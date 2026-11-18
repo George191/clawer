@@ -22,23 +22,26 @@ class TransferPlanPayload(BaseModel):
     targetSchema: WarehouseSchema
     targetTable: TableName
     writeMode: Literal["append", "upsert"]
-    trigger: Literal["manual", "scheduled", "weekly", "upstream"]
+    trigger: Literal["manual", "scheduled", "weekly", "monthly", "upstream"]
     scheduleTime: DailyUtcTime | None = None
     scheduleWeekdayUtc: int | None = Field(default=None, strict=True, ge=1, le=7, exclude_if=lambda value: value is None)
+    scheduleDayOfMonthUtc: int | None = Field(default=None, strict=True, ge=1, le=28, exclude_if=lambda value: value is None)
     incrementalCursor: TableName | None = None
 
     @model_validator(mode="after")
     def validate_plan(self):
         if (self.sourceSchema, self.sourceTable) == (self.targetSchema, self.targetTable):
             raise ValueError("Source and target tables must be different")
-        if (self.trigger in {"scheduled", "weekly"}) != (self.scheduleTime is not None):
-            raise ValueError("A UTC time is required only for a daily or weekly trigger")
+        if (self.trigger in {"scheduled", "weekly", "monthly"}) != (self.scheduleTime is not None):
+            raise ValueError("A UTC time is required only for a daily, weekly or monthly trigger")
         if (self.trigger == "weekly") != (self.scheduleWeekdayUtc is not None):
             raise ValueError("An ISO UTC weekday is required only for a weekly trigger")
-        if self.trigger == "weekly" and (
+        if (self.trigger == "monthly") != (self.scheduleDayOfMonthUtc is not None):
+            raise ValueError("A UTC calendar day 1–28 is required only for a monthly trigger")
+        if self.trigger in {"weekly", "monthly"} and (
             self.writeMode != "upsert" or self.sourceSchema != "ts_transfer_sandbox" or self.targetSchema != "ts_transfer_sandbox"
         ):
-            raise ValueError("A weekly trigger requires a sandbox Upsert plan")
+            raise ValueError("A weekly or monthly trigger requires a sandbox Upsert plan")
         if self.trigger == "upstream" and (
             self.writeMode != "upsert" or self.sourceSchema != "ts_transfer_sandbox" or self.targetSchema != "ts_transfer_sandbox"
         ):
@@ -84,6 +87,7 @@ class TransferRunCapabilities(BaseModel):
     incrementalAppend: bool
     scheduledUpsert: bool
     weeklyUpsert: Literal[True] | None = Field(default=None, exclude_if=lambda value: value is None)
+    monthlyUpsert: Literal[True] | None = Field(default=None, exclude_if=lambda value: value is None)
     upstreamUpsert: bool
 
 
@@ -129,11 +133,20 @@ WEEKLY_PLAN_CHECK = (
 )
 
 
+MONTHLY_PLAN_CHECK = (
+    f"((({WEEKLY_PLAN_CHECK}) AND schedule_day_of_month_utc IS NULL) OR "
+    "(trigger = 'monthly' AND schedule_time IS NOT NULL "
+    "AND schedule_time ~ '^(0[0-9]|1[0-9]|2[0-3]):[0-5][0-9]$' "
+    "AND schedule_weekday_utc IS NULL AND schedule_day_of_month_utc BETWEEN 1 AND 28 "
+    "AND write_mode = 'upsert' AND source_schema = 'ts_transfer_sandbox' AND target_schema = 'ts_transfer_sandbox')) IS TRUE"
+)
+
+
 class TransferPlanRow(SQLModel, table=True):
     __tablename__ = "ontology_transfer_plans"
     __table_args__ = (
         CheckConstraint("write_mode IN ('append', 'upsert')", name="ck_ontology_transfer_plans_mode"),
-        CheckConstraint(WEEKLY_PLAN_CHECK, name="ck_ontology_transfer_plans_schedule"),
+        CheckConstraint(MONTHLY_PLAN_CHECK, name="ck_ontology_transfer_plans_schedule"),
         CheckConstraint("source_schema <> target_schema OR source_table <> target_table",
                         name="ck_ontology_transfer_plans_endpoints"),
         CheckConstraint("incremental_cursor IS NULL OR (write_mode = 'append' AND trigger = 'manual' "
@@ -153,6 +166,7 @@ class TransferPlanRow(SQLModel, table=True):
     trigger: str = DbField(max_length=9)
     schedule_time: str | None = DbField(default=None, max_length=5)
     schedule_weekday_utc: int | None = None
+    schedule_day_of_month_utc: int | None = None
     incremental_cursor: str | None = DbField(default=None, max_length=63)
     updated_at: datetime = DbField(sa_column=Column(DateTime(timezone=True), nullable=False))
 
@@ -236,8 +250,8 @@ class TransferAttemptRow(SQLModel, table=True):
                         "AND (target_table IS NULL) = (scope_trigger IS NULL) "
                         "AND (target_oid IS NULL) = (target_filenode IS NULL) "
                         "AND (target_table IS NOT NULL OR target_oid IS NULL) "
-                        "AND (scope_trigger IS NULL OR scope_trigger IN ('manual','daily_utc','upstream','week_utc')) "
-                        "AND (scope_trigger IS NULL OR scope_trigger NOT IN ('daily_utc','week_utc') OR schedule_job_id IS NOT NULL)",
+                        "AND (scope_trigger IS NULL OR scope_trigger IN ('manual','daily_utc','upstream','week_utc','month_utc')) "
+                        "AND (scope_trigger IS NULL OR scope_trigger NOT IN ('daily_utc','week_utc','month_utc') OR schedule_job_id IS NOT NULL)",
                         name="ck_ontology_transfer_attempt_timeline_scope"),
         Index("ix_ontology_transfer_attempts_plan", "plan_id", "started_at"),
         Index("ix_ontology_transfer_attempts_request", "plan_id", "request_id"),

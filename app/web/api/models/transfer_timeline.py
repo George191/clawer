@@ -11,8 +11,8 @@ from app.web.api.models.transfer_upstream import Operator, UpstreamGroup, Upstre
 
 TimelineKind = Literal["attempt", "receipt"]
 TimelineView = Literal["receipts", "rejected_attempts", "unconfirmed_attempts"]
-TimelineTrigger = Literal["manual", "daily_utc", "weekly_utc", "upstream"]
-TimelineScheduledTrigger = Literal["daily_utc", "weekly_utc"]
+TimelineTrigger = Literal["manual", "daily_utc", "weekly_utc", "monthly_utc", "upstream"]
+TimelineScheduledTrigger = Literal["daily_utc", "weekly_utc", "monthly_utc"]
 
 
 class TransferTimelineEntry(BaseModel):
@@ -34,8 +34,9 @@ class TransferTimelineEntry(BaseModel):
 
 class TransferTimelineJob(BaseModel):
     id: UUID
-    kind: Literal["daily_utc", "weekly_utc", "upstream"]
+    kind: Literal["daily_utc", "weekly_utc", "monthly_utc", "upstream"]
     dueAt: datetime
+    scheduleDayOfMonthUtc: int | None = Field(default=None, exclude_if=lambda value: value is None)
     scheduleWeekdayUtc: int | None = Field(default=None, ge=1, le=7, exclude_if=lambda value: value is None)
     witnessObservedAt: datetime | None = Field(default=None, exclude_if=lambda value: value is None)
     state: Literal["pending", "dispatched", "committed", "rejected", "outcome_unknown", "expired", "canceled"]

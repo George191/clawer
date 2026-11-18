@@ -37,7 +37,7 @@ _FILTER_TIMESTAMP = re.compile(
     r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:[.][0-9]{1,6})?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])"
 )
 _SCOPE_FIELDS = ("plan_id", "request_id", "plan_updated_at", "target_table", "source_table")
-_SCHEDULE_SCOPES: dict[str, TimelineScheduledTrigger] = {"daily_utc": "daily_utc", "week_utc": "weekly_utc"}
+_SCHEDULE_SCOPES: dict[str, TimelineScheduledTrigger] = {"daily_utc": "daily_utc", "week_utc": "weekly_utc", "month_utc": "monthly_utc"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,7 +129,12 @@ def _matching_receipt(record: TransferRunRow, job: Job) -> bool:
 
 def _scheduled_kind(job: TransferScheduleJobRow) -> TimelineScheduledTrigger | None:
     """Read cadence from immutable job metadata, not the mutable draft or a feature flag."""
-    weekday = job.schedule_weekday_utc
+    weekday, month_day = job.schedule_weekday_utc, job.schedule_day_of_month_utc
+    if month_day is not None:
+        if (weekday is None and 1 <= month_day <= 28 and job.slot.utcoffset() is not None
+            and job.slot.astimezone(timezone.utc).day == month_day):
+            return "monthly_utc"
+        return None
     if weekday is None:
         return "daily_utc"
     if (1 <= weekday <= 7 and job.slot.utcoffset() is not None
@@ -326,7 +331,8 @@ async def _job_detail(session: AsyncSession, job: Job) -> TransferTimelineJob | 
     if isinstance(job, TransferScheduleJobRow):
         cadence = _scheduled_kind(job)
         return (TransferTimelineJob(id=job.id, kind=cadence, dueAt=job.slot, state=job.state,
-                                    scheduleWeekdayUtc=job.schedule_weekday_utc, canceledAt=job.canceled_at,
+                                    scheduleWeekdayUtc=job.schedule_weekday_utc, scheduleDayOfMonthUtc=job.schedule_day_of_month_utc,
+                                    canceledAt=job.canceled_at,
                                     parentEvents=[]) if cadence is not None else None)
     events = (await session.scalars(select(TransferCommitEventRow).join(
         UpstreamTriggerJobEventRow, UpstreamTriggerJobEventRow.event_id == TransferCommitEventRow.id,

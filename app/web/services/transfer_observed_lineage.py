@@ -93,6 +93,7 @@ _POSITIVE_SCHEDULED_PROOF = """
     AND j.finished_at <= pg_catalog.statement_timestamp()
     AND r.recorded_at >= j.slot AND r.recorded_at <= j.finished_at
     AND r.recorded_at <= pg_catalog.statement_timestamp()
+    AND j.schedule_day_of_month_utc IS NULL
     AND (j.schedule_weekday_utc IS NULL OR (j.schedule_weekday_utc BETWEEN 1 AND 7
         AND j.schedule_weekday_utc = EXTRACT(ISODOW FROM j.slot AT TIME ZONE 'UTC')))
     AND NOT EXISTS (

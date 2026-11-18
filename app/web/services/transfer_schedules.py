@@ -1,4 +1,4 @@
-"""Durable daily and weekly UTC slots for the existing scheduler's local Upsert pilot."""
+"""Durable daily, weekly and monthly UTC slots for the existing scheduler's local Upsert pilot."""
 
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
@@ -22,7 +22,8 @@ from app.web.api.models.transfer_upstream import UpstreamTriggerRow
 from app.web.api.models.user import User
 from app.web.api.utils.models import StatusTypes
 from app.web.services.transfer_runs import (
-    HISTORY_LIMIT, SANDBOX, clock_slot_job_id, run_sandbox_transfer, scheduled_transfer_enabled, weekly_transfer_enabled,
+    HISTORY_LIMIT, SANDBOX, clock_slot_job_id, monthly_transfer_enabled, run_sandbox_transfer,
+    scheduled_transfer_enabled, weekly_transfer_enabled,
 )
 
 SLOT_WINDOW = timedelta(minutes=5)
@@ -37,7 +38,7 @@ def _utc_now() -> datetime:
 
 
 def _eligible(plan: TransferPlanRow) -> bool:
-    return (plan.trigger in {"scheduled", "weekly"} and plan.schedule_time is not None and plan.write_mode == "upsert"
+    return (plan.trigger in {"scheduled", "weekly", "monthly"} and plan.schedule_time is not None and plan.write_mode == "upsert"
             and plan.source_schema == SANDBOX and plan.target_schema == SANDBOX and plan.incremental_cursor is None)
 
 
@@ -59,6 +60,7 @@ def _cancel_error(code: str, message: str) -> HTTPException:
 def _current_job(plan, schedule, job, conflict: bool) -> bool:
     return bool(schedule is not None and schedule.enabled and not conflict and _eligible(plan)
                 and plan.trigger == "scheduled" and job.schedule_weekday_utc is None
+                and job.schedule_day_of_month_utc is None
                 and schedule.generation == job.generation and schedule.armed_by == job.armed_by
                 and schedule.armed_for_updated_at == plan.updated_at == job.plan_updated_at
                 and schedule.updated_at <= job.slot and job.expires_at == job.slot + SLOT_WINDOW
@@ -88,7 +90,7 @@ def _prior_attempts(plan_id: UUID, job_ids: list[UUID]):
 def _job_response(job: TransferScheduleJobRow, *, include_generation: bool = False, cancelable: bool = False) -> TransferScheduleJob:
     return TransferScheduleJob(
         id=job.id, slot=job.slot, state=job.state, dispatchedAt=job.dispatched_at,
-        scheduleWeekdayUtc=job.schedule_weekday_utc,
+        scheduleWeekdayUtc=job.schedule_weekday_utc, scheduleDayOfMonthUtc=job.schedule_day_of_month_utc,
         finishedAt=job.finished_at, receiptId=job.receipt_id, message=job.message,
         generation=job.generation if include_generation or job.state == "canceled" else None,
         canceledAt=job.canceled_at, cancelable=True if cancelable else None,
@@ -96,14 +98,16 @@ def _job_response(job: TransferScheduleJobRow, *, include_generation: bool = Fal
 
 
 def _response(plan: TransferPlanRow, binding: TransferScheduleRow | None) -> TransferSchedule:
-    available = scheduled_transfer_enabled() and _eligible(plan) and (plan.trigger != "weekly" or weekly_transfer_enabled())
+    available = (scheduled_transfer_enabled() and _eligible(plan)
+                 and (plan.trigger != "weekly" or weekly_transfer_enabled())
+                 and (plan.trigger != "monthly" or monthly_transfer_enabled()))
     return TransferSchedule(
         available=available,
         jobCancelAvailable=True if available and plan.trigger == "scheduled" and transfer_job_cancel_enabled() else None,
-        enabled=bool((available or plan.trigger == "weekly") and binding and binding.enabled and binding.armed_for_updated_at == plan.updated_at),
+        enabled=bool((available or plan.trigger in {"weekly", "monthly"}) and binding and binding.enabled and binding.armed_for_updated_at == plan.updated_at),
         generation=binding.generation if binding else None,
         plannedTimeUtc=plan.schedule_time,
-        plannedWeekdayUtc=plan.schedule_weekday_utc,
+        plannedWeekdayUtc=plan.schedule_weekday_utc, plannedDayOfMonthUtc=plan.schedule_day_of_month_utc,
         armedForUpdatedAt=binding.armed_for_updated_at if binding else None,
         updatedAt=binding.updated_at if binding else None,
     )
@@ -135,6 +139,8 @@ async def change_transfer_schedule(
         raise HTTPException(409, "The transfer draft changed. Reload it before changing the schedule")
     if change.enabled and plan.trigger == "weekly" and not weekly_transfer_enabled():
         raise HTTPException(403, "Weekly UTC sandbox transfer execution is disabled")
+    if change.enabled and plan.trigger == "monthly" and not monthly_transfer_enabled():
+        raise HTTPException(403, "Monthly UTC sandbox transfer execution is disabled")
     if change.enabled and not scheduled_transfer_enabled():
         raise HTTPException(403, "Automatic sandbox transfer execution is disabled")
     if change.enabled:
@@ -142,7 +148,7 @@ async def change_transfer_schedule(
         if upstream is not None and upstream.enabled and upstream.mixed_time_utc is not None:
             raise HTTPException(409, "Pause the mixed upstream trigger before arming the independent UTC schedule")
     if change.enabled and not _eligible(plan):
-        raise HTTPException(422, "Only daily or weekly UTC Upsert plans in the dedicated local sandbox can be scheduled")
+        raise HTTPException(422, "Only daily, weekly or monthly UTC Upsert plans in the dedicated local sandbox can be scheduled")
 
     binding = await session.get(TransferScheduleRow, plan_id)
     if binding is None and not change.enabled:
@@ -200,7 +206,8 @@ async def list_transfer_schedule_jobs(session: AsyncSession, plan_id: UUID) -> l
             possible -= set((await session.scalars(select(TransferRunRow.request_id).where(
                 TransferRunRow.plan_id == plan_id, TransferRunRow.request_id.in_(possible),
             ))).all())
-    return [_job_response(job, include_generation=enabled and job.schedule_weekday_utc is None, cancelable=job.id in possible) for job in jobs]
+    return [_job_response(job, include_generation=enabled and job.schedule_weekday_utc is None and job.schedule_day_of_month_utc is None,
+                          cancelable=job.id in possible) for job in jobs]
 
 
 async def cancel_transfer_schedule_job(
@@ -220,7 +227,7 @@ async def cancel_transfer_schedule_job(
         job = await session.scalar(select(TransferScheduleJobRow).where(
             TransferScheduleJobRow.id == job_id, TransferScheduleJobRow.plan_id == plan_id,
         ).with_for_update(nowait=True).execution_options(populate_existing=True))
-        if job is None or job.schedule_weekday_utc is not None:
+        if job is None or job.schedule_weekday_utc is not None or job.schedule_day_of_month_utc is not None:
             raise HTTPException(404, "The exact Daily UTC job does not exist")
         if job.generation != change.expectedGeneration or job.slot != change.expectedSlot:
             raise _cancel_error("job_scope_changed", "The exact reviewed generation or UTC slot does not match")
@@ -276,14 +283,19 @@ def _no_mixed_binding(plan_id):
                            UpstreamTriggerRow.mixed_time_utc.is_not(None))
 
 
-def _weekly_lease_scope(now: datetime):
+def _calendar_lease_scope(now: datetime, *, monthly: bool):
     job, plan, binding = TransferScheduleJobRow, TransferPlanRow, TransferScheduleRow
     utc_slot = func.timezone("UTC", job.slot)
+    reviewed_day = (
+        (plan.schedule_day_of_month_utc == job.schedule_day_of_month_utc,
+         job.schedule_day_of_month_utc == extract("day", utc_slot), job.schedule_weekday_utc.is_(None))
+        if monthly else (plan.schedule_weekday_utc == job.schedule_weekday_utc,
+                         job.schedule_weekday_utc == extract("isodow", utc_slot), job.schedule_day_of_month_utc.is_(None))
+    )
     return exists(select(plan.id).join(binding, binding.plan_id == plan.id).where(
-        plan.id == job.plan_id, plan.trigger == "weekly", plan.write_mode == "upsert",
+        plan.id == job.plan_id, plan.trigger == ("monthly" if monthly else "weekly"), plan.write_mode == "upsert",
         plan.source_schema == SANDBOX, plan.target_schema == SANDBOX, plan.incremental_cursor.is_(None),
-        plan.schedule_weekday_utc == job.schedule_weekday_utc,
-        job.schedule_weekday_utc == extract("isodow", utc_slot),
+        *reviewed_day,
         plan.schedule_time == func.to_char(utc_slot, "HH24:MI"), extract("second", utc_slot) == 0,
         job.slot <= now, job.expires_at == job.slot + text("interval '5 minutes'"),
         plan.updated_at == job.plan_updated_at, binding.armed_for_updated_at == plan.updated_at,
@@ -307,18 +319,22 @@ async def collect_due_transfer_jobs(session: AsyncSession, *, now: datetime | No
         job.message = "UTC dispatch window closed before an outcome was confirmed"
 
     minute = now.replace(second=0, microsecond=0)
-    weekly = weekly_transfer_enabled()
+    weekly, monthly = weekly_transfer_enabled(), monthly_transfer_enabled()
     for offset in range(5):
         slot = minute - timedelta(minutes=offset)
         daily_mode = TransferPlanRow.trigger == "scheduled"
         weekly_mode = and_(TransferPlanRow.trigger == "weekly", TransferPlanRow.schedule_weekday_utc == slot.isoweekday(),
                            _active_actor(TransferScheduleRow), _no_mixed_binding(TransferPlanRow.id))
-        matches = select(TransferScheduleRow, TransferPlanRow.schedule_weekday_utc).join(
+        monthly_mode = and_(TransferPlanRow.trigger == "monthly", TransferPlanRow.schedule_day_of_month_utc == slot.day,
+                            _active_actor(TransferScheduleRow), _no_mixed_binding(TransferPlanRow.id))
+        modes = [daily_mode] + ([weekly_mode] if weekly else []) + ([monthly_mode] if monthly else [])
+        matches = select(TransferScheduleRow, TransferPlanRow.schedule_weekday_utc,
+                         TransferPlanRow.schedule_day_of_month_utc).join(
             TransferPlanRow, TransferPlanRow.id == TransferScheduleRow.plan_id,
         ).where(
             TransferScheduleRow.enabled, TransferScheduleRow.armed_for_updated_at == TransferPlanRow.updated_at,
             TransferScheduleRow.updated_at <= slot,
-            or_(daily_mode, weekly_mode) if weekly else daily_mode, TransferPlanRow.write_mode == "upsert",
+            or_(*modes), TransferPlanRow.write_mode == "upsert",
             TransferPlanRow.source_schema == SANDBOX, TransferPlanRow.target_schema == SANDBOX,
             TransferPlanRow.schedule_time == slot.strftime("%H:%M"), TransferPlanRow.incremental_cursor.is_(None),
             ~exists().where(
@@ -335,21 +351,26 @@ async def collect_due_transfer_jobs(session: AsyncSession, *, now: datetime | No
                     "plan_id": binding.plan_id, "generation": binding.generation, "slot": slot,
                     "expires_at": slot + SLOT_WINDOW, "dispatch_after": now,
                     "plan_updated_at": binding.armed_for_updated_at, "armed_by": binding.armed_by, "state": "pending",
-                    "schedule_weekday_utc": weekday,
+                    "schedule_weekday_utc": weekday, "schedule_day_of_month_utc": month_day,
                 }
-                for binding, weekday in bindings
+                for binding, weekday, month_day in bindings
             ]).on_conflict_do_nothing())
 
+    lease_modes = [and_(TransferScheduleJobRow.schedule_weekday_utc.is_(None),
+                        TransferScheduleJobRow.schedule_day_of_month_utc.is_(None))]
+    if weekly:
+        lease_modes.append(_calendar_lease_scope(now, monthly=False))
+    if monthly:
+        lease_modes.append(_calendar_lease_scope(now, monthly=True))
     jobs = (await session.scalars(select(TransferScheduleJobRow).where(
         TransferScheduleJobRow.state.in_(OPEN_JOB_STATES), TransferScheduleJobRow.expires_at > now,
-        TransferScheduleJobRow.dispatch_after <= now,
-        or_(TransferScheduleJobRow.schedule_weekday_utc.is_(None), _weekly_lease_scope(now))
-        if weekly else TransferScheduleJobRow.schedule_weekday_utc.is_(None),
+        TransferScheduleJobRow.dispatch_after <= now, or_(*lease_modes),
     ).order_by(TransferScheduleJobRow.dispatch_after, TransferScheduleJobRow.id)
         .limit(TICK_LIMIT).with_for_update(skip_locked=True))).all()
     ids = []
     for job in jobs:
-        if job.schedule_weekday_utc is not None and job.id != _job_identity(job.plan_id, job.generation, job.slot):
+        if ((job.schedule_weekday_utc is not None or job.schedule_day_of_month_utc is not None)
+            and job.id != _job_identity(job.plan_id, job.generation, job.slot)):
             continue
         job.dispatch_after = now + DISPATCH_LEASE
         ids.append(job.id)
@@ -372,6 +393,7 @@ async def record_transfer_job_dispatched(job_id: UUID) -> None:
         await session.execute(update(TransferScheduleJobRow).where(
             TransferScheduleJobRow.id == job_id, TransferScheduleJobRow.state == "pending",
             True if weekly_transfer_enabled() else TransferScheduleJobRow.schedule_weekday_utc.is_(None),
+            True if monthly_transfer_enabled() else TransferScheduleJobRow.schedule_day_of_month_utc.is_(None),
         ).values(state="dispatched", dispatched_at=_utc_now()))
 
 
@@ -390,7 +412,8 @@ async def execute_transfer_schedule_job(session: AsyncSession, job_id: UUID, *, 
         return "missing"
     if job.state not in OPEN_JOB_STATES:
         return job.state
-    if job.schedule_weekday_utc is not None and not weekly_transfer_enabled():
+    if ((job.schedule_weekday_utc is not None and not weekly_transfer_enabled())
+        or (job.schedule_day_of_month_utc is not None and not monthly_transfer_enabled())):
         return "disabled"
     try:
         await run_sandbox_transfer(

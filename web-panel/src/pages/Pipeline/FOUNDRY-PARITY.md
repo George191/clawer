@@ -67,6 +67,12 @@
 - 每周计划和作业记录与每日明确区分。版本、授权、功能开关或有效窗口在写入前仍须满足；历史以持久作业记录为准，不用当前草稿重新标记。受控批量同步、混合上游触发、每日质量检查及生产部署不在本轮范围。
 - 迁移 `deb2f8719046` 后，`TRANSFER_SANDBOX_WEEKLY_SCHEDULER_ENABLED` 仍默认关闭。仅在完整的新 API、采集器和执行器均就绪的隔离环境启用；旧执行器不会把每周计划当作每日写入，但混合版本不保证每周作业可用。支持暂停每周计划，不复用仅针对每日 UTC 的单条作业取消接口。
 
+### 每月 1–28 日的固定 UTC 时点
+
+- 对照 [Foundry 按月调度](https://www.palantir.com/docs/foundry/pipeline-builder/schedules-create-schedule) 和 [时间触发配置](https://www.palantir.com/docs/foundry/building-pipelines/triggers-reference/#time-trigger)。既有 Lineage 和 Automation Center 支持同库内部沙箱 Upsert 的每月 1–28 日固定 UTC 时分；不另建调度器，也不覆盖月末规则、完整 cron、用户时区或夏令时。
+- 保存草稿不会启用；确认确切版本后才计入现有调度。派发、租用及写入前重新核对原 UTC 时点和五分钟窗口、当前已审核版本及权限；不补跑过期时点。作业与运行回执保留原月度身份，修改草稿不会重标历史，精确原请求只恢复原回执。
+- 迁移 `d31f0b483a76` 后 `TRANSFER_SANDBOX_MONTHLY_SCHEDULER_ENABLED` 仍默认关闭。只在新 API、采集器和执行器都一致的隔离环境启用。月度不复用每日单任务取消、每日/每周质量规则或原外发观测；可暂停计划。未部署。
+
 ### 数据源发现的验收口径
 
 - 对照 [Data Connection Source Exploration](https://www.palantir.com/docs/foundry/data-connection/source-exploration/) 的数据源树、搜索和元数据面板。Explore source 放在现有 Data Connections 已保存连接内，不另建导航。

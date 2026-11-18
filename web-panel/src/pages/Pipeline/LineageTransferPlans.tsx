@@ -4,7 +4,7 @@ import { Modal } from '@/components/ui';
 import { ArrowRightOutlined, PlusOutlined } from '@/components/ui/icons';
 import { checkTransferPlan, fetchEtlObjectTypes, fetchEtlTableColumns, fetchTransferPlans, fetchTransferRunAttempts, fetchTransferRunCapabilities, fetchTransferRunHistory, fetchTransferSchedule, fetchTransferScheduleJobs, runSandboxTransfer, saveTransferPlan, updateTransferSchedule } from '../../services/api';
 import type { TransferPlan, TransferPlanInput, TransferPlanPreflight, TransferRunAttempt, TransferRunCapabilities, TransferRunReceipt, TransferSchedule, TransferScheduleJob } from '../../services/api';
-import { isoWeekdayName, isoWeekdaysUtc } from '../../services/scheduleTime';
+import { isUtcMonthDay, isoWeekdayName, isoWeekdaysUtc } from '../../services/scheduleTime';
 import { getSessionState } from '../../services/session';
 import LineageUpstreamTrigger from './LineageUpstreamTrigger';
 
@@ -28,7 +28,7 @@ const emptyDraft = (schema: string): TransferPlanInput => ({
   writeMode: 'append', trigger: 'manual', scheduleTime: null,
 });
 
-function validateDraft(draft: TransferPlanInput, weeklyAvailable: boolean) {
+function validateDraft(draft: TransferPlanInput, weeklyAvailable: boolean, monthlyAvailable: boolean) {
   if (!draft.name.trim() || !draft.sourceTable || !draft.targetTable) return 'Enter a name and select both tables.';
   if (draft.sourceSchema === draft.targetSchema && draft.sourceTable === draft.targetTable) return 'The source and destination must be different tables.';
   if (draft.trigger === 'scheduled' && !draft.scheduleTime) return 'Enter the daily time in UTC.';
@@ -38,6 +38,13 @@ function validateDraft(draft: TransferPlanInput, weeklyAvailable: boolean) {
       return 'Weekly UTC requires Upsert between two transfer sandbox tables.';
     if (!isoWeekdayName(draft.scheduleWeekdayUtc) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(draft.scheduleTime ?? ''))
       return 'Select a weekday and enter the weekly time in UTC.';
+  }
+  if (draft.trigger === 'monthly') {
+    if (!monthlyAvailable) return 'Monthly scheduling is unavailable in this environment.';
+    if (draft.writeMode !== 'upsert' || draft.sourceSchema !== 'ts_transfer_sandbox' || draft.targetSchema !== 'ts_transfer_sandbox')
+      return 'Monthly UTC requires Upsert between two transfer sandbox tables.';
+    if (!isUtcMonthDay(draft.scheduleDayOfMonthUtc) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(draft.scheduleTime ?? ''))
+      return 'Select a day from 1 through 28 and enter the monthly time in UTC.';
   }
   if (draft.trigger === 'upstream' && (draft.writeMode !== 'upsert' || draft.sourceSchema !== 'ts_transfer_sandbox' || draft.targetSchema !== 'ts_transfer_sandbox')) {
     return 'On upstream commit requires Upsert between two transfer sandbox tables.';
@@ -142,12 +149,14 @@ function TransferSchedulePanel({ plan, maxRows }: { plan: TransferPlan; maxRows:
   }, [plan.id, plan.updatedAt, revision, identity]);
 
   const draftWeekly = plan.trigger === 'weekly';
+  const draftMonthly = plan.trigger === 'monthly';
   const planWeekday = isoWeekdayName(plan.scheduleWeekdayUtc);
-  const weeklyArmReady = !draftWeekly || Boolean(planWeekday && plan.scheduleTime);
+  const draftArmReady = (!draftWeekly || Boolean(planWeekday && plan.scheduleTime)) &&
+    (!draftMonthly || Boolean(isUtcMonthDay(plan.scheduleDayOfMonthUtc) && plan.scheduleTime));
   const submit = async () => {
     if (!confirm || !schedule || requestPending.current || !current()) return;
     const enabled = confirm === 'arm';
-    if (enabled ? !schedule.available || schedule.enabled || !weeklyArmReady : !schedule.enabled) return;
+    if (enabled ? !schedule.available || schedule.enabled || !draftArmReady : !schedule.enabled) return;
     requestPending.current = true;
     setSubmitting(true);
     setMutationError('');
@@ -168,8 +177,10 @@ function TransferSchedulePanel({ plan, maxRows }: { plan: TransferPlan; maxRows:
   const plannedTime = schedule?.plannedTimeUtc || plan.scheduleTime;
   const weekday = schedule?.plannedTimeUtc ? isoWeekdayName(schedule.plannedWeekdayUtc) : planWeekday;
   const weekly = schedule?.plannedTimeUtc ? Boolean(weekday) : draftWeekly;
-  const armedWeeklyBlocked = weekly && schedule?.enabled && !schedule.available;
-  const scheduleClock = weekly ? weekday && plannedTime ? `Weekly on ${weekday} at ${plannedTime} UTC` : undefined :
+  const monthDay = schedule?.plannedTimeUtc ? schedule.plannedDayOfMonthUtc : plan.scheduleDayOfMonthUtc;
+  const monthly = schedule?.plannedTimeUtc ? isUtcMonthDay(monthDay) : draftMonthly;
+  const armedCadenceBlocked = (weekly || monthly) && schedule?.enabled && !schedule.available;
+  const scheduleClock = monthly ? isUtcMonthDay(monthDay) && plannedTime ? `Monthly on day ${monthDay} at ${plannedTime} UTC` : undefined : weekly ? weekday && plannedTime ? `Weekly on ${weekday} at ${plannedTime} UTC` : undefined :
     plannedTime ? `Daily at ${plannedTime} UTC` : undefined;
 
   return <section className="flow-transfer-schedule" aria-label="Transfer schedule">
@@ -177,15 +188,15 @@ function TransferSchedulePanel({ plan, maxRows }: { plan: TransferPlan; maxRows:
       <h4>Transfer schedule</h4>
       <button type="button" className="flow-lineage-action" disabled={submitting} onClick={() => { setMutationError(''); setRevision(value => value + 1); }}>Refresh schedule</button>
     </div>
-    <p>{scheduleClock ? `${scheduleClock}.` : weekly ? 'No weekly UTC time is configured.' : 'No daily UTC time is configured.'} This is a sandbox schedule, not a production or CDC job.</p>
+    <p>{scheduleClock ? `${scheduleClock}.` : monthly ? 'No monthly UTC time is configured.' : weekly ? 'No weekly UTC time is configured.' : 'No daily UTC time is configured.'} This is a sandbox schedule, not a production or CDC job.</p>
     {mutationError && <div role="alert" className="flow-transfer-error">{mutationError}</div>}
     {scheduleError ? <div role="alert" className="flow-transfer-error">{scheduleError}</div> : !schedule ? <p role="status">Loading schedule…</p> : <>
-      <strong role="status">{armedWeeklyBlocked ? 'Schedule armed · blocked' : schedule.enabled ? 'Schedule armed' : schedule.generation != null ? 'Schedule paused' : 'Schedule not armed'}</strong>
+      <strong role="status">{armedCadenceBlocked ? 'Schedule armed · blocked' : schedule.enabled ? 'Schedule armed' : schedule.generation != null ? 'Schedule paused' : 'Schedule not armed'}</strong>
       {!schedule.available && <p>Scheduled execution is unavailable for this plan or environment.</p>}
       <div className="flow-transfer-run-actions">
         {schedule.enabled
           ? <button type="button" className="flow-lineage-action" disabled={submitting} onClick={() => { setMutationError(''); setConfirm('pause'); }}>Pause schedule</button>
-          : schedule.available && weeklyArmReady && <button type="button" className="flow-lineage-action is-primary" disabled={submitting} onClick={() => { setMutationError(''); setConfirm('arm'); }}>Arm schedule</button>}
+          : schedule.available && draftArmReady && <button type="button" className="flow-lineage-action is-primary" disabled={submitting} onClick={() => { setMutationError(''); setConfirm('arm'); }}>Arm schedule</button>}
       </div>
     </>}
     <h4>Schedule jobs</h4>
@@ -195,6 +206,7 @@ function TransferSchedulePanel({ plan, maxRows }: { plan: TransferPlan; maxRows:
         {jobs.map(job => <li key={job.id}>
           <strong>{scheduleJobLabels[job.state]}</strong>
           {isoWeekdayName(job.scheduleWeekdayUtc) && <div>Recorded mode: Weekly UTC · {isoWeekdayName(job.scheduleWeekdayUtc)}</div>}
+          {isUtcMonthDay(job.scheduleDayOfMonthUtc) && <div>Recorded mode: Monthly UTC · day {job.scheduleDayOfMonthUtc}</div>}
           <div>Scheduled slot: <UtcTime value={job.slot} /></div>
           {job.dispatchedAt && <div>Dispatched at: <UtcTime value={job.dispatchedAt} /></div>}
           {job.state === 'canceled' ? job.canceledAt && <div>Canceled at: <UtcTime value={job.canceledAt} /></div>
@@ -203,10 +215,10 @@ function TransferSchedulePanel({ plan, maxRows }: { plan: TransferPlan; maxRows:
           {job.message && <div>{job.message}</div>}
         </li>)}
       </ol>}
-    <Modal open={Boolean(confirm)} destroyOnHidden className="flow-surface-modal" title={confirm === 'pause' ? 'Pause sandbox schedule?' : draftWeekly ? 'Arm weekly sandbox schedule?' : 'Arm sandbox schedule?'}
+    <Modal open={Boolean(confirm)} destroyOnHidden className="flow-surface-modal" title={confirm === 'pause' ? 'Pause sandbox schedule?' : draftMonthly ? 'Arm monthly sandbox schedule?' : draftWeekly ? 'Arm weekly sandbox schedule?' : 'Arm sandbox schedule?'}
       onCancel={() => setConfirm(undefined)} onOk={submit} confirmLoading={submitting} okText={confirm === 'pause' ? 'Confirm pause' : 'Confirm arm schedule'}>
       {confirm === 'pause' ? <p>This stops future dispatches. It does not reverse a committed transfer or cancel a transfer that has already started.</p>
-        : <><p>Allow Automation to run this saved Upsert revision {draftWeekly ? `weekly on ${planWeekday} at ${plan.scheduleTime} UTC` : `daily at ${plan.scheduleTime} UTC`}. A run can write up to {maxRows} rows into the destination sandbox table.</p>
+        : <><p>Allow Automation to run this saved Upsert revision {draftMonthly ? `monthly on day ${plan.scheduleDayOfMonthUtc} at ${plan.scheduleTime} UTC` : draftWeekly ? `weekly on ${planWeekday} at ${plan.scheduleTime} UTC` : `daily at ${plan.scheduleTime} UTC`}. A run can write up to {maxRows} rows into the destination sandbox table.</p>
           <div className="flow-transfer-route"><code>{plan.sourceSchema}.{plan.sourceTable}</code><ArrowRightOutlined /><code>{plan.targetSchema}.{plan.targetTable}</code></div></>}
     </Modal>
   </section>;
@@ -437,12 +449,13 @@ export default function LineageTransferPlans({ schema, schemas, selectedSchedule
       incrementalCursor: plan.incrementalCursor,
       trigger: plan.trigger, scheduleTime: plan.scheduleTime,
       scheduleWeekdayUtc: plan.trigger === 'weekly' ? plan.scheduleWeekdayUtc : undefined,
+      scheduleDayOfMonthUtc: plan.trigger === 'monthly' ? plan.scheduleDayOfMonthUtc : undefined,
     } : emptyDraft(schema));
   };
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!draft || pending.current || !isCurrent()) return;
-    const validation = validateDraft(draft, capabilities?.weeklyUpsert === true);
+    const validation = validateDraft(draft, capabilities?.weeklyUpsert === true, capabilities?.monthlyUpsert === true);
     if (validation) {
       setSaveError(validation);
       return;
@@ -467,7 +480,7 @@ export default function LineageTransferPlans({ schema, schemas, selectedSchedule
   const checkCompatibility = async () => {
     if (!draft || preflightRequest.current || pending.current || !isCurrent()) return;
     resetPreflight();
-    const validation = validateDraft(draft, capabilities?.weeklyUpsert === true);
+    const validation = validateDraft(draft, capabilities?.weeklyUpsert === true, capabilities?.monthlyUpsert === true);
     if (validation) {
       setPreflightError(validation);
       return;
@@ -492,7 +505,7 @@ export default function LineageTransferPlans({ schema, schemas, selectedSchedule
   const retrying = confirmPlan ? savedRun(storageKey(confirmPlan.id)) : undefined;
   const cursorEligible = draft && capabilities?.incrementalAppend && draft.writeMode === 'append' &&
     draft.trigger === 'manual' && draft.sourceSchema === capabilities.sourceSchema && draft.targetSchema === capabilities.targetSchema;
-  const scheduleEligible = (plan: TransferPlanInput) => capabilities && (plan.trigger === 'scheduled' || plan.trigger === 'weekly' || plan.trigger === 'upstream') && plan.writeMode === 'upsert' &&
+  const scheduleEligible = (plan: TransferPlanInput) => capabilities && (plan.trigger === 'scheduled' || plan.trigger === 'weekly' || plan.trigger === 'monthly' || plan.trigger === 'upstream') && plan.writeMode === 'upsert' &&
     plan.sourceSchema === capabilities.sourceSchema && plan.targetSchema === capabilities.targetSchema;
   const canSelectUpstream = draft && capabilities && draft.writeMode === 'upsert' &&
     draft.sourceSchema === capabilities.sourceSchema && draft.targetSchema === capabilities.targetSchema;
@@ -514,10 +527,12 @@ export default function LineageTransferPlans({ schema, schemas, selectedSchedule
         <label>Write mode<select value={draft.writeMode} onChange={event => change({ writeMode: event.target.value === 'upsert' ? 'upsert' : 'append', incrementalCursor: null })}><option value="append">Append</option><option value="upsert">Upsert by destination primary key</option></select></label>
         <label>Intended trigger<select value={draft.trigger} onChange={event => {
           const trigger = event.target.value;
-          change({ trigger: trigger === 'scheduled' || trigger === 'upstream' || trigger === 'weekly' ? trigger : 'manual', scheduleTime: null, scheduleWeekdayUtc: undefined, incrementalCursor: null });
+          change({ trigger: trigger === 'scheduled' || trigger === 'upstream' || trigger === 'weekly' || trigger === 'monthly' ? trigger : 'manual', scheduleTime: null, scheduleWeekdayUtc: undefined, scheduleDayOfMonthUtc: undefined, incrementalCursor: null });
         }}><option value="manual">Manual</option><option value="scheduled">Daily</option>
           {(capabilities?.weeklyUpsert === true || draft.trigger === 'weekly') &&
             <option value="weekly" disabled={!capabilities?.weeklyUpsert || !canSelectUpstream}>Weekly UTC</option>}
+          {(capabilities?.monthlyUpsert === true || draft.trigger === 'monthly') &&
+            <option value="monthly" disabled={!capabilities?.monthlyUpsert || !canSelectUpstream}>Monthly UTC</option>}
           <option value="upstream" disabled={!canSelectUpstream}>On upstream commit</option></select></label>
         {draft.trigger === 'scheduled' && <label>Daily time (UTC)<input type="time" required step={60} value={draft.scheduleTime ?? ''} onChange={event => change({ scheduleTime: event.target.value || null })} /></label>}
         {draft.trigger === 'weekly' && <>
@@ -529,6 +544,17 @@ export default function LineageTransferPlans({ schema, schemas, selectedSchedule
             onChange={event => change({ scheduleTime: event.target.value || null })} /></label>
           <p>{capabilities?.weeklyUpsert ? 'Saving this draft does not arm the schedule. Review and arm the saved revision separately.' :
             'Weekly scheduling is unavailable. Existing schedule history remains in the saved plan.'}</p>
+        </>}
+        {draft.trigger === 'monthly' && <>
+          <label>Day of month (UTC)<select required value={draft.scheduleDayOfMonthUtc ?? ''} disabled={!capabilities?.monthlyUpsert}
+            onChange={event => change({ scheduleDayOfMonthUtc: event.target.value ? Number(event.target.value) : undefined })}>
+            <option value="">Select a day</option>{Array.from({ length: 28 }, (_, index) => index + 1).map(day =>
+              <option key={day} value={day}>{day}</option>)}
+          </select></label>
+          <label>Monthly time (UTC)<input type="time" required step={60} value={draft.scheduleTime ?? ''} disabled={!capabilities?.monthlyUpsert}
+            onChange={event => change({ scheduleTime: event.target.value || null })} /></label>
+          <p>{capabilities?.monthlyUpsert ? 'Choose day 1 through 28. Saving this draft does not arm the schedule. Review and arm the saved revision separately.' :
+            'Monthly scheduling is unavailable. Existing schedule history remains in the saved plan.'}</p>
         </>}
         {draft.trigger === 'upstream' && <p>Save this draft, then open Schedule to select an eligible manual producer. {capabilities && !capabilities.upstreamUpsert && 'Upstream execution is disabled in this environment.'}</p>}
         {cursorEligible && <IncrementalCursorPicker key={`${draft.sourceSchema}:${draft.sourceTable}`} schema={draft.sourceSchema} table={draft.sourceTable} cursor={draft.incrementalCursor} onChange={incrementalCursor => change({ incrementalCursor })} />}
@@ -554,7 +580,7 @@ export default function LineageTransferPlans({ schema, schemas, selectedSchedule
         : plans.length ? <ul className="flow-transfer-list">{plans.map(plan => <li key={plan.id}>
           <div><strong>{plan.name}</strong><span className="flow-transfer-badge">Draft</span></div>
           <div className="flow-transfer-route"><code>{plan.sourceSchema}.{plan.sourceTable}</code><ArrowRightOutlined /><code>{plan.targetSchema}.{plan.targetTable}</code></div>
-          <div className="flow-transfer-meta"><small>{plan.writeMode === 'upsert' ? 'Upsert' : plan.incrementalCursor ? `Incremental append by ${plan.incrementalCursor}` : 'One-time append'} · {plan.trigger === 'scheduled' ? `Daily at ${plan.scheduleTime} UTC` : plan.trigger === 'weekly' ? `Weekly on ${isoWeekdayName(plan.scheduleWeekdayUtc) ?? 'unrecorded weekday'} at ${plan.scheduleTime ?? 'unrecorded time'} UTC` : plan.trigger === 'upstream' ? 'On upstream commit' : 'Manual'} (intended)</small><button type="button" className="flow-lineage-action" aria-label={`Edit ${plan.name}`} disabled={Boolean(runningPlan)} onClick={() => edit(plan)}>Edit</button></div>
+          <div className="flow-transfer-meta"><small>{plan.writeMode === 'upsert' ? 'Upsert' : plan.incrementalCursor ? `Incremental append by ${plan.incrementalCursor}` : 'One-time append'} · {plan.trigger === 'scheduled' ? `Daily at ${plan.scheduleTime} UTC` : plan.trigger === 'weekly' ? `Weekly on ${isoWeekdayName(plan.scheduleWeekdayUtc) ?? 'unrecorded weekday'} at ${plan.scheduleTime ?? 'unrecorded time'} UTC` : plan.trigger === 'monthly' ? `Monthly on day ${isUtcMonthDay(plan.scheduleDayOfMonthUtc) ? plan.scheduleDayOfMonthUtc : 'not recorded'} at ${plan.scheduleTime ?? 'unrecorded time'} UTC` : plan.trigger === 'upstream' ? 'On upstream commit' : 'Manual'} (intended)</small><button type="button" className="flow-lineage-action" aria-label={`Edit ${plan.name}`} disabled={Boolean(runningPlan)} onClick={() => edit(plan)}>Edit</button></div>
           <div className="flow-transfer-run-actions">
             <button type="button" className="flow-lineage-action" aria-expanded={historyFor === plan.id} onClick={() => { setHistory(undefined); setAttempts(undefined); setHistoryError(''); setHistoryView('receipts'); setHistoryFor(historyFor === plan.id ? undefined : plan.id); }}>Run history</button>
             {(scheduleEligible(plan) || selectedSchedule === plan.id) && <button type="button" className="flow-lineage-action" aria-expanded={scheduleFor === plan.id} onClick={() => setScheduleFor(scheduleFor === plan.id ? undefined : plan.id)}>Schedule</button>}

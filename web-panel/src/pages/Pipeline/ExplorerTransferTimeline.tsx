@@ -4,7 +4,7 @@ import { exactTransferReceiptFocus } from './transferReceiptFocus';
 import { Button, Modal } from '@/components/ui';
 import { fetchTransferTimeline, fetchTransferTimelineDetail } from '../../services/api';
 import type { TransferRunReceipt, TransferTimelineDetail, TransferTimelineEntry, TransferTimelineFilters } from '../../services/api';
-import { isoWeekdayName } from '../../services/scheduleTime';
+import { isUtcMonthDay, isoWeekdayName } from '../../services/scheduleTime';
 import { sandboxScopeDenied, useSandboxIdentity } from './SandboxMarkings';
 import { recordedUpstreamRule } from './upstreamRules';
 
@@ -14,7 +14,7 @@ const physicalLabels: Record<TransferTimelineEntry['physicalScope'], string> = {
   unknown: 'Physical identity unverified',
 };
 const triggerLabels: Record<NonNullable<TransferTimelineEntry['trigger']>, string> = {
-  manual: 'Manual', daily_utc: 'Daily UTC', weekly_utc: 'Weekly UTC', upstream: 'Upstream commit',
+  manual: 'Manual', daily_utc: 'Daily UTC', weekly_utc: 'Weekly UTC', monthly_utc: 'Monthly UTC', upstream: 'Upstream commit',
 };
 const statusLabels: Record<string, string> = {
   started: 'Request recorded', rejected: 'Rejected', outcome_unknown: 'Outcome unknown',
@@ -239,6 +239,8 @@ function TimelineWorkspace({ schema, table, onLatestCurrentReceipt }: Props) {
           {shownDetail.job ? <section aria-label="Dispatch provenance">
             <h5>Dispatch provenance</h5>
             <p>{triggerLabels[shownDetail.job.kind]} · {labelStatus(shownDetail.job.state)}</p>
+            {shownDetail.job.kind === 'monthly_utc' && isUtcMonthDay(shownDetail.job.scheduleDayOfMonthUtc) &&
+              <p>Recorded day of month (UTC): {shownDetail.job.scheduleDayOfMonthUtc}</p>}
             {shownDetail.job.kind === 'weekly_utc' && isoWeekdayName(shownDetail.job.scheduleWeekdayUtc) &&
               <p>Recorded weekday (UTC): {isoWeekdayName(shownDetail.job.scheduleWeekdayUtc)}</p>}
             {shownDetail.job.group && shownDetail.job.operator && <p>Recorded condition: <strong>{recordedUpstreamRule({

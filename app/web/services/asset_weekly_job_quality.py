@@ -335,7 +335,7 @@ async def read_weekly_job_evidence(
 
     job = await session.get(TransferScheduleJobRow, clock_slot_job_id(row.plan_id, row.schedule_generation, slot))
     if (job is None or job.plan_id != row.plan_id or job.generation != row.schedule_generation
-        or job.schedule_weekday_utc != row.planned_weekday_utc or job.slot != slot
+        or job.schedule_day_of_month_utc is not None or job.schedule_weekday_utc != row.planned_weekday_utc or job.slot != slot
         or job.plan_updated_at != row.plan_updated_at or job.armed_by != row.armed_by
         or job.expires_at != slot + timedelta(minutes=5) or schedule.updated_at > slot
         or job.state != row.job_state or job.finished_at != row.finished_at or job.finished_at is None
@@ -396,7 +396,8 @@ async def evaluate_weekly_job_quality(
         return
     job = await session.scalar(select(TransferScheduleJobRow).where(
         TransferScheduleJobRow.plan_id == row.plan_id, TransferScheduleJobRow.generation == row.schedule_generation,
-        TransferScheduleJobRow.schedule_weekday_utc == row.planned_weekday_utc, TransferScheduleJobRow.slot == expected,
+        TransferScheduleJobRow.schedule_weekday_utc == row.planned_weekday_utc,
+        TransferScheduleJobRow.schedule_day_of_month_utc.is_(None), TransferScheduleJobRow.slot == expected,
     ))
     if job is None or job.slot != expected:
         row.state, row.reason = "unknown", "missing_slot"

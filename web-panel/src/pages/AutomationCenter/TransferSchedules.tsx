@@ -4,7 +4,7 @@ import { Button, Modal } from '@/components/ui';
 import { FieldTimeOutlined, ReloadOutlined } from '@/components/ui/icons';
 import { cancelTransferScheduleJob, fetchBatchSyncScheduleJobs, fetchBatchSyncSchedules, fetchCurrentUserContext, fetchTransferScheduleJobs, fetchTransferSchedules, fetchTransferUpstreamJobs, fetchTransferUpstreamTriggers, type BatchSyncScheduleSummary, type BatchSyncScheduleJob, type TransferScheduleJob, type TransferScheduleSummary, type TransferUpstreamJob, type TransferUpstreamSummary } from '@/services/api';
 import { getSessionState } from '@/services/session';
-import { isoWeekdayName, nextLocalTimeForUtcClock } from '@/services/scheduleTime';
+import { isUtcMonthDay, isoWeekdayName, nextLocalTimeForUtcClock } from '@/services/scheduleTime';
 import { recordedUpstreamRule, upstreamExpression } from '../Pipeline/upstreamRules';
 import UpstreamSlotHistory, { UpstreamUtcTime } from '../Pipeline/UpstreamSlotHistory';
 import { useSandboxIdentity } from '../Pipeline/SandboxMarkings';
@@ -14,7 +14,7 @@ type ScheduleItem = ({ kind: 'transfer' } & TransferScheduleSummary) | ({ kind: 
 type ScheduleJob = BatchSyncScheduleJob | TransferScheduleJob | TransferUpstreamJob;
 type Cancellation = { schedule: ScheduleItem & { kind: 'transfer' }; job: TransferScheduleJob & { generation: number } };
 const canCancel = (item: ScheduleItem, job: ScheduleJob): job is TransferScheduleJob & { generation: number } =>
-  item.kind === 'transfer' && !isoWeekdayName(item.plannedWeekdayUtc) && item.jobCancelAvailable === true && 'slot' in job && 'cancelable' in job && job.cancelable === true && !isoWeekdayName(job.scheduleWeekdayUtc) &&
+  item.kind === 'transfer' && !isoWeekdayName(item.plannedWeekdayUtc) && !isUtcMonthDay(item.plannedDayOfMonthUtc) && item.jobCancelAvailable === true && 'slot' in job && 'cancelable' in job && job.cancelable === true && !isoWeekdayName(job.scheduleWeekdayUtc) && !isUtcMonthDay(job.scheduleDayOfMonthUtc) &&
   (job.state === 'pending' || job.state === 'dispatched') && typeof job.generation === 'number' &&
   Number.isSafeInteger(job.generation) && job.generation === item.generation;
 const itemKey = (item: ScheduleItem) => `${item.kind}:${item.planId}`;
@@ -135,6 +135,7 @@ function TransferSchedulesWorkspace({ keyword, filter, identity }: Props & { ide
         <div><strong>{item.planName}</strong>{item.kind === 'batch' && <span>Batch sync</span>}{item.kind === 'upstream' && <span>Upstream trigger</span>}<code>{item.sourceTable} → {item.targetTable}</code></div>
         <div>
           <span>{item.kind === 'upstream' ? upstreamLabel(item)
+            : item.kind === 'transfer' && isUtcMonthDay(item.plannedDayOfMonthUtc) ? `Monthly on day ${item.plannedDayOfMonthUtc} at ${item.plannedTimeUtc ?? 'unrecorded time'} UTC`
             : item.kind === 'transfer' && isoWeekdayName(item.plannedWeekdayUtc) ? `Weekly on ${isoWeekdayName(item.plannedWeekdayUtc)} at ${item.plannedTimeUtc ?? 'unrecorded time'} UTC`
             : item.plannedTimeUtc ? `Daily at ${item.plannedTimeUtc} UTC · local time ${nextLocalTimeForUtcClock(item.plannedTimeUtc)}` : 'No daily time configured'}</span>
           <span className={`automation-schedule-status ${item.enabled && item.available ? 'is-enabled' : ''}`}><i />{configured(item) ? (item.enabled && item.available ? 'Armed' : 'Armed · blocked') : 'Paused'}</span>
@@ -157,6 +158,8 @@ function TransferSchedulesWorkspace({ keyword, filter, identity }: Props & { ide
                   {'events' in job && job.mixedSlot ? <span>UTC slot: <UpstreamUtcTime value={job.mixedSlot} /></span>
                     : timestamp && (item.kind === 'transfer' ? <span>UTC slot: <UpstreamUtcTime value={timestamp} /></span>
                       : <time dateTime={timestamp}>{new Date(timestamp).toLocaleString()}</time>)}
+                  {'scheduleDayOfMonthUtc' in job && isUtcMonthDay(job.scheduleDayOfMonthUtc) &&
+                    <span>Recorded mode: Monthly UTC · day {job.scheduleDayOfMonthUtc}</span>}
                   {'scheduleWeekdayUtc' in job && isoWeekdayName(job.scheduleWeekdayUtc) &&
                     <span>Recorded mode: Weekly UTC · {isoWeekdayName(job.scheduleWeekdayUtc)}</span>}
                   <strong>{job.state === 'canceled' ? 'Canceled' : job.state === 'no_new_data' ? 'No new data' : job.state.replace(/_/g, ' ')}{recorded && ` · ${recorded.expression}`}</strong>

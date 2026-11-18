@@ -18,6 +18,7 @@ def _response(row: TransferPlanRow) -> TransferPlan:
     return TransferPlan(id=row.id, name=row.name, sourceSchema=row.source_schema, sourceTable=row.source_table,
                         targetSchema=row.target_schema, targetTable=row.target_table, writeMode=row.write_mode,
                         trigger=row.trigger, scheduleTime=row.schedule_time, scheduleWeekdayUtc=row.schedule_weekday_utc,
+                        scheduleDayOfMonthUtc=row.schedule_day_of_month_utc,
                         incrementalCursor=row.incremental_cursor,
                         updatedAt=row.updated_at)
 
@@ -92,6 +93,11 @@ async def save_transfer_plan(
 
         if not weekly_transfer_enabled():
             raise HTTPException(403, "Weekly UTC sandbox transfer execution is disabled")
+    if payload.trigger == "monthly":
+        from app.web.services.transfer_runs import monthly_transfer_enabled
+
+        if not monthly_transfer_enabled():
+            raise HTTPException(403, "Monthly UTC sandbox transfer execution is disabled")
     source = (payload.sourceSchema, payload.sourceTable)
     target = (payload.targetSchema, payload.targetTable)
     endpoints = await get_etl_layers().transfer_endpoints(source, target)
@@ -105,6 +111,7 @@ async def save_transfer_plan(
     fields = dict(name=payload.name, source_schema=source[0], source_table=source[1], target_schema=target[0],
                   target_table=target[1], write_mode=payload.writeMode, trigger=payload.trigger,
                   schedule_time=payload.scheduleTime, schedule_weekday_utc=payload.scheduleWeekdayUtc,
+                  schedule_day_of_month_utc=payload.scheduleDayOfMonthUtc,
                   incremental_cursor=payload.incrementalCursor)
     if plan_id is None:
         row = TransferPlanRow(**fields, updated_at=datetime.now(timezone.utc))

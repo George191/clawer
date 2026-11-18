@@ -42,7 +42,8 @@ def transfer_run_capabilities() -> TransferRunCapabilities:
     return TransferRunCapabilities(enabled=enabled, sourceSchema=SANDBOX, targetSchema=SANDBOX,
                                    maxRows=MAX_ROWS, incrementalAppend=enabled,
                                    scheduledUpsert=scheduled_transfer_enabled(), upstreamUpsert=upstream_transfer_enabled(),
-                                   weeklyUpsert=True if weekly_transfer_enabled() else None)
+                                   weeklyUpsert=True if weekly_transfer_enabled() else None,
+                                   monthlyUpsert=True if monthly_transfer_enabled() else None)
 
 
 def scheduled_transfer_enabled() -> bool:
@@ -54,13 +55,29 @@ def weekly_transfer_enabled() -> bool:
     return scheduled_transfer_enabled() and settings.TRANSFER_SANDBOX_WEEKLY_SCHEDULER_ENABLED
 
 
+def monthly_transfer_enabled() -> bool:
+    return scheduled_transfer_enabled() and settings.TRANSFER_SANDBOX_MONTHLY_SCHEDULER_ENABLED
+
+
+def _clock_mode(job: TransferScheduleJobRow) -> tuple[str, str]:
+    if job.schedule_day_of_month_utc is not None:
+        if job.schedule_weekday_utc is not None:
+            raise HTTPException(409, "The admitted UTC job has conflicting cadence metadata")
+        return "month_utc", "monthly"
+    if job.schedule_weekday_utc is not None:
+        return "week_utc", "weekly"
+    return "daily_utc", "scheduled"
+
+
 def clock_slot_job_id(plan_id: UUID, generation: int, slot: datetime) -> UUID:
     return uuid5(NAMESPACE_URL, f"asiral:transfer:{plan_id}:{generation}:{slot.astimezone(timezone.utc).isoformat()}")
 
 
-def _weekly_window(job: TransferScheduleJobRow, now: datetime | None) -> datetime:
-    if not weekly_transfer_enabled():
-        raise HTTPException(403, "Weekly UTC sandbox transfer execution is disabled")
+def _variant_window(job: TransferScheduleJobRow, now: datetime | None) -> datetime:
+    _, mode = _clock_mode(job)
+    for variant, enabled in (("weekly", weekly_transfer_enabled), ("monthly", monthly_transfer_enabled)):
+        if mode == variant and not enabled():
+            raise HTTPException(403, f"{variant.title()} UTC sandbox transfer execution is disabled")
     current = now or datetime.now(timezone.utc)
     if current < job.slot:
         raise HTTPException(409, {"code": "schedule_not_due", "message": "UTC dispatch window has not opened"})
@@ -166,7 +183,7 @@ async def _pin_attempt_scope(
         if (job is None or job.id != request.requestId or job.plan_id != plan.id
             or job.plan_updated_at != request.expectedUpdatedAt):
             return {}
-        trigger, expected_mode = ("week_utc", "weekly") if job.schedule_weekday_utc is not None else ("daily_utc", "scheduled")
+        trigger, expected_mode = _clock_mode(job)
     elif upstream_job_id is not None:
         job = await session.get(UpstreamTriggerJobRow, upstream_job_id)
         if (job is None or job.id != request.requestId or job.plan_id != plan.id
@@ -319,18 +336,21 @@ async def _incremental_batch(
     return keys[:MAX_ROWS], len(keys) > MAX_ROWS
 
 
-def _validate_weekly_job(plan, binding, job, now: datetime | None) -> None:
-    """Reject a retired, wrong-day or otherwise unreviewed Weekly job before private data work."""
+def _validate_clock_variant_job(plan, binding, job, now: datetime | None) -> None:
+    """Reject retired, wrong-day or otherwise unreviewed calendar jobs before private data work."""
     slot = job.slot.astimezone(timezone.utc)
-    if (
-        plan.trigger != "weekly" or job.schedule_weekday_utc != slot.isoweekday()
-        or plan.schedule_weekday_utc != job.schedule_weekday_utc
+    _, mode = _clock_mode(job)
+    exact_day = (
+        job.schedule_day_of_month_utc == slot.day == plan.schedule_day_of_month_utc
+        if mode == "monthly" else job.schedule_weekday_utc == slot.isoweekday() == plan.schedule_weekday_utc
+    )
+    if (plan.trigger != mode or not exact_day
         or slot.second != 0 or slot.microsecond != 0 or job.expires_at != slot + timedelta(minutes=5)
         or job.id != clock_slot_job_id(plan.id, job.generation, slot)
         or binding is None or binding.updated_at > slot
     ):
-        raise HTTPException(409, "The exact Weekly UTC slot does not match its reviewed binding")
-    _weekly_window(job, now)
+        raise HTTPException(409, f"The exact {mode.title()} UTC slot does not match its reviewed binding")
+    _variant_window(job, now)
 
 
 async def _lock_schedule_job(
@@ -345,9 +365,11 @@ async def _lock_schedule_job(
         raise HTTPException(409, "The scheduled dispatch does not match this transfer request")
     if not scheduled_transfer_enabled():
         raise HTTPException(403, "Automatic sandbox transfer execution is disabled")
-    weekly = job.schedule_weekday_utc is not None
-    if weekly and not weekly_transfer_enabled():
+    _, expected_trigger = _clock_mode(job)
+    if expected_trigger == "weekly" and not weekly_transfer_enabled():
         raise HTTPException(403, "Weekly UTC sandbox transfer execution is disabled")
+    if expected_trigger == "monthly" and not monthly_transfer_enabled():
+        raise HTTPException(403, "Monthly UTC sandbox transfer execution is disabled")
     if job.state == "committed":
         return job
     if job.state not in ("pending", "dispatched"):
@@ -358,9 +380,8 @@ async def _lock_schedule_job(
     if current >= job.expires_at:
         raise HTTPException(409, {"code": "schedule_expired", "message": "UTC dispatch window has closed"})
     binding = await session.get(TransferScheduleRow, plan.id, populate_existing=True)
-    if weekly:
-        _validate_weekly_job(plan, binding, job, now)
-    expected_trigger = "weekly" if weekly else "scheduled"
+    if expected_trigger != "scheduled":
+        _validate_clock_variant_job(plan, binding, job, now)
     if (binding is None or not binding.enabled or binding.generation != job.generation
         or binding.armed_for_updated_at != plan.updated_at or binding.armed_by != actor_id
         or plan.updated_at != job.plan_updated_at or plan.trigger != expected_trigger or plan.write_mode != "upsert"
@@ -545,10 +566,11 @@ async def _lock_schedule_admission(
             raise HTTPException(409, "The scheduled dispatch does not match this transfer request")
         if job.state == "canceled":
             raise HTTPException(409, {"code": "job_canceled", "message": "The Daily UTC job was canceled"})
-        if job.schedule_weekday_utc is not None or plan.trigger == "weekly":
-            if job.schedule_weekday_utc is None:
-                raise HTTPException(409, "The admitted job does not have a Weekly UTC origin")
+        _, mode = _clock_mode(job)
+        if mode != "scheduled":
             await _lock_schedule_job(session, plan, request, job_id, actor_id, now, mark_dispatch=False)
+        elif plan.trigger in {"weekly", "monthly"}:
+            raise HTTPException(409, "The admitted job does not have the exact reviewed UTC origin")
         return plan
     except DBAPIError as failure:
         await session.rollback()
@@ -730,8 +752,8 @@ async def run_sandbox_transfer(
                 selection = f"WHERE {key} BETWEEN CAST(:first_key AS bigint) AND CAST(:last_key AS bigint) ORDER BY {key}"
                 limit_params.update(first_key=keys[0], last_key=keys[-1])
         else:
-            if isinstance(job, TransferScheduleJobRow) and job.schedule_weekday_utc is not None:
-                _weekly_window(job, scheduled_now)
+            if isinstance(job, TransferScheduleJobRow) and _clock_mode(job)[1] != "scheduled":
+                _variant_window(job, scheduled_now)
             count = (await session.execute(text(
                 f"SELECT count(*) FROM (SELECT 1 FROM ONLY {source} LIMIT :limit) AS bounded_source",
             ), {"limit": MAX_ROWS + 1})).scalar_one()
@@ -760,9 +782,9 @@ async def run_sandbox_transfer(
                    else scheduled_now or datetime.now(timezone.utc))
         if job is not None and job_now >= job.expires_at:
             raise HTTPException(409, {"code": "schedule_expired", "message": "UTC dispatch window closed before writing"})
-        if isinstance(job, TransferScheduleJobRow) and job.schedule_weekday_utc is not None:
-            _weekly_window(job, scheduled_now)
-        if (isinstance(job, TransferScheduleJobRow) and job.schedule_weekday_utc is None
+        if isinstance(job, TransferScheduleJobRow) and _clock_mode(job)[1] != "scheduled":
+            _variant_window(job, scheduled_now)
+        if (isinstance(job, TransferScheduleJobRow) and _clock_mode(job)[1] == "scheduled"
             and settings.TRANSFER_SANDBOX_JOB_QUALITY_ENABLED):
             current_target = catalog[plan.target_table]
             target_stage = plan.target_table, current_target["table_oid"], current_target["table_node"]
@@ -776,7 +798,7 @@ async def run_sandbox_transfer(
             SELECT count(*) FROM inserted
         """)
         prove_weekly = (
-            isinstance(job, TransferScheduleJobRow) and job.schedule_weekday_utc is not None
+            isinstance(job, TransferScheduleJobRow) and _clock_mode(job)[1] == "weekly"
             and settings.TRANSFER_SANDBOX_WEEKLY_JOB_QUALITY_ENABLED
             and scope.get("scope_trigger") == "week_utc" and scope.get("schedule_job_id") == job.id
         )
@@ -805,10 +827,10 @@ async def run_sandbox_transfer(
             checkpoint.cursor_through = keys[-1]
         scheduled_source = None
         if (written > 0 and isinstance(job, TransferScheduleJobRow) and scheduled_observed_lineage_enabled()
-            and is_sandbox_upsert(plan, "weekly" if job.schedule_weekday_utc is not None else "scheduled")
+            and _clock_mode(job)[1] in {"scheduled", "weekly"} and is_sandbox_upsert(plan, _clock_mode(job)[1])
             and job.id == clock_slot_job_id(job.plan_id, job.generation, job.slot)
             and scope.get("schedule_job_id") == job.id
-            and scope.get("scope_trigger") == ("week_utc" if job.schedule_weekday_utc is not None else "daily_utc")):
+            and scope.get("scope_trigger") == _clock_mode(job)[0]):
             # The source is the actual heap already catalog-checked and locked
             # for this bounded write. Never capture on the replay path.
             scheduled_source = catalog[plan.source_table]

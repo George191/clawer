@@ -12,3 +12,7 @@ export function isoWeekdayName(value?: number | null) {
   return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 7
     ? isoWeekdaysUtc[value - 1] : undefined;
 }
+
+export function isUtcMonthDay(value?: number | null): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 28;
+}
