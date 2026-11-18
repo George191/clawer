@@ -134,6 +134,8 @@ services:
       dockerfile: docker/downloader.Dockerfile
     container_name: downloader
     restart: unless-stopped
+    mem_limit: 4g
+    memswap_limit: 4g
     env_file:
       - .env
     environment:
@@ -143,6 +145,7 @@ services:
     working_dir: /app
     volumes:
       - ./docker/kafka.crt:/etc/kafka/kafka.crt:ro
+      - ./output/downloader-tmp:/tmp
     command: ["python", "-m", "app.downloader.main", "--poll", "60"]
     networks:
       - asiral-helio

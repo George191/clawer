@@ -3,7 +3,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from app.base.http import DownloadResponse
+from app.base.http import DownloadResponse, FileDownloadResponse
 from app.models.template import SiteTemplate
 
 
@@ -18,4 +18,4 @@ class DownloadItem:
 
 Filename = Callable[[str, str], str]
 DownloadHandler = Callable[[dict[str, Any], SiteTemplate, Filename], list[DownloadItem]]
-ResponseValidator = Callable[[DownloadItem, DownloadResponse], None]
+ResponseValidator = Callable[[DownloadItem, DownloadResponse | FileDownloadResponse], None]

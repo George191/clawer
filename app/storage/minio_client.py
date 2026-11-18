@@ -128,13 +128,34 @@ class MinioClient:
 
         file_size = file_path.stat().st_size
 
-        await self._run_sync(
-            self._client.fput_object,
-            bucket_name=self._bucket,
-            object_name=object_key,
-            file_path=str(file_path),
-            content_type=content_type,
+        upload = asyncio.get_running_loop().run_in_executor(
+            self._executor,
+            partial(
+                self._client.fput_object,
+                bucket_name=self._bucket,
+                object_name=object_key,
+                file_path=str(file_path),
+                content_type=content_type,
+            ),
         )
+        try:
+            await asyncio.shield(upload)
+        except asyncio.CancelledError:
+            # The SDK thread still needs the file until it finishes, even after
+            # repeated cancellation of its owner.
+            while not upload.done():
+                try:
+                    await asyncio.shield(upload)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
+            if not upload.cancelled() and (error := upload.exception()) is not None:
+                logger.error(
+                    "File upload failed during cancellation: %s", object_key,
+                    exc_info=(type(error), error, error.__traceback__),
+                )
+            raise
 
         logger.info(
             "Uploaded file to MinIO: %s (%d bytes, %s)",

@@ -6,12 +6,14 @@ import asyncio
 import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from time import perf_counter
 from typing import Any
 
 import filetype
 
-from app.base.http import DownloadCleanupError, DownloadError
+from app.base.http import DownloadCleanupError, DownloadError, is_download_file_error
 from app.config.settings import settings
 from app.downloader.adapters import (
     DownloadItem,
@@ -491,42 +493,51 @@ class DownloadWorker:
     ) -> str | None:
         started_at = perf_counter()
         await check_control_state()
-        try:
-            response = await self._http.download_response(item.url, use_proxy=use_proxy)
-            validator = get_download_response_validator(template_name)
-            if validator is not None:
-                validator(item, response)
-            if item.attachment and (response.content_type or "").startswith("text/html"):
-                raise DownloadError(item.url, response.status_code, "attachment is HTML")
-        except DownloadCleanupError:
-            raise
-        except Exception as exc:
-            if HttpClient._error_status_code(exc) == 404:
-                return None
-            await self._http.mark_last_proxy_failed()
-            raise
-        response_data = response.data
-        content_type = response.content_type or "application/octet-stream"
-        filename = item.filename
-        detected_type = filetype.guess(response_data)
-        if detected_type is not None:
-            content_type = detected_type.mime
-            filename += f".{detected_type.extension}"
-        path = await self._minio.upload_bytes(
-            response_data,
-            template_name,
-            data_type,
-            f"{record_id}/{source_fingerprint(item)}/{hashlib.sha256(response_data).hexdigest()}/{filename}",
-            content_type,
-        )
-        logger.debug(
-            "Download uploaded: %s | template=%s datatype=%s record=%s "
-            "| bytes=%d elapsed=%.2fs | stored=%s",
-            item.url, template_name, data_type, record_id,
-            len(response_data), perf_counter() - started_at, path,
-            extra={"skip_task_log_capture": True},
-        )
-        return path
+        with TemporaryDirectory(prefix="spider-download-") as directory:
+            try:
+                response = await self._http.download_to_file(
+                    item.url, Path(directory) / "payload", use_proxy=use_proxy,
+                )
+                validator = get_download_response_validator(template_name)
+                if validator is not None:
+                    validator(item, response)
+                if item.attachment and (response.content_type or "").startswith("text/html"):
+                    raise DownloadError(item.url, response.status_code, "attachment is HTML")
+            except DownloadCleanupError:
+                raise
+            except Exception as exc:
+                if is_download_file_error(exc):
+                    raise
+                if HttpClient._error_status_code(exc) == 404:
+                    return None
+                await self._http.mark_last_proxy_failed()
+                raise
+            content_type = response.content_type or "application/octet-stream"
+            filename = item.filename
+            detected_type = filetype.guess(response.read_prefix(32768))
+            if detected_type is not None:
+                content_type = detected_type.mime
+                filename += f".{detected_type.extension}"
+            digest = hashlib.sha256()
+            with response.path.open("rb") as content:
+                while chunk := content.read(1024 * 1024):
+                    digest.update(chunk)
+                    await asyncio.sleep(0)
+            path = await self._minio.upload_file(
+                response.path,
+                template_name,
+                data_type,
+                f"{record_id}/{source_fingerprint(item)}/{digest.hexdigest()}/{filename}",
+                content_type,
+            )
+            logger.debug(
+                "Download uploaded: %s | template=%s datatype=%s record=%s "
+                "| bytes=%d elapsed=%.2fs | stored=%s",
+                item.url, template_name, data_type, record_id,
+                response.size, perf_counter() - started_at, path,
+                extra={"skip_task_log_capture": True},
+            )
+            return path
 
     async def _update_mongo(
         self,

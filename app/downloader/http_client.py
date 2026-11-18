@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextvars import copy_context
 import inspect
 import json
 import logging
@@ -19,13 +20,18 @@ import socket
 import sys
 import weakref
 from io import BytesIO
+from pathlib import Path
+from tempfile import TemporaryFile
+from typing import BinaryIO
 from urllib.parse import urlsplit, urlunsplit
 
 from curl_cffi import CurlECode, CurlError, CurlOpt
 from curl_cffi import requests as curl_requests
 from curl_cffi.requests.exceptions import ProxyError, RequestException
 
-from app.base.http import DownloadCleanupError, DownloadError, DownloadResponse
+from app.base.http import (
+    DownloadCleanupError, DownloadError, DownloadResponse, FileDownloadResponse, is_download_file_error,
+)
 from app.config.settings import settings
 from app.downloader.resume import DownloadTruncatedError, ResumeProtocolError, ResumeState
 from app.logger import get_logger
@@ -755,11 +761,48 @@ class HttpClient:
         use_proxy: bool | None = None,
         chunk_callback=None,
     ) -> DownloadResponse:
+        with BytesIO() as buffer:
+            return await self._download_response_into(
+                url, config or RequestConfig(), buffer=buffer, use_proxy=use_proxy,
+                chunk_callback=chunk_callback,
+            )
+
+    async def download_to_file(
+        self,
+        url: str,
+        path: Path,
+        config: RequestConfig | None = None,
+        *,
+        use_proxy: bool | None = None,
+    ) -> FileDownloadResponse:
+        """Download into a new disk file; retries resume only this transfer."""
+        if not _STREAM_REQUEST_KWARGS:
+            raise DownloadError(url, message="File downloads require a streaming transport")
+        path = Path(path)
+        buffer = path.open("x+b")
+        try:
+            with buffer:
+                return await self._download_response_into(
+                    url, config or RequestConfig(), buffer=buffer, path=path, use_proxy=use_proxy,
+                )
+        except BaseException:
+            path.unlink(missing_ok=True)
+            raise
+
+    async def _download_response_into(
+        self,
+        url: str,
+        config: RequestConfig,
+        *,
+        buffer: BinaryIO,
+        path: Path | None = None,
+        use_proxy: bool | None,
+        chunk_callback=None,
+    ) -> DownloadResponse | FileDownloadResponse:
         config = config or RequestConfig()
         method = (config.method or "GET").upper()
         state = ResumeState() if (method == "GET" and _STREAM_REQUEST_KWARGS
                                  and not any(key.lower() == "range" for key in config.headers)) else None
-        buffer = BytesIO()
         attempts = 4 if method == "GET" else 1
         task = asyncio.current_task()
         task_id = id(task) if task is not None else 0
@@ -770,6 +813,7 @@ class HttpClient:
                 try:
                     result = await self._download_response_once(
                         url, config, use_proxy=use_proxy, _state=state, _buffer=buffer,
+                        _file_path=path,
                     )
                 except DownloadCleanupError:
                     raise
@@ -795,7 +839,6 @@ class HttpClient:
             raise RuntimeError("Download attempts exhausted")
         finally:
             self._download_owners.pop(task_id, None)
-            buffer.close()
 
     async def _download_response_once(
         self,
@@ -804,8 +847,9 @@ class HttpClient:
         *,
         use_proxy: bool | None,
         _state: ResumeState | None,
-        _buffer: BytesIO,
-    ) -> DownloadResponse:
+        _buffer: BinaryIO,
+        _file_path: Path | None = None,
+    ) -> DownloadResponse | FileDownloadResponse:
         config = config or RequestConfig()
         task = asyncio.current_task()
         retrying = task in self._retrying_tasks
@@ -856,9 +900,11 @@ class HttpClient:
         response = request_task = None
         operations: set[asyncio.Future] = set()
         self._download_operations[task_id] = operations
-        streaming = bool(_STREAM_REQUEST_KWARGS)
+        streaming = bool(_STREAM_REQUEST_KWARGS) and _file_path is None
         completed = cancelled = False
         buffer = _buffer
+        segment = None
+        write_error = transfer_error = None
         try:
             # Every supported transport streams so interrupted resources can
             # resume even when the caller does not request progress callbacks.
@@ -873,7 +919,35 @@ class HttpClient:
                 timeout=None,
             )
 
-            if streaming:
+            if _file_path is not None:
+                # curl's stream queue is unbounded. Write callbacks directly to
+                # disk, then validate response headers before joining a segment.
+                segment = TemporaryFile(mode="w+b", dir=_file_path.parent)
+                last_logged_time = started
+                last_logged_bytes = 0
+
+                def write_chunk(chunk):
+                    nonlocal write_error, last_logged_time, last_logged_bytes
+                    try:
+                        count = segment.write(chunk)
+                    except OSError as error:
+                        write_error = error
+                        return 0
+                    received = (_state.offset if _state is not None else 0) + segment.tell()
+                    now = loop.time()
+                    if (received - last_logged_bytes >= (20 << 20)
+                            and now - last_logged_time >= _STREAM_LOG_MIN_SECONDS):
+                        last_logged_bytes, last_logged_time = received, now
+                        logger.info("%s", _download_progress_line(
+                            received, _state.total if _state is not None else 0,
+                            segment.tell() / 1048576 / max(now - started, 1e-9),
+                        ))
+                    return count
+
+                callback_context = copy_context()
+                stream_kwargs.update({key: value for key, value in _STREAM_REQUEST_KWARGS.items() if key != "stream"})
+                stream_kwargs.update(stream=False, content_callback=lambda chunk: callback_context.run(write_chunk, chunk))
+            elif streaming:
                 stream_kwargs.update(_STREAM_REQUEST_KWARGS)
             else:
                 # download_bytes() returns the complete payload.  Using
@@ -885,7 +959,14 @@ class HttpClient:
             request_task = asyncio.ensure_future(client.request(**stream_kwargs))
             operations.add(request_task)
             await _wait_for_transfer(request_task)
-            response = request_task.result()
+            try:
+                response = request_task.result()
+            except Exception as error:
+                if write_error is not None:
+                    raise write_error from error
+                if segment is None or getattr(error, "response", None) is None:
+                    raise
+                response, transfer_error = error.response, error
             transfer = getattr(response, "astream_task", None)
             if isinstance(transfer, asyncio.Future):
                 operations.add(transfer)
@@ -911,7 +992,24 @@ class HttpClient:
             else:
                 buffer.seek(0)
                 buffer.truncate()
-            if streaming:
+            if segment is not None:
+                segment.seek(0)
+                while chunk := segment.read(1 << 20):
+                    buffer.write(chunk)
+                    if _state is not None:
+                        _state.advance(len(chunk))
+                    await check_control_state()
+                    await asyncio.sleep(0)
+                if transfer_error is not None:
+                    raise transfer_error
+                if _state is not None:
+                    _state.finish()
+                logger.info(
+                    "download finished:\n  %s 100%% (%.1f MB in %.0fs) - %s",
+                    _download_bar(1.0), buffer.tell() / 1048576,
+                    max(loop.time() - started, 0), self._safe_proxy_url(url),
+                )
+            elif streaming:
                 length = (response.headers or {}).get("Content-Length") or \
                     (response.headers or {}).get("content-length") or ""
                 total = int(str(length).strip()) if str(length).strip().isdigit() else 0
@@ -957,7 +1055,8 @@ class HttpClient:
                     _download_bar(1.0), received / 1048576, elapsed,
                     received / 1048576 / max(elapsed, 1e-9), self._safe_proxy_url(url),
                 )
-                data = buffer.getvalue()
+                if _file_path is None:
+                    data = buffer.getvalue()
             else:
                 data = response.content
                 raw_headers = {str(key).lower(): str(value) for key, value in response.headers.items()}
@@ -971,15 +1070,16 @@ class HttpClient:
             if effective_use_proxy and _proxy_pool is not None and proxy_url:
                 await _proxy_pool.mark_success(proxy_url)
 
-            result = DownloadResponse(
+            metadata = dict(
                 source_url=url,
                 final_url=str(response.url or url),
                 status_code=200 if _state is not None else response.status_code,
                 headers=_state.complete_headers() if _state is not None else {
                     str(k).lower(): str(v) for k, v in response.headers.items()
                 },
-                data=data,
             )
+            result = (FileDownloadResponse(**metadata, path=_file_path, size=buffer.tell())
+                      if _file_path is not None else DownloadResponse(**metadata, data=data))
             completed = True
             if task is not None:
                 self._retrying_tasks.discard(task)
@@ -987,9 +1087,10 @@ class HttpClient:
         except asyncio.CancelledError:
             cancelled = True
             raise
-        except Exception:
+        except Exception as error:
             proxy_failed = (
-                effective_use_proxy
+                not is_download_file_error(error)
+                and effective_use_proxy
                 and _proxy_pool is not None
                 and proxy_url
             )
@@ -1039,6 +1140,9 @@ class HttpClient:
                 else:
                     await self._discard_download_client(task_id)
                     raise
+            finally:
+                if segment is not None:
+                    segment.close()
 
     async def download_bytes(
         self,
