@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
@@ -49,6 +50,8 @@ def _normalized_value(prop: Property, value: JsonValue) -> Any:
             else:
                 if "T" not in value:
                     _bad(f"{prop.id} timestamp must use ISO 8601")
+                if re.search(r"[.,][0-9]{6}[0-9]*[1-9]", value):
+                    _bad(f"{prop.id} timestamp must be representable at microsecond precision")
                 timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
                 if timestamp.tzinfo is not None:
                     return timestamp.astimezone(timezone.utc).isoformat()

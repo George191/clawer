@@ -2,6 +2,19 @@
 
 初始核对基线：Clawer `master` `c825e4865ef4dfc5afb72dcd4020a92202f5cf2a`（2026-11-17）。表中状态包含后续本地试点，不代表服务器已部署。范围为 Ontology Foundry 的 11 项数据管理能力，不是对 Palantir 全产品的覆盖声明。
 
+## 语义本体与业务应用（2026-11-18）
+
+以下核对从用户发布类型和操作实例的入口出发。开发者可在 `app/web/api/routes/ontology_registry.py` 和 `ontology_action_runtime.py` 查看对应 HTTP 契约。下节的 11 项继续用于评估数据管理。
+
+| 能力 | 当前可用路径 | 与 Foundry 的差距 |
+| --- | --- | --- |
+| 对象类型、属性、发布 | 项目管理员保存私有草稿，按修订校验、发布。可绑定现有 ODS/DWD 表或创建由动作维护的类型。数据源绑定会核对物理表身份和键。 | 发布后缺少类型变更提案、审阅合并、已发布结构的版本升级和回退。接口、共享属性及可复用的自定义值类型也缺少语义定义入口。[Ontology branching](https://www.palantir.com/docs/foundry/ontologies/branching-ontology/) · [Ontology building](https://www.palantir.com/docs/foundry/ontology/overview/) |
+| 关系与对象集 | 物理表支持外键、声明关系与列映射。已发布目录按用户权限搜索和翻页，选择类型可浏览实例。 | 缺少项目级语义 Link Type、从某个实例沿关系遍历、保存动态对象集及在集合上聚合的发布 API。目录搜索仅针对类型元数据。[Link types](https://www.palantir.com/docs/foundry/object-link-types/link-types-overview/) · [Core concepts](https://www.palantir.com/docs/foundry/ontology/core-concepts/) |
+| 动作与历史 | 无源对象支持有权限的创建、修改、软删除，使用修订控制并发，数据和审计同事务提交。详情的 History 展示动作、修订和时间。持有记录 ID 的授权读者也可通过 API 核对删除事件。 | 现有记录未保存字段前后值。缺少跨对象/关系的事务动作、函数动作、业务副作用和通用撤销。已有数据源绑定只读。[Action types](https://www.palantir.com/docs/foundry/action-types/overview/) · [User edit history](https://www.palantir.com/docs/foundry/object-edits/user-edit-history/) |
+| 数据权限与消费 | 基于有效项目成员、对象读者、字段读者和动作提交者授权。目录和详情均过滤不可见资源。源表绑定还要求平台管理员权限。 | 一个无源类型的记录共享读策略。按记录属性或具体关系授权、通用标记传播和生成类型化 Ontology SDK 仍缺少项目级实现。[Object permissioning](https://www.palantir.com/docs/foundry/object-permissioning/overview/) · [Ontology building](https://www.palantir.com/docs/foundry/ontology/overview/) |
+
+语义工作流回归使用已迁移至当前 head 的一次性回环数据库 `ontology_workflow_regression`。设置 `ONTOLOGY_WORKFLOW_TEST_DATABASE_URL` 后运行 `python -m unittest app.web.tests.test_ontology_published_workflow`，会经过实际登录、草稿校验、发布、字段权限、动作冲突、历史和成员撤权。测试写入位于可回滚事务中。
+
 | 核对项 | Palantir 官方行为 | Clawer 当前状态 | 下一步验收标准 |
 | --- | --- | --- | --- |
 | 数据源与连接器 | [配置 Source](https://www.palantir.com/docs/foundry/data-connection/set-up-source/)；连接、凭证、网络和支持的能力先于任务配置。 | **部分**。Ontology 内已有连接器清单、新建/编辑/测试、加密凭证，以及有界只读的 PostgreSQL 源目录浏览；普通源表可按需查看有权限的一跳原生外键及有序列映射。本地 PostgreSQL 试点已将连通性与已保存源身份核验分开，手工和调度在源事务中重新验证；保存连接可显式暂停/恢复且旧审核不自动复用。已保存连接详情分别显示连接测试、目录浏览及三种本地同步方式的配置前提和阻止原因，不替代实际连接或执行检查。 | 继续验收其他连接器的实际可用能力、源网络策略及跨表关系图；不把连接测试通过当成可读取或可写入业务资产的证明。 |

@@ -134,6 +134,16 @@ def test_equivalent_numeric_and_utc_keys_have_identical_digests():
     )
 
 
+def test_timestamp_key_rejects_precision_loss_and_accepts_exact_trailing_zeros():
+    definition = sample_definition()
+    for fraction in (".1234561", ",1234560001"):
+        with pytest.raises(HTTPException, match="microsecond precision"):
+            normalize_fields(definition, {"time": "2026-11-16T12:00:00" + fraction + "Z"})
+    assert normalize_fields(definition, {"time": "2026-11-16T12:00:00.123456000Z"}) == {
+        "time": "2026-11-16T12:00:00.123456+00:00"
+    }
+
+
 @pytest.mark.parametrize(
     "values",
     [
@@ -143,6 +153,8 @@ def test_equivalent_numeric_and_utc_keys_have_identical_digests():
         {"numeric": float("nan")},
         {"time": "2026-11-16T12:00:00"},
         {"note": {"value": "\x00"}},
+        {"note": {"value": "\ud800"}},
+        {"note": {"\x00": "value"}},
         {"unexpected": 3},
     ],
 )

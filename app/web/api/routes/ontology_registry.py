@@ -20,13 +20,13 @@ from app.web.api.models.ontology_registry import (
 )
 from app.web.services.ontology_registry import (
     assess_definition,
+    catalog_definition,
     check_revision,
     get_project,
-    get_published,
     projects_statement,
+    published_catalog_statement,
     require_source_access,
     source_signature,
-    visible_definition,
     warehouse_table,
 )
 from app.web.services.ontology_registry_identity import eligible_principals
@@ -185,26 +185,20 @@ async def publish_draft(draft_id: UUID, payload: Revision, session: SessionDep, 
 async def published_types(
     session: SessionDep, user: CurrentUser,
     limit: int = Query(100, ge=1, le=200), offset: int = Query(0, ge=0, le=100_000),
+    q: str = Query("", max_length=200),
 ):
-    accessible = projects_statement(user).with_only_columns(Team.id)
-    result = await session.scalars(select(OntologyDefinitionRow).where(
-        OntologyDefinitionRow.project_id.in_(accessible),
-        OntologyDefinitionRow.published_at.is_not(None),
-    ).order_by(OntologyDefinitionRow.published_at.desc(), OntologyDefinitionRow.id).limit(limit).offset(offset))
+    result = await session.execute(published_catalog_statement(user, q.strip()).limit(limit + 1).offset(offset))
     rows = result.all()
-    items = []
-    for row in rows:
-        view = await visible_definition(session, user, row)
-        if view:
-            items.append({"id": row.id, "revision": row.revision, "definition": view})
-    # Do not expose the count of policy-hidden resources. The caller can paginate explicitly.
-    return {"items": items}
+    items = [{"id": row.id, "revision": row.revision, "definition": catalog_definition(user, row, tenant_id)}
+             for row, tenant_id in rows[:limit]]
+    return {"items": items, "hasMore": len(rows) > limit}
 
 
 @router.get("/object-types/{definition_id}")
 async def published_type(definition_id: UUID, session: SessionDep, user: CurrentUser):
-    row = await get_published(session, user, definition_id)
-    view = await visible_definition(session, user, row)
-    if not view:
+    result = await session.execute(published_catalog_statement(user).where(OntologyDefinitionRow.id == definition_id))
+    item = result.one_or_none()
+    if item is None:
         raise HTTPException(404, "Object type not found")
-    return {"id": row.id, "revision": row.revision, "definition": view}
+    row, tenant_id = item
+    return {"id": row.id, "revision": row.revision, "definition": catalog_definition(user, row, tenant_id)}

@@ -1,5 +1,5 @@
 import  React,  {  useEffect,  useLayoutEffect,  useRef,  useState  }  from  'react';
-import  {  Link,  useLocation,  useNavigate  }  from  'react-router-dom';
+import  {  Link,  matchPath,  useLocation,  useNavigate  }  from  'react-router-dom';
 import  {  Button,  Checkbox,  ConfigProvider,  Dropdown,  Input,  InputNumber,  Modal,  Select,  Space,  Spin,  Table,  Tag,  Upload,  message  }  from  '@/components/ui';
 import  enUS  from  '@/components/ui/locale';
 import  {  AlertOutlined,  ArrowDownOutlined,  ArrowUpOutlined,  CheckOutlined,  CloseOutlined,  CodeOutlined,  DatabaseOutlined,  DeleteOutlined,  DownOutlined,  DownloadOutlined,  EditOutlined,  PlusOutlined,  ReloadOutlined,  RightOutlined,  SearchOutlined,  SettingOutlined,  UploadOutlined  }  from  '@/components/ui/icons';
@@ -138,11 +138,11 @@ const Pipeline: React.FC = () => {
     const { pathname } = useLocation();
     return <ConfigProvider locale={enUS}><main className="flow-console flow-console--ontology">
         <section className="flow-core">
-            {pathname === '/ontology' ? <OntologyExplorer refreshToken={0} />
-                : pathname === '/ontology/connections' ? <DataConnections />
-                : pathname === '/ontology/lineage' ? <OntologyLineage refreshToken={0} />
-                    : pathname === '/ontology/runtime' ? <FlowRuntime />
-                        : pathname === '/ontology/transforms' ? <TransformWorkspace /> : <DataLayersWorkspace />}
+            {matchPath('/ontology', pathname) ? <OntologyExplorer refreshToken={0} />
+                : matchPath('/ontology/connections', pathname) ? <DataConnections />
+                : matchPath('/ontology/lineage', pathname) ? <OntologyLineage refreshToken={0} />
+                    : matchPath('/ontology/runtime', pathname) ? <FlowRuntime />
+                        : matchPath('/ontology/transforms', pathname) ? <TransformWorkspace /> : <DataLayersWorkspace />}
         </section>
     </main></ConfigProvider>;
 };
@@ -184,8 +184,8 @@ const FlowRuntime: React.FC = () => {
 };
 const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     const { search, pathname } = useLocation();
-    const isSchemas = pathname === '/ontology/explorer';
-    const workspacePath = pathname === '/ontology/transforms' ? '/ontology/transforms' : '/ontology/explorer';
+    const isSchemas = !!matchPath('/ontology/explorer', pathname);
+    const workspacePath = isSchemas ? '/ontology/explorer' : '/ontology/transforms';
     const requestedView = new URLSearchParams(search).get('view');
     const  navigate  =  useNavigate();
     const [canManage, setCanManage] = useState(false);
@@ -420,8 +420,8 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     const resourceView = isSchemas && (requestedView === 'schema' || requestedView === 'stream' || requestedView === 'api' || requestedView === 'evidence') ? requestedView : 'preview';
     useLayoutEffect(()  =>  {  const  element  =  sortConditionsRef.current;  if  (!element)  return;  const  update  =  ()  =>  setSortConditionsOverflow(element.scrollWidth  >  element.clientWidth  +  1);  update();  const  observer  =  new  ResizeObserver(update);  observer.observe(element);  return  ()  =>  observer.disconnect();  },  [sortConditions.length, sortField, filterOpen, resourceView]);
     useEffect(() => {
-        setScriptOpen(pathname === '/ontology/transforms' && selectedTableAvailable);
-    }, [pathname, selectedSchema, table.name, selectedTableAvailable]);
+        setScriptOpen(!isSchemas && selectedTableAvailable);
+    }, [isSchemas, selectedSchema, table.name, selectedTableAvailable]);
     const scriptDirty = scriptLoaded && script !== savedScript;
     const closeScript = () => {
         if (mutationPending.current) return;
@@ -924,7 +924,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
             <section  className="flow-layer-main">
                 {(loading || tablesLoading) && <Spin size="small" />}
                 {requestError && <div role="alert" style={{ padding: 12, color: '#ff7875' }}>{requestError} <Button size="small" onClick={() => { setRefreshVersion((value) => value + 1); refreshCatalog().catch((error) => setRequestError(errorText(error))); }}>Retry</Button></div>}
-                <nav className="flow-asset-breadcrumb" aria-label="Breadcrumb"><button type="button" onClick={() => navigate('/ontology')}>Ontology Foundry</button><RightOutlined /><span>{pathname === '/ontology/transforms' ? 'Transformations' : 'Explorer'}</span>{selectedSchema && <><RightOutlined /><strong>{selectedSchema}</strong></>}{isSchemas && table.name && <><RightOutlined /><strong aria-current="page" title={table.name}>{table.name}</strong></>}</nav>
+                <nav className="flow-asset-breadcrumb" aria-label="Breadcrumb"><button type="button" onClick={() => navigate('/ontology')}>Ontology Foundry</button><RightOutlined /><span>{isSchemas ? 'Explorer' : 'Transformations'}</span>{selectedSchema && <><RightOutlined /><strong>{selectedSchema}</strong></>}{isSchemas && table.name && <><RightOutlined /><strong aria-current="page" title={table.name}>{table.name}</strong></>}</nav>
                 {(!isSchemas || !table.name) && <div className="flow-layer-overview" style={{ '--schema-color': selectedSchema ? schemaColor(selectedSchema) : undefined } as React.CSSProperties}>
                     <div  className="flow-layer-glyph"><PostgresIcon  className="flow-layer-glyph-svg"  /></div>
                     <h3>{schemaAliases[selectedSchema] || selectedSchema || 'No schema selected'}<em>{selectedSchema}{schemaNode?.database ? ` · ${schemaNode.database}` : ''}</em></h3>

@@ -106,25 +106,37 @@ async def project_access_context(
     user: User,
     project_id: UUID,
     source_access: bool,
+    *,
+    lock_membership: bool = False,
 ) -> AccessContext:
     """Calculate read/submit identity for actual or simulated user, without admin policy bypass."""
     if user.status != StatusTypes.ENABLE:
         return AccessContext(frozenset(), False, False)
-    scope = await _scope(session, project_id)
-    if not scope:
-        return AccessContext(frozenset(), False, False)
-    team, tenant = scope
-    membership = await session.scalar(
-        select(TeamUserJoin.id).where(
+    statement = (
+        select(Team.tenant_id)
+        .select_from(TeamUserJoin)
+        .join(User, User.id == TeamUserJoin.user_id)
+        .join(Team, Team.id == TeamUserJoin.team_id)
+        .join(Tenant, Tenant.id == Team.tenant_id)
+        .where(
             TeamUserJoin.user_id == user.id,
-            TeamUserJoin.team_id == team.id,
+            TeamUserJoin.team_id == project_id,
             TeamUserJoin.status == StatusTypes.ENABLE,
+            User.status == StatusTypes.ENABLE,
+            Tenant.status == StatusTypes.ENABLE,
         )
     )
-    principals = {Principal(kind="user", id=user.id)}
-    if membership:
-        principals.update(
-            (Principal(kind="group", id=team.id), Principal(kind="organization", id=tenant.id))
+    if lock_membership:
+        # Keep every row proving this grant valid until the action and audit event commit.
+        statement = statement.with_for_update(read=True)
+    tenant_id = await session.scalar(statement)
+    if tenant_id is None:
+        return AccessContext(frozenset(), False, False)
+    principals = frozenset(
+        (
+            Principal(kind="user", id=user.id),
+            Principal(kind="group", id=project_id),
+            Principal(kind="organization", id=tenant_id),
         )
-    # An administrator may manage a definition but is not automatically a data reader or submitter.
-    return AccessContext(frozenset(principals), bool(membership), bool(source_access))
+    )
+    return AccessContext(principals, True, bool(source_access))

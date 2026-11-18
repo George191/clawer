@@ -16,8 +16,10 @@ from app.web.services.ontology_action_runtime import (
     ActionKind,
     ActionPayload,
     ActionReceipt,
+    RecordHistoryPage,
     RuntimePage,
     list_records,
+    record_history,
     submit_action,
 )
 from app.web.services.ontology_registry_identity import (
@@ -110,6 +112,18 @@ async def records(
 ) -> RuntimePage:
     """Return a bounded list of policy-filtered object instances."""
     return await list_records(session, current_user, definition_id, limit=limit, offset=offset)
+
+
+@router.get("/object-types/{definition_id}/records/{record_id}/history", response_model=RecordHistoryPage)
+async def history(
+    session: SessionDep,
+    current_user: CurrentUser,
+    definition_id: UUID,
+    record_id: UUID,
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0, le=100_000),
+) -> RecordHistoryPage:
+    return await record_history(session, current_user, definition_id, record_id, limit=limit, offset=offset)
 
 
 @router.post("/object-types/{definition_id}/actions/{kind}", response_model=ActionReceipt)

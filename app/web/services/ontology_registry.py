@@ -8,9 +8,10 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import text
+from sqlalchemy import String, cast, func, or_, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only
 from sqlmodel import select
 
 from app.web.api.models import Team, TeamUserJoin, Tenant, User
@@ -24,7 +25,7 @@ from app.web.api.models.ontology_registry import (
 from app.web.api.models.user import RoleTypes
 from app.web.api.utils.models import StatusTypes
 from app.web.services.etl_layers import get_etl_layers, quote_identifier
-from app.web.services.ontology_registry_policy import definition_policy_errors, visibility
+from app.web.services.ontology_registry_policy import AccessContext, Principal, definition_policy_errors, visibility
 
 WAREHOUSE_SCHEMAS = frozenset({"ts_ods", "ts_dwd"})
 IDENTIFIER = re.compile(r"^[a-z][a-z0-9_-]{0,62}$")
@@ -82,18 +83,49 @@ async def get_published(session: AsyncSession, user: User, definition_id: UUID) 
     return row
 
 
-async def visible_definition(session: AsyncSession, user: User, row: OntologyDefinitionRow) -> dict[str, Any] | None:
-    from app.web.services.ontology_registry_identity import project_access_context
-
-    definition = Definition.model_validate(row.published_definition)
-    if definition.source.mode == "existing" and not user.is_superuser:
-        return None
-    context = await project_access_context(
-        session, user, row.project_id, source_access=definition.source.mode == 'none' or user.is_superuser,
+def published_catalog_statement(user: User, search: str = ""):
+    row = OntologyDefinitionRow
+    definition = row.published_definition
+    source = definition["source"]
+    security = definition["security"]
+    readers = security["objectReaders"]
+    # Project membership is required even for administrators reading published objects.
+    statement = (
+        select(row, Team.tenant_id)
+        .options(load_only(row.id, row.revision, row.project_id, row.published_definition))
+        .join(Team, Team.id == row.project_id)
+        .join(Tenant, Tenant.id == Team.tenant_id)
+        .join(TeamUserJoin, TeamUserJoin.team_id == Team.id)
+        .join(User, User.id == TeamUserJoin.user_id)
+        .where(row.published_at.is_not(None), Tenant.status == StatusTypes.ENABLE,
+               TeamUserJoin.status == StatusTypes.ENABLE, User.status == StatusTypes.ENABLE,
+               User.id == user.id)
     )
+    if not user.is_superuser:
+        statement = statement.where(source["mode"].astext == "none")
+    principals = (("user", User.id), ("group", Team.id), ("organization", Team.tenant_id))
+    statement = statement.where(or_(
+        security["mode"].astext == "inherit",
+        *[readers.contains(func.jsonb_build_array(
+            func.jsonb_build_object("kind", kind, "id", cast(identity, String))
+        )) for kind, identity in principals],
+    ))
+    if search:
+        fields = [definition[key].astext for key in ("id", "name", "description")]
+        fields.extend([source["schema"].astext, source["table"].astext])
+        statement = statement.where(or_(*(field.icontains(search, autoescape=True) for field in fields)))
+    return statement.order_by(row.published_at.desc(), row.id)
+
+
+def catalog_definition(user: User, row: OntologyDefinitionRow, tenant_id: UUID) -> dict[str, Any]:
+    definition = Definition.model_validate(row.published_definition)
+    principals = frozenset(Principal(kind=kind, id=identity) for kind, identity in (
+        ("user", user.id), ("group", row.project_id), ("organization", tenant_id),
+    ))
+    context = AccessContext(principals, True, definition.source.mode == "none" or user.is_superuser)
     allowed, fields = visibility(definition.security, [item.id for item in definition.properties], context)
     if not allowed:
-        return None
+        raise HTTPException(404, "Object type not found")
     payload = definition.model_dump(mode="json", by_alias=True)
     payload["properties"] = [item for item in payload["properties"] if item["id"] in fields]
     payload["primaryKey"] = [field for field in payload["primaryKey"] if field in fields]
@@ -299,9 +331,9 @@ async def read_bound_records(row: OntologyDefinitionRow, columns: list[str], lim
         fields = ", ".join(
             quote_identifier(prop.sourceColumn) + ' AS "' + prop.id + '"' for prop in props
         )
-        order = ", ".join(quote_identifier(key) for key in row.source_signature["primaryKey"])
+        order = ", ".join(f'bound.{quote_identifier(key)}' for key in row.source_signature["primaryKey"])
         result = await session.execute(text(
-            f"SELECT to_jsonb(source_row) FROM (SELECT {fields} FROM {relation} "
+            f"SELECT to_jsonb(source_row) FROM (SELECT {fields} FROM {relation} AS bound "
             f"ORDER BY {order} LIMIT :limit OFFSET :offset) AS source_row"
         ), {"limit": limit + 1, "offset": offset})
         records = result.scalars().all()

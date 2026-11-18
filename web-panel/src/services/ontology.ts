@@ -29,7 +29,9 @@ export const updateOntologyDraft = (id: string, revision: number, definition: Se
 export const validateOntologyDraft = (id: string, revision: number) => client.post<OntologyValidation>(draftPath(id) + '/validate', { revision }, config).then(r => data(r.data));
 export const publishOntologyDraft = (id: string, revision: number) => client.post<{ id: string; revision: number; objectType: SemanticDefinition }>(draftPath(id) + '/publish', { revision }, config).then(r => data(r.data));
 export const testOntologyPolicy = (definition: SemanticDefinition, userId: string) => client.post<{ visible: boolean; visibleFields: string[] }>('/security/preview', { projectId: definition.projectId, userId, sourceMode: definition.source.mode, properties: definition.properties.map(item => item.id), security: definition.security }, config).then(r => data(r.data));
-export const listPublishedOntologyTypes = () => client.get<{items: PublishedOntologyType[]}>('/object-types', config).then(r => data(r.data).items);
+export type PublishedOntologyPage = { items: PublishedOntologyType[]; hasMore: boolean };
+export const listPublishedOntologyTypes = (limit: number, offset: number, q: string) =>
+  client.get<PublishedOntologyPage>('/object-types', { ...config, params: { limit, offset, q } }).then(r => data(r.data));
 export const fetchPublishedOntologyType = (id: string) => client.get<PublishedOntologyType>('/object-types/' + encodeURIComponent(id), config).then(r => data(r.data));
 
 
@@ -38,5 +40,8 @@ export type OntologyRecordPage = { items: OntologyRecord[]; hasMore: boolean; ac
 type ActionInput = { values: Record<string, unknown> } | { recordId: string; expectedRevision: number; values?: Record<string, unknown> };
 export const listOntologyRecords = (id: string, limit: number, offset: number) =>
   client.get<OntologyRecordPage>('/object-types/' + encodeURIComponent(id) + '/records', { ...config, params: { limit, offset } }).then(r => data(r.data));
+export type OntologyRecordHistoryPage = { items: Array<{ kind: SemanticAction['kind']; revision: number; createdAt: string }>; hasMore: boolean };
+export const listOntologyRecordHistory = (id: string, recordId: string, limit: number, offset: number, signal: AbortSignal) =>
+  client.get<OntologyRecordHistoryPage>('/object-types/' + encodeURIComponent(id) + '/records/' + encodeURIComponent(recordId) + '/history', { ...config, params: { limit, offset }, signal }).then(r => data(r.data));
 export const submitOntologyAction = (id: string, kind: SemanticAction['kind'], body: ActionInput) =>
   client.post<{ id: string; revision: number; deleted: boolean }>('/object-types/' + encodeURIComponent(id) + '/actions/' + kind, body, config).then(r => data(r.data));

@@ -38,7 +38,7 @@ import {
   SettingOutlined,
   ThunderboltOutlined,
 } from '@/components/ui/icons';
-import { NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { Link, matchPath, useLocation, useNavigate } from 'react-router-dom';
 import { useThemeStore } from '@/stores/settings';
 import { fetchCurrentUserContext } from '@/services/api';
 import { clearSession } from '@/services/session';
@@ -293,7 +293,7 @@ interface MainLayoutProps {
 
 const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const location = useLocation();
-  const isFlowSurface = location.pathname === '/ontology' || location.pathname.startsWith('/ontology/');
+  const isFlowSurface = !!matchPath('/ontology/*', location.pathname);
   const [manualCollapsed, setManualCollapsed] = useState(false);
   const [pinned, setPinned] = useState(true);
   const [isMobile, setIsMobile] = useState(false);
@@ -309,7 +309,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const { mode } = useThemeStore();
   const isDark = mode === 'dark';
   const [currentProject, setCurrentProject] = useState<ProjectKey>(() => resolveProjectByPath(location.pathname) ?? 'etl-pipeline');
-  const routedProject = useMemo(() => resolveProjectByPath(location.pathname), [location.pathname]);
+  const routedProject = useMemo(() => isFlowSurface ? 'etl-pipeline' : resolveProjectByPath(location.pathname), [isFlowSurface, location.pathname]);
   const activeProjectKey = routedProject ?? currentProject;
   const activeProject = projectConfigs[activeProjectKey];
   const isAutomationSurface = location.pathname.startsWith('/automation');
@@ -895,9 +895,9 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         <nav className="ontology-workspace-navigation" aria-label="Ontology Foundry workspace">
           {projectConfigs['etl-pipeline'].sections[0].children.map((item) => (
             <React.Fragment key={item.key}>
-              <NavLink to={item.key} end>{item.icon}<span>{item.label}</span></NavLink>
+              <Link to={item.key} aria-current={matchPath(item.key, location.pathname) ? 'page' : undefined}>{item.icon}<span>{item.label}</span></Link>
               {item.key === '/ontology/explorer' && currentUserContext?.user.is_superuser && (
-                <NavLink to="/ontology/connections" end><DatabaseOutlined /><span>Data Connections</span></NavLink>
+                <Link to="/ontology/connections" aria-current={matchPath('/ontology/connections', location.pathname) ? 'page' : undefined}><DatabaseOutlined /><span>Data Connections</span></Link>
               )}
             </React.Fragment>
           ))}

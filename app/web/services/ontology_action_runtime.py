@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
@@ -63,6 +64,17 @@ class ActionReceipt(BaseModel):
     deleted: bool
 
 
+class RecordHistoryEvent(BaseModel):
+    kind: ActionKind
+    revision: int
+    createdAt: datetime
+
+
+class RecordHistoryPage(BaseModel):
+    items: list[RecordHistoryEvent]
+    hasMore: bool
+
+
 def _bad(message: str) -> None:
     raise HTTPException(422, message)
 
@@ -87,6 +99,8 @@ async def _definition_access(
     session: AsyncSession,
     user: User,
     definition_id: UUID,
+    *,
+    lock_membership: bool = False,
 ) -> tuple[Any, Definition, AccessContext, list[str]]:
     row = await ontology_registry.get_published(session, user, definition_id)
     definition = Definition.model_validate(row.published_definition)
@@ -95,6 +109,7 @@ async def _definition_access(
         user,
         row.project_id,
         source_access=definition.source.mode != "existing" or user.is_superuser,
+        lock_membership=lock_membership,
     )
     visible, fields = visibility(
         definition.security, [prop.id for prop in definition.properties], context
@@ -162,6 +177,30 @@ async def list_records(
     )
 
 
+async def record_history(
+    session: AsyncSession, user: User, definition_id: UUID, record_id: UUID, *, limit: int, offset: int
+) -> RecordHistoryPage:
+    """Read committed event metadata under the current object's access policy."""
+    _, definition, _, _ = await _definition_access(session, user, definition_id)
+    if definition.source.mode != "none" or await session.scalar(
+        select(OntologyRuntimeRecord.id).where(
+            OntologyRuntimeRecord.definition_id == definition_id, OntologyRuntimeRecord.id == record_id
+        )
+    ) is None:
+        raise HTTPException(404, "Record not found")
+    events = (await session.execute(
+        select(OntologyActionEvent.kind, OntologyActionEvent.revision, OntologyActionEvent.occurred_at)
+        .where(OntologyActionEvent.record_id == record_id)
+        .order_by(OntologyActionEvent.revision.desc())
+        .offset(offset).limit(limit + 1)
+    )).all()
+    return RecordHistoryPage(
+        items=[RecordHistoryEvent(kind=kind, revision=revision, createdAt=when)
+               for kind, revision, when in events[:limit]],
+        hasMore=len(events) > limit,
+    )
+
+
 async def submit_action(
     session: AsyncSession,
     user: User,
@@ -170,7 +209,9 @@ async def submit_action(
     payload: ActionPayload,
 ) -> ActionReceipt:
     """Atomically write and audit a no-source action, preserving immutable business keys."""
-    _, definition, context, visible = await _definition_access(session, user, definition_id)
+    _, definition, context, visible = await _definition_access(
+        session, user, definition_id, lock_membership=True
+    )
     action = next(
         (item for item in _available_actions(definition, context, visible) if item.kind == kind),
         None,
@@ -233,6 +274,8 @@ async def submit_action(
         await session.rollback()
         original = exc.orig
         sqlstate = getattr(original, "sqlstate", None)
-        if kind == "create" and sqlstate == "23505":
+        if kind == "create" and sqlstate == "23505" and (
+            getattr(original.__cause__, "constraint_name", None) == "uq_ontology_runtime_record_key"
+        ):
             raise HTTPException(409, "Record identity already exists") from exc
         raise

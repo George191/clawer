@@ -1,17 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Button, Checkbox, Input, Modal, Table } from '@/components/ui';
 import { ArrowLeftOutlined, BarsOutlined, CloseOutlined, DatabaseOutlined, ReloadOutlined, SearchOutlined } from '@/components/ui/icons';
 import { getSessionState } from '../../services/session';
 import {
-  fetchPublishedOntologyType, listPublishedOntologyTypes, listOntologyRecords, submitOntologyAction,
-  type PublishedOntologyType, type SemanticAction, type OntologyRecord, type OntologyRecordPage,
+  fetchPublishedOntologyType, listPublishedOntologyTypes, listOntologyRecords, listOntologyRecordHistory, submitOntologyAction,
+  type PublishedOntologyType, type PublishedOntologyPage, type SemanticAction, type OntologyRecord, type OntologyRecordPage, type OntologyRecordHistoryPage,
 } from '../../services/ontology';
 import SemanticTypeGlyph from './SemanticTypeGlyph';
 import './ontology-create.css';
 import './published-results.css';
 
 const pageSize = 25;
-type Operation = { kind: SemanticAction['kind']; fields: string[]; record?: OntologyRecord };
+const maxOffset = 100_000;
+type ActionInputs = Record<string, { text: string; isNull: boolean }>;
+type Operation = { kind: SemanticAction['kind']; fields: string[]; record?: OntologyRecord; initialInputs: ActionInputs };
 type Props = { selection: string; onSelect: (id: string) => void };
 function show(value: unknown): string {
   if (value == null) return '—';
@@ -38,20 +41,56 @@ function parse(value: string, type: string) {
   return value;
 }
 
+function RecordHistory({ objectType, recordId }: { objectType: string; recordId: string }) {
+  const [offset, setOffset] = useState(0);
+  const [page, setPage] = useState<OntologyRecordHistoryPage>();
+  const [error, setError] = useState('');
+  const [version, setVersion] = useState(0);
+  useEffect(() => {
+    const controller = new AbortController();
+    const identity = getSessionState().identity;
+    const current = () => !controller.signal.aborted && identity === getSessionState().identity;
+    setPage(undefined); setError('');
+    listOntologyRecordHistory(objectType, recordId, pageSize, offset, controller.signal)
+      .then(result => { if (current()) setPage(result); }, failure => { if (current()) setError(describe(failure, 'Unable to load this record’s action history.')); });
+    return () => controller.abort();
+  }, [objectType, recordId, offset, version]);
+
+  return <section className="flow-published-selection-properties" aria-label="Record action history">
+    <h4>Action history</h4>
+    {error ? <p role="alert">{error} <Button size="small" onClick={() => setVersion(value => value + 1)}>Retry</Button></p>
+      : !page ? <p role="status">Loading action history…</p>
+        : <>
+          {page.items.length ? <dl>{page.items.map(event => <div key={event.revision}>
+            <dt>{{ create: 'Created', modify: 'Modified', delete: 'Deleted' }[event.kind]} · Revision {event.revision}</dt>
+            <dd><time dateTime={event.createdAt}>{new Date(event.createdAt).toLocaleString()}</time></dd>
+          </div>)}</dl> : <p>No action history on this page.</p>}
+          {(offset > 0 || page.hasMore) && <footer className="flow-published-results-pagination" aria-label="Action history pagination"><div>
+            <Button size="small" disabled={!offset} onClick={() => setOffset(Math.max(0, offset - pageSize))}>Previous page</Button>
+            <Button size="small" disabled={!page.hasMore || offset + pageSize > maxOffset} onClick={() => setOffset(offset + pageSize)}>Next page</Button>
+          </div></footer>}
+        </>}
+  </section>;
+}
+
 export default function PublishedOntology({ selection, onSelect }: Props) {
-  const [items, setItems] = useState<PublishedOntologyType[]>();
-  const [search, setSearch] = useState('');
+  const [params, setParams] = useSearchParams();
+  const search = params.get('publishedQ') || '';
+  const keyword = search.trim();
+  const requestedOffset = Number(params.get('publishedOffset'));
+  const catalogOffset = Number.isInteger(requestedOffset) && requestedOffset >= 0 && requestedOffset <= maxOffset ? requestedOffset : 0;
+  const [catalogPage, setCatalogPage] = useState<PublishedOntologyPage>();
   const [object, setObject] = useState<PublishedOntologyType>();
   const [records, setRecords] = useState<OntologyRecordPage>();
   const [selectedRow, setSelectedRow] = useState<number>();
   const recordTitles = useRef<Record<number, HTMLButtonElement | null>>({});
-  const [previewTab, setPreviewTab] = useState<'overview' | 'properties'>('overview');
+  const [previewTab, setPreviewTab] = useState<'overview' | 'properties' | 'history'>('overview');
   const [offset, setOffset] = useState(0);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [version, setVersion] = useState(0);
   const [operation, setOperation] = useState<Operation>();
-  const [inputs, setInputs] = useState<Record<string, { text: string; isNull: boolean }>>({});
+  const [inputs, setInputs] = useState<ActionInputs>({});
   const [actionPending, setActionPending] = useState(false);
   const [actionError, setActionError] = useState('');
   const actionLocked = useRef(false);
@@ -59,13 +98,29 @@ export default function PublishedOntology({ selection, onSelect }: Props) {
   const identity = useRef(getSessionState().identity).current;
   const current = () => active.current && identity === getSessionState().identity;
   const reload = () => setVersion(value => value + 1);
+  const changeCatalogSearch = (value: string) => setParams(previous => {
+    const next = new URLSearchParams(previous);
+    if (value) next.set('publishedQ', value); else next.delete('publishedQ');
+    next.delete('publishedOffset');
+    return next;
+  }, { replace: true });
+  const changeCatalogOffset = (value: number) => setParams(previous => {
+    const next = new URLSearchParams(previous);
+    if (value) next.set('publishedOffset', String(value)); else next.delete('publishedOffset');
+    return next;
+  });
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   useEffect(() => {
     let alive = true;
     setLoading(true); setError(''); setObject(undefined); setRecords(undefined); setSelectedRow(undefined); setPreviewTab('overview');
     if (!selection) {
-      listPublishedOntologyTypes().then(data => { if (alive && current()) setItems(data); }, failure => { if (alive && current()) setError(describe(failure, 'Unable to load published object types.')); })
-        .finally(() => { if (alive && current()) setLoading(false); });
+      setCatalogPage(undefined);
+      const timer = window.setTimeout(() => {
+        listPublishedOntologyTypes(pageSize, catalogOffset, keyword)
+          .then(data => { if (alive && current()) setCatalogPage(data); }, failure => { if (alive && current()) setError(describe(failure, 'Unable to load published object types.')); })
+          .finally(() => { if (alive && current()) setLoading(false); });
+      }, keyword ? 250 : 0);
+      return () => { alive = false; window.clearTimeout(timer); };
     } else {
       fetchPublishedOntologyType(selection).then(async data => {
         if (!alive || !current()) return;
@@ -76,15 +131,17 @@ export default function PublishedOntology({ selection, onSelect }: Props) {
         .finally(() => { if (alive && current()) setLoading(false); });
     }
     return () => { alive = false; };
-  }, [selection, offset, version, identity]);
+  }, [selection, offset, catalogOffset, keyword, version, identity]);
 
   const startAction = (kind: SemanticAction['kind'], fields: string[], record?: OntologyRecord) => {
     setActionError('');
-    setInputs(Object.fromEntries(fields.filter(id => record && Object.prototype.hasOwnProperty.call(record.properties, id)).map(id => {
+    const initialInputs = Object.fromEntries(fields.filter(id => record && Object.prototype.hasOwnProperty.call(record.properties, id)).map(id => {
       const val = record!.properties[id];
-      return [id, { text: val == null ? '' : typeof val === 'object' ? JSON.stringify(val) : String(val), isNull: val === null }];
-    })));
-    setOperation({ kind, fields, record });
+      const type = object?.definition.properties.find(prop => prop.id === id)?.type;
+      return [id, { text: val == null ? '' : type === 'json' ? JSON.stringify(val) : String(val), isNull: val === null }];
+    }));
+    setInputs(initialInputs);
+    setOperation({ kind, fields, record, initialInputs });
   };
   const applyAction = async () => {
     if (!current() || !selection || !operation || !object || actionLocked.current) return;
@@ -97,11 +154,14 @@ export default function PublishedOntology({ selection, onSelect }: Props) {
         if (!item) throw new Error('The selected property is unavailable.');
         const input = inputs[id];
         if (!input) { if (operation.kind === 'create' && item.required) throw new Error(item.name + ' is required.'); continue; }
+        const initial = operation.initialInputs[id];
+        if (initial && input.text === initial.text && input.isNull === initial.isNull) continue;
         try { values[id] = input.isNull ? null : parse(input.text, item.type); }
         catch (failure) { throw new Error(item.name + ': ' + (failure instanceof Error ? failure.message : 'invalid value')); }
       }
       const record = operation.record;
       if (operation.kind !== 'create' && (!record?.id || record.revision == null)) throw new Error('This record cannot be changed.');
+      if (operation.kind === 'modify' && !Object.keys(values).length) throw new Error('Change at least one property.');
       await submitOntologyAction(selection, operation.kind,
         operation.kind === 'create' ? { values } : operation.kind === 'modify' ? { recordId: record!.id!, expectedRevision: record!.revision!, values } : { recordId: record!.id!, expectedRevision: record!.revision! });
       if (current()) { setOperation(undefined); setOffset(0); reload(); }
@@ -130,9 +190,6 @@ export default function PublishedOntology({ selection, onSelect }: Props) {
   };
   const recordActions = selectedRecord?.id ? available.filter(action => action.kind !== 'create') : [];
   const returnToTypes = () => { if (!actionLocked.current) { setOffset(0); setSelectedRow(undefined); onSelect(''); } };
-  const keyword = search.trim().toLowerCase();
-  const displayed = items?.filter(({ definition }) => !keyword || [definition.name, definition.id, definition.description, definition.source.schema, definition.source.table]
-    .some(value => value?.toLowerCase().includes(keyword))) || [];
   return <>
     <main className={`flow-ontology__published flow-foundry-workbench${selection ? ' flow-ontology__published--results' : ''}`} data-testid="published-ontology" aria-label={selection ? 'Published object results' : 'Published object types'} aria-busy={loading}>
       <header className="flow-ontology__published-header">
@@ -142,16 +199,21 @@ export default function PublishedOntology({ selection, onSelect }: Props) {
         </div> : <><h2>Published object types</h2><p>Browse published definitions and access the records and actions available to your account.</p></>}
       </header>
         <section className="flow-create-section">
+          {!selection && <div className="flow-ontology__published-search"><Input size="small" prefix={<SearchOutlined />} aria-label="Search published types" placeholder="Search published types" value={search} maxLength={200} onChange={event => changeCatalogSearch(event.target.value)} allowClear /></div>}
           {error && <p className="flow-create-error" role="alert">{error}<Button size="small" icon={<ReloadOutlined />} onClick={reload}>Retry</Button></p>}
           {loading && <p role="status">{selection ? 'Loading published object type and records…' : 'Loading published object types…'}</p>}
-          {!selection && !loading && !error && <>
-            <div className="flow-ontology__published-search"><Input size="small" prefix={<SearchOutlined />} aria-label="Search published types" placeholder="Search published types" value={search} onChange={event => setSearch(event.target.value)} allowClear /></div>
-            <Table<PublishedOntologyType> className="flow-create-table flow-create-review-table" size="small" rowKey="id" pagination={false} dataSource={displayed} locale={{ emptyText: keyword ? 'No published object types match your search.' : 'No published object types are available to this account.' }} columns={[
+          {!selection && !loading && catalogPage && <>
+            <Table<PublishedOntologyType> className="flow-create-table flow-create-review-table" size="small" rowKey="id" pagination={false} dataSource={catalogPage.items} locale={{ emptyText: catalogOffset ? 'No published object types on this page.' : keyword ? 'No published object types match your search.' : 'No published object types are available to this account.' }} columns={[
             { title: 'Object type', render: (_, item) => <Button type="link" onClick={() => onSelect(item.id)}><SemanticTypeGlyph definition={item.definition} />{item.definition.name}</Button> },
             { title: 'API ID', render: (_, item) => item.definition.id },
             { title: 'Datasource', render: (_, item) => item.definition.source.mode === 'existing' ? item.definition.source.schema + '.' + item.definition.source.table : 'No backing table' },
             { title: 'Revision', dataIndex: 'revision' },
-            ]} /></>}
+            ]} />
+            {(catalogOffset > 0 || catalogPage.hasMore) && <footer className="flow-published-results-pagination" aria-label="Published object types pagination">
+              <span>{catalogPage.items.length ? `${catalogOffset + 1}–${catalogOffset + catalogPage.items.length} shown` : '0 shown'}</span>
+              <div><Button size="small" disabled={!catalogOffset} onClick={() => changeCatalogOffset(Math.max(0, catalogOffset - pageSize))}>Previous page</Button><Button size="small" disabled={!catalogPage.hasMore || catalogOffset + pageSize > maxOffset} onClick={() => changeCatalogOffset(catalogOffset + pageSize)}>Next page</Button></div>
+            </footer>}
+          </>}
           {object && records && <div className="flow-published-results">
             <div className="flow-published-results-toolbar">
               <h3><BarsOutlined /> Results</h3>
@@ -193,13 +255,14 @@ export default function PublishedOntology({ selection, onSelect }: Props) {
                   <nav className="flow-published-selection-tabs" aria-label="Selection view">
                     <button type="button" aria-pressed={previewTab === 'overview'} onClick={() => setPreviewTab('overview')}>Overview</button>
                     <button type="button" aria-pressed={previewTab === 'properties'} onClick={() => setPreviewTab('properties')}>Properties</button>
+                    {selectedRecord.id && object.definition.source.mode === 'none' && <button type="button" aria-pressed={previewTab === 'history'} onClick={() => setPreviewTab('history')}>History</button>}
                   </nav>
                   {previewTab === 'overview' && !!summaryProperties.length && <dl className="flow-published-selection-summary">{summaryProperties.map(prop => <div key={prop.id}><dt>{prop.name}</dt><dd>{show(selectedRecord.properties[prop.id])}</dd></div>)}</dl>}
-                  <section className="flow-published-selection-properties">
+                  {previewTab === 'history' && selectedRecord.id ? <RecordHistory key={selectedRecord.id} objectType={selection} recordId={selectedRecord.id} /> : <section className="flow-published-selection-properties">
                     <h4><DatabaseOutlined />{previewTab === 'overview' ? 'Key properties' : 'Properties'}</h4>
                     <dl>{(previewTab === 'overview' ? visibleSelectedProperties.slice(0, 8) : visibleSelectedProperties).map(prop => <div key={prop.id}><dt>{prop.name}</dt><dd>{selectedRecord.properties[prop.id] == null ? <i>No value</i> : show(selectedRecord.properties[prop.id])}</dd></div>)}</dl>
                     {!visibleSelectedProperties.length && <p>No properties are available for this record.</p>}
-                  </section>
+                  </section>}
                 </div>
               </aside>}
             </div>
