@@ -46,6 +46,7 @@ def verify():
         or shutil.which("chromium-browser")
     )
     stage = "launch Chromium"
+    merge_status = {}
     try:
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(
@@ -73,10 +74,21 @@ def verify():
 
                 def workspace(page):
                     panel = page.get_by_role("region", name="Model revisions", exact=True)
-                    if not panel.is_visible():
-                        button(page, "Model revisions").click()
+                    toggle = button(page, "Model revisions")
+                    expect(toggle).to_be_visible()
+                    if toggle.get_attribute("aria-pressed") != "true":
+                        toggle.click()
                     panel.get_by_text(re.compile(r"^Published revision \d+$")).wait_for()
                     return panel
+
+                def merge_from_browser(page, proposal, label):
+                    path_prefix = f"/api/ontology/v1/object-types/{definition_id}/revision-proposals/"
+                    with page.expect_response(lambda response: response.request.method == "POST"
+                                              and urlsplit(response.url).path.startswith(path_prefix)
+                                              and urlsplit(response.url).path.endswith("/merge")) as response:
+                        button(proposal, "Merge proposal").click()
+                    merge_status[label] = response.value.status
+                    assert response.value.status == 200
 
                 def select_proposal(panel, title):
                     button(panel, "Proposals").click()
@@ -130,10 +142,12 @@ def verify():
                 expect(review_pane.get_by_text("Proposal approved.", exact=True)).to_be_visible()
                 expect(button(review, "Merge proposal")).to_have_count(0)
 
-                stage = "merge the approved proposal and verify the fresh publication"
+                stage = "send the approved merge request"
                 button(pane, "Refresh revisions").click()
-                button(proposal, "Merge proposal").click()
+                merge_from_browser(manager, proposal, "change")
+                stage = "verify the title refresh after merge"
                 expect(manager.get_by_role("heading", name=new_name, exact=True)).to_be_visible()
+                stage = "verify the revision workspace after merge"
                 pane = workspace(manager)
                 expect(
                     pane.get_by_text(f"Published revision {baseline + 1}", exact=True)
@@ -161,13 +175,14 @@ def verify():
                 review = select_proposal(review_pane, restore_title)
                 button(review, "Approve proposal").click()
                 expect(review_pane.get_by_text("Proposal approved.", exact=True)).to_be_visible()
+                stage = "send the approved restore merge request"
                 button(pane, "Refresh revisions").click()
-                button(
-                    pane.get_by_role("region", name="Proposal details"), "Merge proposal"
-                ).click()
+                merge_from_browser(manager, pane.get_by_role("region", name="Proposal details"), "restore")
+                stage = "verify the title refresh after restore"
                 expect(
                     manager.get_by_role("heading", name=original_name, exact=True)
                 ).to_be_visible()
+                stage = "verify the revision workspace after restore"
                 pane = workspace(manager)
                 expect(
                     pane.get_by_text(f"Published revision {baseline + 2}", exact=True)
@@ -189,6 +204,7 @@ def verify():
                     "baseline": baseline,
                     "merged": baseline + 1,
                     "restored": baseline + 2,
+                    "merge_http_status": merge_status,
                 }
             ),
             flush=True,
@@ -201,6 +217,7 @@ def verify():
                     "ok": False,
                     "feature": "published-revisions",
                     "failed_stage": stage,
+                    "merge_http_status": merge_status,
                     "error": type(error).__name__,
                 }
             ),

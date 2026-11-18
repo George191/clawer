@@ -4,18 +4,13 @@ import { graphRequest, type LinkType, type Page } from '../../services/ontology_
 import { applyTransaction, listOntologyRecords, listPublishedOntologyTypes, listTransactions, ontologyError, undoTransaction,
   type OntologyRecordPage, type PublishedOntologyType, type TransactionReceipt, type TransactionStep } from '../../services/ontology';
 import { parsePropertyValue } from './ontologyPropertyValue';
+import { newOntologyRequestId } from '../../services/ontology';
+import OntologyWriteback from './OntologyWriteback';
 
 type Kind = TransactionStep['kind'];
 type Entry = {label: string; step: TransactionStep};
 const emptyRecords: OntologyRecordPage = {items: [], hasMore: false, actions: []};
 const description = (error: unknown) => ontologyError(error, 'The transaction request failed.');
-function requestId() {
-  const bytes = crypto.getRandomValues(new Uint8Array(16));
-  bytes[6] = (bytes[6] & 15) | 64;
-  bytes[8] = (bytes[8] & 63) | 128;
-  const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
-  return [hex.slice(0,8), hex.slice(8,12), hex.slice(12,16), hex.slice(16,20), hex.slice(20)].join('-');
-}
 
 function RecordPicker({type, label, value, aliases = [], change, version}: {
   type: string; label: string; value: string; aliases?: string[]; version: number;
@@ -66,6 +61,7 @@ export default function OntologyTransactions({objectType}: {objectType: Publishe
   const [record, setRecord] = useState({id: '', revision: 0, title: ''});
   const [values, setValues] = useState<Record<string, string | null>>({});
   const [history, setHistory] = useState<TransactionReceipt[]>([]);
+  const [deliveryId, selectDelivery] = useState('');
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(true);
@@ -155,7 +151,7 @@ export default function OntologyTransactions({objectType}: {objectType: Publishe
       } else {
         const steps = entries.map(entry => entry.step);
         const signature = JSON.stringify([name,steps]);
-        const id = retryIds.current.get(signature) ?? requestId();
+        const id = retryIds.current.get(signature) ?? newOntologyRequestId();
         retryIds.current.set(signature, id);
         const result = await applyTransaction(project,name,id,steps);
         setStatus('Committed: ' + result.name);setEntries([]);setName('');retryIds.current.delete(signature);
@@ -196,7 +192,9 @@ export default function OntologyTransactions({objectType}: {objectType: Publishe
     {historyLoading && <p role="status">Loading transactions…</p>}
     {!historyLoading && !history.length && !error && <p>No transactions on this page.</p>}
     <ul>{history.map(item => <li key={item.id}>{item.name} · {item.stepCount} steps · {new Date(item.createdAt).toLocaleString()} {' '}
-      {item.undoneAt ? <span>Undone</span> : <Button size="small" disabled={pending || historyLoading} onClick={() => perform(item)}>Undo transaction</Button>}</li>)}</ul>
+      {item.undoneAt ? <span>Undone</span> : <Button size="small" disabled={pending || historyLoading} onClick={() => perform(item)}>Undo transaction</Button>}
+      <Button size="small" aria-pressed={deliveryId === item.id} onClick={() => selectDelivery(deliveryId === item.id ? '' : item.id)}>Writeback</Button>
+      {deliveryId === item.id && <OntologyWriteback key={item.id} project={project} transaction={item.id}/>}</li>)}</ul>
     {(offset > 0 || hasMore) && <div><Button disabled={!offset || historyLoading || pending} onClick={() => {setHistoryLoading(true);setOffset(offset-25);}}>Previous transactions</Button>
       <Button disabled={!hasMore || historyLoading || pending || offset + 25 > 100_000} onClick={() => {setHistoryLoading(true);setOffset(offset+25);}}>Next transactions</Button></div>}
   </section>;

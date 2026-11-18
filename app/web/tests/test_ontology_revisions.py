@@ -27,6 +27,7 @@ from app.web.api.models.ontology_registry import OntologyDefinitionRow
 from app.web.api.models.ontology_runtime import OntologyRuntimeRecord
 from app.web.api.models.user import InviteCodes, RoleTypes
 from app.web.api.routes.ontology_registry import router as registry_router
+from app.web.api.models.ontology_markings import OntologyMarking
 from app.web.api.routes.ontology_revisions import router as revision_router
 from app.web.services.ontology_revisions import definition_diff
 from app.web.services import ontology_registry
@@ -70,7 +71,7 @@ class RevisionIntegration(unittest.IsolatedAsyncioTestCase):
                 Team.metadata.create_all(sync, tables=[tables[name] for name in (
                     "dictionaries", "tenant", "user", "team", "invite_codes", "team_user_join",
                     "ontology_registry_definitions", "ontology_runtime_records", "ontology_saved_sets",
-                    "ontology_link_types", "ontology_links",
+                    "ontology_link_types", "ontology_links", "ontology_markings",
                 )])
                 with Operations.context(MigrationContext.configure(sync)):
                     migration.upgrade()
@@ -141,6 +142,34 @@ class RevisionIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def grant(self, review=True):
         await self.call("PUT", self.roles, 204, {"canEdit": False, "canReview": review})
+
+    async def test_downgrading_markings_requires_manager_and_still_cleared_reviewer(self):
+        group = [{"kind": "group", "id": self.team_id}]
+        async with AsyncSession(self.engine, expire_on_commit=False) as session:
+            label = OntologyMarking(project_id=UUID(self.team_id), name="Restricted", readers=group)
+            session.add(label)
+            await session.commit()
+        await self.call("PUT", self.roles, 204, {"canEdit": True, "canReview": True})
+        marked = {**self.definition, "security": {**self.definition["security"], "markings": [str(label.id)]}}
+        change = await self.propose(definition=marked)
+        await self.vote(change)
+        await self.merge(change)
+        revision = self.head + 1
+        body = {"definition": self.definition, "revision": revision, "summary": "Remove clearance"}
+        await self.call("POST", self.proposals, 403, body, actor=1)
+        restore = await self.propose(definition=self.definition, head=revision)
+        await self.vote(restore)
+        async with AsyncSession(self.engine) as session:
+            row = await session.get(OntologyMarking, label.id)
+            row.readers = [{"kind": "user", "id": str(self.actors[0].id)}]
+            await session.commit()
+        await self.merge(restore, 404, head=revision)
+        await self.call("GET", self.route + "/revision-workspace", 404, actor=1)
+        async with AsyncSession(self.engine) as session:
+            row = await session.get(OntologyMarking, label.id)
+            row.readers = group
+            await session.commit()
+        await self.merge(restore, head=revision)
 
     async def propose(self, *, head=None, name="New invoice", expected=201, definition=None):
         return await self.call("POST", self.proposals, expected, {

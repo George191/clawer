@@ -11,6 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.web.api.dependencies.common import CurrentUser
 from app.web.api.dependencies.session import SessionDep
 from app.web.api.models import User
+from app.web.api.routes.ontology_markings import router as marking_router
+from app.web.services.ontology_markings import cleared
 from app.web.services import ontology_registry
 from app.web.services.ontology_action_runtime import (
     ActionKind,
@@ -37,6 +39,7 @@ from app.web.services.ontology_registry_policy import (
 )
 
 router = APIRouter(prefix="/ontology/v1", tags=["ontology object actions and security"])
+router.include_router(marking_router)
 
 
 class SecurityPreviewRequest(BaseModel):
@@ -101,6 +104,8 @@ async def preview_security(
         source_access=payload.sourceMode != "existing" or subject.is_superuser,
     )
     allowed, fields = visibility(payload.security, payload.properties, context)
+    if allowed and not await cleared(session, payload.projectId, payload.security.markings, context):
+        allowed, fields = False, []
     return SecurityPreview(visible=allowed, visibleFields=fields)
 
 

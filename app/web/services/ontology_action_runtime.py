@@ -19,7 +19,8 @@ from app.web.api.models.ontology_graph import OntologyLink
 from app.web.api.models.ontology_registry import Definition
 from app.web.api.models.ontology_runtime import OntologyActionEvent, OntologyRuntimeRecord
 from app.web.services import ontology_registry
-from app.web.services.ontology_record_policy import authorize_record_values, record_read_predicate
+from app.web.services.ontology_markings import allowed_ids, cleared, covers
+from app.web.services.ontology_record_policy import authorize_record_values, lock_related_clearances, record_read_predicate
 from app.web.services.ontology_registry_identity import project_access_context
 from app.web.services.ontology_registry_policy import (
     AccessContext,
@@ -126,8 +127,9 @@ async def _definition_access(
     visible, fields = visibility(
         definition.security, [prop.id for prop in definition.properties], context
     )
-    if not visible:
+    if not visible or not await cleared(session, row.project_id, definition.security.markings, context):
         raise HTTPException(404, "Object type not found")
+    await lock_related_clearances(session, definition, context)
     return row, definition, context, fields
 
 
@@ -243,7 +245,8 @@ async def record_history(
         await session.scalars(
             select(OntologyActionEvent)
             .where(
-                OntologyActionEvent.record_id == record_id, OntologyActionEvent.revision <= revision
+                OntologyActionEvent.record_id == record_id, OntologyActionEvent.revision <= revision,
+                covers(OntologyActionEvent.markings, allowed_ids(definition.projectId, [(p.kind, p.id) for p in context.principals])),
             )
             .order_by(OntologyActionEvent.revision.desc())
             .offset(offset)
@@ -367,6 +370,7 @@ async def apply_action_step(
             revision=record.revision,
             changes=record_changes(before, {} if record.deleted else record.values),
             restricted_history=bool(definition.security.recordRules),
+            markings=[str(m) for m in definition.security.markings],
         )
     )
     await session.flush()

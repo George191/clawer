@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 from sqlalchemy import BigInteger, Column, DateTime, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field as DBField
@@ -50,6 +50,31 @@ class Property(Payload):
     required: bool = False
 
 
+FunctionKey = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{0,62}$")]
+
+
+class Parameter(Payload):
+    parameter: FunctionKey
+
+
+class Constant(BaseModel):
+    # Spaces in literal strings are business data, including separators used by concat.
+    model_config = ConfigDict(extra="forbid")
+    value: JsonValue
+
+
+class Assignment(Payload):
+    field: Annotated[str, Field(pattern=r"^[a-z][a-z0-9_-]{0,62}$")]
+    operation: Literal["set", "add", "multiply", "concat"]
+    operands: list[Parameter | Constant] = Field(min_length=1, max_length=2)
+
+
+class BusinessFunction(Payload):
+    key: FunctionKey
+    name: str = Field(min_length=1, max_length=100)
+    assignments: list[Assignment] = Field(min_length=1, max_length=24)
+
+
 class Definition(Payload):
     id: Identifier
     name: Label
@@ -64,6 +89,7 @@ class Definition(Payload):
     primaryKey: list[Identifier] = Field(default_factory=list, max_length=16)
     titleKey: Identifier = ""
     actions: list[ActionDefinition] = Field(default_factory=list, max_length=3)
+    functions: list[BusinessFunction] = Field(default_factory=list, max_length=24)
     security: ObjectSecurity
 
 

@@ -14,6 +14,7 @@ from pydantic import (
     StrictFloat,
     StrictInt,
     StrictStr,
+    model_serializer,
     model_validator,
 )
 
@@ -80,12 +81,15 @@ class ObjectSecurity(BaseModel):
     mode: Literal["inherit", "explicit"]
     objectReaders: list[Principal] = Field(default_factory=list, max_length=100)
     fieldReaders: dict[str, list[Principal]] = Field(default_factory=dict, max_length=200)
+    markings: list[UUID] = Field(default_factory=list, max_length=32)
     recordRules: list[
         Annotated[PropertyRecordRule | RelatedRecordRule, Field(discriminator="kind")]
     ] = Field(default_factory=list, max_length=32)
 
     @model_validator(mode="after")
     def validate_shape(self) -> ObjectSecurity:
+        if len(self.markings) != len(set(self.markings)):
+            raise ValueError("Required markings must be distinct")
         lists = [
             self.objectReaders,
             *self.fieldReaders.values(),
@@ -94,6 +98,13 @@ class ObjectSecurity(BaseModel):
         if any(len(items) > 100 or len(set(items)) != len(items) for items in lists):
             raise ValueError("Reader lists must contain at most 100 distinct principals")
         return self
+
+    @model_serializer(mode="wrap")
+    def serialize(self, handler):
+        value = handler(self)
+        if not self.markings:
+            value.pop("markings", None)
+        return value
 
 
 @dataclass(frozen=True)

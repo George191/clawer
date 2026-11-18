@@ -12,6 +12,10 @@
 | 关系及对象集 | 发布类型可定义有方向及基数的关系，增删关系实例并沿两个方向浏览。个人动态对象集可保存筛选、执行、分组、计数、求和。 | 管理式对象使用稳定记录 ID。查询和聚合在类型、字段与记录权限过滤后执行。[Foundry 核心概念](https://www.palantir.com/docs/foundry/ontology/core-concepts/) |
 | 跨对象动作 | 一次事务可以创建、修改、删除多个对象以及增删关系。步骤可引用同一事务内新建的对象。请求重放使用原回执。撤销反序执行并复查当前权限、修订及边身份。 | 数据和审计同事务提交。无源对象可写，已有业务表只读。早于字段审计迁移的事件仅保留原有元数据。[Foundry 动作](https://www.palantir.com/docs/foundry/action-types/overview/) |
 | 记录级授权 | 可限定读者的字段值、当前用户身份或已建立的具体语义关系。列表、详情、动作、关系、统计及历史查询使用记录规则，并复查有效成员资格。 | 源表支持标量比较。关系规则适用于有稳定记录 ID 的管理式对象。启用记录策略期间产生的事件仅向历史接口提供元数据。[Foundry 对象权限](https://www.palantir.com/docs/foundry/object-permissioning/overview/) |
+| 业务函数 | 在模型修订中配置命名函数及其输出。支持类型化参数、常量、赋值、数值加法和乘法、字符串拼接。提交后按原请求返回事务回执，可在事务历史撤销。 | 函数作用于调用者有权修改的一条本体记录。模型版本和记录版本共同约束执行。[Foundry 函数与动作](https://www.palantir.com/docs/foundry/functions/use-functions) |
+| 业务系统写回 | 从已提交事务选择预设接收端，投递当前仍获准访问的结果。签名、正文摘要、唯一投递标识和接收方回执用于验证及重试。 | 接收端按项目配置，支持 HTTPS 和签名 JSON 契约。[接收端部署及契约](./ONTOLOGY-WRITEBACK.md) · [Foundry Webhooks](https://www.palantir.com/docs/foundry/data-connection/webhooks-overview) |
+| 安全标记 | 项目内复用标记并授予用户、团队或组织。受标记类型的记录、对象集、遍历及事务沿用该授权，事务和审计事件记录提交时的标记。 | 用户需同时满足已有访问策略和全部所需标记。授权修改可单独审计。 |
+| 开发接口 | 已发布类型可下载 TypeScript SDK。生成器使用当前用户可见字段、允许动作及已发布函数签名。调用时使用当前用户的授权。 | 每个制品对应一个类型和模型版本。模型变更后可重新下载。[Foundry Ontology SDK](https://www.palantir.com/docs/foundry/ontology-sdk/overview) |
 
 语义工作流回归使用已迁移至当前 head 的一次性回环数据库 `ontology_workflow_regression`。设置 `ONTOLOGY_WORKFLOW_TEST_DATABASE_URL` 后运行 `python -m unittest app.web.tests.test_ontology_published_workflow`，会经过实际登录、草稿校验、发布、字段权限、动作冲突、历史和成员撤权。测试写入位于可回滚事务中。
 

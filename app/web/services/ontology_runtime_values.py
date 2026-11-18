@@ -21,7 +21,7 @@ def _bad(message: str) -> None:
     raise HTTPException(422, message)
 
 
-def _normalized_value(prop: Property, value: JsonValue) -> Any:
+def normalize_value(prop: Property, value: JsonValue) -> Any:
     if value is None:
         if prop.required:
             _bad(f"{prop.id} cannot be null")
@@ -69,7 +69,7 @@ def normalize_fields(definition: Definition, values: dict[str, JsonValue]) -> di
     properties = {prop.id: prop for prop in definition.properties}
     if values.keys() - properties.keys():
         _bad("Action references unknown fields")
-    normalized = {key: _normalized_value(properties[key], value) for key, value in values.items()}
+    normalized = {key: normalize_value(properties[key], value) for key, value in values.items()}
     check_record_json(normalized)
     return normalized
 

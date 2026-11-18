@@ -22,6 +22,7 @@ from app.web.api.models.ontology_registry import (
     UpdateDraft,
 )
 from app.web.api.utils.models import StatusTypes
+from app.web.services.ontology_markings import allowed_for, covers, require_clearance
 from app.web.services.ontology_registry import (
     assess_definition,
     catalog_definition,
@@ -103,7 +104,9 @@ async def owned_draft(session, user, draft_id: UUID, *, locked=False) -> Ontolog
     row = await session.scalar(statement)
     if row is None:
         raise HTTPException(404, "Draft not found")
-    require_source_access(user, Definition.model_validate(row.draft_definition).source)
+    definition = Definition.model_validate(row.draft_definition)
+    require_source_access(user, definition.source)
+    await require_clearance(session, user, row.project_id, definition.security.markings)
     return row
 
 
@@ -111,6 +114,7 @@ async def owned_draft(session, user, draft_id: UUID, *, locked=False) -> Ontolog
 async def list_drafts(session: SessionDep, user: CurrentUser, limit: int = Query(100, ge=1, le=200)):
     accessible = projects_statement(user, manage=True).with_only_columns(Team.id)
     result = await session.scalars(select(OntologyDefinitionRow).where(
+        covers(OntologyDefinitionRow.draft_definition["security"]["markings"], allowed_for(user.id, OntologyDefinitionRow.project_id)),
         OntologyDefinitionRow.owner_id == user.id,
         OntologyDefinitionRow.project_id.in_(accessible),
         OntologyDefinitionRow.published_at.is_(None),
@@ -124,6 +128,7 @@ async def list_drafts(session: SessionDep, user: CurrentUser, limit: int = Query
 @router.post("/drafts", status_code=201)
 async def new_draft(payload: Definition, session: SessionDep, user: CurrentUser):
     await get_project(session, user, payload.projectId, manage=True)
+    await require_clearance(session, user, payload.projectId, payload.security.markings)
     require_source_access(user, payload.source)
     row = OntologyDefinitionRow(
         project_id=payload.projectId, owner_id=user.id, semantic_id=payload.id,
@@ -147,6 +152,7 @@ async def update_draft(draft_id: UUID, payload: UpdateDraft, session: SessionDep
     check_revision(row, payload.revision)
     definition = payload.definition
     await get_project(session, user, definition.projectId, manage=True)
+    await require_clearance(session, user, definition.projectId, definition.security.markings)
     require_source_access(user, definition.source)
     row.project_id = definition.projectId
     row.semantic_id = definition.id

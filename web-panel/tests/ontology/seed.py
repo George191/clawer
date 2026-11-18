@@ -53,6 +53,11 @@ with httpx.Client(base_url=base, trust_env=False, timeout=22) as cli:
     group = {"kind": "group", "id": proj}
     admin = {"kind": "user", "id": owner["id"]}
 
+    def publish(body):
+        draft = call("POST", sem + "/drafts", 201, json=body)
+        call("POST", sem + "/drafts/" + draft["id"] + "/publish", json={"revision": draft["revision"]})
+        return draft["id"]
+
     def define(key, name):
         fields = ["id", "name", "amount", "category", "owner"]
         body = {
@@ -78,12 +83,7 @@ with httpx.Client(base_url=base, trust_env=False, timeout=22) as cli:
                 for k, fs in [("create", fields), ("modify", fields[1:]), ("delete", [])]
             ],
         }
-        draft = call("POST", sem + "/drafts", 201, json=body)
-        call(
-            "POST",
-            sem + "/drafts/" + draft["id"] + "/publish",
-            json={"revision": draft["revision"]},
-        )
+        definition_id = publish(body)
         records = []
         for i in range(3):
             values = {
@@ -95,7 +95,7 @@ with httpx.Client(base_url=base, trust_env=False, timeout=22) as cli:
             }
             r = call(
                 "POST",
-                sem + "/object-types/" + draft["id"] + "/actions/create",
+                sem + "/object-types/" + definition_id + "/actions/create",
                 json={"values": values},
             )
             records.append(
@@ -107,13 +107,42 @@ with httpx.Client(base_url=base, trust_env=False, timeout=22) as cli:
                 }
             )
         return dict(
-            id=draft["id"],
+            id=definition_id,
             name=name,
             records=records,
             numericField="amount",
             groupField="category",
             filterField="category",
         )
+
+    def define_sdk():
+        semantic_id = "qa-sdk"
+        name = "QA SDK Isolated Type"
+        fields = ["id", "title", "count", "visibility", "private-note"]
+        definition_id = publish({
+            "projectId": proj, "id": semantic_id, "name": name, "pluralName": name + "s",
+            "source": {"mode": "none"}, "primaryKey": ["id"], "titleKey": "title",
+            "properties": [{"id": field, "name": field, "type": "integer" if field == "count" else "string",
+                            "required": field != "private-note"} for field in fields],
+            "actions": [{"kind": kind, "fields": editable, "submitters": [admin]}
+                        for kind, editable in (("create", fields), ("modify", ["count"]), ("delete", []))],
+            "functions": [{"key": "set_count", "name": "Set count", "assignments": [
+                {"field": "count", "operation": "set", "operands": [{"parameter": "count"}]},
+            ]}],
+            "security": {"mode": "explicit", "objectReaders": [group], "fieldReaders": {"private-note": [admin]},
+                         "recordRules": [
+                             {"kind": "property", "field": "visibility", "match": "equals", "value": state, "readers": readers}
+                             for state, readers in (("public", [group]), ("private", [admin]))
+                         ]},
+        })
+        records = []
+        for state in ("public", "private"):
+            record = call("POST", sem + "/object-types/" + definition_id + "/actions/create", json={"values": {
+                "id": state, "title": state + " row", "visibility": state, "count": 3, "private-note": "controlled test fixture",
+            }})
+            records.append(record["id"])
+        return {"id": definition_id, "semantic_id": semantic_id, "name": name,
+                "visible_record": records[0], "denied_record": records[1]}
 
     fixture = {
         "base": base,
@@ -122,9 +151,10 @@ with httpx.Client(base_url=base, trust_env=False, timeout=22) as cli:
         "projectId": proj,
         "source": define("work-order", "QA Work Order"),
         "target": define("equipment", "QA Equipment"),
+        "sdk": define_sdk(),
     }
     path = Path("/tmp/ontology-fixture.json")
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "w") as file:
         json.dump(fixture, file)
-    print(json.dumps({"ok": True, "principals": 2, "types": 2, "records": 6}))
+    print(json.dumps({"ok": True, "principals": 2, "types": 3, "records": 8}))

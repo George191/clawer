@@ -31,6 +31,7 @@ class OntologyActionEvent(SQLModel, table=True):
     """An immutable edit. Values are projected under the current history policy."""
 
     __tablename__ = "ontology_action_events"
+    markings: list[str] = Field(default_factory=list, sa_column=Column(JSONB, nullable=False, server_default="[]"))
     __table_args__ = (
         UniqueConstraint("record_id", "revision", name="uq_ontology_action_event_revision"),
         CheckConstraint(
@@ -57,6 +58,7 @@ class OntologyTransaction(SQLModel, table=True):
     """A replayable receipt. Steps point to exact edits, never to mutable business keys."""
 
     __tablename__ = "ontology_transactions"
+    markings: list[str] = Field(default_factory=list, sa_column=Column(JSONB, nullable=False, server_default="[]"))
     __table_args__ = (
         UniqueConstraint("project_id", "actor_id", "request_id", name="uq_ontology_tx_request"),
         Index("ix_ontology_tx_history", "project_id", "actor_id", "created_at", "id"),

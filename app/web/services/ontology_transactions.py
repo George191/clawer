@@ -8,8 +8,9 @@ from uuid import UUID, uuid4
 
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
-from sqlalchemy import select
+from sqlalchemy import Uuid, cast, column, func, literal, or_, select
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,6 +30,7 @@ from app.web.services.ontology_action_runtime import (
     raise_action_integrity_error,
 )
 from app.web.services.ontology_graph import mutate_edge
+from app.web.services.ontology_markings import allowed_for, cleared, covers, require_clearance
 from app.web.services.ontology_record_policy import authorize_record_values
 from app.web.services.ontology_registry_identity import project_access_context
 from app.web.services.ontology_runtime_values import check_record_json, normalize_fields
@@ -142,6 +144,24 @@ async def _event(session, record_id, revision):
     )
 
 
+def touched_markings(steps, project_id):
+    """Expand committed edit references, including both ends of each directed link."""
+    row, link = OntologyDefinitionRow, OntologyLinkType
+    edits = func.jsonb_array_elements(steps).table_valued(column("value", JSONB)).alias("tx_edit")
+    value = edits.c.value
+    return (select(row.published_definition["security"]["markings"]).select_from(edits)
+            .outerjoin(link, link.id == cast(value["linkTypeId"].astext, Uuid))
+            .join(row, or_(row.id == cast(value["definitionId"].astext, Uuid), row.id == link.source_definition_id, row.id == link.target_definition_id))
+            .where(row.project_id == project_id).correlate(OntologyTransaction))
+
+
+def visible_receipt(user, project_id):
+    granted = allowed_for(user.id, project_id)
+    current = OntologyDefinitionRow.published_definition["security"]["markings"]
+    touched = touched_markings(OntologyTransaction.steps, project_id)
+    return covers(OntologyTransaction.markings, granted) & ~touched.where(~covers(current, granted)).exists()
+
+
 async def _execute_steps(session, user, project_id, batch_id, steps):
     aliases = {}
     edits = []
@@ -190,9 +210,11 @@ async def _execute_steps(session, user, project_id, batch_id, steps):
     return edits
 
 
-async def execute(session: AsyncSession, user: User, project_id: UUID, request: TransactionRequest):
+async def execute(session: AsyncSession, user: User, project_id: UUID, request: TransactionRequest, *, invocation: dict | None = None):
     await require_member(session, user, project_id, lock=True)
     body = request.model_dump(mode="json", exclude={"requestId"})
+    if invocation is not None:
+        body["invocation"] = invocation
     check_record_json(body)
     signature = hashlib.sha256(
         json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
@@ -217,13 +239,18 @@ async def execute(session: AsyncSession, user: User, project_id: UUID, request: 
                 OntologyTransaction.project_id == project_id,
                 OntologyTransaction.actor_id == user.id,
                 OntologyTransaction.request_id == request.requestId,
+                visible_receipt(user, project_id),
             )
         )
+        if previous is None:
+            raise HTTPException(404, "Transaction not found")
         if previous.request_hash != signature:
             raise HTTPException(409, "Request ID already belongs to a different transaction")
         return receipt(previous)
     batch = await session.get(OntologyTransaction, batch_id)
     batch.steps = await _execute_steps(session, user, project_id, batch.id, request.steps)
+    labels = await session.scalars(touched_markings(literal(batch.steps, type_=JSONB), project_id))
+    batch.markings = sorted({key for labels_for_type in labels for key in (labels_for_type or [])})
     return receipt(batch)
 
 
@@ -247,6 +274,9 @@ async def _undo_record(session, user, definition_id, record_id, revision, *, bat
     event = await _event(session, record_id, revision)
     if event is None or event.actor_id != user.id or event.transaction_id != batch_id:
         raise HTTPException(404, "Reversible edit not found")
+    if not await cleared(session, definition.projectId, event.markings, context):
+        raise HTTPException(404, "Reversible edit not found")
+    audit_markings = sorted(set(event.markings) | {str(key) for key in definition.security.markings})
     if event.changes is None or record.revision != revision or revision >= 2_147_483_647:
         raise HTTPException(
             409, "This edit has no reversible snapshot or is no longer the current revision"
@@ -261,6 +291,7 @@ async def _undo_record(session, user, definition_id, record_id, revision, *, bat
         )
         inverse = await _event(session, record_id, revision + 1)
         inverse.transaction_id = batch_id
+        inverse.markings = audit_markings
         return
     actions = {a.kind: set(a.fields) for a in _available_actions(definition, context, fields)}
     current = record.values
@@ -309,6 +340,7 @@ async def _undo_record(session, user, definition_id, record_id, revision, *, bat
             changes=inverse_changes,
             transaction_id=batch_id,
             restricted_history=event.restricted_history or bool(definition.security.recordRules),
+            markings=audit_markings,
         )
     )
     await session.flush()
@@ -327,11 +359,13 @@ async def undo(session, user, project_id, batch_id):
             OntologyTransaction.id == batch_id,
             OntologyTransaction.project_id == project_id,
             OntologyTransaction.actor_id == user.id,
+            visible_receipt(user, project_id),
         )
         .with_for_update()
     )
     if batch is None:
         raise HTTPException(404, "Transaction not found")
+    await require_clearance(session, user, project_id, batch.markings)
     if batch.undone_at is None:
         for edit in reversed(batch.steps):
             if edit["kind"] in ("link", "unlink"):

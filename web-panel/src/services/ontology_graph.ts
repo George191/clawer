@@ -26,7 +26,7 @@ export type NamedSet = { id: string; name: string };
 export type Neighbor = { linkId: string; record: OntologyRecord };
 
 export async function graphRequest<T>(
-  method: 'get' | 'post' | 'delete',
+  method: 'get' | 'post' | 'put' | 'delete',
   url: string,
   options: { data?: unknown; params?: Record<string, unknown>; signal?: AbortSignal } = {},
 ) {

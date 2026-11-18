@@ -18,6 +18,7 @@ from app.web.api.dependencies.session import get_db
 from app.web.api.models import Team, TeamUserJoin, Tenant, User
 from app.web.api.models.ontology_graph import OntologyLink, OntologyLinkType, SetQuery
 from app.web.api.models.ontology_registry import Definition, OntologyDefinitionRow
+from app.web.api.models.ontology_revisions import OntologyRevisionGrant
 from app.web.api.models.ontology_runtime import OntologyActionEvent, OntologyRuntimeRecord
 from app.web.api.models.user import InviteCodes
 from app.web.api.routes.team import router as team_router
@@ -63,7 +64,11 @@ async def runtime():
                         "ontology_transactions",
                         "ontology_action_events",
                         "ontology_link_types",
+                        OntologyRevisionGrant.__tablename__,
+                        "ontology_markings",
+                        "ontology_marking_changes",
                         "ontology_links",
+                        "ontology_removed_links",
                     )
                 ],
             )

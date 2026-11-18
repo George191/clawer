@@ -11,7 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.web.api.models.ontology_registry import Definition, OntologyDefinitionRow
+from app.web.api.models.ontology_markings import OntologyMarking
 from app.web.api.models.ontology_runtime import OntologyRuntimeRecord
+from app.web.services.ontology_markings import allowed_ids, covers
 from app.web.services.ontology_registry_policy import (
     AccessContext,
     PropertyRecordRule,
@@ -58,7 +60,7 @@ def record_policy_errors(definition: Definition) -> list[str]:
     return errors
 
 
-def _related_records(definition, definition_id, rule, record_id=None):
+def _related_records(definition, definition_id, rule, record_id=None, context=None):
     from app.web.api.models.ontology_graph import OntologyLink, OntologyLinkType
 
     link_type = OntologyLinkType
@@ -89,6 +91,9 @@ def _related_records(definition, definition_id, rule, record_id=None):
         query = query.join(link, link.link_type_id == link_type.id).where(
             own_id == record_id, other_id == other.id
         )
+    if context is not None:
+        query = query.where(covers(other_definition.published_definition["security"]["markings"],
+                                   allowed_ids(definition.projectId, [(p.kind, p.id) for p in context.principals])))
     return query
 
 
@@ -101,6 +106,23 @@ async def validate_record_policy_refs(session, definition_id, definition) -> lis
                 "Relationship rule must identify a matching link type and active record in this project."
             ]
     return []
+
+
+async def lock_related_clearances(session, definition, context):
+    """Keep related anchors' classifications and grants stable for the complete operation."""
+    anchors = {r.relatedRecordId for r in definition.security.recordRules
+               if isinstance(r, RelatedRecordRule) and context.principals.intersection(r.readers)}
+    if not anchors:
+        return
+    row = OntologyDefinitionRow
+    peer_types = select(OntologyRuntimeRecord.definition_id).where(OntologyRuntimeRecord.id.in_(anchors))
+    labels = await session.scalars(select(row.published_definition["security"]["markings"])
+                                  .where(row.project_id == definition.projectId, row.id.in_(peer_types))
+                                  .order_by(row.id).with_for_update(read=True))
+    ids = {UUID(value) for values in labels for value in values or []}
+    if ids:
+        await session.execute(select(OntologyMarking.id).where(OntologyMarking.project_id == definition.projectId, OntologyMarking.id.in_(ids))
+                              .order_by(OntologyMarking.id).with_for_update(read=True))
 
 
 def property_operand(rule: PropertyRecordRule, context: AccessContext):
@@ -126,7 +148,7 @@ def _predicate(definition, context, definition_id, record_id, values):
                     == literal(operand, type_=JSONB)
                 )
         else:
-            conditions.append(_related_records(definition, definition_id, rule, record_id).exists())
+            conditions.append(_related_records(definition, definition_id, rule, record_id, context).exists())
     return or_(false(), *conditions)
 
 

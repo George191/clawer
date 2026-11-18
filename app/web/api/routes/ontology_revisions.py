@@ -15,6 +15,7 @@ from app.web.api.models.ontology_revisions import (
     RevisionRoleUpdate,
 )
 from app.web.services import ontology_revisions as service
+from app.web.services.ontology_markings import allowed_for, covers, require_clearance
 from app.web.services.ontology_registry_identity import project_principals
 
 router = APIRouter(prefix="/api/ontology/v1/object-types/{definition_id}", tags=["ontology revisions"])
@@ -40,7 +41,7 @@ async def history(
     rows = (await session.execute(
         select(snapshot.revision, snapshot.created_at, snapshot.actor_id, proposal.id, proposal.restore_revision)
         .select_from(snapshot).outerjoin(proposal, snapshot.proposal_id == proposal.id)
-        .where(snapshot.definition_id == row.id)
+        .where(snapshot.definition_id == row.id, covers(snapshot.snapshot["security"]["markings"], allowed_for(user.id, row.project_id)))
         .order_by(snapshot.revision.desc()).limit(limit + 1).offset(offset)
     )).all()
     return {
@@ -56,6 +57,7 @@ async def revision_details(definition_id: UUID, revision: int, session: SessionD
     row, current, _ = await service.authorized_type(session, user, definition_id)
     snapshot = await service.read_snapshot(session, row, revision)
     definition = service.dump(Definition.model_validate(snapshot.snapshot))
+    await require_clearance(session, user, row.project_id, definition["security"].get("markings", []))
     return {
         "revision": snapshot.revision, "definition": definition,
         "changesFromCurrent": service.definition_diff(service.dump(current), definition),
@@ -83,8 +85,12 @@ async def proposals(
 ):
     row, _, _ = await service.authorized_type(session, user, definition_id)
     proposal = OntologyRevisionProposal
+    baseline = OntologyRevisionSnapshot
+    allowed = allowed_for(user.id, row.project_id)
     rows = (await session.scalars(
-        select(proposal).where(proposal.definition_id == row.id)
+        select(proposal).join(baseline, (baseline.definition_id == proposal.definition_id) & (baseline.revision == proposal.base_revision))
+        .where(proposal.definition_id == row.id, covers(proposal.proposed_definition["security"]["markings"], allowed),
+               covers(baseline.snapshot["security"]["markings"], allowed))
         .order_by(proposal.created_at.desc(), proposal.id.desc()).limit(limit + 1).offset(offset)
     )).all()
     return {"items": [service.proposal_view(item, row, user.id) for item in rows[:limit]], "hasMore": len(rows) > limit}
@@ -101,6 +107,8 @@ async def proposal_details(definition_id: UUID, proposal_id: UUID, session: Sess
     row, _, _ = await service.authorized_type(session, user, definition_id)
     proposal = await service.get_proposal(session, row, proposal_id)
     baseline = await service.read_snapshot(session, row, proposal.base_revision)
+    required = set(baseline.snapshot["security"].get("markings", [])) | set(proposal.proposed_definition["security"].get("markings", []))
+    await require_clearance(session, user, row.project_id, required)
     return {
         **service.proposal_view(proposal, row, user.id),
         "definition": proposal.proposed_definition,

@@ -26,6 +26,7 @@ from app.web.api.models.ontology_registry import (
 from app.web.api.models.user import RoleTypes
 from app.web.api.utils.models import StatusTypes
 from app.web.services.etl_layers import get_etl_layers, quote_identifier
+from app.web.services.ontology_markings import allowed_ids, covers
 from app.web.services.ontology_registry_policy import AccessContext, Principal, definition_policy_errors, visibility
 
 WAREHOUSE_SCHEMAS = frozenset({"ts_ods", "ts_dwd"})
@@ -108,6 +109,7 @@ def published_catalog_statement(user: User, search: str = ""):
     if not user.is_superuser:
         statement = statement.where(source["mode"].astext == "none")
     principals = (("user", User.id), ("group", Team.id), ("organization", Team.tenant_id))
+    statement = statement.where(covers(security["markings"], allowed_ids(row.project_id, principals)))
     statement = statement.where(or_(
         security["mode"].astext == "inherit",
         *[readers.contains(func.jsonb_build_array(
@@ -137,9 +139,11 @@ def catalog_definition(user: User, row: OntologyDefinitionRow, tenant_id: UUID) 
         payload["titleKey"] = ""
     # Identity and policy definitions are editable in the draft, not public object metadata.
     payload["actions"] = []
+    payload.pop("functions", None)
     payload["security"]["objectReaders"] = []
     payload["security"]["fieldReaders"] = {}
     payload["security"].pop("recordRules", None)
+    payload["security"].pop("markings", None)
     return payload
 
 
@@ -170,6 +174,9 @@ def assess_definition(
 
     for message in record_policy_errors(definition):
         error("security.recordRules", message)
+    from app.web.services.ontology_functions import function_errors
+    for message in function_errors(definition):
+        error("functions", message)
 
     if not IDENTIFIER.fullmatch(definition.id):
         error("id", "Use a lowercase identifier beginning with a letter")

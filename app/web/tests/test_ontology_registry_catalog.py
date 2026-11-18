@@ -83,6 +83,7 @@ async def test_published_catalog_pages_visible_matches_and_projects_fields(db):
             "CREATE TEMP TABLE tenant (id uuid PRIMARY KEY, status statustypes)",
             'CREATE TEMP TABLE "user" (id uuid PRIMARY KEY, status statustypes)',
             "CREATE TEMP TABLE team_user_join (team_id uuid, user_id uuid, status statustypes)",
+            "CREATE TEMP TABLE ontology_markings (id uuid PRIMARY KEY, project_id uuid, readers jsonb)",
             "CREATE TEMP TABLE ontology_registry_definitions (id uuid PRIMARY KEY, project_id uuid,"
             " revision integer, published_at timestamptz, published_definition jsonb)",
         ):

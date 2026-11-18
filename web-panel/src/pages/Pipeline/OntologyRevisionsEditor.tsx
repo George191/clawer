@@ -1,6 +1,7 @@
 import { Button, Checkbox, Input, Select } from '@/components/ui';
 import type { OntologyPrincipal, Principal, SemanticAction, SemanticDefinition, SemanticProperty } from '../../services/ontology';
 import OntologyRecordPolicyEditor from './OntologyRecordPolicyEditor';
+import OntologyFunctionEditor from './OntologyFunctionEditor';
 
 const propertyTypes = ['string', 'integer', 'number', 'boolean', 'date', 'datetime', 'json'];
 const actionKinds = ['create', 'modify', 'delete'] as const;
@@ -97,6 +98,7 @@ export default function OntologyRevisionsEditor({ initial, definition, principal
       })}
     </details>}
 
+    {definition.source.mode === 'none' && <OntologyFunctionEditor definition={definition} disabled={disabled} change={functions => change({functions})} />}
     <details>
       <summary>Security</summary>
       <label className="flow-create-field"><span>Object security policy</span><Select aria-label="Object security policy" disabled={disabled} value={security.mode} options={[

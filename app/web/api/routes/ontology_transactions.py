@@ -8,9 +8,13 @@ from sqlalchemy import select
 from app.web.api.dependencies.common import CurrentUser
 from app.web.api.dependencies.session import SessionDep
 from app.web.api.models.ontology_runtime import OntologyTransaction
+from app.web.api.routes.ontology_functions import router as functions_router
 from app.web.services import ontology_transactions as tx
+from app.web.api.routes.ontology_writeback import router as writeback_router
 
 router = APIRouter(prefix="/api/ontology/v1", tags=["ontology transactions"])
+router.include_router(writeback_router)
+router.include_router(functions_router)
 
 
 @router.post("/projects/{project_id}/transactions", response_model=tx.TransactionReceipt)
@@ -35,6 +39,7 @@ async def transactions(
             .where(
                 OntologyTransaction.project_id == project_id,
                 OntologyTransaction.actor_id == user.id,
+                tx.visible_receipt(user, project_id),
             )
             .order_by(OntologyTransaction.created_at.desc(), OntologyTransaction.id.desc())
             .offset(offset)

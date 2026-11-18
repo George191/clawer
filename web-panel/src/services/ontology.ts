@@ -4,14 +4,17 @@ export type SemanticSource = { mode: 'existing' | 'none'; schema?: string; table
 export type SemanticProperty = { id: string; name: string; type: string; sourceColumn?: string; required: boolean };
 export type Principal = { kind: 'user' | 'group' | 'organization'; id: string };
 export type SemanticAction = { kind: 'create' | 'modify' | 'delete'; submitters: Principal[]; fields: string[] };
+export type FunctionOperand = {parameter: string} | {value: unknown};
+export type FunctionAssignment = {field: string; operation: 'set'|'add'|'multiply'|'concat'; operands: FunctionOperand[]};
+export type BusinessFunction = {key: string; name: string; assignments: FunctionAssignment[]};
 export type RecordRule =
   | { kind: 'property'; readers: Principal[]; field: string; match: 'equals' | 'currentUser'; value?: string | boolean | number | null }
   | { kind: 'related'; readers: Principal[]; linkType: string; direction: 'incoming' | 'outgoing'; relatedRecordId: string };
-export type SemanticSecurity = { mode: 'inherit' | 'explicit'; objectReaders: Principal[]; fieldReaders: Record<string, Principal[]>; recordRules?: RecordRule[] };
+export type SemanticSecurity = { mode: 'inherit' | 'explicit'; objectReaders: Principal[]; fieldReaders: Record<string, Principal[]>; recordRules?: RecordRule[]; markings?: string[] };
 export type SemanticDefinition = {
   id: string; name: string; pluralName: string; description: string; icon: string; color: string; groups: string[];
   projectId: string; source: SemanticSource; properties: SemanticProperty[]; primaryKey: string[]; titleKey: string;
-  actions: SemanticAction[]; security: SemanticSecurity;
+  actions: SemanticAction[]; security: SemanticSecurity; functions?: BusinessFunction[];
 };
 export type OntologyDraft = { id: string; revision: number; definition: SemanticDefinition };
 export type OntologyIssue = { path: string; message: string };
@@ -20,6 +23,13 @@ export type OntologyProject = { id: string; name: string; teamName: string; tena
 export type OntologyPrincipal = Principal & { name: string };
 export type PublishedOntologyType = { id: string; revision: number; definition: SemanticDefinition };
 const config = { baseURL: '/api/ontology/v1' };
+export function newOntologyRequestId() {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 15) | 64;
+  bytes[8] = (bytes[8] & 63) | 128;
+  const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+  return [hex.slice(0,8), hex.slice(8,12), hex.slice(12,16), hex.slice(16,20), hex.slice(20)].join('-');
+}
 const data = <T,>(body: T | { code: number; data: T }): T => body && typeof body === 'object' && 'code' in body && 'data' in body ? body.data : body as T;
 const draftPath = (id: string) => '/drafts/' + encodeURIComponent(id);
 

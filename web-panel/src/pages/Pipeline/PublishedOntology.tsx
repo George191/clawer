@@ -8,7 +8,9 @@ import {
   type PublishedOntologyType, type PublishedOntologyPage, type SemanticAction, type OntologyRecord, type OntologyRecordPage, type OntologyRecordHistoryPage,
 } from '../../services/ontology';
 import OntologyGraph from './OntologyGraph';
+import OntologyFunctions from './OntologyFunctions';
 import OntologyRevisions from './OntologyRevisions';
+import OntologySdkDownload from './OntologySdkDownload';
 import OntologyTransactions from './OntologyTransactions';
 import { parsePropertyValue } from './ontologyPropertyValue';
 import SemanticTypeGlyph from './SemanticTypeGlyph';
@@ -84,6 +86,7 @@ export default function PublishedOntology({ selection, onSelect }: Props) {
   const [loading, setLoading] = useState(true);
   const [version, setVersion] = useState(0);
   const [tool, setTool] = useState('');
+  const [functionResult, setFunctionResult] = useState('');
   const [operation, setOperation] = useState<Operation>();
   const [inputs, setInputs] = useState<ActionInputs>({});
   const [actionPending, setActionPending] = useState(false);
@@ -184,7 +187,7 @@ export default function PublishedOntology({ selection, onSelect }: Props) {
     setSelectedRow(undefined);
   };
   const recordActions = selectedRecord?.id ? available.filter(action => action.kind !== 'create') : [];
-  useEffect(() => {setTool('');setDeleted(false);}, [selection]);
+  useEffect(() => {setTool('');setDeleted(false);setFunctionResult('');}, [selection]);
   const returnToTypes = () => { if (!actionLocked.current) { setOffset(0); setSelectedRow(undefined); onSelect(''); } };
   return <>
     <main className={`flow-ontology__published flow-foundry-workbench${selection ? ' flow-ontology__published--results' : ''}`} data-testid="published-ontology" aria-label={selection ? 'Published object results' : 'Published object types'} aria-busy={loading}>
@@ -221,12 +224,18 @@ export default function PublishedOntology({ selection, onSelect }: Props) {
               </div>
             </div>
             <nav className="flow-ontology-tools" aria-label="Object type tools">
-              {(object.definition.source.mode === 'none' ? ['Relationships and sets','Transactions','Model revisions'] : ['Model revisions']).map(label =>
+              {(object.definition.source.mode === 'none' ? ['Relationships and sets','Transactions','Functions','Model revisions'] : ['Model revisions']).map(label =>
                 <Button key={label} size="small" aria-pressed={tool === label} onClick={() => {if(tool === label){setTool('');reload();}else setTool(label);}}>{label}</Button>)}
+              <OntologySdkDownload key={object.id} definitionId={object.id} />
             </nav>
             {tool && <div className="flow-ontology-tool-content">
               {tool === 'Relationships and sets' && <OntologyGraph key={object.id} objectType={object} recordId={selectedRecord?.id || undefined} />}
               {tool === 'Transactions' && <OntologyTransactions key={object.id} objectType={object} />}
+              {tool === 'Functions' && <>
+                {functionResult && <p role="status">{functionResult}</p>}
+                <OntologyFunctions key={object.id} id={object.id} record={deleted ? undefined : selectedRecord}
+                  onStarted={() => setFunctionResult('')} onCommitted={name => {setFunctionResult('Committed: '+name);reload();}} />
+              </>}
               {tool === 'Model revisions' && <OntologyRevisions key={object.id} definitionId={object.id} onMerged={reload} />}
             </div>}
             <div className={`flow-published-results-body${selectedRecord ? ' has-selection' : ''}`}>

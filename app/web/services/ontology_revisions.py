@@ -18,6 +18,7 @@ from app.web.api.models.user import RoleTypes
 from app.web.api.utils.models import StatusTypes
 from app.web.services import ontology_registry as registry
 from app.web.services.ontology_graph import graph_referenced_fields
+from app.web.services.ontology_markings import require_clearance
 from app.web.services.ontology_record_policy import validate_record_policy_refs
 from app.web.services.ontology_registry_identity import eligible_principals
 from app.web.services.ontology_registry_policy import definition_principals
@@ -89,8 +90,7 @@ async def authorized_type(session, actor, definition_id, *, need=None, lock=None
         OntologyDefinitionRow.id == definition_id,
         OntologyDefinitionRow.published_at.is_not(None),
     )
-    if lock:
-        statement = statement.with_for_update(read=lock == "read")
+    statement = statement.with_for_update(read=lock != "write")
     row = await session.scalar(statement.execution_options(populate_existing=True))
     if row is None:
         raise HTTPException(404, "Revision workspace not found")
@@ -98,6 +98,7 @@ async def authorized_type(session, actor, definition_id, *, need=None, lock=None
     if not (rights.edit or rights.review):
         raise HTTPException(404, "Revision workspace not found")
     current = Definition.model_validate(row.published_definition)
+    await require_clearance(session, actor, row.project_id, current.security.markings)
     if current.source.mode == "existing" and not rights.warehouse:
         raise HTTPException(404, "Revision workspace not found")
     if need and not getattr(rights, need):
@@ -153,7 +154,7 @@ def definition_diff(before: dict, after: dict):
     before = before.copy()
     after = after.copy()
     changed = []
-    for section, key in [("properties", "id"), ("actions", "kind")]:
+    for section, key in [("properties", "id"), ("actions", "kind"), ("functions", "key")]:
         old = {item[key]: item for item in before.pop(section, [])}
         new = {item[key]: item for item in after.pop(section, [])}
         changed.extend({"path": f"{section}.{name}", "before": old.get(name), "after": new.get(name)}
@@ -295,6 +296,9 @@ async def validate_change(session, row, current, candidate, source):
 
 async def create_proposal(session, row, current, actor, revision, candidate, summary, restore_revision=None):
     check_revision(row, revision)
+    await require_clearance(session, actor, row.project_id, candidate.security.markings)
+    if set(current.security.markings) - set(candidate.security.markings) and not (await rights_for(session, row.project_id, actor.id, lock=True)).manage:
+        raise HTTPException(403, "Only a project manager can propose removing a required marking")
     async with _bound_table(row, current) as source:
         await validate_change(session, row, current, candidate, source)
         proposal = OntologyRevisionProposal(
@@ -310,6 +314,7 @@ async def create_proposal(session, row, current, actor, revision, candidate, sum
 
 async def review_proposal(session, row, proposal, actor, payload):
     ensure_pending(row, proposal)
+    await require_clearance(session, actor, row.project_id, Definition.model_validate(proposal.proposed_definition).security.markings)
     if actor.id == proposal.author_id:
         raise HTTPException(403, "A different authorized member must review this proposal")
     proposal.status = "approved" if payload.approve else "rejected"
@@ -330,6 +335,13 @@ async def merge_proposal(session, row, current, proposal, actor):
     if not author.edit or not reviewer.review or (current.source.mode == "existing" and not (author.warehouse and reviewer.warehouse)):
         raise HTTPException(409, "The proposer or reviewer no longer has permission")
     candidate = Definition.model_validate(proposal.proposed_definition)
+    required = set(current.security.markings) | set(candidate.security.markings)
+    if required:
+        for actor_id in sorted({actor.id, proposal.author_id, proposal.reviewer_id}):
+            await require_clearance(session, await session.get(User, actor_id), row.project_id, required)
+        if set(current.security.markings) - set(candidate.security.markings):
+            if not author.manage or not (await rights_for(session, row.project_id, actor.id, lock=True)).manage:
+                raise HTTPException(403, "Only a project manager can merge an independently reviewed marking removal")
     async with _bound_table(row, current) as source:
         await validate_change(session, row, current, candidate, source)
         row.revision += 1
