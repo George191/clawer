@@ -1341,6 +1341,15 @@ export type ColumnLineageReferences = {
   direction: TableLineageDirection; column: string; truncated: boolean;
   references: (TableLineageIdentity & { column: string; kinds: TableLineageReferenceKind[] })[];
 };
+export type ColumnMappingNode = TableLineageIdentity & { column: string };
+export type ColumnMappingPaths = {
+  status: 'complete' | 'incomplete' | 'unavailable'; direction: TableLineageDirection;
+  paths: { nodes: ColumnMappingNode[] }[];
+};
+export const traceColumnMappingPaths = (scope: ColumnMappingNode, direction: TableLineageDirection, signal?: AbortSignal): Promise<ColumnMappingPaths> =>
+  client.get(`/etl/${encodeURIComponent(scope.schema)}/${encodeURIComponent(scope.table)}/lineage-column-mapping-paths`, {
+    params: { column: scope.column, direction }, signal,
+  }).then(r => unwrap<ColumnMappingPaths>(r.data));
 export const fetchColumnLineageReferences = (source: TableLineageIdentity, column: string, direction: TableLineageDirection, signal?: AbortSignal): Promise<ColumnLineageReferences> =>
   client.get(`/etl/${encodeURIComponent(source.schema)}/${encodeURIComponent(source.table)}/lineage-column-references`,
     { params: { column, direction }, signal }).then(r => unwrap<ColumnLineageReferences>(r.data));

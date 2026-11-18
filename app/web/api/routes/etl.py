@@ -16,6 +16,7 @@ from app.etl.tasks.extractors.keyword_files import MAX_FILE_SIZE
 from app.web.api.dependencies.common import CurrentActiveSuperuser, SessionDep, get_current_active_superuser, get_current_user
 from app.web.api.dependencies.session import get_db
 from app.web.api.models.column_planner_statistic import ColumnPlannerStatistic
+from app.web.api.models.lineage_column_mapping_paths import ColumnMappingPaths
 from app.web.api.models.lineage_neighbors import (
     LineageColumnReferences, LineageCommonDownstream, LineageCommonUpstream, LineageDirection, LineageNeighbors, LineagePath,
     LineagePathTargets, ObservedLineage,
@@ -168,6 +169,7 @@ from app.web.services.etl_workspace import get_etl_workspace
 from app.web.services.indexed_compound_id_sample import indexed_compound_sample_capability, sample_indexed_compound_ids
 from app.web.services.indexed_id_sample import indexed_sample_capability, sample_indexed_ids
 from app.web.services.column_planner_statistic import ColumnPlannerStatisticUnavailable, read_column_planner_statistic
+from app.web.services.lineage_column_mapping_paths import ColumnMappingRootUnavailable, read_column_mapping_paths
 from app.web.services.lineage_column_references import read_lineage_column_references
 from app.web.services.preview_index_coverage import preview_index_coverage
 from app.web.services.transfer_observed_lineage import observed_transfer_lineage
@@ -1485,6 +1487,26 @@ async def table_column_planner_statistic(
     try:
         return await read_column_planner_statistic(session, schema, table, request.query_params["column"])
     except ColumnPlannerStatisticUnavailable:
+        return denied
+
+
+@write.get("/{schema}/{table}/lineage-column-mapping-paths", response_model=ColumnMappingPaths)
+async def table_lineage_column_mapping_paths(
+    schema: str, table: str, request: Request, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> ColumnMappingPaths | JSONResponse:
+    response.headers["Cache-Control"] = "private, no-store"
+    denied = JSONResponse({"detail": "Column mapping path unavailable"}, status_code=404,
+                          headers={"Cache-Control": "private, no-store"})
+    query = request.query_params
+    if len(query.multi_items()) != 2 or set(query) != {"column", "direction"}:
+        return denied
+    direction = query["direction"]
+    if direction not in ("incoming", "outgoing"):
+        return denied
+    try:
+        return await read_column_mapping_paths(session, schema, table, query["column"], direction)
+    except ColumnMappingRootUnavailable:
         return denied
 
 

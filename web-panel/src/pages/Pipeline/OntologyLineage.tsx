@@ -290,7 +290,7 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
               <div className="flow-lineage-status"><span>{nodes.length} schemas · {links.length} predefined relationships</span><small data-testid="ontology-lineage-motion-status">{motionStatus}</small></div>
               {asset && inspectorOpen && <aside className={`flow-lineage-inspector${activePanel === 'transfers' || showExportTable || showOrdinaryTable ? ' flow-lineage-inspector--transfers' : ''}`} aria-label="Node details"><header><span>{showExportTable || showOrdinaryTable ? 'SELECTED TABLE' : 'SELECTED SCHEMA'}</span><button type="button" aria-label="Close node details" onClick={closeInspector}><CloseOutlined /></button></header><h2>{showExportTable || showOrdinaryTable ? selectedTable : asset.alias || asset.label}</h2><code>{showExportTable || showOrdinaryTable ? `${asset.key}.${selectedTable}` : asset.key}</code>
                 {showOrdinaryTable ? <>
-                  {selectedColumn && <ColumnLineageReferences schema={asset.key} table={selectedTable} column={selectedColumn} version={version + refreshToken} />}
+                  {selectedColumn && <ColumnLineageReferences schema={asset.key} table={selectedTable} column={selectedColumn} version={version + refreshToken} canTraceMappings={canPlanTransfers} />}
                   <TableLineageReferences schema={asset.key} table={selectedTable} version={version + refreshToken} />
                   {canPlanTransfers && asset.key === 'ts_transfer_sandbox' &&
                     <ObservedTableLineage table={selectedTable} version={version + refreshToken} />}
