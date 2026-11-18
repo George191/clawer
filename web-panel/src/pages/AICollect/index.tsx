@@ -46,7 +46,7 @@ import {
 } from '@/components/ui/icons';
 import { useSearchParams } from 'react-router-dom';
 import ErrorBoundary from '@/components/ErrorBoundary';
-import NativeDot, { type DotActivity } from '@/components/NativeDot';
+import { type DotActivity } from '@/components/NativeDot';
 import SearchEngineIcon, { searchEngineLabels } from '@/components/SearchEngineIcon';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { formatWorkspaceScheduleLabel } from '@/services/taskSchedule';
@@ -3312,7 +3312,7 @@ const AICollect: React.FC = () => {
       return (
         <section className="ai-prompt-landing">
           <div className="ai-prompt-copy">
-            <div className="ai-collect-dot is-landing"><NativeDot activity={dotActivity} /></div>
+            <div className="ai-collect-dot is-landing" data-activity={dotActivity} />
             <h1 className="ai-prompt-title">嗨，<span className="ai-prompt-name">{currentUserName}</span>，又有新灵感了吗？</h1>
           </div>
 
@@ -4613,7 +4613,7 @@ const AICollect: React.FC = () => {
   const renderWorkflowHeader = () => (
     <header className="ai-session-fixed-meta">
       <div className="ai-session-dot-heading">
-        <div className="ai-collect-dot is-session"><NativeDot activity={dotActivity} /></div>
+        <div className="ai-collect-dot is-session" data-activity={dotActivity} />
         <div className="ai-session-fixed-copy">
           <Text className="ai-session-fixed-eyebrow">{sessionHeaderMeta.eyebrow}</Text>
           <div className="ai-session-fixed-title-row">

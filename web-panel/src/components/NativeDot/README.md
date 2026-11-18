@@ -19,6 +19,14 @@ import NativeDot, { type DotActivity, type NativeDotProps } from '@/components/N
 <div style={{ width: 120, height: 120 }}><NativeDot activity="Working" /></div>
 ```
 
+The collection page keeps one `ScoutDot` instance above the router. It starts preparation
+on the login screen, retains the iframe across route/activity changes, and forwards
+page pointer coordinates to the native pointer/gaze APIs. `preload` prepares the first
+frame offscreen, then suspends offscreen rendering.
+
+The bundled engine has no separate Sleep activity; `None` is native idle, not a
+guaranteed sleeping/ZZZ animation.
+
 All props are optional: `activity` defaults to `None`, `paused` to `false`, and
 `dark` to `true`. `DotActivity`, `NativeDotProps`, and `DOT_ACTIVITIES` are public
 exports. The component handles startup, visibility and reduced motion internally.

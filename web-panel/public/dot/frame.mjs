@@ -77,7 +77,17 @@ function render(now) {
 }
 
 addEventListener('message', event => {
-  if (event.source !== parent || event.origin !== location.origin || event.data?.type !== 'helio-dot-config') return;
+  if (event.source !== parent || event.origin !== location.origin) return;
+  if (event.data?.type === 'helio-dot-pointer') {
+    if (character && ready && visible() && Number.isFinite(event.data.x) && Number.isFinite(event.data.y)) {
+      character.setReadyGaze(event.data.x, event.data.y, elapsed);
+      character.pointer(PointerPhase.Move, 1, event.data.x, event.data.y, elapsed);
+      canvas.dataset.gaze = `${event.data.x},${event.data.y}`;
+      schedule();
+    }
+    return;
+  }
+  if (event.data?.type !== 'helio-dot-config') return;
   try {
     const data = event.data;
     if (!Object.hasOwn(ActivityKind, data.activity)) throw new Error('Unknown Dot activity.');

@@ -1,3 +1,4 @@
+import ScoutDot from '@/components/NativeDot/ScoutDot';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { ConfigProvider, App as UiApp, theme as uiTheme, message, notification, Modal, Spin } from '@/components/ui';
@@ -95,6 +96,7 @@ const App: React.FC = () => {
       }}
     >
       <UiApp>
+        <ScoutDot />
         {['/login', '/reset-password'].includes(location.pathname) ? (
           <AuthLayout>
             {location.pathname === '/reset-password' && <ResetPassword />}

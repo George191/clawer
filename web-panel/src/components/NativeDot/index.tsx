@@ -19,9 +19,10 @@ export interface NativeDotProps {
   activity?: DotActivity;
   paused?: boolean;
   dark?: boolean;
+  preload?: boolean;
 }
 
-export default function NativeDot({ activity = 'None', paused = false, dark = true }: NativeDotProps) {
+export default function NativeDot({ activity = 'None', paused = false, dark = true, preload = false }: NativeDotProps) {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const desiredRef = useRef({ activity, paused, dark });
   const visibilityRef = useRef(true);
@@ -30,7 +31,7 @@ export default function NativeDot({ activity = 'None', paused = false, dark = tr
   const [error, setError] = useState('');
   desiredRef.current = { activity, paused, dark };
   function configure() {
-    frameRef.current?.contentWindow?.postMessage({ type: 'helio-dot-config', ...desiredRef.current, active: visibilityRef.current && !document.hidden, reduced: reducedRef.current }, location.origin);
+    frameRef.current?.contentWindow?.postMessage({ type: 'helio-dot-config', ...desiredRef.current, active: (visibilityRef.current || preload && state === 'loading') && !document.hidden, reduced: reducedRef.current }, location.origin);
   }
   useEffect(() => {
     const frame = frameRef.current;
@@ -56,8 +57,18 @@ export default function NativeDot({ activity = 'None', paused = false, dark = tr
       document.removeEventListener('visibilitychange', configure);
       motion.removeEventListener('change', onMotion);
     };
+  }, [preload, state]);
+  useEffect(configure, [activity, paused, dark, preload, state]);
+  useEffect(() => {
+    const move = (event: PointerEvent) => {
+      if (!visibilityRef.current || event.pointerType === 'touch') return;
+      const rect = frameRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      frameRef.current?.contentWindow?.postMessage({ type: 'helio-dot-pointer', x: Math.max(0, Math.min(1, 0.5 + (event.clientX - rect.left - rect.width / 2) / innerWidth)), y: Math.max(0, Math.min(1, 0.5 + (event.clientY - rect.top - rect.height / 2) / innerHeight)) }, location.origin);
+    };
+    window.addEventListener('pointermove', move, { passive: true });
+    return () => window.removeEventListener('pointermove', move);
   }, []);
-  useEffect(configure, [activity, paused, dark]);
   return <div className="native-dot-view" data-renderer="dot-original" data-state={state} data-activity={activity}>
     <iframe ref={frameRef} className="native-dot-frame" src="/dot/frame.html" title={`Helio · ${DOT_ACTIVITIES[activity].label}`} onLoad={configure} />
     {state === 'loading' && <span className="native-dot-message" role="status">正在准备原生 Dot…</span>}
