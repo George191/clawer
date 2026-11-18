@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field as ApiField
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field as ApiField, UUID4, field_validator
 from sqlalchemy import BigInteger, CheckConstraint, Column, DateTime
 from sqlmodel import Field, SQLModel
 
@@ -34,6 +34,30 @@ class PushInboxStatus(BaseModel):
     intakeGeneration: int | None = None
     pausedAt: datetime | None = None
     secondaryProducerAvailable: Literal[True] | None = None
+    eventPathAvailable: Literal[True] | None = None
+
+
+class PushInboxEventPathRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    receiptId: UUID4
+
+    @field_validator("receiptId", mode="before")
+    @classmethod
+    def canonical_id(cls, value):
+        if not isinstance(value, str) or len(value) != 36 or str(UUID(value)) != value:
+            raise ValueError("Invalid receipt identifier")
+        return value
+
+
+class PushInboxEventPath(BaseModel):
+    status: Literal["applied_recorded", "accepted_not_applied_at_observation"]
+    receiptId: UUID
+    ordinal: str
+    acceptedAt: AwareDatetime
+    observedAt: AwareDatetime
+    applyReceiptId: UUID | None = None
+    appliedAt: AwareDatetime | None = None
 
 
 class PushInboxIntakeChange(BaseModel):

@@ -561,6 +561,89 @@ class PushInboxPostgres(IsolatedAsyncioTestCase):
                 self.assertEqual((blocked["state"], blocked["canReplay"]), ("blocked", True))
                 self.assertNotIn("fixture-first", str(blocked))
 
+    async def test_event_path_exact_receipt_and_read_only_opaque_failures(self):
+        await self._prepare_apply_fixture()
+        route = _ADMIN + "/event-path"
+        with (patch.object(settings, "PUSH_INBOX_SANDBOX_APPLY_ENABLED", True),
+              patch.object(settings, "PUSH_INBOX_SANDBOX_EVENT_PATH_ENABLED", True)):
+            async with self._producer() as producer, api(True, self._admin_session) as admin:
+                original = await producer.post(PATH, headers=headers(self.key, _BODY), content=_BODY)
+                self.assertEqual(original.status_code, 201, original.text)
+                receipt = original.json()
+                body = {"receiptId": receipt["id"]}
+                self.assertTrue((await admin.get(_ADMIN)).json()["eventPathAvailable"])
+                absent = await admin.post(route, json=body)
+                self.assertEqual(absent.status_code, 404, absent.text)
+                self.assertEqual(absent.headers["Cache-Control"], "private, no-store")
+                with patch.object(settings, "PUSH_INBOX_SANDBOX_EVENT_PATH_ENABLED", False):
+                    self.assertNotIn("eventPathAvailable", (await admin.get(_ADMIN)).json())
+                    self.assertEqual((await admin.post(route, json=body)).json(), absent.json())
+                async with api(False, self._admin_session) as reader:
+                    self.assertEqual((await reader.post(route, json=body)).status_code, 403)
+                self.assertEqual((await admin.put(_APPLY, json={"expectedGeneration": None})).status_code, 200)
+                pending = await admin.post(route, json=body)
+                self.assertEqual(pending.status_code, 200, pending.text)
+                self.assertEqual(pending.headers["Cache-Control"], "private, no-store")
+                self.assertEqual(set(pending.json()), {"status", "receiptId", "ordinal", "acceptedAt", "observedAt"})
+                self.assertEqual(pending.json()["status"], "accepted_not_applied_at_observation")
+                self.assertEqual(pending.json()["ordinal"], "1")
+                contradictory_id = uuid4()
+                async with self.engine.begin() as conn:
+                    await conn.execute(text("""
+                        INSERT INTO ontology_push_inbox_apply_receipts
+                        (id,request_id,database_marker,generation,outcome,from_exclusive,through_inclusive,
+                         reviewed_accepted_through,events_applied,recorded_by,recorded_at)
+                        VALUES (:id,:request,:marker,1,'applied',0,1,1,1,:actor,clock_timestamp())
+                    """), {"id": contradictory_id, "request": uuid4(), "marker": uuid4(), "actor": uuid4()})
+                self.assertEqual((await admin.post(route, json=body)).json(), absent.json())
+                async with self.engine.begin() as conn:
+                    await conn.execute(text("DELETE FROM ontology_push_inbox_apply_receipts WHERE id=:id"),
+                                       {"id": contradictory_id})
+                self.assertEqual(
+                    (await admin.post(route, json={"receiptId": str(uuid4())})).json(), absent.json(),
+                )
+                self.assertEqual((await admin.post(route + "?x=1", json=body)).json(), absent.json())
+                for malformed in (
+                    {**body, "extra": "ignored"}, {"receiptId": receipt["id"].upper()},
+                ):
+                    self.assertEqual((await admin.post(route, json=malformed)).json(), absent.json())
+                duplicated = f'{{"receiptId":"{receipt["id"]}","receiptId":"{receipt["id"]}"}}'
+                self.assertEqual((await admin.post(route, content=duplicated,
+                                                   headers={"Content-Type": "application/json"})).json(), absent.json())
+                applied = await admin.post(_APPLY + "/runs", json={
+                    "requestId": str(uuid4()), "expectedGeneration": 1,
+                    "expectedAppliedThrough": "0", "expectedAcceptedThrough": "1",
+                })
+                self.assertEqual(applied.status_code, 200, applied.text)
+                with (patch.object(settings, "PUSH_INBOX_SANDBOX_APPLY_ENABLED", False),
+                      patch.object(settings, "PUSH_INBOX_SANDBOX_PUBLIC_KEY", None)):
+                    result = await admin.post(route, json=body)
+                self.assertEqual(result.status_code, 200, result.text)
+                self.assertEqual(result.json()["status"], "applied_recorded")
+                self.assertEqual(result.json()["applyReceiptId"], applied.json()["id"])
+                self.assertEqual(result.json()["acceptedAt"], receipt["acceptedAt"])
+                async with self.engine.begin() as conn:
+                    await conn.execute(text("ALTER INDEX uq_push_apply_ordinal RENAME TO renamed_apply_ordinal"))
+                self.assertEqual((await admin.post(route, json=body)).json(), absent.json())
+                async with self.engine.begin() as conn:
+                    await conn.execute(text("ALTER INDEX renamed_apply_ordinal RENAME TO uq_push_apply_ordinal"))
+                self.assertNotIn("fixture-a", result.text)
+                async with self.engine.begin() as conn:
+                    await conn.execute(text("UPDATE ts_push_inbox_sandbox.applied_fixture SET acceptance_id=:wrong"),
+                                       {"wrong": uuid4()})
+                self.assertEqual((await admin.post(route, json=body)).json(), absent.json())
+                async with self.engine.begin() as conn:
+                    await conn.execute(text("UPDATE ts_push_inbox_sandbox.applied_fixture SET acceptance_id=:right"),
+                                       {"right": receipt["id"]})
+                    await conn.execute(text("UPDATE ontology_push_inbox_apply_receipts SET database_marker=:wrong"),
+                                       {"wrong": uuid4()})
+                self.assertEqual((await admin.post(route, json=body)).json(), absent.json())
+                async with self.engine.begin() as conn:
+                    await conn.execute(text("UPDATE ontology_push_inbox_apply_receipts SET database_marker=:right"),
+                                       {"right": self.marker})
+                    await conn.execute(text("TRUNCATE ts_push_inbox_sandbox.applied_fixture"))
+                self.assertEqual((await admin.post(route, json=body)).json(), absent.json())
+
     async def test_reviewed_apply_caps_exact_batch_detects_missing_ordinals_and_reconciles_without_target(self):
         from app.web.services.push_inbox_apply import apply_push_range
 

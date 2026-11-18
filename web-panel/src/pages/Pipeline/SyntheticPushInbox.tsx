@@ -5,6 +5,7 @@ import type { SyntheticPushInboxStatus } from '../../services/api';
 import { getSessionState } from '../../services/session';
 import { useSandboxIdentity } from './SandboxMarkings';
 import SyntheticPushApply from './SyntheticPushApply';
+import SyntheticPushEventPath from './SyntheticPushEventPath';
 
 export default function SyntheticPushInbox() {
   const identity = useSandboxIdentity();
@@ -83,6 +84,7 @@ function PushInboxStatus({ identity }: { identity: string }) {
     }
   };
   const [latest, ...earlier] = snapshot.recent;
+  const eventPath = snapshot.eventPathAvailable === true && !refreshing && !saving;
   return <section className="ontology-source-catalog ontology-source-sync" aria-labelledby={title} aria-busy={refreshing}>
     <header>
       <div><h3 id={title}>Synthetic Push inbox</h3><p>{controllable || paused ? 'Intake status for local synthetic events; separate from application and CDC replay.' : 'Read-only intake status for local synthetic events; separate from CDC replay.'}</p></div>
@@ -100,10 +102,12 @@ function PushInboxStatus({ identity }: { identity: string }) {
         <div><dt>Latest accepted receipt</dt><dd>{latest ? <code>{latest.id}</code> : 'None recorded'}</dd></div>
         <div><dt>Accepted at</dt><dd><AcceptedAt value={latest?.acceptedAt} /></dd></div>
       </dl>
+      {eventPath && latest && <SyntheticPushEventPath key={`latest:${latest.id}:${latest.ordinal}:${latest.acceptedAt}`} identity={identity} receipt={latest} />}
       {earlier.length > 0 && <details>
         <summary>Earlier accepted receipts</summary>
         <ol className="ontology-source-sync__items">{earlier.map(receipt => <li key={receipt.id}>
           <span>Receipt <code>{receipt.id}</code></span><span>Accepted at <AcceptedAt value={receipt.acceptedAt} /></span>
+          {eventPath && <SyntheticPushEventPath key={`${receipt.ordinal}:${receipt.acceptedAt}`} identity={identity} receipt={receipt} />}
         </li>)}</ol>
       </details>}
       <p><strong>Acceptance is not application.</strong> Inbox acceptance alone does not show that any target changed or data flowed downstream.</p>

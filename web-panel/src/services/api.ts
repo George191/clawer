@@ -646,7 +646,7 @@ export type SandboxCdcReceipt = {
 const sandboxCdcPath = '/etl/cdc-sandbox';
 export type SyntheticPushInboxStatus = {
   available: boolean; state: 'disabled' | 'unconfigured' | 'ready' | 'full' | 'paused';
-  intakeControlAvailable?: true; intakeGeneration?: number; pausedAt?: string; secondaryProducerAvailable?: true;
+  intakeControlAvailable?: true; intakeGeneration?: number; pausedAt?: string; secondaryProducerAvailable?: true; eventPathAvailable?: true;
   acceptedCount: number; totalLimit: number; windowSeconds: number; windowLimit: number;
   recent: { id: string; ordinal: string; acceptedAt: string }[];
 };
@@ -657,6 +657,15 @@ export const setSyntheticPushIntakePaused = (
 ): Promise<SyntheticPushInboxStatus> =>
   client.put('/etl/push-inbox-sandbox/intake', { expectedGeneration, paused }, { signal })
     .then(r => unwrap<SyntheticPushInboxStatus>(r.data));
+export type SyntheticPushAcceptedReceipt = SyntheticPushInboxStatus['recent'][number];
+export type SyntheticPushEventPath = {
+  status: 'applied_recorded' | 'accepted_not_applied_at_observation';
+  receiptId: string; ordinal: string; acceptedAt: string; observedAt: string;
+  applyReceiptId?: string; appliedAt?: string;
+};
+export const checkSyntheticPushEventPath = (receiptId: string, signal?: AbortSignal): Promise<SyntheticPushEventPath> =>
+  client.post('/etl/push-inbox-sandbox/event-path', { receiptId }, { signal })
+    .then(r => unwrap<SyntheticPushEventPath>(r.data));
 export type PushApplyResult = {
   status: 'applied' | 'no_new_data'; id: string | null; fromExclusive: string; throughInclusive: string;
   reviewedAcceptedThrough: string; eventsApplied: number; appliedAt: string | null; checkedAt: string | null; hasMoreReviewed: boolean;

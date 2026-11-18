@@ -80,6 +80,11 @@ def local_inbox_database() -> URL | None:
         return None
 
 
+def event_path_opted_in() -> bool:
+    return (settings.PUSH_INBOX_SANDBOX_EVENT_PATH_ENABLED and inbox_opted_in()
+            and settings.PUSH_INBOX_SANDBOX_DATABASE_MARKER is not None and local_inbox_database() is not None)
+
+
 def configured() -> bool:
     return (inbox_opted_in() and settings.PUSH_INBOX_SANDBOX_DATABASE_MARKER is not None
             and producer_key() is not None and local_inbox_database() is not None)
@@ -127,6 +132,7 @@ async def _status(session: AsyncSession, state: PushInboxStateRow) -> PushInboxS
         acceptedCount=state.accepted_count, intakeControlAvailable=True if changeable else None,
         intakeGeneration=generation if changeable or generation else None, pausedAt=paused_at,
         secondaryProducerAvailable=True if producer_key(secondary=True) is not None else None,
+        eventPathAvailable=True if event_path_opted_in() else None,
         recent=[PushInboxAcceptance(id=identity, ordinal=str(ordinal), acceptedAt=at) for identity, ordinal, at in recent],
     )
 

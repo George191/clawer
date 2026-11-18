@@ -44,7 +44,9 @@ from app.web.api.models.cdc_sandbox import CdcSandboxApply, CdcSandboxReceipt, C
 from app.web.api.models.cdc_sandbox_versions import (
     CdcSandboxComparison, CdcSandboxVersionDetail, CdcSandboxVersionsPage,
 )
-from app.web.api.models.push_inbox import PushInboxIntakeChange, PushInboxStatus
+from app.web.api.models.push_inbox import (
+    PushInboxEventPath, PushInboxEventPathRequest, PushInboxIntakeChange, PushInboxStatus,
+)
 from app.web.api.models.push_inbox_apply import PushApplyRequest, PushApplyResult, PushApplyReview, PushApplyStatus
 from app.web.api.models.pipeline_handoff import (
     PipelineHandoffCapability, PipelineHandoffCopyReceipt, PipelineHandoffCopyRequest, PipelineHandoffEligibility,
@@ -147,6 +149,7 @@ from app.web.services.pipeline_sandbox_outputs import (
 )
 from app.web.services.push_inbox import change_push_intake, read_push_status
 from app.web.services.push_inbox_apply import apply_push_range, read_push_apply, review_push_apply
+from app.web.services.push_inbox_event_path import PushInboxEventPathUnavailable, read_push_event_path
 from app.web.services.table_export_snapshot import compare_table_export_snapshots, read_snapshot_preview_capability
 from app.web.services.table_export_snapshot_intent import (
     SnapshotPublicationIntentPredecessorChanged, SnapshotPublicationIntentUnavailable,
@@ -201,6 +204,23 @@ async def get_local_push_inbox(
         return await read_push_status(session)
     except DBAPIError:
         raise HTTPException(503, "Synthetic inbox status is unavailable") from None
+
+
+@write.post("/push-inbox-sandbox/event-path", response_model=PushInboxEventPath, response_model_exclude_none=True)
+async def post_local_push_event_path(
+    request: Request, response: Response, session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> PushInboxEventPath | JSONResponse:
+    response.headers["Cache-Control"] = "private, no-store"
+    denied = JSONResponse({"detail": "Synthetic event path unavailable"}, status_code=404,
+                          headers={"Cache-Control": "private, no-store"})
+    try:
+        payload = PushInboxEventPathRequest.model_validate(await _parse_snapshot_intent_json(request))
+    except (ValueError, TimeoutError, RecursionError):
+        return denied
+    try:
+        return await read_push_event_path(session, payload.receiptId)
+    except PushInboxEventPathUnavailable:
+        return denied
 
 
 @write.put("/push-inbox-sandbox/intake", response_model_exclude_none=True)
