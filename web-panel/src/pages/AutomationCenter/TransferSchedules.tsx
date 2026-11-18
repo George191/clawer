@@ -7,6 +7,7 @@ import { getSessionState } from '@/services/session';
 import { isUtcMonthDay, isoWeekdayName, nextLocalTimeForUtcClock } from '@/services/scheduleTime';
 import { recordedUpstreamRule, upstreamExpression } from '../Pipeline/upstreamRules';
 import UpstreamSlotHistory, { UpstreamUtcTime } from '../Pipeline/UpstreamSlotHistory';
+import MonthlyCommittedRun, { isCommittedMonthlyJob } from './MonthlyCommittedRun';
 import { useSandboxIdentity } from '../Pipeline/SandboxMarkings';
 
 type Props = { keyword: string; filter: 'all' | 'enabled' | 'paused' };
@@ -169,6 +170,9 @@ function TransferSchedulesWorkspace({ keyword, filter, identity }: Props & { ide
                   {recorded?.parents.map(parent => <span key={parent.id}>Rule producer {parent.label}: <code>{parent.id}</code></span>)}
                   {'events' in job && job.events.map(event => <span key={event.eventId}>Parent receipt: <code>{event.parentReceiptId}</code></span>)}
                   {job.receiptId && ('events' in job ? <span>Child receipt: <code>{job.receiptId}</code></span> : <code title={job.state === 'no_new_data' ? 'No new data record' : 'Committed receipt'}>{job.receiptId}</code>)}
+                  {item.kind === 'transfer' && 'slot' in job && isCommittedMonthlyJob(job) &&
+                    <MonthlyCommittedRun key={JSON.stringify([version, item.planId, job.id, job.slot, job.scheduleDayOfMonthUtc, job.receiptId])}
+                      planId={item.planId} job={job} identity={identity} disabled={cancelBusy || Boolean(confirmation)} />}
                   {item.kind === 'transfer' && canCancel(item, job) && <Button size="small" danger disabled={cancelBusy || Boolean(confirmation)}
                     onClick={() => { setCancelNotice(undefined); setConfirmation({ schedule: item, job }); }}>Cancel waiting job</Button>}
                 </li>;

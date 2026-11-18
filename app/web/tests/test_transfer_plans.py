@@ -1086,6 +1086,142 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
             async with self.pg.session() as session:
                 await self.migrate(session, self.monthly_migration.downgrade)
 
+    async def test_monthly_committed_run_exact_historical_names_zero_and_current_physical_acl(self):
+        from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+        from app.web.services.transfer_schedules import execute_transfer_schedule_job
+
+        slot = datetime(2024, 3, 28, 23, 59, tzinfo=timezone.utc)
+        observed_runtime = slot + timedelta(minutes=2)
+        draft_clock = slot - timedelta(days=2)
+        clock = draft_clock
+
+        class FixtureClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return clock.astimezone(tz) if tz else clock.replace(tzinfo=None)
+
+        schema = "ts_transfer_sandbox"
+        role = "monthly_reader_" + uuid4().hex[:8]
+        password = uuid4().hex
+        async with self.pg.session() as session:
+            for sql in (
+                f"CREATE SCHEMA {schema}",
+                *(f"CREATE TABLE {schema}.{table} (id int PRIMARY KEY)" for table in
+                  ("source", "target", "zero_source", "zero_target", "replacement_target")),
+                f"INSERT INTO {schema}.source VALUES (1)",
+                "CREATE TYPE public.statustypes AS ENUM ('ENABLE', 'DISABLE')",
+                'CREATE TABLE public."user" (id uuid PRIMARY KEY, status public.statustypes, is_superuser bool)',
+                f"CREATE ROLE {role} LOGIN PASSWORD '{password}'",
+                f"GRANT USAGE ON SCHEMA {schema} TO {role}",
+                f"GRANT SELECT ON public.ontology_objects, public.ontology_transfer_schedule_jobs, "
+                f"public.ontology_transfer_runs, public.ontology_transfer_attempts, public.ontology_transfer_upstream_jobs TO {role}",
+                f"GRANT SELECT ON {schema}.source, {schema}.target TO {role}",
+            ):
+                await session.execute(text(sql))
+            await session.execute(text("""INSERT INTO public."user" VALUES (:id,'ENABLE',true)"""), {"id": TEST_ACTOR})
+
+        async def cleanup_role():
+            async with self.pg.session() as session:
+                await session.execute(text(f"DROP OWNED BY {role}"))
+                await session.execute(text(f"DROP ROLE {role}"))
+
+        self.addAsyncCleanup(self.pg.execute, "DROP TYPE public.statustypes")
+        self.addAsyncCleanup(self.pg.execute, 'DROP TABLE public."user"')
+        self.addAsyncCleanup(cleanup_role)
+        limited_engine = create_async_engine(make_url(TRANSFERS_URL).set(username=role, password=password))
+        self.addAsyncCleanup(limited_engine.dispose)
+
+        async def restricted():
+            async with AsyncSession(limited_engine) as session:
+                yield session
+
+        body = {**PAYLOAD, "sourceSchema": schema, "targetSchema": schema, "sourceTable": "source", "targetTable": "target",
+                "writeMode": "upsert", "trigger": "monthly", "scheduleTime": "23:59", "scheduleDayOfMonthUtc": 28}
+
+        def exact(plan, job):
+            return f"{RUNS}/{plan}/schedule/jobs/{job}/committed-run"
+
+        with (
+            patch("app.web.services.transfer_plans.get_etl_layers", return_value=self.layers),
+            patch("app.web.services.transfer_runs.get_etl_layers", return_value=self.layers),
+            patch("app.web.services.transfer_plans.datetime", FixtureClock),
+            patch("app.web.services.transfer_runs.datetime", FixtureClock),
+            patch("app.web.services.transfer_schedules._utc_now", return_value=draft_clock),
+            patch.object(settings, "ENVIRONMENT", "local"),
+            patch.object(settings, "TRANSFER_SANDBOX_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_SCHEDULER_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_MONTHLY_SCHEDULER_ENABLED", True),
+        ):
+            async with api(True, self.session_provider) as client, api(False, self.session_provider) as regular:
+                first = (await client.post(RUNS, json=body)).json()
+                second = (await client.post(RUNS, json={**body, "sourceTable": "zero_source", "targetTable": "zero_target"})).json()
+                for plan in (first, second):
+                    arm = await client.put(f"{RUNS}/{plan['id']}/schedule", json={
+                        "expectedUpdatedAt": plan["updatedAt"], "enabled": True,
+                    })
+                    self.assertEqual(arm.status_code, 200, arm.text)
+                clock = observed_runtime
+                async with self.pg.session() as session:
+                    self.assertEqual(len(await collect_due_transfer_jobs(session, now=observed_runtime)), 2)
+                jobs = {}
+                for plan in (first, second):
+                    history = await client.get(f"{RUNS}/{plan['id']}/schedule/jobs")
+                    job = UUID(history.json()[0]["id"])
+                    jobs[plan["id"]] = job
+                    self.assertEqual((await client.get(exact(plan["id"], job))).status_code, 404)
+                    async with self.pg.session() as session:
+                        self.assertEqual(await execute_transfer_schedule_job(session, job, now=observed_runtime), "committed")
+                picked = exact(first["id"], jobs[first["id"]])
+                zero = await client.get(exact(second["id"], jobs[second["id"]]))
+                self.assertEqual(zero.status_code, 200, zero.text)
+                self.assertEqual((zero.json()["kind"], zero.json()["rowsAffected"]), ("monthly_utc", 0))
+                success = await client.get(picked)
+                self.assertEqual(success.status_code, 200, success.text)
+                self.assertEqual(success.headers["cache-control"], "private, no-store")
+                expected = success.json()
+                self.assertEqual(set(expected), {"kind", "planId", "jobId", "receiptId", "sourceSchema", "sourceTable",
+                                                "targetSchema", "targetTable", "slot", "scheduleDayOfMonthUtc", "recordedAt",
+                                                "rowsAffected"})
+                self.assertEqual((expected["sourceTable"], expected["targetTable"], expected["rowsAffected"]), ("source", "target", 1))
+                for url in (picked + "?anything=1", exact(second["id"], jobs[first["id"]]), exact(first["id"], uuid4())):
+                    missing = await client.get(url)
+                    self.assertEqual((missing.status_code, missing.headers["cache-control"]), (404, "private, no-store"))
+                self.assertEqual((await regular.get(picked)).status_code, 403)
+                changed = await client.put(f"{RUNS}/{first['id']}", json={**body, "targetTable": "replacement_target"})
+                self.assertEqual(changed.status_code, 200, changed.text)
+                self.assertEqual((await client.get(picked)).json(), expected)
+
+                async with api(True, restricted) as limited:
+                    self.assertEqual((await limited.get(picked)).json(), expected)
+                    await self.pg.execute(f"REVOKE SELECT ON {schema}.source FROM {role}")
+                    self.assertEqual((await limited.get(picked)).status_code, 404)
+
+                await self.pg.execute(f"DROP TABLE {schema}.source")
+                await self.pg.execute(f"CREATE TABLE {schema}.source (id int PRIMARY KEY)")
+                self.assertEqual((await client.get(picked)).json(), expected)
+
+                async with self.pg.session() as session:
+                    conflicting = await session.scalar(text("""
+                        INSERT INTO ontology_transfer_attempts
+                        (id,upstream_job_id,schedule_job_id,plan_updated_at,source_table,target_table,target_oid,target_filenode,
+                         scope_trigger,plan_id,request_id,status,started_at,finished_at,receipt_id)
+                        SELECT gen_random_uuid(),upstream_job_id,schedule_job_id,plan_updated_at,source_table,target_table,
+                               target_oid,target_filenode+1,scope_trigger,plan_id,request_id,status,started_at,finished_at,receipt_id
+                        FROM ontology_transfer_attempts WHERE schedule_job_id=:job RETURNING id
+                    """), {"job": jobs[first["id"]]})
+                self.assertEqual((await client.get(picked)).status_code, 404)
+                async with self.pg.session() as session:
+                    await session.execute(text("""
+                        UPDATE ontology_transfer_attempts SET target_filenode=target_filenode-1 WHERE id=:id
+                    """), {"id": conflicting})
+                self.assertEqual((await client.get(picked)).status_code, 404)
+                async with self.pg.session() as session:
+                    await session.execute(text("UPDATE ontology_transfer_attempts SET status='replayed' WHERE id=:id"),
+                                          {"id": conflicting})
+                self.assertEqual((await client.get(picked)).json(), expected)
+                await self.pg.execute(f"TRUNCATE TABLE {schema}.zero_target")
+                self.assertEqual((await client.get(exact(second["id"], jobs[second["id"]]))).status_code, 404)
+
     async def test_clock_writer_mints_source_proof_only_on_new_positive_scheduled_commits(self):
         from app.web.api.models.transfer_plans import TransferRunRequest
         from app.web.services import transfer_runs

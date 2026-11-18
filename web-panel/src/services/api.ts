@@ -365,6 +365,14 @@ export const updateTransferSchedule = (planId: string, request: { enabled: boole
 
 export const fetchTransferScheduleJobs = (planId: string, signal?: AbortSignal): Promise<TransferScheduleJob[]> =>
   client.get(`${transferSchedulePath(planId)}/jobs`, { signal }).then((r) => unwrap<TransferScheduleJob[]>(r.data));
+export type MonthlyCommittedRun = {
+  kind: 'monthly_utc'; planId: string; jobId: string; receiptId: string;
+  sourceSchema: string; sourceTable: string; targetSchema: string; targetTable: string;
+  slot: string; scheduleDayOfMonthUtc: number; recordedAt: string; rowsAffected: number;
+};
+export const fetchMonthlyCommittedRun = (planId: string, jobId: string, signal?: AbortSignal): Promise<MonthlyCommittedRun> =>
+  client.get(`${transferSchedulePath(planId)}/jobs/${encodeURIComponent(jobId)}/committed-run`, { signal })
+    .then(r => unwrap<MonthlyCommittedRun>(r.data));
 export const cancelTransferScheduleJob = (planId: string, jobId: string, request: { expectedGeneration: number; expectedSlot: string }): Promise<TransferScheduleJob> =>
   client.put(`${transferSchedulePath(planId)}/jobs/${encodeURIComponent(jobId)}/cancel`, request).then((r) => unwrap<TransferScheduleJob>(r.data));
 

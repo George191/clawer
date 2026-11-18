@@ -95,6 +95,7 @@ from app.web.api.models.transfer_plans import (
     TableName, TransferAttempt, TransferPlan, TransferPlanPayload, TransferPreflight, TransferRun, TransferRunCapabilities,
     TransferRunRequest, WarehouseSchema,
 )
+from app.web.api.models.monthly_committed_run import MonthlyCommittedRun
 from app.web.api.models.transfer_schedules import (
     TransferSchedule, TransferScheduleChange, TransferScheduleJob, TransferScheduleJobCancel, TransferScheduleSummary,
 )
@@ -177,6 +178,7 @@ from app.web.services.transfer_plans import list_transfer_plans, preflight_trans
 from app.web.services.transfer_runs import (
     SANDBOX, list_transfer_attempts, list_transfer_runs, run_sandbox_transfer, transfer_run_capabilities,
 )
+from app.web.services.monthly_committed_run import MonthlyCommittedRunUnavailable, read_monthly_committed_run
 from app.web.services.transfer_schedules import (
     cancel_transfer_schedule_job, change_transfer_schedule, list_transfer_schedule_jobs, list_transfer_schedules, read_transfer_schedule,
 )
@@ -835,6 +837,25 @@ async def put_transfer_schedule(
 @write.get("/transfer-plans/{plan_id}/schedule/jobs")
 async def get_transfer_schedule_jobs(plan_id: UUID, session: SessionDep) -> list[TransferScheduleJob]:
     return await list_transfer_schedule_jobs(session, plan_id)
+
+
+@write.get("/transfer-plans/{plan_id}/schedule/jobs/{job_id}/committed-run", response_model=MonthlyCommittedRun)
+async def get_monthly_committed_run(
+    plan_id: str, job_id: str, request: Request, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> MonthlyCommittedRun | JSONResponse:
+    headers = {"Cache-Control": "private, no-store"}
+    response.headers.update(headers)
+    denied = JSONResponse({"detail": "Monthly committed run unavailable"}, status_code=404, headers=headers)
+    if request.query_params or len(plan_id) != 36 or len(job_id) != 36:
+        return denied
+    try:
+        plan, job = UUID(plan_id), UUID(job_id)
+        if str(plan) != plan_id or str(job) != job_id:
+            return denied
+        return await read_monthly_committed_run(session, plan, job)
+    except (MonthlyCommittedRunUnavailable, ValueError):
+        return denied
 
 
 @write.put("/transfer-plans/{plan_id}/schedule/jobs/{job_id}/cancel")
