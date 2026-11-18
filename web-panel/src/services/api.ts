@@ -754,11 +754,12 @@ export interface DataSourceConfig {
 }
 export interface DataSourcePayload {
   name: string; engine: DataConnectorEngine; config: DataSourceConfig;
+  expectedUpdatedAt?: string;
   credentials: { password?: string; apiKey?: string; token?: string };
 }
 export type DataSourceCapabilityKey = 'connectionTest' | 'catalog' | 'snapshot' | 'committedBatch' | 'reviewedRange';
 export type DataSourceCapability = { status: 'available_to_try' | 'unavailable'; reason?: string | null };
-export interface DataSource extends Omit<DataSourcePayload, 'credentials'> {
+export interface DataSource extends Omit<DataSourcePayload, 'credentials' | 'expectedUpdatedAt'> {
   id: string; credentialsConfigured: boolean; catalogAvailable: boolean; createdBy: string;
   createdAt: string; updatedAt: string; testedAt: string | null; pausedAt?: string | null; pauseAvailable?: boolean;
   capabilities?: Partial<Record<DataSourceCapabilityKey, DataSourceCapability>>;

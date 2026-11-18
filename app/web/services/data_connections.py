@@ -440,11 +440,25 @@ class DataConnections:
                 raise HTTPException(503, "Stored credentials cannot be decrypted; restore the configured SECRET_KEY or replace these credentials") from error
         raise HTTPException(422, "Enter credentials for the selected authentication method")
 
-    async def test(self, payload: DataConnectionPayload, connection_id: str | None = None):
+    @staticmethod
+    def _require_draft_revision(payload: DataConnectionPayload, stored, expected_updated_at: datetime | None) -> None:
+        if "postgresql" in (stored["engine"], payload.engine) and (
+            expected_updated_at is None or stored["updated_at"] != expected_updated_at
+        ):
+            raise HTTPException(409, {
+                "code": "source_revision_changed",
+                "message": "The saved source changed; reload it before testing or saving this draft",
+            })
+
+    async def test(
+        self, payload: DataConnectionPayload, connection_id: str | None = None,
+        *, expected_updated_at: datetime | None = None,
+    ):
         if connection_id is None:
             return await self._probe_result(payload, await self._credentials(payload))
         async with self._session() as session:
             stored = await self._stored(connection_id, session=session, lock=" FOR SHARE")
+            self._require_draft_revision(payload, stored, expected_updated_at)
             return await self._probe_result(payload, await self._credentials(payload, stored))
 
     async def _probe_result(self, payload, credentials):
@@ -631,13 +645,14 @@ class DataConnections:
             ],
         )
 
-    async def save(self, payload, user_id, connection_id=None):
+    async def save(self, payload, user_id, connection_id=None, *, expected_updated_at: datetime | None = None):
         if connection_id is None:
             params = await self._prepare_save(payload, user_id, uuid.uuid4(), None)
             async with self._session() as session:
                 return await self._save_verified(session, params)
         async with self._session() as session:
             stored = await self._stored(connection_id, session=session, lock=" FOR UPDATE")
+            self._require_draft_revision(payload, stored, expected_updated_at)
             params = await self._prepare_save(payload, user_id, uuid.UUID(connection_id), stored)
             return await self._save_verified(session, params)
 

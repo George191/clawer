@@ -2,6 +2,7 @@
 
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 import json
 import ssl
 from types import SimpleNamespace
@@ -162,7 +163,8 @@ class StoredConnectionCredentialsTests(unittest.IsolatedAsyncioTestCase):
     async def test_connection_change_requires_explicit_credentials_before_probing(self):
         service = object.__new__(sources.DataConnections)
         original = payload()
-        stored = {"engine": original.engine, "config": original.config.model_dump()}
+        revision = datetime.now(timezone.utc)
+        stored = {"engine": original.engine, "config": original.config.model_dump(), "updated_at": revision}
         changes = (
             {"host": "other-db.example.test"}, {"port": 6543},
             {"database": "other"}, {"username": "other"}, {"tls": False},
@@ -172,7 +174,7 @@ class StoredConnectionCredentialsTests(unittest.IsolatedAsyncioTestCase):
             for change in changes:
                 candidate = payload(**change).model_copy(update={"credentials": type(original.credentials)()})
                 with self.subTest(change=change), self.assertRaises(HTTPException) as failure:
-                    await service.test(candidate, "saved")
+                    await service.test(candidate, "saved", expected_updated_at=revision)
                 self.assertEqual(failure.exception.status_code, 422)
             probe.assert_not_called()
 

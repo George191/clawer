@@ -6,6 +6,7 @@ the disposable ontology_creation_regression instance.
 
 import asyncio
 from importlib import import_module
+from datetime import datetime
 import json
 import os
 from types import SimpleNamespace
@@ -102,14 +103,16 @@ class DataConnectionsIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("capabilities", saved)
         self.assertNotIn("credentials", saved)
         self.assertNotIn("credentials_ciphertext", saved)
-        renamed = await self.service.save(payload(name="Renamed source", credentials={}), "admin", saved["id"])
+        renamed = await self.service.save(payload(name="Renamed source", credentials={}), "admin", saved["id"],
+                                          expected_updated_at=datetime.fromisoformat(saved["updatedAt"]))
         self.assertEqual(renamed["name"], "Renamed source")
         self.assertEqual((await self.stored(saved["id"]))["credentials_ciphertext"], ciphertext)
         # A new service instance and cipher can decrypt after a process restart
         # because derivation uses the same explicitly configured stable secret.
         restarted = object.__new__(sources.DataConnections)
         restarted._pg = self.pg
-        self.assertTrue((await restarted.test(payload(credentials={}), saved["id"]))["ok"])
+        self.assertTrue((await restarted.test(payload(credentials={}), saved["id"],
+                                                   expected_updated_at=datetime.fromisoformat(renamed["updatedAt"])))["ok"])
         self.probe.assert_awaited()
         await self.service.delete(saved["id"])
         self.assertEqual(await self.service.list(), [])
@@ -439,23 +442,85 @@ class DataConnectionsIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.probe.await_count, 2)
         self.assertEqual(await self.service.list(), [])
 
+    async def test_draft_http_cas_blocks_credential_and_probe_access_before_replacement(self):
+        saved = await self.service.save(payload(), "admin")
+        previous = datetime.fromisoformat(saved["updatedAt"])
+        rotated = await self.service.save(payload(name="Current test source"), "admin", saved["id"],
+                                          expected_updated_at=previous)
+        current = await self.stored(saved["id"])
+        # The framework's real validation handler would otherwise expose user-supplied locations.
+        app = FastAPI()
+        app.add_exception_handler(RequestValidationError, request_exception_handler)
+        app.include_router(router)
+        app.dependency_overrides[get_current_active_superuser] = lambda: SimpleNamespace(id=uuid4(), is_superuser=True)
+        original_credentials = self.service._credentials
+        with patch.object(sources, "get_data_connections", return_value=self.service), patch(
+            "app.web.api.routes.etl.get_data_connections", return_value=self.service,
+        ):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://localfixture") as client:
+                test_url = f"/etl/data-connections/test?connectionId={saved['id']}"
+                put_url = f"/etl/data-connections/{saved['id']}"
+                for body in (PAYLOAD, {**PAYLOAD, "expectedUpdatedAt": saved["updatedAt"]}):
+                    with patch.object(self.service, "_credentials", side_effect=AssertionError("stale credentials reached")) as lookup:
+                        self.probe.reset_mock()
+                        for response in (await client.post(test_url, json=body), await client.put(put_url, json=body)):
+                            self.assertEqual(response.status_code, 409, response.text)
+                            self.assertEqual(response.json()["detail"]["code"], "source_revision_changed")
+                        lookup.assert_not_awaited()
+                        self.probe.assert_not_awaited()
+                self.assertEqual(await self.stored(saved["id"]), current)
+                secret_key = "fixture-unrecognized-key-never-return"
+                invalid = await client.put(put_url, json={**PAYLOAD, "credentials": {secret_key: "fixture-value-never-return"}})
+                self.assertEqual(invalid.status_code, 422)
+                self.assertNotIn(secret_key, invalid.text)
+                self.assertNotIn("fixture-value-never-return", invalid.text)
+                body = {**PAYLOAD, "expectedUpdatedAt": rotated["updatedAt"],
+                        "credentials": {"password": "fixture-new-draft-password"}}
+                self.probe.side_effect = RuntimeError("fixture-new-draft-password")
+                denied = await client.put(put_url, json=body)
+                self.assertEqual(denied.status_code, 422, denied.text)
+                self.assertNotIn("fixture-new-draft-password", denied.text)
+                self.assertEqual(await self.stored(saved["id"]), current)
+                self.probe.side_effect = None
+                self.assertTrue((await client.post(test_url, json=body)).json()["ok"])
+                self.assertEqual(await self.stored(saved["id"]), current)
+                changed = await client.put(put_url, json=body)
+                self.assertEqual(changed.status_code, 200, changed.text)
+                self.assertNotEqual(changed.json()["updatedAt"], rotated["updatedAt"])
+                self.assertNotIn("fixture-new-draft-password", changed.text)
+                stored = await self.stored(saved["id"])
+                self.assertEqual(stored["config"], current["config"])
+                self.assertNotEqual(stored["credentials_ciphertext"], current["credentials_ciphertext"])
+                self.assertEqual(await original_credentials(payload(credentials={}), stored), body["credentials"])
+                self.assertEqual((await client.post(test_url, json=body)).status_code, 409)
+                self.assertTrue((await client.post(f"/etl/data-connections/{saved['id']}/test")).json()["ok"])
+
     async def test_changed_secret_fails_explicitly_until_credentials_are_replaced(self):
         saved = await self.service.save(payload(), "admin")
         with patch.object(sources, "settings", SimpleNamespace(SECRET_KEY="a-different-explicitly-configured-secret", model_fields_set={"SECRET_KEY"})):
             with self.assertRaises(HTTPException) as failure:
-                await self.service.test(payload(credentials={}), saved["id"])
+                await self.service.test(payload(credentials={}), saved["id"],
+                                        expected_updated_at=datetime.fromisoformat(saved["updatedAt"]))
             self.assertEqual(failure.exception.status_code, 503)
             self.assertIn("cannot be decrypted", failure.exception.detail)
-            replaced = await self.service.save(payload(credentials={"password": "replacement-test-only-password"}), "admin", saved["id"])
+            replaced = await self.service.save(
+                payload(credentials={"password": "replacement-test-only-password"}), "admin", saved["id"],
+                expected_updated_at=datetime.fromisoformat(saved["updatedAt"]),
+            )
             self.assertEqual(replaced["id"], saved["id"])
-            self.assertTrue((await self.service.test(payload(credentials={}), saved["id"]))["ok"])
+            self.assertTrue((await self.service.test(payload(credentials={}), saved["id"],
+                                                       expected_updated_at=datetime.fromisoformat(replaced["updatedAt"])))["ok"])
 
     async def test_one_credential_snapshot_is_probed_and_concurrent_edits_are_serialized(self):
         saved = await self.service.save(payload(), "admin")
         original_stored = self.service._stored
         self.probe.reset_mock()
         with patch.object(self.service, "_stored", wraps=original_stored) as read:
-            await self.service.save(payload(name="Snapshot source", credentials={}), "admin", saved["id"])
+            snapshot = await self.service.save(
+                payload(name="Snapshot source", credentials={}), "admin", saved["id"],
+                expected_updated_at=datetime.fromisoformat(saved["updatedAt"]),
+            )
             self.assertEqual(read.await_count, 1)
         self.probe.assert_awaited_once()
         self.assertEqual(self.probe.call_args.args[1], PAYLOAD["credentials"])
@@ -472,7 +537,10 @@ class DataConnectionsIntegration(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(cannot_edit.exception.orig.sqlstate, "55P03")
 
         self.probe.side_effect = edit_during_probe
-        result = await self.service.save(payload(name="Settled edit", credentials={}), "admin", saved["id"])
+        result = await self.service.save(
+            payload(name="Settled edit", credentials={}), "admin", saved["id"],
+            expected_updated_at=datetime.fromisoformat(snapshot["updatedAt"]),
+        )
         self.assertEqual(result["name"], "Settled edit")
 
     async def test_postgres_pause_waits_for_saved_probe_then_stays_effective_when_switch_is_off(self):

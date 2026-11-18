@@ -196,6 +196,8 @@ export default function DataConnections({ onChanged }: Props = {}) {
   const [savedTest, setSavedTest] = useState<DataSourceTest | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [editingId, setEditingId] = useState('');
+  const [editingRevision, setEditingRevision] = useState<{ updatedAt: string; engine: DataConnectorEngine }>();
+  const [editConflict, setEditConflict] = useState(false);
   const [baseline, setBaseline] = useState('');
   const [operation, setOperation] = useState<'' | 'test' | 'save' | 'delete' | 'pause'>('');
   const [testResult, setTestResult] = useState<DataSourceTest | null>(null);
@@ -263,10 +265,10 @@ export default function DataConnections({ onChanged }: Props = {}) {
   };
   const resetFeedback = () => { setError(''); setNotice(''); setTestResult(null); };
   const closeWizard = () => {
-    setWizard(null); setDraft(null); setBaseline(''); setEditingId(''); setChosenEngine(undefined); resetFeedback();
+    setWizard(null); setDraft(null); setBaseline(''); setEditingId(''); setEditingRevision(undefined); setEditConflict(false); setChosenEngine(undefined); resetFeedback();
   };
   const newSource = () => navigate(() => {
-    setDraft(null); setBaseline(''); setEditingId(''); setChosenEngine(undefined); setCategory('all'); setSearch('');
+    setDraft(null); setBaseline(''); setEditingId(''); setEditingRevision(undefined); setEditConflict(false); setChosenEngine(undefined); setCategory('all'); setSearch('');
     setWizard('choose'); resetFeedback();
   });
   const chooseAgain = () => navigate(() => {
@@ -283,17 +285,18 @@ export default function DataConnections({ onChanged }: Props = {}) {
   const showSource = (source?: DataSource) => navigate(() => { selectSource(source?.id); resetFeedback(); });
   const configure = (type: DataConnectorType) => {
     const next = initialDraft(type);
-    setDraft(next); setBaseline(JSON.stringify(next)); setEditingId(''); setWizard('configure'); resetFeedback();
+    setDraft(next); setBaseline(JSON.stringify(next)); setEditingId(''); setEditingRevision(undefined); setEditConflict(false); setWizard('configure'); resetFeedback();
   };
   const openSource = (source: DataSource) => navigate(() => {
     if (isConnectionPaused(source)) return;
     const next = { name: source.name, engine: source.engine, config: { ...source.config, port: String(source.config.port) }, secret: '' };
-    setDraft(next); setBaseline(JSON.stringify(next)); setEditingId(source.id); setWizard('configure'); resetFeedback();
+    setDraft(next); setBaseline(JSON.stringify(next)); setEditingId(source.id); setEditingRevision({ updatedAt: source.updatedAt, engine: source.engine }); setEditConflict(false); setWizard('configure'); resetFeedback();
   });
   const change = (patch: Partial<Draft>) => { setDraft((value) => value ? { ...value, ...patch } : value); resetFeedback(); };
   const changeConfig = (patch: Partial<Draft['config']>) => { if (draft) change({ config: { ...draft.config, ...patch } }); };
+  const postgresEdit = Boolean(editingId && (editingRevision?.engine === 'postgresql' || draft?.engine === 'postgresql'));
   const payload = (): DataSourcePayload | null => {
-    if (!draft || isConnectionPaused(selected)) return null;
+    if (editConflict || (postgresEdit && !editingRevision?.updatedAt) || !draft || isConnectionPaused(selected)) return null;
     const name = draft.name.trim(), config = draft.config;
     if (!name || !config.host.trim() || !/^\d+$/.test(config.port) || Number(config.port) < 1 || Number(config.port) > 65535) { setError('Enter a connection name, host and port between 1 and 65535.'); return null; }
     if (config.auth === 'password' && !config.username.trim()) { setError('Enter the database username.'); return null; }
@@ -303,13 +306,25 @@ export default function DataConnections({ onChanged }: Props = {}) {
       return null;
     }
     const key = config.auth === 'api_key' ? 'apiKey' : config.auth === 'token' ? 'token' : 'password';
-    return { name, engine: draft.engine, config: { ...config, host: config.host.trim(), port: Number(config.port), username: config.username.trim(), database: config.database.trim() }, credentials: draft.secret ? { [key]: draft.secret } : {} };
+    return { name, engine: draft.engine, ...(postgresEdit && editingRevision ? { expectedUpdatedAt: editingRevision.updatedAt } : {}), config: { ...config, host: config.host.trim(), port: Number(config.port), username: config.username.trim(), database: config.database.trim() }, credentials: draft.secret ? { [key]: draft.secret } : {} };
   };
-  const mutate = async (kind: 'test' | 'save' | 'delete' | 'pause', action: () => Promise<void>) => {
+  const mutate = async (kind: 'test' | 'save' | 'delete' | 'pause', action: () => Promise<void>, draftEdit = false) => {
     if (!current() || pendingRef.current || blocked) return false;
     pendingRef.current = true; setOperation(kind); setError(''); setNotice(''); setConfirmationError('');
     try { await action(); return current(); }
-    catch (failure) { if (current()) { const detail = errorText(failure); setError(detail); setConfirmationError(detail); } return false; }
+    catch (failure) {
+      if (current()) {
+        const response = (failure as { response?: { status?: number; data?: { detail?: { code?: string }; errors?: { code?: string } } } })?.response;
+        const code = response?.data?.errors?.code ?? response?.data?.detail?.code;
+        if (draftEdit && response?.status === 409 && code === 'source_revision_changed') {
+          setEditConflict(true); setTestResult(null);
+          setDraft(value => value ? { ...value, secret: '' } : value);
+        } else {
+          const detail = errorText(failure); setError(detail); setConfirmationError(detail);
+        }
+      }
+      return false;
+    }
     finally { pendingRef.current = false; if (current()) setOperation(''); }
   };
   const test = async () => {
@@ -319,7 +334,7 @@ export default function DataConnections({ onChanged }: Props = {}) {
     await mutate('test', async () => {
       const result = await testDataSource(body, editingId || undefined);
       if (current()) setTestResult(result);
-    });
+    }, postgresEdit);
   };
   const refreshCapabilities = (id: string) => {
     if (!current() || metadataVerifying.current.has(id)) return;
@@ -367,7 +382,7 @@ export default function DataConnections({ onChanged }: Props = {}) {
       selectSource(source.id); setExploringSource(''); setSyncSelection(undefined); setSavedTest(null);
       refreshCapabilities(source.id);
       setNotice('Source saved. Its connectivity was tested with a read-only request.'); onChanged?.();
-    });
+    }, postgresEdit);
   };
   const testSaved = async () => {
     if (!viewedSource || sourcePaused || blocked || !viewedType?.driverAvailable) return;
@@ -538,7 +553,7 @@ export default function DataConnections({ onChanged }: Props = {}) {
           {wizard === 'configure' && draft && connector && <form className="ontology-connectors__form" onSubmit={(event) => event.preventDefault()} onKeyDown={(event) => { if (event.key === 'Enter' && !event.nativeEvent.isComposing && event.target instanceof HTMLInputElement && !event.target.closest('[role="combobox"]')) event.preventDefault(); }}>
             <header className="ontology-connectors__form-heading"><div><ConnectorMark engine={draft.engine} /><span><span className="ontology-connectors__eyebrow">{connector.name}</span><h2>{editingId ? 'Source settings' : `New ${connector.name} source`}</h2></span></div>{!editingId && <Button size="small" icon={<ArrowLeftOutlined />} disabled={blocked} onClick={chooseAgain}>Change connector</Button>}</header>
             {!connector.driverAvailable && <p className="ontology-connectors__prerequisite" role="alert">{connector.prerequisite} Connection testing and saving require this driver.</p>}
-            <fieldset disabled={blocked}>
+            <fieldset disabled={blocked || editConflict}>
               <section className="ontology-connectors__section"><h3>Source details</h3><label>Connection name<Input aria-label="Connection name" value={draft.name} maxLength={200} autoComplete="off" placeholder="Production database" onChange={(event) => change({ name: event.target.value })} /></label></section>
               <section className="ontology-connectors__section"><h3>Connection</h3><div className="ontology-connectors__endpoint"><label>Host<Input aria-label="Host" value={draft.config.host} maxLength={253} autoComplete="off" placeholder="database.example.com" onChange={(event) => changeConfig({ host: event.target.value })} /></label><label>Port<Input aria-label="Port" value={draft.config.port} inputMode="numeric" maxLength={5} onChange={(event) => changeConfig({ port: event.target.value })} /></label></div>
                 {!['elasticsearch', 'dameng'].includes(draft.engine) && <label>{draft.engine === 'oracle' ? 'Service name' : 'Database'}<Input aria-label={draft.engine === 'oracle' ? 'Service name' : 'Database'} value={draft.config.database} maxLength={128} autoComplete="off" onChange={(event) => changeConfig({ database: event.target.value })} /></label>}
@@ -548,12 +563,19 @@ export default function DataConnections({ onChanged }: Props = {}) {
                 {['elasticsearch', 'milvus'].includes(draft.engine) && <label>Authentication method<Select aria-label="Authentication method" value={draft.config.auth} disabled={blocked} onChange={(auth: DataSourceConfig['auth']) => { change({ config: { ...draft.config, auth, username: '' }, secret: '' }); }} options={[{ value: 'password', label: 'Username and password' }, draft.engine === 'elasticsearch' ? { value: 'api_key', label: 'API key' } : { value: 'token', label: 'Token' }]} /></label>}
                 {draft.config.auth === 'password' && <label>Username<Input aria-label="Username" value={draft.config.username} maxLength={200} autoComplete="off" onChange={(event) => changeConfig({ username: event.target.value })} /></label>}
                 <label>{secretLabel}<Input aria-label={secretLabel} type="password" value={draft.secret} maxLength={8192} autoComplete="new-password" placeholder={canReuseSecret ? `Leave blank to keep the stored ${secretLabel.toLowerCase()}` : `Enter ${secretLabel.toLowerCase()}`} onChange={(event) => change({ secret: event.target.value })} /></label>
+                {postgresEdit && <p className="ontology-connectors__help">Replacing the saved password does not revoke the old password on the PostgreSQL server. Saving changes requires a new review of existing sync plans and schedules before they can use the new revision.</p>}
                 <p className="ontology-connectors__help">Credentials are encrypted at rest and are never returned by the API. Use a dedicated account with read access.</p>
               </section>
             </fieldset>
+            {editConflict && <div role="alert" className="ontology-connectors__test-result is-error">
+              <p>This saved source changed after you opened the editor. The entered password was cleared. Reload the saved source and reopen Edit before testing or saving.</p>
+              <Button size="small" disabled={pending} onClick={() => {
+                closeWizard(); setReload(value => value + 1);
+              }}>Reload saved source</Button>
+            </div>}
             {testFeedback(testResult)}
             <p className="ontology-connectors__help">Saving verifies the connection again. It does not import tables or change the external database.</p>
-            <div className="ontology-connectors__actions ontology-connectors__wizard-footer"><span /><Button disabled={pending} onClick={() => navigate(closeWizard)}>Cancel</Button><Button onClick={() => void test()} loading={operation === 'test'} disabled={blocked || !connector.driverAvailable}>Test connection</Button><Button type="primary" onClick={() => void save()} loading={operation === 'save'} disabled={blocked || !connector.driverAvailable || !!editingId && !dirty}>Save source</Button></div>
+            <div className="ontology-connectors__actions ontology-connectors__wizard-footer"><span /><Button disabled={pending} onClick={() => navigate(closeWizard)}>Cancel</Button><Button onClick={() => void test()} loading={operation === 'test'} disabled={blocked || editConflict || !connector.driverAvailable}>Test connection</Button><Button type="primary" onClick={() => void save()} loading={operation === 'save'} disabled={blocked || editConflict || !connector.driverAvailable || !!editingId && !dirty}>Save source</Button></div>
           </form>}
       </div>
     </Modal>}

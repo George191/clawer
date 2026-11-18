@@ -87,7 +87,7 @@ from app.web.api.models.etl import (
     SqlQuery,
 )
 from app.web.api.models.data_connections import (
-    DataConnectionPauseChange, DataConnectionPayload, SourceCatalog, SourceColumns, SourceReferenceDirection, SourceReferences,
+    DataConnectionDraftPayload, DataConnectionPauseChange, DataConnectionPayload, SourceCatalog, SourceColumns, SourceReferenceDirection, SourceReferences,
 )
 from app.web.api.models.transfer_plans import (
     TableName, TransferAttempt, TransferPlan, TransferPlanPayload, TransferPreflight, TransferRun, TransferRunCapabilities,
@@ -1210,9 +1210,51 @@ async def data_connections() -> list[dict[str, Any]]:
     return await get_data_connections().list()
 
 
-@write.post("/data-connections/test")
-async def test_data_connection(payload: DataConnectionPayload, connectionId: UUID | None = None) -> dict[str, Any]:
-    return await get_data_connections().test(payload, str(connectionId) if connectionId else None)
+def _data_connection_draft_openapi() -> dict[str, Any]:
+    # The route parses explicitly to redact validation failures; retain the
+    # documented body schema without adding unresolved local JSON-schema refs.
+    schema = DataConnectionDraftPayload.model_json_schema()
+    definitions = schema.pop("$defs", {})
+
+    def inline(value):
+        if isinstance(value, list):
+            return [inline(item) for item in value]
+        if isinstance(value, dict):
+            reference = value.get("$ref")
+            if reference is not None:
+                value = {**definitions[reference.rsplit("/", 1)[-1]], **{k: v for k, v in value.items() if k != "$ref"}}
+            return {key: inline(item) for key, item in value.items()}
+        return value
+
+    return {"requestBody": {"required": True, "content": {"application/json": {"schema": inline(schema)}}}}
+
+
+async def _data_connection_draft_body(request: Request, *, saved: bool) -> DataConnectionPayload:
+    # Pydantic validation errors may reflect attacker-controlled credential field paths.
+    # Parse only these draft routes and return one stable error without payload/location echo.
+    media = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if media and not (media == "application/json" or (media.startswith("application/") and media.endswith("+json"))):
+        raise HTTPException(422, "Invalid data source configuration or credentials")
+    try:
+        body = bytearray()
+        with fail_after(3):
+            async for chunk in request.stream():
+                if len(chunk) > 128 * 1024 - len(body):
+                    raise ValueError("Invalid connector draft")
+                body.extend(chunk)
+        model = DataConnectionDraftPayload if saved else DataConnectionPayload
+        return model.model_validate(json.loads(body.decode("utf-8"), object_pairs_hook=_unique_delivery_evidence_keys))
+    except Exception:
+        raise HTTPException(422, "Invalid data source configuration or credentials") from None
+
+
+@write.post("/data-connections/test", openapi_extra=_data_connection_draft_openapi())
+async def test_data_connection(request: Request, connectionId: UUID | None = None) -> dict[str, Any]:
+    if len(request.query_params.getlist("connectionId")) > 1:
+        raise HTTPException(422, "Invalid data source configuration or credentials")
+    payload = await _data_connection_draft_body(request, saved=connectionId is not None)
+    expected = payload.expectedUpdatedAt if isinstance(payload, DataConnectionDraftPayload) else None
+    return await get_data_connections().test(payload, str(connectionId) if connectionId else None, expected_updated_at=expected)
 
 
 @write.post("/data-connections")
@@ -1275,10 +1317,14 @@ async def browse_data_connection_references(
     )
 
 
-@write.put("/data-connections/{connection_id}")
-async def update_data_connection(connection_id: UUID, payload: DataConnectionPayload,
+@write.put("/data-connections/{connection_id}", openapi_extra=_data_connection_draft_openapi())
+async def update_data_connection(connection_id: UUID, request: Request,
                                  current_user: Any = Depends(get_current_active_superuser)) -> dict[str, Any]:
-    return await get_data_connections().save(payload, str(current_user.id), str(connection_id))
+    payload = await _data_connection_draft_body(request, saved=True)
+    assert isinstance(payload, DataConnectionDraftPayload)
+    return await get_data_connections().save(
+        payload, str(current_user.id), str(connection_id), expected_updated_at=payload.expectedUpdatedAt,
+    )
 
 
 @write.delete("/data-connections/{connection_id}")

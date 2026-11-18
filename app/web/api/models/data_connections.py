@@ -78,6 +78,10 @@ class DataConnectionPayload(BaseModel):
         return self
 
 
+class DataConnectionDraftPayload(DataConnectionPayload):
+    expectedUpdatedAt: AwareDatetime | None = None
+
+
 class DataConnectionPauseChange(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
