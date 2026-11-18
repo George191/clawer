@@ -685,6 +685,131 @@ class WorkerControlTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([event["attempt"] for event in events], [1, 2, 3, 4, 5])
         self.assertTrue(all(event["error"] == "QueryCanceledError" for event in events))
 
+    async def test_closed_connection_rollback_error_retries_the_uncommitted_batch_once(self):
+        self.documents = self.documents[:2]
+        rows = [(layer, SafeMigrationTests.row(self, number, "google_patent", layer))
+                for layer in ("rds", "ods") for number in range(2)]
+        failed, healthy = Connection(rows), Connection()
+        original_rows = dict(failed.rows)
+        for connection in (failed, healthy):
+            connection.is_closed = MagicMock(return_value=False)
+            connection.close = AsyncMock()
+            connection.terminate = MagicMock()
+        timeout = TimeoutError("query timed out")
+        closed = migration.asyncpg.InterfaceError("cannot perform operation: connection is closed")
+        transaction = failed.transaction
+
+        def failed_transaction():
+            inner = transaction()
+
+            class Transaction:
+                async def __aenter__(self):
+                    return await inner.__aenter__()
+
+                async def __aexit__(self, kind, value, trace):
+                    await inner.__aexit__(kind, value, trace)
+                    if kind is not None:
+                        failed.is_closed.return_value = True
+                        raise closed from value
+
+            return Transaction()
+
+        failed.transaction = failed_transaction
+        routing_rows = migration.routing_rows
+
+        async def routing(connection, layer, *args):
+            if connection is failed and layer == "ods":
+                self.assertIn(("rds", "0", "patent_google"), failed.rows)
+                raise timeout
+            return await routing_rows(connection, layer, *args)
+
+        async def connect(_root, _worker):
+            if not failed.is_closed():
+                return failed
+            checkpoint = migration.pg.read(self.root / "worker-0.json")
+            self.assertEqual((checkpoint["processed"], checkpoint["cursor"], checkpoint["pending"]),
+                             (0, None, None))
+            self.assertEqual(failed.rows, original_rows)
+            healthy.rows, healthy.outcomes, healthy.txid = failed.rows, failed.outcomes, failed.txid
+            return healthy
+
+        with patch.object(migration.facts, "mongo_client", return_value=MagicMock()), \
+             patch.object(migration, "validate_namespace", return_value=MagicMock()), \
+             patch.object(migration.pg, "owned_connection", AsyncMock(side_effect=connect)) as owned, \
+             patch.object(migration.patent, "read_batch", side_effect=self.read), \
+             patch.object(migration, "routing_rows", side_effect=routing), \
+             patch.object(migration, "apply_chunk", AsyncMock(wraps=migration.apply_chunk)) as apply, \
+             patch.object(migration.asyncio, "sleep", AsyncMock()) as sleep, patch("builtins.print") as log:
+            await migration.worker_run(self.root, 0)
+        self.assertIs(closed.__cause__, timeout)
+        self.assertEqual((owned.await_count, apply.await_count, sleep.await_count), (2, 2, 1))
+        failed.close.assert_not_awaited()
+        failed.terminate.assert_not_called()
+        healthy.close.assert_awaited_once()
+        checkpoint = migration.pg.read(self.root / "worker-0.json")
+        self.assertEqual((checkpoint["processed"], checkpoint["cursor"], checkpoint["pending"]),
+                         (2, str(self.documents[-1]["_id"]), None))
+        self.assertTrue(checkpoint["done"])
+        self.assertIsNone(checkpoint["last_error"])
+        self.assertEqual(len(list((self.root / "transactions").glob("*.prepared.json"))), 1)
+        self.assertEqual(len(list((self.root / "transactions").glob("*.committed.json"))), 1)
+        self.assertEqual(set(healthy.rows), {(layer, str(number), "patent_google")
+                                           for layer in ("rds", "ods") for number in range(2)})
+        self.assertEqual(json.loads(log.call_args.args[0])["error"], "InterfaceError")
+
+    async def test_interface_error_on_open_connection_is_not_retried(self):
+        error = migration.asyncpg.InterfaceError("another operation is in progress")
+        with patch.object(migration.facts, "mongo_client", return_value=MagicMock()), \
+             patch.object(migration, "validate_namespace", return_value=MagicMock()), \
+             patch.object(migration.pg, "owned_connection", AsyncMock(return_value=self.connection)) as owned, \
+             patch.object(migration.patent, "read_batch", side_effect=self.read), \
+             patch.object(migration, "apply_chunk", AsyncMock(side_effect=error)) as apply, \
+             patch.object(migration.asyncio, "sleep", AsyncMock()) as sleep, patch("builtins.print") as log:
+            with self.assertRaises(migration.asyncpg.InterfaceError) as raised:
+                await migration.worker_run(self.root, 0)
+        self.assertIs(raised.exception, error)
+        self.assertEqual((owned.await_count, apply.await_count), (1, 1))
+        sleep.assert_not_awaited()
+        log.assert_not_called()
+        self.connection.close.assert_awaited_once()
+        checkpoint = migration.pg.read(self.root / "worker-0.json")
+        self.assertEqual((checkpoint["processed"], checkpoint["cursor"], checkpoint["last_error"]),
+                         (0, None, "InterfaceError"))
+
+    async def test_five_closed_connection_failures_preserve_the_committed_cursor(self):
+        connections = [MagicMock() for _ in range(5)]
+        for connection in connections:
+            connection.is_closed.return_value = False
+            connection.close = AsyncMock()
+        before = {"plan_sha256": self.plan["plan_sha256"], "worker": 0, "processed": 300,
+                  "cursor": str(self.documents[299]["_id"]), "pending": None, "done": False, "last_error": None}
+        migration.pg.atomic(self.root / "worker-0.json", before)
+        error = migration.asyncpg.InterfaceError("cannot perform operation: connection is closed")
+
+        async def fail(connection, *args):
+            connection.is_closed.return_value = True
+            raise error
+
+        with patch.object(migration.facts, "mongo_client", return_value=MagicMock()), \
+             patch.object(migration, "validate_namespace", return_value=MagicMock()), \
+             patch.object(migration.pg, "owned_connection", AsyncMock(side_effect=connections)) as owned, \
+             patch.object(migration.patent, "read_batch", side_effect=self.read), \
+             patch.object(migration, "apply_chunk", AsyncMock(side_effect=fail)) as apply, \
+             patch.object(migration.asyncio, "sleep", AsyncMock()) as sleep, patch("builtins.print") as log:
+            with self.assertRaises(migration.asyncpg.InterfaceError) as raised:
+                await migration.worker_run(self.root, 0)
+        self.assertIs(raised.exception, error)
+        self.assertEqual((owned.await_count, apply.await_count, sleep.await_count), (5, 5, 4))
+        for connection in connections:
+            connection.terminate.assert_not_called()
+            connection.close.assert_not_awaited()
+        for call in apply.await_args_list:
+            self.assertEqual(call.args[4]["processed"], 300)
+            self.assertEqual(call.args[5][0]["_id"], self.documents[300]["_id"])
+        self.assertEqual(migration.pg.read(self.root / "worker-0.json"),
+                         {**before, "canary_complete": False, "last_error": "InterfaceError"})
+        self.assertEqual([json.loads(call.args[0])["attempt"] for call in log.call_args_list], [1, 2, 3, 4, 5])
+
     async def test_full_facts_uses_generic_safe_writer_and_resumes_the_canary_cursor(self):
         self.plan.update(kind="facts_full", collection="financial_fact_sec_edgar", data_type="financial_fact",
                          aliases=migration.SCOPES["facts_full"][1])

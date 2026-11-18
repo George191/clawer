@@ -40,6 +40,33 @@ def route(row, layer='rds'):
     return result
 
 
+def filing_groups_fixture(root):
+    scope = {'protocol': 'sec_history_source_dedup_v1', 'scopes': []}
+    subject.atomic(root / 'scope.json', scope)
+    units = []
+    for layer, kind, count in [('rds', 'filing', 32), ('rds', 'financial_fact', 64),
+                               ('ods', 'filing', 32), ('ods', 'filing_document', 32),
+                               ('ods', 'financial_fact', 64)]:
+        for ordinal in range(count):
+            number = len(units)
+            units.append({**UNIT, 'unit': number, 'worker': number % 6, 'ordinal': ordinal % 32,
+                'schema': 'ts_' + layer, 'table': layer + '_' + kind, 'layer': layer,
+                'data_type': kind, 'leaf': layer + '_' + kind + '_p' + str(ordinal % 32)})
+    plan = {'plan_sha256': subject.sha((root / 'scope.json').read_bytes()), 'workers': 6,
+            'batch_size': 300, 'units': units, 'guard_table': None}
+    subject.atomic(root / 'plan.json', plan)
+    layout = {'workers': 6, 'page_size': 3000, 'sql_batch_size': 300,
+              'plan_sha256': plan['plan_sha256'], 'worker_groups': copy.deepcopy(subject.FILING_WORKER_GROUPS)}
+    subject.atomic(root / 'layout.json', layout)
+    for unit in units:
+        if unit['table'] == 'ods_filing_document':
+            subject.atomic(root / 'checkpoints' / f"unit-{unit['unit']}.json", {
+                'plan_sha256': plan['plan_sha256'], 'unit': unit['unit'], 'worker': 4 + unit['ordinal'] % 2,
+                'processed': 100, 'renamed': 80, 'deduplicated': 20, 'cursor': '000100',
+                'pending': None, 'done': True, 'last_error': None})
+    return plan, layout
+
+
 class Transaction:
     def __init__(self, connection):
         self.connection = connection
@@ -515,6 +542,65 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({row['worker'] for row in starts}, set(range(6)))
         self.assertTrue(all(row['page_size'] == 3000 and row['sql_batch_size'] == 300 for row in starts))
 
+    async def test_reassigned_filing_workers_recover_pending_and_preserve_completed_documents_and_facts(self):
+        plan, configured = filing_groups_fixture(self.root)
+        originals = {}
+        for unit in plan['units']:
+            if unit['table'] == 'ods_filing_document':
+                continue
+            state = {**self.state, 'plan_sha256': plan['plan_sha256'], 'unit': unit['unit'],
+                'worker': subject.unit_owner(unit, {'workers': 6}), 'cursor': f"{unit['unit']:06d}",
+                'processed': 100 + unit['unit'], 'renamed': 80 + unit['unit'], 'deduplicated': 20,
+                'done': False, 'last_error': None}
+            if unit['table'].endswith('financial_fact'):
+                state.update(pending='transactions/untouched-facts.json', last_error='HistoricalError')
+            subject.atomic(self.root / 'checkpoints' / f"unit-{unit['unit']}.json", state)
+            originals[unit['unit']] = state
+        preserved = {p: p.read_bytes() for p in (self.root / 'checkpoints').glob('unit-*.json')
+                     if subject.unit_owner(plan['units'][subject.read(p)['unit']], configured) is None}
+        source_files = {self.root / name: (self.root / name).read_bytes() for name in ('scope.json', 'plan.json')}
+        unit = plan['units'][2]
+        self.assertEqual(subject.unit_owner(unit, configured), 4)
+        self.assertEqual(originals[2]['worker'], 0)
+        connection = Connection([record('000999', OLD)])
+        connection.lose_commit = True
+        with self.assertRaises(OSError):
+            await subject.apply_batch(connection, self.root, plan, unit,
+                [{'record_id': '000999', 'data_type': KIND}], originals[2], self.root / 'checkpoints/unit-2.json')
+        prepared = {p: p.read_bytes() for p in (self.root / 'transactions').glob('*.prepared.json')}
+        fetch = connection.fetch; queries = []
+
+        async def keys_or_rows(sql, *args, **kwargs):
+            if 'SELECT record_id,data_type FROM ONLY' in sql:
+                queries.append((sql, args))
+                return []
+            return await fetch(sql, *args, **kwargs)
+
+        connection.fetch = keys_or_rows
+        with patch.object(subject, 'connect', new=AsyncMock(return_value=connection)), redirect_stdout(io.StringIO()):
+            for owner in range(6):
+                await subject.worker_run(self.root, owner)
+        self.assertEqual(len(queries), 64)
+        self.assertFalse(any('financial_fact' in sql or 'filing_document' in sql for sql, _ in queries))
+        for unit in plan['units']:
+            owner = subject.unit_owner(unit, configured)
+            if owner is None:
+                continue
+            state = subject.read(self.root / 'checkpoints' / f"unit-{unit['unit']}.json")
+            delta = int(unit['unit'] == 2)
+            self.assertTrue(state['done'])
+            self.assertEqual(state['worker'], owner)
+            for key in ('processed', 'renamed', 'deduplicated'):
+                self.assertEqual(state[key], originals[unit['unit']][key] + (delta if key != 'deduplicated' else 0))
+            cursor = '000999' if delta else originals[unit['unit']]['cursor']
+            self.assertEqual(state['cursor'], cursor)
+            self.assertIsNone(state['pending'])
+            self.assertEqual(sum('FROM ONLY ' + subject.qualified(unit['schema'], unit['leaf']) in sql
+                and args == (unit['old'], unit['data_type'], cursor, 3000) for sql, args in queries), 1)
+        for path, raw_bytes in {**preserved, **source_files, **prepared}.items():
+            self.assertEqual(path.read_bytes(), raw_bytes)
+        self.assertEqual(len(list((self.root / 'transactions').glob('*.committed.json'))), 1)
+
     async def test_3000_key_page_uses_300_row_transactions_and_recovers_failed_second_batch(self):
         plan = self.legacy_plan([{**UNIT, 'worker': 0}])
         c = Connection([record(f'{n:06d}', OLD) for n in range(3000)])
@@ -562,6 +648,58 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
 
 
 class BoundsTests(unittest.TestCase):
+    def test_completed_document_slots_form_two_disjoint_filing_groups(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); plan, configured = filing_groups_fixture(root)
+            layout = subject.runtime_layout(root, plan)
+            self.assertEqual(layout, configured)
+            assigned = [{u['unit'] for u in plan['units'] if subject.unit_owner(u, layout) == n}
+                        for n in range(6)]
+            self.assertEqual([len(group) for group in assigned], [11, 11, 11, 11, 10, 10])
+            expected = {u['unit'] for u in plan['units'] if u['table'] in ('rds_filing', 'ods_filing')}
+            self.assertEqual(set.union(*assigned), expected)
+            self.assertEqual(sum(map(len, assigned)), len(expected))
+            self.assertTrue(all(plan['units'][n]['table'] == 'rds_filing'
+                                for owner in (0, 1, 4) for n in assigned[owner]))
+            self.assertTrue(all(plan['units'][n]['table'] == 'ods_filing'
+                                for owner in (2, 3, 5) for n in assigned[owner]))
+            self.assertTrue(all(subject.unit_owner(u, layout) is None for u in plan['units']
+                                if u['table'] in ('ods_filing_document', 'rds_financial_fact', 'ods_financial_fact')))
+
+    def test_filing_reassignment_refuses_incomplete_unbound_or_pending_documents(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); plan, _ = filing_groups_fixture(root)
+            document = next(u for u in plan['units'] if u['table'] == 'ods_filing_document')
+            path = root / 'checkpoints' / f"unit-{document['unit']}.json"
+            original = subject.read(path)
+            for change in ({'done': False}, {'pending': 'transactions/unresolved.json'},
+                           {'last_error': 'TimeoutError'}, {'plan_sha256': 'f' * 64}, {'unit': -1}):
+                with self.subTest(change=change):
+                    subject.atomic(path, {**original, **change})
+                    with self.assertRaisesRegex(RuntimeError, 'fully committed'):
+                        subject.runtime_layout(root, plan)
+            path.unlink()
+            with self.assertRaisesRegex(RuntimeError, 'fully committed'):
+                subject.runtime_layout(root, plan)
+            subject.atomic(path, original)
+            bad_plan = copy.deepcopy(plan); bad_plan['units'].remove(document)
+            with self.assertRaisesRegex(RuntimeError, 'completion coverage'):
+                subject.runtime_layout(root, bad_plan)
+
+    def test_filing_reassignment_rejects_other_worker_groups_or_other_scopes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); plan, layout = filing_groups_fixture(root)
+            bad = copy.deepcopy(layout); bad['worker_groups']['ts_rds.rds_filing'] = [0, 1, 2]
+            subject.atomic(root / 'layout.json', bad)
+            with self.assertRaisesRegex(RuntimeError, 'worker groups'):
+                subject.runtime_layout(root, plan)
+            with self.assertRaisesRegex(ValueError, 'worker groups'):
+                subject.unit_owner(UNIT, bad)
+            subject.atomic(root / 'layout.json', layout)
+            subject.atomic(root / 'scope.json', {'protocol': 'source_safe_patent_alias_tail_v1'})
+            with self.assertRaisesRegex(RuntimeError, 'worker groups'):
+                subject.runtime_layout(root, plan)
+
     def test_six_slots_cover_history_without_scanning_facts_and_reject_other_tables(self):
         layout = {'workers': 6}
         for schema, table, base in [('ts_rds', 'rds_filing', 0), ('ts_ods', 'ods_filing', 2),

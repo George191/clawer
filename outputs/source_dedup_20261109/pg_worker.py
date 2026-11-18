@@ -19,6 +19,7 @@ BATCH = 300
 MAX_ROWS = 3000
 MAX_BYTES = 8 * 1024 * 1024
 GUARD_TABLE = 'public.source_dedup_20261109_tx'
+FILING_WORKER_GROUPS = {'ts_rds.rds_filing': [0, 1, 4], 'ts_ods.ods_filing': [2, 3, 5]}
 
 
 def encoded(value):
@@ -384,11 +385,34 @@ def runtime_layout(root, plan):
         value['scope'] = 'facts_full'
     elif layout.get('scope') is not None:
         raise RuntimeError('A dedicated facts layout requires its immutable scope')
+    groups = layout.get('worker_groups')
+    if groups is not None:
+        if groups != FILING_WORKER_GROUPS or scope.get('protocol') != 'sec_history_source_dedup_v1':
+            raise RuntimeError('Unexpected filing worker groups')
+        documents = [unit for unit in plan['units']
+                     if (unit['schema'], unit['table']) == ('ts_ods', 'ods_filing_document')]
+        if len(documents) != 32 or {unit['ordinal'] for unit in documents} != set(range(32)):
+            raise RuntimeError('Document completion coverage differs')
+        for unit in documents:
+            state = read(root / 'checkpoints' / ('unit-' + str(unit['unit']) + '.json'), {})
+            if (state.get('plan_sha256') != plan['plan_sha256'] or state.get('unit') != unit['unit']
+                    or state.get('done') is not True or state.get('pending') or state.get('last_error')):
+                raise RuntimeError('Document must be fully committed before reassigning its workers')
+        value['worker_groups'] = groups
     return value
 
 
 def unit_owner(unit, layout):
     table = (unit['schema'], unit['table'])
+    groups = layout.get('worker_groups')
+    if groups is not None:
+        if groups != FILING_WORKER_GROUPS:
+            raise ValueError('Unexpected filing worker groups')
+        if table == ('ts_ods', 'ods_filing_document'):
+            return None
+        name = '.'.join(table)
+        if name in groups:
+            return groups[name][unit['ordinal'] % 3]
     if table in (('ts_rds', 'rds_financial_fact'), ('ts_ods', 'ods_financial_fact')):
         if layout.get('scope') == 'facts_full':
             if (unit['old'] not in ('sec_edgar_financial_fact', 'sec_edgar_company')

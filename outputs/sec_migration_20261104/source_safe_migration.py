@@ -441,7 +441,9 @@ async def worker_run(root, worker, canary=False):
                     apply = apply_facts_chunk if expected is not None else apply_chunk
                     state = await apply(connection, root, plan, worker, state, chunk)
                     failures = 0
-            except (asyncpg.PostgresError, OSError, asyncio.TimeoutError, PyMongoError) as error:
+            except (asyncpg.PostgresError, asyncpg.InterfaceError, OSError, asyncio.TimeoutError, PyMongoError) as error:
+                if isinstance(error, asyncpg.InterfaceError) and (connection is None or not connection.is_closed()):
+                    raise
                 failures += 1
                 print(json.dumps({"event": "retryable_worker_error", "worker": worker,
                                   "error": type(error).__name__, "attempt": failures, "max_attempts": 5}),
