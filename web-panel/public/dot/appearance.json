@@ -1,0 +1,10 @@
+{
+  "preset": "alfred",
+  "selections": {
+    "Shape": "rounded_cube",
+    "Color": "teal",
+    "Eyes": "dots",
+    "Eyewear": "separate_trapezoid_lenses"
+  },
+  "accessories": ["headphones"]
+}

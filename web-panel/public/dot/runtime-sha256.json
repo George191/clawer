@@ -1,0 +1,10 @@
+{
+  "sourceVersion": "26.1111.2228.0",
+  "files": {
+    "orbit-characters.data": "e37ccf13bacedcfe04cff3facf545ebc96c7c02173bbe813ec4d54d68dc79fed",
+    "orbit-characters.mjs": "61d28b159b5b4d3669ec8526b67edc1183cce6e317d1550cb47f73b90ccde120",
+    "orbit-characters.wasm": "10c43c3139ff0d415a8d95b9a6adb22dd2bfc7f7a0dc5eca3a1edf8ede8e11d3",
+    "orbit-enums.mjs": "8ac48c6a46a9da8f6f48f067278ed049739df5934a3bee42719f67d69c1ddc73",
+    "preparation-worker.mjs": "ed59044123d01a96749fb3ea6acd0ef18e7728e1c7b578bd100234108c1fbc20"
+  }
+}

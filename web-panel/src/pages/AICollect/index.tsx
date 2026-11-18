@@ -46,6 +46,7 @@ import {
 } from '@/components/ui/icons';
 import { useSearchParams } from 'react-router-dom';
 import ErrorBoundary from '@/components/ErrorBoundary';
+import NativeDot, { type DotActivity } from '@/components/NativeDot';
 import SearchEngineIcon, { searchEngineLabels } from '@/components/SearchEngineIcon';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { formatWorkspaceScheduleLabel } from '@/services/taskSchedule';
@@ -1469,6 +1470,16 @@ const AICollect: React.FC = () => {
   const templateReadyForConfirm = workflowPhase === 'confirm-template'
     && templateStagesReady
     && pendingConfirmations.template;
+  const dotActivity: DotActivity = runStatus === 'paused' ? 'Paused'
+    : searchLoading ? 'Searching'
+    : hasSession && streamError ? 'Error'
+    : adapterWriting ? 'Creating'
+    : promptGenerating ? 'Thinking'
+    : templateReadyForConfirm || (pendingConfirmations.adapter && adapterReadyForConfirm) ? 'NeedsInput'
+    : runStatus === 'running' && (preflightLoading || browserAnalysisActive) ? 'Searching'
+    : runStatus === 'running' ? 'Working'
+    : runStatus === 'ready' || runStatus === 'completed' ? 'Ready'
+    : 'None';
   const displayWorkflowPhase = guidePreviewPhase ?? workflowPhase;
   const templateCollapsed = displayWorkflowPhase === 'generating-adapter' || displayWorkflowPhase === 'release-template';
   const sessionGuideSteps = useMemo<SessionGuideStepId[]>(() => {
@@ -3301,6 +3312,7 @@ const AICollect: React.FC = () => {
       return (
         <section className="ai-prompt-landing">
           <div className="ai-prompt-copy">
+            <div className="ai-collect-dot is-landing"><NativeDot activity={dotActivity} /></div>
             <h1 className="ai-prompt-title">嗨，<span className="ai-prompt-name">{currentUserName}</span>，又有新灵感了吗？</h1>
           </div>
 
@@ -4600,12 +4612,15 @@ const AICollect: React.FC = () => {
 
   const renderWorkflowHeader = () => (
     <header className="ai-session-fixed-meta">
-      <div className="ai-session-fixed-copy">
-        <Text className="ai-session-fixed-eyebrow">{sessionHeaderMeta.eyebrow}</Text>
-        <div className="ai-session-fixed-title-row">
-          <h2>{sessionHeaderMeta.title}</h2>
+      <div className="ai-session-dot-heading">
+        <div className="ai-collect-dot is-session"><NativeDot activity={dotActivity} /></div>
+        <div className="ai-session-fixed-copy">
+          <Text className="ai-session-fixed-eyebrow">{sessionHeaderMeta.eyebrow}</Text>
+          <div className="ai-session-fixed-title-row">
+            <h2>{sessionHeaderMeta.title}</h2>
+          </div>
+          <Text className="ai-session-fixed-subtitle">{sessionHeaderMeta.subtitle}</Text>
         </div>
-        <Text className="ai-session-fixed-subtitle">{sessionHeaderMeta.subtitle}</Text>
       </div>
       {renderSessionBrowserPreview()}
     </header>
@@ -5955,6 +5970,17 @@ const AICollect: React.FC = () => {
           .ai-session-fixed-meta > * {
             min-width: 0;
           }
+          .ai-collect-dot { flex: 0 0 auto; }
+          .ai-collect-dot .native-dot-message[role="status"] {
+            width: 1px;
+            height: 1px;
+            overflow: hidden;
+            clip-path: inset(50%);
+            white-space: nowrap;
+          }
+          .ai-collect-dot.is-landing { width: 112px; height: 112px; margin: 0 auto 12px; }
+          .ai-session-dot-heading { display: flex; align-items: center; gap: 10px; min-width: 0; }
+          .ai-collect-dot.is-session { width: 72px; height: 72px; }
           .ai-session-fixed-copy {
             min-width: 0;
             display: flex;

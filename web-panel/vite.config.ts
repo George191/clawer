@@ -24,6 +24,9 @@ export default defineConfig({
     },
   },
   build: {
+    rollupOptions: {
+      input: { main: path.resolve(__dirname, 'index.html'), helio: path.resolve(__dirname, 'helio.html') },
+    },
     outDir: '../static',
     emptyOutDir: true,
   },
