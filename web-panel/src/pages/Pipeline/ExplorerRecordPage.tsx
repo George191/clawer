@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui';
-import { TableOutlined } from '@/components/ui/icons';
+import { DeleteOutlined, EditOutlined, ReloadOutlined } from '@/components/ui/icons';
 import { deleteEtlRow, fetchExplorerRowByKey, updateEtlRow } from '../../services/api';
 import { layoutPath, readLayouts, type Layouts } from '../../services/explorerLayouts';
 import { editorValue, rowChanges, type RowDraft } from './explorerRowEditing';
-import { ExplorerProperties, explorerRowTitle } from './ExplorerSelection';
+import {
+    ExplorerObjectOverview, ExplorerProperties, ExplorerRecordActions, ExplorerTypeIcon, explorerRowTitle, useExplorerPresentation,
+} from './ExplorerSelection';
 import ExplorerRowLinks from './ExplorerRowLinks';
 import './ontology-frame.css';
 import './explorer-record.css';
@@ -41,7 +43,7 @@ function RecordPage({ schema, table, identity }: { schema: string; table: string
     const [layoutError, setLayoutError] = useState('');
     const [error, setError] = useState('');
     const [revision, reload] = useState(0);
-    const [mode, setMode] = useState<'properties'|'links'|'json'>('properties');
+    const [mode, setMode] = useState<'overview'|'properties'|'links'|'json'|`group:${string}`>('overview');
     const [draft, setDraft] = useState<RowDraft>();
     const [confirmDelete, setConfirmDelete] = useState(false);
     const [busy, setBusy] = useState(false);
@@ -62,7 +64,14 @@ function RecordPage({ schema, table, identity }: { schema: string; table: string
             .catch(err => { if (!controller.signal.aborted) setError(requestError(err)); });
         return () => controller.abort();
     }, [schema,table,key,revision]);
-    const title=result ? explorerRowTitle(result.row,result.identity) : table;
+    const metadata = useExplorerPresentation(schema, table, revision);
+    const presentation = metadata?.presentation;
+    const typeName = presentation?.displayName || table;
+    const title = result ? (metadata ? explorerRowTitle(result.row, result.identity, presentation?.titleProperty) : 'Loading title…') : typeName;
+    const row = result && { record: result.row, identity: result.identity, key: JSON.stringify(result.identity), title, columnTypes: result.columnTypes };
+    const groups = presentation?.groups ?? [];
+    const group = mode.startsWith('group:') ? mode.slice(6) : undefined;
+    const currentGroup = group && groups.includes(group) ? group : undefined;
     const editFields = result ? Object.keys(result.columnTypes).filter(name => !Object.prototype.hasOwnProperty.call(result.identity,name)) : [];
     const layout=layouts?.personal.layout ?? layouts?.default.layout;
     const presentations=Object.fromEntries((layout?.columns ?? []).map(c=>[c.field,c.presentation??'value']));
@@ -94,27 +103,33 @@ function RecordPage({ schema, table, identity }: { schema: string; table: string
         } catch { /* The link remains selectable on HTTP or when clipboard access is disabled. */ }
         setShare(v=>!v);
     };
-    return <article className="flow-console--ontology explorer-full-record">
+    const actions = [
+        ...(result?.rowActions?.edit && editFields.length > 0 ? [{key:'edit',label:'Edit row',icon:<EditOutlined />,onClick:()=>{
+            setMode('properties');setError('');setNotice('');
+            setDraft(Object.fromEntries(editFields.map(name=>[name,editorValue(result.columnTypes[name],result.row[name])])));
+        }}] : []),
+        ...(result?.rowActions?.delete ? [{key:'delete',label:'Delete row',icon:<DeleteOutlined />,danger:true,onClick:()=>{
+            setError('');setNotice('');setConfirmDelete(true);
+        }}] : []),
+    ];
+    return <article className="flow-console--ontology explorer-object-workspace explorer-full-record">
         <nav aria-label="Object location"><Link to="/ontology/explorer">Explorer</Link><span>/</span>
             <Link to={tablePath}>{schema}.{table}</Link></nav>
-        <header><div className="record-type-icon"><TableOutlined /></div><div className="record-heading">
-            <span>{table}</span><h1>{title}</h1>
+        <header><ExplorerTypeIcon presentation={presentation} /><div className="record-heading">
+            <span>{typeName}</span><h1>{title}</h1>
         </div><div className="record-operations">
             <Button onClick={showLink} disabled={!result}>Share link</Button>
-            <Button disabled={busy || (!!draft && !stale)} onClick={()=>{setNotice('');reload(n=>n+1);}}>Refresh</Button>
-            {result?.rowActions?.edit && editFields.length > 0 && <Button disabled={locked || stale} onClick={()=>{
-                setMode('properties');setError('');setNotice('');
-                setDraft(Object.fromEntries(editFields.map(name=>[name,editorValue(result.columnTypes[name],result.row[name])])));
-            }}>Edit row</Button>}
-            {result?.rowActions?.delete && <Button danger disabled={locked || stale} onClick={()=>{setError('');setNotice('');setConfirmDelete(true);}}>Delete row</Button>}
+            <Button icon={<ReloadOutlined />} disabled={busy || (!!draft && !stale)} onClick={()=>{setNotice('');reload(n=>n+1);}}>Refresh</Button>
+            <ExplorerRecordActions items={actions} disabled={locked || stale} />
         </div></header>
         {share && <label className="record-share">Object link<input readOnly value={window.location.href} onFocus={e=>e.currentTarget.select()} autoFocus /></label>}
         {notice && <p role="status">{notice}</p>}
         {error && <div className="record-error" role="alert">{error}
             {stale && <Button onClick={()=>reload(n=>n+1)}>Reload current object</Button>}</div>}
         {layoutError && <p role="alert">Property layout unavailable. {layoutError}</p>}
+        {metadata?.error && <p role="alert">Object presentation unavailable. <Button size="small" onClick={() => reload(n => n + 1)}>Retry</Button></p>}
         {!result && !error && <p role="status">Loading object…</p>}
-        {result && <>
+        {result && row && <>
             <dl className="record-identity">{Object.entries(result.identity).map(([name,value])=>
                 <div key={name}><dt>{name}</dt><dd>{String(value)}</dd></div>)}</dl>
             {confirmDelete && <section className="record-confirm" aria-label="Confirm row deletion">
@@ -122,9 +137,14 @@ function RecordPage({ schema, table, identity }: { schema: string; table: string
                 <Button disabled={busy} onClick={()=>setConfirmDelete(false)}>Cancel deletion</Button>
                 <Button danger disabled={busy || stale} onClick={()=>void mutate(true)}>Confirm delete</Button>
             </section>}
-            <div className="record-tabs" aria-label="Object views">{(['properties','links','json'] as const).map(tab=>
+            <div className="record-tabs" aria-label="Object views">{(['overview','properties'] as const).map(tab=>
                 <button type="button" key={tab} aria-pressed={tab===mode} disabled={locked} onClick={()=>setMode(tab)}>
-                    {{properties:'Properties',links:'Links',json:'JSON'}[tab]}</button>)}</div>
+                    {{overview:'Overview',properties:'Properties'}[tab]}</button>)}
+                {groups.map(name => <button type="button" key={name} disabled={locked} aria-pressed={mode === 'group:' + name}
+                    onClick={() => setMode(`group:${name}`)}>{name}</button>)}
+                <button type="button" aria-pressed={mode==='links'} disabled={locked} onClick={()=>setMode('links')}>Links</button>
+                <button type="button" aria-pressed={mode==='json'} disabled={locked} onClick={()=>setMode('json')}>JSON</button>
+            </div>
             {draft ? <form className="record-edit" onSubmit={e=>{e.preventDefault();void mutate(false);}}>
                 {editFields.map(name=><fieldset key={name} disabled={busy || stale}><legend>{name} <small>{result.columnTypes[name]}</small></legend>
                     <textarea aria-label={'Edit '+name} rows={1} disabled={draft[name]===null} value={draft[name]??''}
@@ -134,7 +154,10 @@ function RecordPage({ schema, table, identity }: { schema: string; table: string
                     <Button type="primary" htmlType="submit" disabled={busy || stale}>Save changes</Button></div>
             </form> : mode==='links' ? <ExplorerRowLinks schema={schema} table={table} primaryKey={result.identity}/> :
                 mode==='json' ? <pre className="record-json">{JSON.stringify(result.row,null,2)}</pre> :
-                <ExplorerProperties presentations={presentations} row={{record:result.row,identity:result.identity,key:JSON.stringify(result.identity),title,columnTypes:result.columnTypes}}/>}
+                !metadata ? <p role="status">Loading object presentation…</p> :
+                metadata.error ? <p>Properties are unavailable until the object presentation loads.</p> :
+                mode==='properties' ? <ExplorerProperties presentation={presentation} presentations={presentations} row={row}/> :
+                <ExplorerObjectOverview row={row} presentation={presentation} presentations={presentations} typeName={typeName} group={currentGroup}/>}
         </>}
     </article>;
 }

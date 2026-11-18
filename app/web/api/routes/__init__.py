@@ -6,7 +6,7 @@ from . import (
     login, user, utils, apikey, team, tenant, graph, model,
     provider, thread, upload, dataset, embedding,
     health, dashboard, templates, tasks, ai_collect, automation,
-    monitor, explorer_layouts,
+    monitor, explorer_layouts, explorer_properties, explorer_saved_items,
     etl, infrastructure, scheduler, cdc,
 )
 from app.web.core.config import settings
@@ -36,6 +36,8 @@ api_router.include_router(automation.router)
 api_router.include_router(scheduler.router)
 api_router.include_router(monitor.router)
 api_router.include_router(explorer_layouts.router)
+api_router.include_router(explorer_properties.router)
+api_router.include_router(explorer_saved_items.router)
 api_router.include_router(etl.router)
 api_router.include_router(infrastructure.router)
 api_router.include_router(cdc.router)

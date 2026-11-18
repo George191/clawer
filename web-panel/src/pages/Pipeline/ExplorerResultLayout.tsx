@@ -5,7 +5,7 @@ import './explorer-result-layout.css';
 
 const defaultColumn = (field: string): ResultColumn => ({ field, visible: true, width: 180, presentation: 'value' });
 const labels: Record<Presentation, string> = { value: 'Value', timeSeries: 'Time series', geoJson: 'GeoJSON', media: 'Media' };
-function modes(sqlType = ''): Presentation[] {
+export function columnPresentations(sqlType = ''): Presentation[] {
   if (['json', 'jsonb'].includes(sqlType)) return ['value', 'timeSeries', 'geoJson', 'media'];
   return /^(text|(?:varchar|character varying)(?:\(\d+\))?)$/.test(sqlType) ? ['value', 'media'] : ['value'];
 }
@@ -155,7 +155,7 @@ export function LayoutToolbar({ controls: c, admin, types }: { controls: Control
   const columns = c.columns.filter(item => item.field.toLowerCase().includes(c.search.toLowerCase()));
   const error = c.error && <p role="alert">{c.error} <Button disabled={c.saving} onClick={c.reload}>Reload saved layout</Button></p>;
   return <>
-    <button className="flow-tool" type="button" disabled={!c.ready} onClick={() => c.setOpen(true)}>Configure columns</button>
+    <button className="flow-tool" type="button" aria-label="Configure columns" disabled={!c.ready} onClick={() => c.setOpen(true)}>Custom layout <span aria-hidden="true">▾</span></button>
     {!c.open && error}
     <Modal title="Configure columns" open={c.open} onCancel={() => c.setOpen(false)} footer={null} width={570}>
       <div className="result-column-config">
@@ -167,9 +167,9 @@ export function LayoutToolbar({ controls: c, admin, types }: { controls: Control
         <ul aria-label="Column order">{columns.map(col => <li key={col.field} {...drag(col.field, c)}>
           <span className="result-grip" aria-hidden="true">⠿</span>
           <label><input type="checkbox" checked={col.visible} disabled={c.saving} onChange={e => c.column(col.field, { visible: e.target.checked })} />{col.field}</label>
-          {modes(types?.[col.field]).length > 1 && <select aria-label={'Display ' + col.field + ' as'} value={col.presentation}
+          {columnPresentations(types?.[col.field]).length > 1 && <select aria-label={'Display ' + col.field + ' as'} value={col.presentation}
             disabled={c.saving} onChange={e => c.column(col.field, { presentation: e.target.value as Presentation })}>
-            {modes(types?.[col.field]).map(mode => <option key={mode} value={mode}>{labels[mode]}</option>)}
+            {columnPresentations(types?.[col.field]).map(mode => <option key={mode} value={mode}>{labels[mode]}</option>)}
           </select>}
           <button type="button" aria-label={'Move ' + col.field + ' to top'} disabled={c.saving || c.columns[0] === col} onClick={() => c.move(col.field, c.columns[0].field)}>Top</button>
           <button type="button" aria-label={'Move ' + col.field + ' to bottom'} disabled={c.saving || c.columns[c.columns.length - 1] === col} onClick={() => c.move(col.field, c.columns[c.columns.length - 1].field)}>Bottom</button>

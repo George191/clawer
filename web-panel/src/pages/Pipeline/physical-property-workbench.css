@@ -1,0 +1,81 @@
+.physical-property-workbench {
+  container-type: inline-size; min-width: 0; padding: 0 0 12px; background:var(--ontology-bg);
+}
+.physical-property-workbench .flow-foundry-property-main {
+  gap:16px; padding:14px clamp(10px,3vw,48px) 14px; grid-template-rows:max-content minmax(0,1fr);
+}
+.physical-property-workbench .flow-foundry-property-header { align-self:start; }
+.physical-property-workbench .flow-foundry-property-list { align-self:start; }
+.physical-property-workbench .flow-foundry-property-workspace.has-inspector { grid-template-columns:minmax(0,1fr) minmax(255px,28%); }
+.physical-property-workbench .flow-foundry-property-tools { flex-wrap: nowrap; }
+.physical-property-workbench .flow-foundry-property-workspace { align-items: stretch; }
+.physical-property-workbench .flow-foundry-property-table-wrap { scrollbar-gutter: auto; }
+.physical-property-workbench .flow-foundry-property-list th,
+.physical-property-workbench .flow-foundry-property-list td { padding: 5px 7px; }
+.physical-property-workbench .flow-foundry-property-list tbody > tr td:first-child { min-width: 120px; }
+.physical-property-workbench .flow-foundry-property-table-wrap table { line-height: 1.3; }
+.physical-property-workbench .flow-foundry-property-list tbody tr.is-selected td { background: var(--ontology-selected); }
+.physical-property-inspector header { min-height: 43px; flex-wrap: wrap; }
+.physical-property-inspector nav,.physical-property-preview nav { display:flex; align-items:center; gap:8px; overflow-x:auto; }
+.physical-property-inspector nav { border-bottom: 1px solid var(--ontology-border); padding:0 8px; }
+.physical-property-inspector nav button,.physical-property-preview nav button {
+  background:transparent; border:0; color:var(--ontology-muted); font:inherit; font-size:12px; padding:7px 0; cursor:pointer;
+}
+.physical-property-inspector nav [aria-pressed=true],.physical-property-preview nav [aria-pressed=true] {
+  color:var(--ontology-link); box-shadow:inset 0 -2px var(--ontology-primary);
+}
+.physical-property-fields { padding:10px; display:grid; gap:8px; font-size:13px; }
+.physical-property-fields h4 { margin:2px 0; font-size:13px; }
+.physical-property-fields label { display:grid; gap:3px; }
+.physical-property-fields :is(input:not([type=checkbox]),textarea,select),.physical-property-search :is(select,input),
+.physical-property-workbench .flow-foundry-property-list select {
+  color:var(--ontology-text); background:var(--ontology-panel); border:1px solid var(--ontology-border);
+  border-radius:3px; padding:4px 6px; font:inherit; min-width:0; max-width:100%;
+}
+.physical-property-fields textarea { resize:vertical; }
+.physical-property-fields :disabled { color:var(--ontology-muted); background:var(--ontology-bg) }
+.physical-property-fields label.physical-property-toggle { display:flex; justify-content:space-between; align-items:center; }
+.physical-property-toggle input,.physical-property-preview input { accent-color:var(--ontology-primary); }
+.physical-property-fields small,.physical-property-fields dt { font-size:11px; color:var(--ontology-muted); }
+.physical-property-fields dl,.physical-property-fields dd { margin:0; }
+.physical-property-fields dd { margin-bottom:8px; overflow-wrap:anywhere; }
+.physical-property-group,.physical-property-search,.physical-property-changes { display:flex; gap:8px; align-items:center; }
+.physical-property-group input { flex:1; }
+.physical-property-search { padding:0 10px 7px; flex-wrap:wrap; }
+.physical-property-changes { flex-wrap:wrap; justify-content:flex-end; padding:6px 8px; margin-bottom:8px; background:var(--ontology-toolbar); }
+.physical-property-changes [role=alert] { margin-right:auto; }
+.physical-property-glyph,.physical-selection { display:inline-grid; place-items:center; flex:none; width:14px; height:14px; }
+.physical-property-glyph { color:var(--ontology-muted); border:1px solid var(--ontology-border); border-radius:2px; background:var(--ontology-bg); width:18px; height:18px; font-size:10px; font-weight:600; }
+.physical-selection { border:1px solid var(--ontology-border); border-radius:2px; }
+.is-selected .physical-selection { background:var(--ontology-primary); color:var(--ontology-panel); }
+.is-selected .physical-selection::before { content:'✓'; font-size:10px; }
+.physical-chip { display:inline-block; padding:2px 5px; border-radius:2px; background:var(--ontology-bg); font-size:11px; white-space:nowrap; }
+.physical-chip.status-experimental { background:var(--ontology-toolbar); }
+.physical-chip.status-active { background:var(--ontology-success-bg); }
+.physical-chip.status-deprecated { background:var(--ontology-toolbar); }
+.physical-property-workbench .flow-foundry-property-list .physical-chip { font-size:11px; padding:2px 5px; border:0; }
+.physical-property-workbench .flow-foundry-property-list .visibility { background:var(--ontology-selected); color:var(--ontology-link); }
+.physical-property-workbench .flow-foundry-property-list .formatter { background:var(--ontology-bg); }
+.physical-property-workbench .flow-foundry-property-list tbody tr.is-selected td { background:var(--ontology-bg); }
+.physical-property-preview .flow-foundry-property-preview-tools strong { margin-right:6px; }
+.physical-property-preview .flow-foundry-property-preview-tools nav { margin-left:auto; }
+.physical-property-workbench .physical-property-toggle input,.physical-property-preview input[type=checkbox] {
+  appearance:none; flex:none; width:27px; height:15px; margin:0; border:1px solid var(--ontology-border); border-radius:10px;
+  background:var(--ontology-control-border); cursor:pointer; position:relative;
+}
+.physical-property-workbench .physical-property-toggle input::after,.physical-property-preview input[type=checkbox]::after {
+  position:absolute; content:''; width:11px; height:11px; top:1px; left:1px; border-radius:50%; background:var(--ontology-panel);
+}
+.physical-property-workbench .physical-property-toggle input:checked,.physical-property-preview input[type=checkbox]:checked { background:var(--ontology-primary); }
+.physical-property-workbench .physical-property-toggle input:checked::after,.physical-property-preview input[type=checkbox]:checked::after { left:13px; }
+.physical-property-workbench .physical-property-toggle input:disabled { opacity:.55; cursor:default; }
+.physical-property-fields label.physical-property-toggle { background:var(--ontology-bg); padding:4px 6px; }
+.physical-property-preview .flow-foundry-property-preview-tools :is(label,button) { font-size:12px; }
+.physical-property-preview .flow-foundry-property-preview-tools label { display:flex; align-items:center; gap:4px; }
+.physical-property-preview p { margin:10px; color:var(--ontology-muted); }
+.physical-property-preview .flow-foundry-property-tag { margin-inline-end:3px; }
+@container (max-width: 760px) {
+  .physical-property-workbench .flow-foundry-property-workspace.has-inspector { grid-template-columns:minmax(0,1fr); gap:8px; }
+  .physical-property-workbench .has-inspector .flow-foundry-property-main { padding:8px 0 0; }
+  .physical-property-workbench .flow-foundry-property-tools { flex-wrap:wrap; }
+}

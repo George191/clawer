@@ -1,55 +1,44 @@
-import { lazy, Suspense, useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
-import { Button, Checkbox, Input, Table } from '@/components/ui';
-import type { ColumnsType, TableProps } from '@/components/ui';
-import { ArrowLeftOutlined, LinkOutlined, SearchOutlined, TableOutlined } from '@/components/ui/icons';
+import { Button, Checkbox, Dropdown, Input, Table } from '@/components/ui';
+import type { ColumnsType, MenuItem, TableProps } from '@/components/ui';
+import { BarsOutlined, DownOutlined, LinkOutlined, ReloadOutlined, SearchOutlined } from '@/components/ui/icons';
+import {
+  ExplorerFieldValue, ExplorerObjectOverview, ExplorerPropertyValue as PropertyValue, ExplorerTypeIcon,
+  explorerFields, explorerFieldValue, explorerRowTitle, propertyValue,
+  type ExplorerOverviewPresentation, type ExplorerPresentationRead, type ExplorerPreviewRow, type ExplorerPropertyPresentation,
+} from './ExplorerObjectOverview';
 import './explorer-selection.css';
 
 type RecordRow = Record<string, unknown>;
-export type ExplorerPropertyPresentation = 'value' | 'timeSeries' | 'geoJson' | 'media';
-export type ExplorerPreviewRow = {
-  record: RecordRow;
-  key: string;
-  title: string;
-  identity: RecordRow;
-  columnTypes: Record<string, string>;
-  version?: string;
-};
-
-const titleProperties = ['title', 'name', 'display_name', 'label'];
+export { ExplorerObjectOverview, ExplorerTypeIcon, explorerRowTitle, useExplorerPresentation } from './ExplorerObjectOverview';
+export type { ExplorerOverviewPresentation, ExplorerPreviewRow, ExplorerPropertyPresentation } from './ExplorerObjectOverview';
 const previewLimit = 20;
 const noTypes: Record<string, string> = {};
-const ExplorerPropertyPreview = lazy(() => import('./ExplorerPropertyPreview'));
 const format = (value: unknown) => typeof value === 'object' ? JSON.stringify(value) : String(value);
-const propertyValue = (row: ExplorerPreviewRow, name: string) =>
-  Object.prototype.hasOwnProperty.call(row.identity, name) ? row.identity[name] : row.record[name];
 
-export function explorerRowTitle(row: RecordRow, identity: RecordRow, fallback = 'Untitled row') {
-  const value = titleProperties.map(name => row[name]).find(item => typeof item === 'string' && item.trim());
-  return typeof value === 'string' ? value : Object.values(identity).map(format).join(' · ') || fallback;
+export function ExplorerRecordActions({ items, disabled }: { items: MenuItem[]; disabled?: boolean }) {
+  return items.length ? <Dropdown trigger={['click']} placement="bottomRight" menu={{ items }}
+    getPopupContainer={(anchor: HTMLElement) => anchor.closest('.explorer-object-workspace') ?? document.body}>
+    <Button size="small" disabled={disabled}>Actions <DownOutlined /></Button>
+  </Dropdown> : null;
 }
 
-function PropertyValue({ value }: { value: unknown }) {
-  if (value === undefined) return <span className="flow-explorer-selection__empty-value">Missing</span>;
-  if (value === null) return <span className="flow-explorer-selection__empty-value">No value</span>;
-  if (value === '') return <span className="flow-explorer-selection__empty-value">Empty string</span>;
-  return <span className="flow-explorer-selection__property-value">{format(value)}</span>;
-}
-
-export function ExplorerProperties({ row, columns = Object.keys(row.record), presentations }: {
-  row: ExplorerPreviewRow; columns?: readonly string[]; presentations?: Record<string, ExplorerPropertyPresentation>;
+export function ExplorerProperties({ row, columns = Object.keys(row.record), presentation, presentations }: {
+  row: ExplorerPreviewRow; columns?: readonly string[]; presentation?: ExplorerOverviewPresentation;
+  presentations?: Record<string, ExplorerPropertyPresentation>;
 }) {
   const [query, setQuery] = useState('');
   const [type, setType] = useState('');
   const [valueFilter, setValueFilter] = useState('');
-  const fieldType = (field: string) => row.columnTypes[field] || 'Unknown';
-  const types = [...new Set(columns.map(fieldType))].sort();
+  const fields = explorerFields(row, columns, presentation, presentations);
+  const types = [...new Set(fields.map(field => field.type))].sort();
   const search = query.trim().toLocaleLowerCase();
-  const visible = columns.filter(field => {
-    const value = propertyValue(row, field);
+  const visible = fields.filter(field => {
+    const value = explorerFieldValue(row, field);
     const empty = value === undefined || value === null || value === '';
-    return (!search || field.toLocaleLowerCase().includes(search))
-      && (!type || fieldType(field) === type)
+    return (!search || field.label.toLocaleLowerCase().includes(search) || !!field.field?.toLocaleLowerCase().includes(search))
+      && (!type || field.type === type)
       && (!valueFilter || empty === (valueFilter === 'empty'));
   });
   return <section className="flow-explorer-selection__properties" aria-label="Object properties">
@@ -64,16 +53,10 @@ export function ExplorerProperties({ row, columns = Object.keys(row.record), pre
         <option value="">All values</option><option value="present">With value</option><option value="empty">Empty</option>
       </select></label>
     </div>
-    {visible.length ? <dl className="flow-explorer-selection__fields">{visible.map(field => {
-      const kind = presentations?.[field];
-      const value = propertyValue(row, field);
-      return <div key={field}>
-        <dt><span>{field}</span><small>{fieldType(field)}</small></dt>
-        <dd>{kind && kind !== 'value' && value != null && value !== '' ? <Suspense fallback={<span role="status">Loading property preview…</span>}>
-          <ExplorerPropertyPreview kind={kind} value={value} label={field} />
-        </Suspense> : <PropertyValue value={value} />}</dd>
-      </div>;
-    })}</dl> : <p role="status">{columns.length ? 'No properties match these filters.' : 'This row has no properties.'}</p>}
+    {visible.length ? <dl className="flow-explorer-selection__fields">{visible.map(field => <div key={field.key}>
+      <dt title={field.description || undefined}><span>{field.label}</span><small>{field.type}</small></dt>
+      <dd><ExplorerFieldValue row={row} field={field} /></dd>
+    </div>)}</dl> : <p role="status">{fields.length ? 'No properties match these filters.' : 'This row has no visible properties.'}</p>}
   </section>;
 }
 
@@ -122,6 +105,7 @@ type Props = {
   columns: readonly string[];
   columnTypes?: Record<string, string>;
   presentations?: Record<string, ExplorerPropertyPresentation>;
+  metadata?: ExplorerPresentationRead;
   dataColumns: ColumnsType<RecordRow>;
   rowKey: (record: RecordRow, index: number) => string;
   rowIdentity: (record: RecordRow) => RecordRow;
@@ -132,23 +116,30 @@ type Props = {
   renderTitleLink?: (row: ExplorerPreviewRow) => ReactNode;
   renderFullDetails?: (row: ExplorerPreviewRow) => ReactNode;
   renderRelationships?: (row: ExplorerPreviewRow) => ReactNode;
-  renderActions?: (row: ExplorerPreviewRow) => ReactNode;
+  rowActions?: (row: ExplorerPreviewRow) => MenuItem[];
   renderMutation?: (row: ExplorerPreviewRow) => ReactNode;
   renderJson?: (row: ExplorerPreviewRow) => ReactNode;
+  onRefresh?: () => void;
+  onSelectedRowsChange?: (rows: ExplorerPreviewRow[]) => void;
 };
 
 type Selection = { rows: RecordRow[]; picked: number[]; active: number; anchor: number; collapsed: boolean };
+type View = 'overview' | 'properties' | 'links' | 'json' | 'compare' | `group:${string}`;
 
 export default function ExplorerSelection({
-  schema, table, rows, columns, columnTypes = noTypes, presentations, dataColumns, rowKey, rowIdentity, rowVersion, loading, locked, footer,
-  renderTitleLink, renderFullDetails, renderRelationships, renderActions, renderMutation, renderJson,
+  schema, table, rows, columns, columnTypes = noTypes, presentations, metadata, dataColumns, rowKey, rowIdentity, rowVersion, loading, locked, footer,
+  renderTitleLink, renderFullDetails, renderRelationships, rowActions, renderMutation, renderJson, onRefresh, onSelectedRowsChange,
 }: Props) {
   const panelId = useId();
   const results = useRef<HTMLDivElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const restore = useRef<HTMLButtonElement>(null);
+  const refreshState = useRef<{ from: RecordRow[]; keys: Set<string>; active: string }>();
+  const reported = useRef<ExplorerPreviewRow[]>([]);
+  const presentation = metadata?.presentation;
+  const typeName = presentation?.displayName || table;
   const [selection, setSelection] = useState<Selection>();
-  const [view, setView] = useState<'properties' | 'links' | 'json' | 'compare'>('properties');
+  const [view, setView] = useState<View>('overview');
   const current = selection?.rows === rows ? selection : undefined;
   const picked = current?.picked ?? [];
   const displayed = picked.slice(0, previewLimit);
@@ -158,15 +149,40 @@ export default function ExplorerSelection({
 
   function describeRow(record: RecordRow, index: number): ExplorerPreviewRow {
     const identity = rowIdentity(record);
-    return { record, identity, key: rowKey(record, index), title: explorerRowTitle(record, identity, 'Row ' + (index + 1)),
+    return { record, identity, key: rowKey(record, index),
+      title: explorerRowTitle(record, identity, presentation?.titleProperty, 'Row ' + (index + 1)),
       columnTypes, version: rowVersion(record) };
   }
+  useEffect(() => {
+    const snapshot = refreshState.current;
+    if (!snapshot || snapshot.from === rows || loading) return;
+    refreshState.current = undefined;
+    const matching = rows.flatMap((record, index) => snapshot.keys.has(rowKey(record, index)) ? [index] : []);
+    const index = matching.find(position => rowKey(rows[position], position) === snapshot.active) ?? matching[0];
+    setSelection(matching.length ? { rows, picked: matching, active: index, anchor: index, collapsed: false } : undefined);
+  }, [rows, loading, rowKey]);
+  useEffect(() => {
+    if (!onSelectedRowsChange) return;
+    const next = picked.map(index => describeRow(rows[index], index));
+    if (reported.current.length === next.length && next.every((row, index) => {
+      const previous = reported.current[index];
+      return row.record === previous.record && row.key === previous.key &&
+        row.title === previous.title && row.version === previous.version;
+    })) return;
+    reported.current = next;
+    onSelectedRowsChange(next);
+  });
+  useEffect(() => () => {
+    if (!reported.current.length) return;
+    reported.current = [];
+    onSelectedRowsChange?.([]);
+  }, [onSelectedRowsChange]);
   const findRow = (index: number) => results.current?.querySelector<HTMLTableRowElement>('[data-preview-index="' + index + '"]');
   const select = (indices: number[], active: number, anchor = active) => {
     if (disabled) return;
     const unique = [...new Set(indices)].sort((a, b) => a - b);
     setSelection({ rows, picked: unique, active, anchor, collapsed: false });
-    if (!picked.length || unique.length < 2 && view === 'compare') setView('properties');
+    if (!picked.length || unique.length < 2 && view === 'compare') setView('overview');
   };
   const selectIndex = (index: number, mode: 'row' | 'toggle' | 'range') => {
     if (mode === 'range' && current && picked.length) {
@@ -177,7 +193,7 @@ export default function ExplorerSelection({
       select(selected.has(index) ? picked.filter(item => item !== index) : [...picked, index], index);
     } else {
       select(selected.has(index) ? picked : [index], index);
-      if (!selected.has(index)) setView('properties');
+      if (!selected.has(index)) setView('overview');
     }
   };
   const collapse = () => {
@@ -194,7 +210,7 @@ export default function ExplorerSelection({
     if (disabled) return;
     findRow(activeIndex)?.focus({ preventScroll: true });
     setSelection(undefined);
-    setView('properties');
+    setView('overview');
   };
 
   function rowKeyboard(event: KeyboardEvent<HTMLTableRowElement>, index: number) {
@@ -228,6 +244,7 @@ export default function ExplorerSelection({
   });
   const checkboxProps = {
     fixed: true,
+    columnWidth: 36,
     selectedRowKeys: picked.map(index => rowKey(rows[index], index)),
     getCheckboxProps: (record: RecordRow) => ({
       disabled, 'aria-label': 'Select ' + describeRow(record, rows.indexOf(record)).title,
@@ -238,15 +255,14 @@ export default function ExplorerSelection({
       select(indices, active ?? -1);
     },
   };
-  const titleColumn = titleProperties.find(field => columns.includes(field));
   const titleCell = (_value: unknown, record: RecordRow, index: number) => {
     const row = describeRow(record, index);
-    return <span className="flow-explorer-selection__table-title"><TableOutlined />
-      {Object.keys(row.identity).length > 0 && renderTitleLink ? renderTitleLink(row) : <span>{row.title}</span>}
+    return <span className="flow-explorer-selection__table-title" title={row.title}>
+      <ExplorerTypeIcon presentation={presentation} compact />
+      {!metadata ? <span>Loading title…</span> : Object.keys(row.identity).length > 0 && renderTitleLink ? renderTitleLink(row) : <span>{row.title}</span>}
     </span>;
   };
   const tableColumns = dataColumns.map(column => {
-    if (column.dataIndex === titleColumn) return { ...column, render: titleCell };
     if (typeof column.dataIndex !== 'string' || !column.render) return column;
     const field = column.dataIndex, render = column.render;
     return { ...column, render: (value: unknown, record: RecordRow, index: number) => {
@@ -254,22 +270,35 @@ export default function ExplorerSelection({
       return render(Object.prototype.hasOwnProperty.call(identity, field) ? identity[field] : value, record, index);
     } };
   });
-  if (!titleColumn) tableColumns.unshift({ title: 'Title', key: 'explorer-result-title', render: titleCell });
+  tableColumns.unshift({ title: 'TITLE', key: 'explorer-result-title', className: 'flow-explorer-selection__title-column',
+    width: 232, fixed: 'left', onHeaderCell: () => ({ scope: 'col' }), render: titleCell });
   const active = activeIndex == null ? undefined : describeRow(rows[activeIndex], activeIndex);
   const panelOpen = Boolean(active && !current?.collapsed);
   const hasLinks = Boolean(active && renderRelationships && Object.keys(active.identity).length);
-  const displayView = view === 'links' && !hasLinks ? 'properties' : view;
+  const groups = presentation?.groups ?? [];
+  const group = view.startsWith('group:') ? view.slice(6) : undefined;
+  const displayView = view === 'links' && !hasLinks || group && !groups.includes(group) ? 'overview' : view;
   const shownCount = Math.min(picked.length, previewLimit);
+  const actions = active && picked.length === 1 ? rowActions?.(active) ?? [] : [];
+  const refresh = () => {
+    if (!active || !onRefresh || disabled) return;
+    refreshState.current = {
+      from: rows, active: active.key,
+      keys: new Set(picked.filter(index => Object.keys(rowIdentity(rows[index])).length > 0)
+        .map(index => rowKey(rows[index], index))),
+    };
+    onRefresh();
+  };
   return <div className={`flow-explorer-selection${panelOpen ? ' is-open' : ''}`}>
-    <div ref={results} className="flow-explorer-selection__results">
-      <header className="flow-explorer-selection__results-header"><h3>Results</h3>
-        {!!picked.length && <span role="status">{picked.length} selected</span>}
-        {current?.collapsed && active && <>
+    <div ref={results} role="region" aria-label="Object results" className="flow-explorer-selection__results">
+      {current?.collapsed && active && <header className="flow-explorer-selection__results-header">
           <button ref={restore} type="button" className="flow-explorer-selection__control"
             aria-controls={panelId} aria-expanded={false} onClick={show}>Show selection preview</button>
           <Button size="small" disabled={disabled} onClick={clear}>Clear selection</Button>
-        </>}
-      </header>
+      </header>}
+      {metadata?.error && <div role="alert" className="flow-explorer-selection__mapping-error">
+        Unable to load object presentation. {onRefresh && <Button size="small" onClick={onRefresh}>Retry</Button>}
+      </div>}
       <Table<RecordRow> className="flow-data-table" size="small" loading={loading} pagination={false} rowKey={(record, index = 0) => rowKey(record, index)}
         scroll={{ x: 'max-content' }} dataSource={rows} columns={tableColumns} rowSelection={checkboxProps} onRow={rowProps} />
       {footer}
@@ -278,10 +307,10 @@ export default function ExplorerSelection({
       onKeyDown={event => { if (event.key === 'Escape' && !event.defaultPrevented && !disabled) { event.preventDefault(); collapse(); } }}>
       <header className="flow-explorer-selection__panel-header">
         <button className="flow-explorer-selection__control" type="button" aria-label="Collapse selection preview" aria-controls={panelId}
-          aria-expanded={true} disabled={disabled} onClick={collapse}><ArrowLeftOutlined /></button>
+          aria-expanded={true} disabled={disabled} onClick={collapse}><BarsOutlined /></button>
         <h3 ref={heading} id={panelId + '-heading'} tabIndex={-1}>Selection Preview</h3>
         {picked.length > 1 && <Button size="small" disabled={disabled} aria-pressed={displayView === 'compare'}
-          onClick={() => setView(displayView === 'compare' ? 'properties' : 'compare')}>Compare objects</Button>}
+          onClick={() => setView(displayView === 'compare' ? 'overview' : 'compare')}>Compare objects</Button>}
         <Button size="small" disabled={disabled} onClick={clear}>Clear selection</Button>
       </header>
       {picked.length > 1 && <div className="flow-explorer-selection__picked">
@@ -291,8 +320,8 @@ export default function ExplorerSelection({
             return <button type="button" key={row.key} aria-pressed={activeIndex === index && displayView !== 'compare'}
               title={row.title} disabled={disabled} onClick={() => {
                 setSelection(current => current && { ...current, active: index });
-                setView('properties');
-              }}><TableOutlined /><span>{row.title}</span></button>;
+                setView('overview');
+              }}><ExplorerTypeIcon presentation={presentation} compact /><span>{row.title}</span></button>;
           })}
         </div>
         {picked.length > shownCount && <p>Showing the first {shownCount} of {picked.length} selected objects.</p>}
@@ -302,24 +331,36 @@ export default function ExplorerSelection({
           ? <Comparison columns={columns} choices={displayed.map(index => describeRow(rows[index], index))} />
           : <>
             <div className="flow-explorer-selection__object">
-              <span className="flow-explorer-selection__icon" aria-hidden="true"><TableOutlined /></span>
-              <div><span>{schema}.{table}</span><h4>{active.title}</h4>
+              <ExplorerTypeIcon presentation={presentation} />
+              <div className="flow-explorer-selection__identity"><span>{typeName}</span><h4>{metadata ? active.title : 'Loading title…'}</h4>
                 {!!Object.keys(active.identity).length && <small>{Object.entries(active.identity).map(([field, value]) => field + ': ' + format(value)).join(' · ')}</small>}
               </div>
-              {!!Object.keys(active.identity).length && renderFullDetails?.(active)}
+              <div className="flow-explorer-selection__object-actions">
+                {onRefresh && <Button size="small" type="text" icon={<ReloadOutlined />} aria-label="Refresh selected records" title="Refresh selected records"
+                  disabled={disabled} onClick={refresh} />}
+                {!!Object.keys(active.identity).length && renderFullDetails?.(active)}
+                <ExplorerRecordActions items={actions} disabled={disabled} />
+              </div>
             </div>
             {renderMutation?.(active) ?? <>
               <div className="flow-explorer-selection__view">
                 <nav aria-label="Selected object view">
+                  <button type="button" aria-pressed={displayView === 'overview'} onClick={() => setView('overview')}>Overview</button>
                   <button type="button" aria-pressed={displayView === 'properties'} onClick={() => setView('properties')}>Properties</button>
+                  {groups.map(name => <button type="button" key={name} aria-pressed={displayView === 'group:' + name}
+                    onClick={() => setView(`group:${name}`)}>{name}</button>)}
                   {hasLinks && <button type="button" aria-pressed={displayView === 'links'} onClick={() => setView('links')}><LinkOutlined /> Links</button>}
                   <button type="button" aria-pressed={displayView === 'json'} onClick={() => setView('json')}>JSON preview</button>
                 </nav>
-                {picked.length === 1 && renderActions?.(active)}
               </div>
               {displayView === 'links' ? renderRelationships?.(active)
                 : displayView === 'json' ? <section aria-label="Row JSON">{renderJson?.(active) ?? <pre>{JSON.stringify(active.record, null, 2)}</pre>}</section>
-                : <ExplorerProperties key={active.key} row={active} columns={columns} presentations={presentations} />}
+                : !metadata ? <p role="status">Loading object presentation…</p>
+                : metadata.error ? <p>Properties are unavailable until the object presentation loads.</p>
+                : displayView === 'properties'
+                  ? <ExplorerProperties key={active.key} row={active} columns={columns} presentation={presentation} presentations={presentations} />
+                  : <ExplorerObjectOverview row={active} typeName={typeName} columns={columns}
+                    presentation={presentation} presentations={presentations} group={displayView === 'overview' ? undefined : group} />}
             </>}
           </>}
       </div>

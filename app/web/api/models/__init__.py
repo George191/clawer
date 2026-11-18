@@ -44,6 +44,7 @@ from .embedding import (
 
 from .ontology_registry import OntologyDefinitionRow as OntologyDefinitionRow
 from .explorer_layouts import ExplorerResultLayout as ExplorerResultLayout
+from .explorer_properties import ExplorerPropertyProfile as ExplorerPropertyProfile
 from .asset_collected_stats import AssetCollectedStatRow as AssetCollectedStatRow
 from .asset_field_freshness import AssetFieldFreshnessRow as AssetFieldFreshnessRow
 from .asset_min_rows import AssetMinRowsRow as AssetMinRowsRow
@@ -135,3 +136,5 @@ class PasswordRecoveryCodeVerified(SQLModel):
 class NewPasswordWithCode(SQLModel):
     reset_token: str
     new_password: str = Field(min_length=8, max_length=40)
+
+from .explorer_saved_items import ExplorerSavedItem

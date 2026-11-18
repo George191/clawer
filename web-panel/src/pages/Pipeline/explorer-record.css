@@ -17,20 +17,19 @@
 .record-heading { flex: 1 1 200px; min-width: 0; }
 .record-heading > span, .record-identity dt, .record-edit small { color: var(--ontology-muted); }
 .record-heading h1 { margin: 2px 0 0; font-size: clamp(21px,3vw,34px); line-height: 1.2; overflow-wrap: anywhere; }
-.record-type-icon { width: 42px; height: 42px; display: grid; place-items: center; border: 1px solid var(--ontology-border); color: var(--ontology-primary); border-radius: 5px; font-size: 20px; }
 .record-operations, .record-confirm { flex-wrap: wrap; }
 .record-identity { display: flex; gap: 20px; flex-wrap: wrap; padding: 12px 0 18px; margin-block: 0; }
 .record-identity div { min-width: 70px; }
 .record-identity dt { font-size: 12px; }
 .record-identity dd { margin: 3px 0 0; font: 13px ui-monospace, monospace; overflow-wrap: anywhere; }
-.record-tabs { gap: 16px; border-bottom: 1px solid var(--ontology-border); margin-bottom: 18px; }
+.record-tabs { gap: 16px; flex-wrap: wrap; border-bottom: 1px solid var(--ontology-border); margin-bottom: 18px; }
 .record-tabs button { padding: 10px 2px; border: 0; border-bottom: 2px solid transparent; color: var(--ontology-muted); background: transparent; cursor: pointer; }
 .record-tabs button[aria-pressed="true"] { color: var(--ontology-primary); border-color: currentColor; }
 .record-tabs button:disabled { cursor: default; }
 .record-edit fieldset { margin: 0 0 8px; display: flex; gap: 12px; align-items: center; border: 0; padding: 4px 0 8px; }
 .record-edit legend { padding: 0; font-weight: 600; }
 .record-edit small { margin-left: 6px; font-weight: normal; }
-.record-edit textarea, .record-share input { flex: 1; min-width: 0; resize: vertical; background: var(--ontology-surface); border: 1px solid var(--ontology-border); color: var(--ontology-text); padding: 7px; }
-.record-error, .record-confirm, .record-share { background: var(--ontology-surface); padding: 12px; margin-bottom: 12px; border: 1px solid var(--ontology-border); border-radius: 4px; }
-.record-error { display: flex; gap: 10px; align-items: center; color: var(--ui-danger, #d96c75); }
-.record-json { padding: 14px; background: var(--ontology-surface); overflow: auto; border-radius: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.record-edit textarea, .record-share input { flex: 1; min-width: 0; resize: vertical; background: var(--ontology-panel); border: 1px solid var(--ontology-border); color: var(--ontology-text); padding: 7px; }
+.record-error, .record-confirm, .record-share { background: var(--ontology-panel); padding: 12px; margin-bottom: 12px; border: 1px solid var(--ontology-border); border-radius: 4px; }
+.record-error { display: flex; gap: 10px; align-items: center; color: var(--ui-error); }
+.record-json { padding: 14px; background: var(--ontology-panel); overflow: auto; border-radius: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
