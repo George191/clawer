@@ -67,7 +67,9 @@ function RecordPage({ schema, table, identity }: { schema: string; table: string
     const metadata = useExplorerPresentation(schema, table, revision);
     const presentation = metadata?.presentation;
     const typeName = presentation?.displayName || table;
-    const title = result ? (metadata ? explorerRowTitle(result.row, result.identity, presentation?.titleProperty) : 'Loading title…') : typeName;
+    const title = result ? (metadata
+        ? explorerRowTitle(result.row, result.identity, presentation?.titleProperty, presentation?.primaryKey ?? result.primaryKey)
+        : 'Loading title…') : typeName;
     const row = result && { record: result.row, identity: result.identity, key: JSON.stringify(result.identity), title, columnTypes: result.columnTypes };
     const groups = presentation?.groups ?? [];
     const group = mode.startsWith('group:') ? mode.slice(6) : undefined;

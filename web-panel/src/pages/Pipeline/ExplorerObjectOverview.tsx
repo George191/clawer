@@ -39,13 +39,16 @@ export const propertyValue = (row: ExplorerPreviewRow, field: string) => fieldVa
 const rawText = (value: unknown) => typeof value === 'object' ? JSON.stringify(value) : String(value);
 const notEmpty = (value: unknown) => value !== undefined && value !== null && value !== '';
 
-export function explorerRowTitle(record: RowValues, identity: RowValues, titleProperty?: string | null, fallback = 'Untitled row') {
+export function explorerRowTitle(record: RowValues, identity: RowValues, titleProperty?: string | null,
+  primaryKey: readonly string[] = [], fallback = 'Untitled row') {
   if (titleProperty) {
     const value = fieldValue(record, identity, titleProperty);
     return notEmpty(value) && typeof value !== 'object' && String(value).trim() ? rawText(value) : 'Title unavailable';
   }
-  const parts = Object.entries(identity);
-  return parts.length ? 'Primary key: ' + parts.map(([field, value]) => field + '=' + rawText(value)).join(' · ') : fallback;
+  const keys = Object.keys(identity).sort();
+  const ordered = [...primaryKey.filter(key => Object.prototype.hasOwnProperty.call(identity, key)),
+    ...keys.filter(key => !primaryKey.includes(key))];
+  return ordered.length ? 'Primary key: ' + ordered.map(key => key + '=' + rawText(identity[key])).join(' · ') : fallback;
 }
 
 export function useExplorerPresentation(schema: string, table: string, revision: string | number = 0) {

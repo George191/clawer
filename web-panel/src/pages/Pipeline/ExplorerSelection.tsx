@@ -150,7 +150,7 @@ export default function ExplorerSelection({
   function describeRow(record: RecordRow, index: number): ExplorerPreviewRow {
     const identity = rowIdentity(record);
     return { record, identity, key: rowKey(record, index),
-      title: explorerRowTitle(record, identity, presentation?.titleProperty, 'Row ' + (index + 1)),
+      title: explorerRowTitle(record, identity, presentation?.titleProperty, presentation?.primaryKey, 'Row ' + (index + 1)),
       columnTypes, version: rowVersion(record) };
   }
   useEffect(() => {

@@ -5,7 +5,7 @@ import json
 import os
 import shutil
 from pathlib import Path
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 from uuid import uuid4
 
 from playwright.sync_api import expect, sync_playwright
@@ -30,11 +30,28 @@ def exercise(page, base, asset, owner, reader=None):
     expect(title).to_be_visible()
     title_text = title.inner_text()
     # Identity comes from the actual browser hyperlink, including large integer keys.
-    from urllib.parse import parse_qs
-
     key = json.loads(parse_qs(urlsplit(title.get_attribute("href")).query)["key"][0])
+    if asset["table"] == "compound_assets":
+        fields = ["record_id", "data_source", "data_type"]
+        assert set(key) == set(fields)
+        assert title_text == "Primary key: " + " · ".join(f"{field}={key[field]}" for field in fields)
     first.get_by_role("checkbox").check()
     expect(button("Clear selected objects")).to_be_visible()
+    preview = page.get_by_role("complementary", name="Selection Preview")
+    expect(preview.get_by_role("heading", name=title_text, exact=True)).to_be_visible()
+    with page.expect_popup() as opened, page.context.expect_event(
+        "response", predicate=lambda r: r.request.method == "POST"
+        and urlsplit(r.url).path.endswith("/" + asset["table"] + "/row-by-key")
+    ) as lookup:
+        preview.get_by_role("link", name="Open full view").click()
+    full = opened.value
+    assert lookup.value.ok, lookup.value.status
+    if asset["table"] == "compound_assets":
+        details = lookup.value.json()
+        assert list(details.get("data", details)["identity"]) != fields
+    expect(full.get_by_role("heading", name=title_text, exact=True)).to_be_visible()
+    assert json.loads(parse_qs(urlsplit(full.url).query)["key"][0]) == key
+    full.close()
     button("Export").click()
     with page.expect_download() as download:
         button("JSON · selected objects").click()
@@ -50,7 +67,7 @@ def exercise(page, base, asset, owner, reader=None):
     button("Lists").click()
     button(list_name).click()
     expect(
-        page.get_by_role("region", name="Explorer tools").get_by_role("link", name=title_text)
+        page.get_by_role("region", name="Explorer tools").get_by_role("link", name=title_text, exact=True)
     ).to_be_visible()
     page.keyboard.press("Escape")
     button("Explore").click()
@@ -103,6 +120,7 @@ def exercise(page, base, asset, owner, reader=None):
         "exactKey": key,
         "shareRead": bool(reader),
         "checks": [
+            "same exact identity and title in results, selection and full view",
             "selected JSON",
             "saved list",
             "list title",

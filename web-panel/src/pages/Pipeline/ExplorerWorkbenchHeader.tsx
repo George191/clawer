@@ -18,6 +18,7 @@ type Props = {
     table: string;
     label: string;
     titleProperty?: string | null;
+    primaryKey?: string[];
     color?: string;
     glyph?: ReactNode;
     fields: string[];
@@ -70,11 +71,12 @@ function download(format: 'csv' | 'json', rows: RecordRow[], fields: string[], n
     a.click();
     window.setTimeout(() => URL.revokeObjectURL(href), 1000);
 }
-function RelatedList({ schema, table, keys, titleProperty }: {
+function RelatedList({ schema, table, keys, titleProperty, primaryKey }: {
     schema: string;
     table: string;
     keys: ListKey[];
     titleProperty?: string | null;
+    primaryKey?: string[];
 }) {
     const [offset, setOffset] = useState(0);
     const [labels, setLabels] = useState<Record<string, string>>({});
@@ -88,7 +90,7 @@ function RelatedList({ schema, table, keys, titleProperty }: {
                 try {
                     const item = await fetchExplorerRowByKey(schema, table, key, controller.signal);
                     if (!controller.signal.aborted)
-                        setLabels(v => ({ ...v, [id]: explorerRowTitle(item.row, key, titleProperty) }));
+                        setLabels(v => ({ ...v, [id]: explorerRowTitle(item.row, item.identity, titleProperty, primaryKey ?? item.primaryKey) }));
                 }
                 catch {
                     if (!controller.signal.aborted)
@@ -98,7 +100,7 @@ function RelatedList({ schema, table, keys, titleProperty }: {
         }
         void Promise.all([next(), next(), next()]);
         return () => controller.abort();
-    }, [schema, table, keys, offset, titleProperty]);
+    }, [schema, table, keys, offset, titleProperty, primaryKey]);
     return <><ul className="wb-list">{keys.slice(offset, offset + 8).map(key => <li key={JSON.stringify(key)}>
         <ExplorerRecordLink schema={schema} table={table} identity={key}>{labels[JSON.stringify(key)] ?? 'Loading object…'}</ExplorerRecordLink></li>)}</ul>
         {keys.length > 8 && <div><button disabled={!offset} onClick={() => setOffset(n => n - 8)}>Previous</button> {offset + 1}–{Math.min(offset + 8, keys.length)} / {keys.length} <button disabled={offset + 8 >= keys.length} onClick={() => setOffset(n => n + 8)}>Next</button></div>}</>;
@@ -296,7 +298,7 @@ export default function ExplorerWorkbenchHeader(p: Props) {
                     setError(fail(e));
                 } }}>×</button></div>)}
                 {(page > 0 || items?.hasMore) && <div><button disabled={!page} onClick={() => setPage(v => v - 1)}>Previous</button><button disabled={!items?.hasMore} onClick={() => setPage(v => v + 1)}>Next</button></div>}</>}
-            {menu === 'objects' && saved?.kind === 'list' && <><strong>{saved.name}</strong><RelatedList schema={p.schema} table={p.table} keys={saved.content.keys ?? []} titleProperty={p.titleProperty}/></>}
+            {menu === 'objects' && saved?.kind === 'list' && <><strong>{saved.name}</strong><RelatedList schema={p.schema} table={p.table} keys={saved.content.keys ?? []} titleProperty={p.titleProperty} primaryKey={p.primaryKey}/></>}
             {menu === 'save' && <form onSubmit={e => { e.preventDefault(); void save(); }}><label>{saveKind === 'list' ? 'List name' : 'Exploration name'}<input autoFocus required maxLength={100} value={name} onChange={e => setName(e.target.value)}/></label>
                 <button className="wb-primary" disabled={busy || !name.trim()}>Save {saveKind}</button></form>}
             {menu === 'share' && <><strong>Share {saved?.name || 'exploration'}</strong>
