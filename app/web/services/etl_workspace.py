@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import secrets
@@ -17,8 +18,6 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
-from app.config.settings import settings
-from app.etl.cdc import cdc_schemas
 from app.etl.schema.object_relations import relation_mapping, validate_definition
 from app.etl.schema.ontology import resource_group, sync_object_metadata
 from app.storage.postgres_client import get_pg_client
@@ -31,6 +30,8 @@ from app.web.services.etl_layers import (
     EtlLayers,
     LAYERS,
     RESERVED_BATCH_TARGET,
+    ROW_VERSION_SQL,
+    allows_physical_delete,
     get_etl_layers,
     require_ordinary_table,
     reserved_batch_target_exists,
@@ -627,7 +628,7 @@ class EtlWorkspace:
     async def _write_row(self, layer: str, table: str, payload: dict[str, Any], delete: bool) -> dict[str, Any]:
         schema = resolve_schema(layer)
         require_ordinary_table(schema, table)
-        if delete and settings.etl_output_mode == "debezium" and schema in cdc_schemas():
+        if delete and not allows_physical_delete(schema):
             raise HTTPException(409, "CDC current tables require business soft deletion; physical deletion propagation is unavailable")
         qualified = f"{quote_identifier(schema)}.{quote_identifier(table)}"
         columns = await self._layers.columns(schema, table)
@@ -638,11 +639,15 @@ class EtlWorkspace:
         if not isinstance(key, dict) or set(key) != set(primary) or any(value is None for value in key.values()):
             _bad("The complete primary key is required")
         changes = payload.get("changes", payload.get("values"))
+        version = payload.get("expectedVersion")
+        if not isinstance(version, str) or not re.fullmatch(r"[0-9a-f]{64}", version):
+            raise HTTPException(428, "Reload the row before editing or deleting it")
         known = {column["name"] for column in columns}
         if not delete and (not isinstance(changes, dict) or not changes or set(changes) - known):
             _bad("Provide changes for known columns")
         # json_populate_record converts JSON strings to native dates, UUIDs, arrays and JSON values.
         predicate = " AND ".join(f"t.{quote_identifier(name)} = k.{quote_identifier(name)}" for name in primary)
+        predicate += f" AND {ROW_VERSION_SQL} = :version"
         source = f"jsonb_populate_record(NULL::{qualified}, CAST(:key AS jsonb)) AS k"
         if delete:
             sql = f"DELETE FROM {qualified} AS t USING {source} WHERE {predicate} RETURNING to_jsonb(t) AS row"
@@ -650,10 +655,12 @@ class EtlWorkspace:
             assignments = ", ".join(f"{quote_identifier(name)} = v.{quote_identifier(name)}" for name in changes)
             sql = f"UPDATE {qualified} AS t SET {assignments} FROM {source}, jsonb_populate_record(NULL::{qualified}, CAST(:changes AS jsonb)) AS v WHERE {predicate} RETURNING to_jsonb(t) AS row"
         async with self._session() as session:
-            result = await session.execute(text(sql), {"key": _json(key), "changes": _json(changes)})
+            await session.execute(text("SET LOCAL lock_timeout='2s'"))
+            result = await session.execute(text(sql), {"key": _json(key), "changes": _json(changes), "version": version})
             rows = list(result.mappings())
             if not rows:
-                raise HTTPException(404, "Row not found")
+                raise HTTPException(409, {"code": "row_version_conflict",
+                                          "message": "Row changed or was deleted. Reload the preview before saving."})
             if len(rows) != 1:
                 raise HTTPException(409, "Primary key matched multiple rows; write rolled back")
             return {"row": rows[0]["row"], "rowCount": 1, "deleted": delete}
@@ -668,7 +675,18 @@ class EtlWorkspace:
     def _publication(row: Any) -> dict[str, Any]:
         record = dict(row)
         scope = record.pop("scope")
-        return {**record, **scope, "url": f"{web_settings.API_V1_STR}/etl/published/{record['token']}"}
+        token = record.pop("token")
+        key_status = "active"
+        if token.startswith("pending:"):
+            key_status = "unissued"
+        elif token.startswith("revoked:"):
+            key_status = "revoked"
+        return {
+            **scope,
+            **record,
+            "keyStatus": key_status,
+            "url": f"{web_settings.API_V1_STR}/etl/published/{record['id']}/data",
+        }
 
     async def publications(self, layer: str, table: str) -> list[dict[str, Any]]:
         schema = resolve_schema(layer)
@@ -715,7 +733,7 @@ class EtlWorkspace:
             _bad("Filters and sorts must be arrays")
         known = {column["name"] for column in columns}
         for name, column in (("filterType", "data_type"), ("filterSource", "data_source")):
-            if scope[name] and column not in known:
+            if scope[name] and column not in known and not (name == "filterSource" and "source" in known):
                 _bad(f"Publication range requires column {column}")
         # Validate the stored query through the same path that will serve the token.
         await self._layers.data(schema, table, {"limit": 1}, scope=scope)
@@ -725,7 +743,7 @@ class EtlWorkspace:
             if publication_id:
                 sql = 'UPDATE public.flow_publications SET valid_from = :start, valid_until = :end, scope = CAST(:scope AS jsonb) WHERE id = :id AND schema_name = :schema AND table_name = :table RETURNING id, token, valid_from AS "validFrom", valid_until AS "validUntil", scope'
             else:
-                params["token"] = "pk_live_" + secrets.token_urlsafe(32)
+                params["token"] = "pending:" + params["id"]
                 sql = 'INSERT INTO public.flow_publications (id, token, schema_name, table_name, valid_from, valid_until, scope) VALUES (:id, :token, :schema, :table, :start, :end, CAST(:scope AS jsonb)) RETURNING id, token, valid_from AS "validFrom", valid_until AS "validUntil", scope'
             result = await session.execute(text(sql), params)
             row = result.mappings().one_or_none()
@@ -744,19 +762,89 @@ class EtlWorkspace:
                 raise HTTPException(404, "Publication not found")
         return {"deleted": True, "id": publication_id}
 
-    async def published_data(self, token: str, payload: dict[str, Any]) -> dict[str, Any]:
+    async def publication_keys(self, search: str, limit: int, offset: int) -> dict[str, Any]:
+        async with self._session() as session:
+            if not await self._exists(session, "flow_publications"):
+                return {"items": [], "hasMore": False}
+            result = await session.execute(
+                text(
+                    """
+                SELECT id, schema_name AS schema, table_name AS "table", valid_from AS "validFrom",
+                       valid_until AS "validUntil",
+                       CASE WHEN token LIKE 'pending:%' THEN 'unissued' WHEN token LIKE 'revoked:%'
+                            THEN 'revoked' ELSE 'active' END AS "keyStatus"
+                FROM public.flow_publications
+                WHERE strpos(lower(schema_name || '.' || table_name || ' ' || id), lower(:q)) > 0
+                ORDER BY created_at DESC, id LIMIT :lim OFFSET :off"""
+                ),
+                {"q": search, "lim": limit + 1, "off": offset},
+            )
+            rows = list(result.mappings())
+            return {
+                "items": [
+                    {**r, "url": f"{web_settings.API_V1_STR}/etl/published/{r['id']}/data"} for r in rows[:limit]
+                ],
+                "hasMore": len(rows) > limit,
+            }
+
+    async def change_publication_key(self, publication_id: str, *, revoke: bool) -> dict[str, Any]:
+        key = None
+        stored = "revoked:" + publication_id
+        if not revoke:
+            key = "pk_live_" + secrets.token_urlsafe(32)
+            stored = "sha256:" + hashlib.sha256(key.encode()).hexdigest()
         async with self._session() as session:
             if not await self._exists(session, "flow_publications"):
                 raise HTTPException(404, "Publication not found")
-            result = await session.execute(text("SELECT schema_name, table_name, scope FROM public.flow_publications WHERE token = :token AND valid_from <= now() AND valid_until > now()"), {"token": token})
+            result = await session.execute(
+                text("""UPDATE public.flow_publications SET token = :stored WHERE id = :id
+                        RETURNING schema_name, table_name"""),
+                {"id": publication_id, "stored": stored},
+            )
+            row = result.mappings().one_or_none()
+            if row is None:
+                raise HTTPException(404, "Publication not found")
+            require_ordinary_table(row["schema_name"], row["table_name"])
+        return {
+            "id": publication_id,
+            "keyStatus": "revoked" if revoke else "active",
+            **({"key": key} if key else {}),
+        }
+
+    async def published_data(
+        self, token: str, payload: dict[str, Any], *, publication_id: str | None = None
+    ) -> dict[str, Any]:
+        if not token or len(token) > 256 or token.startswith(("sha256:", "pending:", "revoked:")):
+            raise HTTPException(404, "Publication not found or outside its validity window")
+        args = {"token": token}
+        predicate = "token = :token"
+        if publication_id is not None:
+            args.update(id=publication_id, digest="sha256:" + hashlib.sha256(token.encode()).hexdigest())
+            predicate = "id = :id AND token IN (:digest, :token)"
+        query = text(
+            "SELECT schema_name, table_name, scope FROM public.flow_publications WHERE "
+            + predicate
+            + " AND valid_from <= clock_timestamp() AND valid_until > clock_timestamp()"
+        )
+        async with self._session() as session:
+            if not await self._exists(session, "flow_publications"):
+                raise HTTPException(404, "Publication not found")
+            result = await session.execute(query, args)
             row = result.mappings().one_or_none()
             if row is None:
                 raise HTTPException(404, "Publication not found or outside its validity window")
             record = dict(row)
             require_ordinary_table(record["schema_name"], record["table_name"])
-        # Only pagination is public input. The stored filters and sort order are authoritative.
-        query = {name: payload[name] for name in ("limit", "offset") if name in payload}
-        return await self._layers.data(record["schema_name"], record["table_name"], query, scope=record["scope"])
+        consumer = {name: payload[name] for name in ("limit", "offset", "filters", "search") if name in payload}
+        data = await self._layers.data(
+            record["schema_name"], record["table_name"], consumer, scope=record["scope"]
+        )
+        # Prevent a scope edit, expiry or revocation during the warehouse read from releasing that result.
+        async with self._session() as session:
+            latest = (await session.execute(query, args)).mappings().one_or_none()
+            if latest is None or dict(latest) != record:
+                raise HTTPException(404, "Publication not found or outside its validity window")
+        return data
 
 
 @lru_cache

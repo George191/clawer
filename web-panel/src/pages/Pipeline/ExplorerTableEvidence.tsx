@@ -5,6 +5,7 @@ import { ReloadOutlined } from '@/components/ui/icons';
 import { fetchExplorerTableEvidence, type ExplorerTableEvidenceSnapshot, type TransferRunReceipt } from '../../services/api';
 import TableExportEvidence, { TABLE_EXPORT_SOURCE } from './TableExportEvidence';
 import ExplorerAssetFreshness from './ExplorerAssetFreshness';
+import ExplorerCdcCapture from './ExplorerCdcCapture';
 import ExplorerDailyJobQuality from './ExplorerDailyJobQuality';
 import ExplorerFieldFreshness from './ExplorerFieldFreshness';
 import ExplorerMinimumRowHealth from './ExplorerMinimumRowHealth';
@@ -78,6 +79,7 @@ export default function ExplorerTableEvidence({ schema, table, canManage }: { sc
                             <ExplorerDailyJobQuality schema={schema} table={table} version={version} cadence="weekly" />
                         </>}
                         {showReceipts && <ExplorerAssetFreshness key={`${schema}.${table}`} schema={schema} table={table} version={version} />}
+                        {/^ts_(rds|ods|task|dwd|dim|dws|ads)$/.test(schema) && <ExplorerCdcCapture schema={schema} table={table} version={version} />}
                         {showExport ? <TableExportEvidence mode="explorer" version={version} /> : <>
                         {showReceipts ? <ExplorerTransferTimeline key={`${schema}.${table}:${version}`} schema={schema} table={table} onLatestCurrentReceipt={setLatestCurrentReceipt} />
                         : <section className="flow-evidence-card" aria-labelledby="table-evidence-history">
@@ -88,7 +90,7 @@ export default function ExplorerTableEvidence({ schema, table, canManage }: { sc
                                 : 'No verified ingestion or transformation runs are available for this table.'}</p>
                         </section>}
                         <section className="flow-evidence-card flow-evidence-lineage" aria-labelledby="table-evidence-lineage">
-                            <header><h4 id="table-evidence-lineage">Lineage</h4><span>{observed ? 'Observed in sandbox' : snapshot.lineage.status === 'declared' ? 'Declared in code' : 'Evidence unavailable'}</span></header>
+                            <header><h4 id="table-evidence-lineage">Table-to-table lineage</h4><span>{observed ? 'Observed in sandbox' : snapshot.lineage.status === 'declared' ? 'Declared in code' : 'Transfer receipts'}</span></header>
                             {observed ? <>
                                 <div className="flow-evidence-path">
                                     <div className="flow-evidence-node"><span>Source table</span><code>{observed.sourceSchema}.{observed.sourceTable}</code></div>
@@ -106,7 +108,7 @@ export default function ExplorerTableEvidence({ schema, table, canManage }: { sc
                                     </div>
                                 </div>
                                 <p>The migration code writes directly from MongoDB to each destination. This is not an observed RDS-to-ODS flow and does not verify a specific run or downstream consumer.</p>
-                            </> : <><strong>No verified data flow</strong><p>No upstream or downstream flow is available as evidence for this table. This does not imply the table is disconnected.</p></>}
+                            </> : <p>No table-to-table transfer receipt was returned for this asset.</p>}
                             {schema.startsWith('ts_') && schema !== 'ts_meta' &&
                                 <Link className="flow-evidence-lineage-link" to={`/ontology/lineage?${new URLSearchParams({
                                     schema, ...(tableLineage ? { table, tableLineage: '1' } : {}),

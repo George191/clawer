@@ -21,8 +21,10 @@ from app.web.api.models.cdc import (
     CdcStatus, ConnectState, ConnectorState, ConsumerLag, KafkaState,
     PostgresState, ProbeState, WalSlot,
 )
+from app.web.services.monitor_snapshots import MonitorSnapshots
 
-_PROBE_TIMEOUT_SECONDS = 5
+_PROBE_TIMEOUT_SECONDS = 15
+_STATUS = MonitorSnapshots(ttl=15, concurrent=1, capacity=1)
 _CONNECTOR_STATES = {"RUNNING", "FAILED", "PAUSED", "UNASSIGNED", "RESTARTING", "STOPPED"}
 _Probe = TypeVar("_Probe", bound=ProbeState)
 
@@ -130,29 +132,42 @@ async def _postgres() -> PostgresState:
 async def _consumer_offsets(admin: AIOKafkaAdminClient) -> dict[str, dict[TopicPartition, OffsetAndMetadata]]:
     pg_prefix = _postgres_identity()["prefix"]
     mongo_prefix = f"{mongo_cdc_topic_prefix()}.{settings.db_name}."
-    groups = [name for name, _ in await admin.list_consumer_groups()
-              if name.startswith(MONGO_CDC_GROUP_PREFIX) or name == f"{pg_prefix}-relay"]
-    offsets = await asyncio.gather(*(admin.list_consumer_group_offsets(group) for group in groups))
-    return {
-        group: {partition: position for partition, position in positions.items()
-                if position.offset >= 0 and (partition.topic.startswith(mongo_prefix)
-                                            or partition.topic.startswith(f"{pg_prefix}."))}
-        for group, positions in zip(groups, offsets, strict=True)
+    worker_topics = {
+        settings.etl_rds_consumer_group: (settings.etl_raw_topic, settings.kafka_topic + "-"),
+        settings.etl_ods_consumer_group: ("", settings.etl_rds_topic + "-"),
     }
+    groups = [name for name, _ in await admin.list_consumer_groups()
+              if name.startswith(MONGO_CDC_GROUP_PREFIX) or name == f"{pg_prefix}-relay" or name in worker_topics]
+    offsets = await asyncio.gather(*(admin.list_consumer_group_offsets(group) for group in groups))
+    result = {}
+    for group, positions in zip(groups, offsets, strict=True):
+        exact, prefix = worker_topics.get(group, ("", f"{pg_prefix}." if group == f"{pg_prefix}-relay" else mongo_prefix))
+        result[group] = {part: pos for part, pos in positions.items()
+                         if pos.offset >= 0 and (part.topic == exact or part.topic.startswith(prefix))}
+    return result
 
 
 async def _kafka() -> KafkaState:
     if not settings.kafka_brokers:
         return KafkaState(state="unconfigured", reason="No Kafka cluster is configured")
-    admin = AIOKafkaAdminClient(**build_admin_client_kwargs(request_timeout_ms=3000))
+    admin = AIOKafkaAdminClient(**build_admin_client_kwargs(request_timeout_ms=10000))
     # This observer never subscribes, joins a group or commits offsets.
-    reader = AIOKafkaConsumer(**build_consumer_kwargs(group_id=None, request_timeout_ms=3000))
+    reader = AIOKafkaConsumer(**build_consumer_kwargs(group_id=None, request_timeout_ms=10000))
     try:
         await admin.start()
         offsets = await _consumer_offsets(admin)
+        existing = {TopicPartition(item["topic"], part["partition"])
+                    for item in await admin.describe_topics()
+                    for part in item["partitions"]}
+        offsets = {group: {part: position for part, position in values.items() if part in existing}
+                   for group, values in offsets.items()}
         partitions = {partition for positions in offsets.values() for partition in positions}
         if not partitions:
             return KafkaState(state="not_ready", reason="No committed offsets were found for the project CDC consumer groups")
+        # Prime all topic metadata in one request. Pause before start so the
+        # lag observer fetches positions without reading any business records.
+        reader.assign(partitions)
+        reader.pause(*partitions)
         await reader.start()
         ends = await reader.end_offsets(list(partitions))
         consumers = [ConsumerLag(
@@ -174,7 +189,7 @@ async def _probe(operation: Callable[[], Awaitable[_Probe]], model: type[_Probe]
         return model(state="unavailable", reason=reason)
 
 
-async def status() -> CdcStatus:
+async def _status() -> CdcStatus:
     """Return bounded independent infrastructure probes, without implying ETL completion."""
     connect, mongo, postgres, kafka = await asyncio.gather(
         _probe(_connect, ConnectState, "Unable to read Kafka Connect status. Check connectivity and permissions."),
@@ -186,3 +201,7 @@ async def status() -> CdcStatus:
         checked_at=datetime.now(timezone.utc).isoformat(), output_mode=settings.etl_output_mode,
         connect=connect, mongo=mongo, postgres=postgres, kafka=kafka,
     )
+
+
+async def status() -> CdcStatus:
+    return await _STATUS.read("cdc", _status)

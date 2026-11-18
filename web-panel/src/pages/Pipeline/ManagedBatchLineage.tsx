@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { ArrowRightOutlined, CloseOutlined, DatabaseOutlined } from '@/components/ui/icons';
 import { fetchCommittedBatchLineage, fetchCommittedBatchLineageEntry } from '../../services/api';
-import type { CommittedBatchLineageDetail, CommittedBatchLineageEntry, CommittedBatchLineagePage } from '../../services/api';
+import type { CommittedBatchLineageDetail, CommittedBatchLineageEntry, CommittedBatchLineagePage, ManagedBatchLineageAsset } from '../../services/api';
 import { sandboxScopeDenied, useSandboxIdentity } from './SandboxMarkings';
 
 export const MANAGED_BATCH_ASSET = 'committed-batch';
@@ -31,15 +31,16 @@ const scopeName = (entry: CommittedBatchLineageEntry) => entry.physicalScope ===
 const entryKey = (entry: Selection) => `${entry.kind}:${entry.id}`;
 
 type Props = {
+  asset: ManagedBatchLineageAsset;
   selected: boolean; exactReceipt: string | null; version: number; onSelect: () => void; onClose: () => void;
 };
 
 export default function ManagedBatchLineage(props: Props) {
   const identity = useSandboxIdentity();
-  return identity ? <Workspace key={identity} {...props} /> : null;
+  return identity ? <Workspace key={JSON.stringify([identity, props.asset.schema, props.asset.table])} {...props} /> : null;
 }
 
-function Workspace({ selected, exactReceipt, version, onSelect, onClose }: Props) {
+function Workspace({ asset, selected, exactReceipt, version, onSelect, onClose }: Props) {
   const [page, setPage] = useState<CommittedBatchLineagePage>();
   const [available, setAvailable] = useState(false);
   const [missing, setMissing] = useState(false);
@@ -66,7 +67,7 @@ function Workspace({ selected, exactReceipt, version, onSelect, onClose }: Props
     const append = next != null;
     setLoading(true); setLoadError(false);
     if (!append) setPage(undefined);
-    void fetchCommittedBatchLineage({ ...(next?.range ?? range), cursor: next?.cursor, limit: 20 }, request.signal).then(value => {
+    void fetchCommittedBatchLineage(asset, { ...(next?.range ?? range), cursor: next?.cursor, limit: 20 }, request.signal).then(value => {
       if (!request.signal.aborted) {
         setAvailable(true); setMissing(false);
         setPage(previous => ({
@@ -89,7 +90,7 @@ function Workspace({ selected, exactReceipt, version, onSelect, onClose }: Props
     const request = new AbortController();
     setDetail(undefined); setDetailError(false);
     if (selected && available && selectedItem) {
-      void fetchCommittedBatchLineageEntry(selectedItem.kind, selectedItem.id, request.signal).then(value => {
+      void fetchCommittedBatchLineageEntry(asset, selectedItem.kind, selectedItem.id, request.signal).then(value => {
         if (!request.signal.aborted) setDetail(value);
       }).catch(failure => {
         if (!request.signal.aborted) {

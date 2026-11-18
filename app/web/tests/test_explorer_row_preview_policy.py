@@ -1,5 +1,6 @@
 """Force indexed browsing before legacy row queries on isolated PostgreSQL."""
 
+import asyncio
 import os
 import unittest
 from unittest.mock import patch
@@ -14,6 +15,7 @@ from app.storage.postgres_client import PostgresClient
 from app.web.core.config import settings
 from app.web.core.config.indexed_sample import RequiredIndexedPreviewTable
 from app.web.services.etl_layers import EtlLayers
+from app.web.services.etl_workspace import EtlWorkspace
 from app.web.tests.test_transfer_plans import api
 
 _URL = os.getenv("ONTOLOGY_TEST_DATABASE_URL")
@@ -31,6 +33,51 @@ class PreviewPolicyShapeTests(unittest.TestCase):
 
 @unittest.skipUnless(_URL, "requires disposable loopback PostgreSQL")
 class PreviewPolicyPostgreSQLTests(unittest.IsolatedAsyncioTestCase):
+    async def test_two_editors_and_stale_delete_at_the_http_boundary(self):
+        url = make_url(_URL)
+        self.assertEqual(url.database, "ontology_creation_regression")
+        self.assertIn(url.host, {"127.0.0.1", "::1"})
+        self.assertFalse(url.query)
+        pg = PostgresClient(_URL)
+        await pg.connect(max_retries=1)
+        self.addAsyncCleanup(pg.close)
+        schema = "ts_explorer_version_test"
+        async with pg.session() as session:
+            await session.execute(text(f"CREATE SCHEMA {schema}"))
+            await session.execute(text(f"CREATE TABLE {schema}.assets (id int PRIMARY KEY, encode text)"))
+            await session.execute(text(f"INSERT INTO {schema}.assets VALUES (1, 'original'), (2, NULL)"))
+        self.addAsyncCleanup(pg.execute, f"DROP SCHEMA {schema} CASCADE")
+        layers = object.__new__(EtlLayers)
+        layers._pg = pg
+        workspace = object.__new__(EtlWorkspace)
+        workspace._pg, workspace._layers = pg, layers
+        endpoint = f"/etl/{schema}/assets"
+        with (patch("app.web.api.routes.etl.get_etl_layers", return_value=layers),
+              patch("app.web.api.routes.etl.get_etl_workspace", return_value=workspace)):
+            async with api(False) as reader:
+                self.assertEqual((await reader.post(endpoint+"/preview-rows", json={"forEditing": True})).status_code, 403)
+                self.assertNotIn("rowVersions", (await reader.post(endpoint+"/preview-rows", json={})).json())
+            async with api(True) as admin:
+                preview = (await admin.post(endpoint+"/preview-rows", json={"limit": 1, "forEditing": True})).json()
+                self.assertEqual(preview["rows"], [{"id": 1, "encode": "original"}])
+                self.assertEqual(len(preview["rowVersions"]), 1)
+                self.assertTrue(preview["hasMore"])
+                self.assertEqual(preview["rowActions"], {"edit": True, "delete": True})
+                key = {"key": {"id": 1}}
+                stale = {**key, "expectedVersion": preview["rowVersions"][0]}
+                missing = await admin.patch(endpoint+"/rows", json={**key, "values": {"encode":"missing"}})
+                self.assertEqual(missing.status_code, 428)
+                replies = await asyncio.gather(*(admin.patch(endpoint+"/rows", json={**stale, "values": {"encode": v}})
+                                                 for v in ("first", "second")))
+                self.assertEqual(sorted(r.status_code for r in replies), [200, 409])
+                conflict = await admin.request("DELETE", endpoint+"/rows", json=stale)
+                self.assertEqual(conflict.status_code, 409)
+                self.assertEqual(conflict.json()["detail"]["code"], "row_version_conflict")
+                current = (await admin.post(endpoint+"/preview-rows", json={"limit": 1, "forEditing": True})).json()
+                self.assertIn(current["rows"][0]["encode"], ("first", "second"))
+                deleted = await admin.request("DELETE", endpoint+"/rows", json={**key, "expectedVersion": current["rowVersions"][0]})
+                self.assertEqual(deleted.status_code, 200)
+
     async def test_real_large_asset_is_blocked_before_sql_and_partition_family_never_reads_rows(self):
         url = make_url(_URL)
         if url.database != "ontology_creation_regression" or url.host not in {"127.0.0.1", "::1"} or url.query:

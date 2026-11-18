@@ -18,6 +18,7 @@ from app.web.api.models.batch_lineage import (
 )
 from app.web.api.models.batch_syncs import (
     INCREMENTAL_TARGET, TARGET_SCHEMA, BatchSyncAttemptRow, BatchSyncReceiptRow, BatchSyncRequestRow, BatchSyncWatermarkRow,
+    ManagedBatchLineageAsset,
 )
 from app.web.api.models.batch_sync_schedules import BatchSyncScheduleJobRow
 from app.web.services.batch_sync_incremental import batch_lineage_enabled, require_target_shape, watermark, watermark_scope
@@ -103,6 +104,21 @@ async def _limits(session: AsyncSession) -> None:
     await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"))
     await session.execute(text("SET LOCAL lock_timeout = '750ms'"))
     await session.execute(text("SET LOCAL statement_timeout = '2s'"))
+
+
+async def available_batch_lineage_asset(session: AsyncSession) -> ManagedBatchLineageAsset | None:
+    if not batch_lineage_enabled():
+        return None
+    await _limits(session)
+    if await watermark(session) is None:
+        try:
+            target, columns = await _target_metadata(session, INCREMENTAL_TARGET)
+            require_target_shape(target, columns)
+        except HTTPException as error:
+            if error.status_code != 422:
+                raise
+            return None
+    return ManagedBatchLineageAsset(schema_name=TARGET_SCHEMA, table=INCREMENTAL_TARGET)
 
 
 def _receipt_filters(binding: BatchSyncWatermarkRow):

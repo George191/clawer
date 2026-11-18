@@ -31,7 +31,7 @@ from app.web.services.batch_source_identity import (
     expected_fingerprint, identity_required, require_legacy_source_scope, require_plan_source_identity, require_source_proof,
 )
 from app.web.services.batch_sync_incremental import (
-    batch_lineage_enabled, bind_incremental_target, incremental_batch_enabled, incremental_preflight_enabled, lock_incremental_target, require_target_shape,
+    bind_incremental_target, incremental_batch_enabled, incremental_preflight_enabled, lock_incremental_target, require_target_shape,
     range_snapshot_enabled, same_binding, watermark, watermark_scope,
 )
 from app.web.services.postgres_committed_batch_source import (
@@ -72,7 +72,6 @@ def batch_sync_capabilities() -> BatchSyncCapabilities:
     return BatchSyncCapabilities(enabled=_batch_sync_enabled(), scheduledBatchSync=scheduled_batch_sync_enabled(),
                                  sourceIdentityRequired=True if identity_required() else None,
                                  rangeSnapshot=True if range_snapshot_enabled() else None,
-                                 incrementalLineage=True if batch_lineage_enabled() else None,
                                  incrementalPreflight=True if incremental_preflight_enabled() else None,
                                  incrementalBatchSync=True if incremental_batch_enabled() else None,
                                  incrementalMaxRows=MAX_BATCH_ROWS if incremental_batch_enabled() else None,

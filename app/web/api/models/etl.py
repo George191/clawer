@@ -20,6 +20,7 @@ class DataQuery(BaseModel):
     limit: int = Field(default=50, ge=1, le=500)
     offset: int = Field(default=0, ge=0, le=1_000_000)
     partition: str | None = None
+    forEditing: bool = False
     search: str = Field(default="", max_length=1000)
     filters: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
     sorts: list[dict[str, str]] = Field(default_factory=list, max_length=20)

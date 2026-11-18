@@ -176,6 +176,11 @@ class BatchSyncAttempt(BaseModel):
     scheduledJobId: UUID | None = None
 
 
+class ManagedBatchLineageAsset(BaseModel):
+    schema_name: str = Field(serialization_alias="schema")
+    table: str
+
+
 class BatchSyncCapabilities(BaseModel):
     enabled: bool
     targetSchema: Literal["ts_batch_sync_sandbox"] = TARGET_SCHEMA
@@ -184,6 +189,7 @@ class BatchSyncCapabilities(BaseModel):
     scheduledBatchSync: bool = False
     rangeSnapshot: Literal[True] | None = Field(default=None, exclude_if=lambda value: value is None)
     incrementalLineage: Literal[True] | None = Field(default=None, exclude_if=lambda value: value is None)
+    lineageAsset: ManagedBatchLineageAsset | None = Field(default=None, exclude_if=lambda value: value is None)
     incrementalPreflight: Literal[True] | None = Field(default=None, exclude_if=lambda value: value is None)
     incrementalBatchSync: Literal[True] | None = Field(default=None, exclude_if=lambda value: value is None)
     incrementalMaxRows: int | None = Field(default=None, exclude_if=lambda value: value is None)

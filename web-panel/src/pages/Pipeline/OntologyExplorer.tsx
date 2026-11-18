@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 're
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Checkbox, Drawer, Select, Tooltip } from '@/components/ui';
 import {
-  ApartmentOutlined, AppstoreOutlined, ArrowRightOutlined, BarsOutlined,
+  AppstoreOutlined, ArrowRightOutlined, BarsOutlined,
   CloseOutlined, DatabaseOutlined, EyeOutlined, InfoCircleOutlined,
   PlusOutlined, ReloadOutlined, RightOutlined, SearchOutlined, StarFilled, StarOutlined,
 } from '@/components/ui/icons';
@@ -549,7 +549,8 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
               </div>
             </React.Fragment>;
           })}
-        </nav><button type="button" className="flow-ontology__sidebar-link" onClick={() => navigate('/ontology/lineage')}><ApartmentOutlined /><span>Lineage &amp; impact</span><ArrowRightOutlined /></button></aside>
+        </nav>
+      </aside>
         <main className="flow-ontology__main" aria-label="Object types" aria-busy={loading}>
           {error && <div className="flow-ontology__notice" role="alert"><span>{error}</span><button type="button" onClick={() => setVersion((value) => value + 1)}>Retry</button></div>}
           {favoriteSummaryError && <div className="flow-ontology__notice" role="alert"><span>{favoriteSummaryError}</span><button type="button" onClick={() => setVersion((value) => value + 1)}>Retry</button></div>}

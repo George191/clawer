@@ -22,7 +22,7 @@ function Probe({ title, probe }: { title: string; probe: CdcProbe }) {
 function CdcDetails({ status }: { status: CdcStatus }) {
   return <>
     <Alert showIcon type={cdcNeedsAttention(status) ? 'warning' : 'info'} message={status.outputMode === 'direct'
-      ? `ETL is using direct-output fallback. Database change events do not control inter-layer output.${cdcNeedsAttention(status) ? ' Mongo CDC or consumer offsets are not ready.' : ''}`
+      ? 'ETL workers publish layer output directly. The probes below show the observed infrastructure state.'
       : cdcNeedsAttention(status) ? 'CDC output is selected. Some runtime requirements have not been verified.'
         : 'CDC infrastructure has been inspected. Connector health and committed offsets do not confirm downstream persistence.'} />
     <div className="cdc-probes">
@@ -52,8 +52,7 @@ function CdcDetails({ status }: { status: CdcStatus }) {
         { title: 'Unconfirmed WAL', dataIndex: 'unconfirmedBytes', render: formatWalBytes },
       ]} />}
     <Typography.Paragraph type="secondary" className="cdc-explanation">
-      Workers rescan pending Mongo download and synchronization records. Postgres inter-layer output resumes from WAL and Kafka offsets.
-      This view does not change offsets or trigger recovery. Verify target tables and pending records after a restart.
+      Lag is measured from the consumer group’s committed next offset to the end of each inspected Kafka partition.
     </Typography.Paragraph>
   </>;
 }
@@ -75,19 +74,30 @@ export default function CdcStatusPanel() {
   useEffect(() => {
     if (!allowed) return;
     const request = new AbortController();
+    let timer: number;
     setLoading(true);
     setError('');
     fetchCdcStatus(request.signal).then((next) => {
       if (!request.signal.aborted) setStatus(next);
     }).catch(() => {
       if (!request.signal.aborted) setError('Unable to load CDC status. Try again. Any previous snapshot may be out of date.');
-    }).finally(() => { if (!request.signal.aborted) setLoading(false); });
-    return () => request.abort();
+    }).finally(() => {
+      if (request.signal.aborted) return;
+      setLoading(false);
+      timer = window.setTimeout(() => { if (!document.hidden) setVersion(v => v + 1); }, 30000);
+    });
+    const resume = () => { if (!document.hidden) setVersion(v => v + 1); };
+    document.addEventListener('visibilitychange', resume);
+    return () => {
+      request.abort();
+      window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', resume);
+    };
   }, [allowed, version]);
 
   if (!allowed) return null;
   return <Card className="cdc-status-panel" size="small" title="CDC runtime status"
-    extra={<Space><Tag>{status ? status.outputMode === 'direct' ? 'Direct-output fallback' : 'Debezium' : 'Not loaded'}</Tag>
+    extra={<Space><Tag>{status ? status.outputMode === 'direct' ? 'Direct output' : 'Debezium' : 'Checking'}</Tag>
       <Button size="small" icon={<ReloadOutlined />} loading={loading} onClick={() => setVersion((value) => value + 1)}>Refresh</Button></Space>}>
     <div aria-busy={loading} aria-live="polite">
       {error && <Alert type="error" showIcon message={error} />}

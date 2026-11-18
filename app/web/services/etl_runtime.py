@@ -20,9 +20,11 @@ from app.etl.state.offsets import OVERRIDE_KEY_PREFIX, get_offset_manager
 from app.etl.schema.catalogs import validate_table_name
 from app.storage.postgres_client import get_pg_client
 from app.storage.redis_client import RedisClient
+from app.web.services.monitor_snapshots import MonitorSnapshots
 
 _ETL_PATH = Path(__file__).resolve().parents[2] / "etl"
 _REDIS = RedisClient(settings.etl_redis_url)
+_STREAM = MonitorSnapshots(ttl=4, concurrent=6, capacity=128)
 _DRAFT_DDL = """
 CREATE TABLE IF NOT EXISTS public.flow_handler_drafts (
     schema_name TEXT NOT NULL,
@@ -69,9 +71,9 @@ def _binding(layer: str, table: str) -> tuple[str, list[str]]:
     topics: list[str] = []
     group = getattr(settings, f"etl_{layer}_consumer_group", "")
     if layer == "rds":
-        topics = [settings.etl_raw_topic]
         if settings.kafka_topic:
             topics.append(f"{settings.kafka_topic}-{table}")
+        topics.append(settings.etl_raw_topic)
     elif layer == "ods":
         topics = [f"{settings.etl_rds_topic}-{table}"]
     elif layer in {"task", "dwd", "dim"}:
@@ -83,6 +85,16 @@ def _binding(layer: str, table: str) -> tuple[str, list[str]]:
     return group, list(dict.fromkeys(topic for topic in topics if topic))
 
 
+async def topic_partitions(admin: AIOKafkaAdminClient, topic: str) -> list[TopicPartition] | None:
+    # A metadata request for all topics cannot auto-create a missing topic.
+    metadata = next((item for item in await admin.describe_topics() if item["topic"] == topic), None)
+    if metadata is None:
+        return None
+    if metadata.get("error_code") or any(part.get("error_code") for part in metadata["partitions"]):
+        raise HTTPException(503, "The broker could not provide partition metadata")
+    return [TopicPartition(topic, p["partition"]) for p in metadata["partitions"]]
+
+
 async def _kafka_positions(topic: str, group: str) -> list[dict[str, Any]]:
     # Neither client subscribes or joins a consumer group, so inspecting the
     # workspace cannot rebalance running workers or advance their positions.
@@ -90,13 +102,9 @@ async def _kafka_positions(topic: str, group: str) -> list[dict[str, Any]]:
     consumer = AIOKafkaConsumer(**build_consumer_kwargs(group_id=None, request_timeout_ms=5000))
     try:
         await admin.start()
-        if topic not in await admin.list_topics():
-            raise HTTPException(409, "Kafka topic has not been created")
-        descriptions = await admin.describe_topics([topic])
-        partitions = [
-            TopicPartition(topic, item["partition"])
-            for item in descriptions[0].get("partitions", [])
-        ]
+        partitions = await topic_partitions(admin, topic)
+        if partitions is None:
+            raise HTTPException(409, "No Kafka topic is visible for this worker input")
         if not partitions:
             raise HTTPException(503, "Kafka topic has no available partitions")
         committed = await admin.list_consumer_group_offsets(group, partitions=partitions)
@@ -123,51 +131,66 @@ async def _kafka_positions(topic: str, group: str) -> list[dict[str, Any]]:
             await admin.close()
 
 
-async def stream(layer: str, table: str, topic: str | None = None) -> dict[str, Any]:
-    layer_name, logical, row = await _table(layer, table)
+async def stream(layer: str, table: str, topic: str | None = None, *, include_hidden: bool = False, fresh: bool = False) -> dict[str, Any]:
+    from app.web.services.etl_layers import get_etl_layers
+
+    row = await get_etl_layers().runtime_table(layer, table, include_hidden=include_hidden)
+    layer_name = row["schemaName"].removeprefix("ts_")
+    logical = table.removeprefix(layer_name + "_")
     group, topics = (
-        _binding(layer_name, logical) if row["schemaName"] == f"ts_{layer_name}" else ("", [])
+        _binding(layer_name, logical) if table.startswith(layer_name + "_") else ("", [])
     )
     selected = topic or (topics[0] if topics else None)
     result: dict[str, Any] = {
         "available": False, "consumerGroup": group, "topics": topics,
-        "topic": selected, "offsets": [], "throughput": None,
-        "throughputReason": "Throughput metrics are not collected by the deployed workers",
+        "topic": selected, "offsets": [], "throughput": None, "resumeAvailable": False,
+        "throughputReason": "Topic growth is measured from successive Kafka log-end offsets",
     }
     if topic and topic not in topics:
         raise HTTPException(400, "Topic does not belong to this connector")
     if not group or not selected:
-        return {**result, "reason": "No deployed consumer is registered for this schema"}
-    if not settings.kafka_brokers or not settings.etl_redis_url:
-        return {**result, "reason": "Kafka and Redis must both be configured to inspect resume positions"}
+        return {**result, "reason": "This table has no input topic defined by an ETL worker"}
+    if not settings.kafka_brokers:
+        return {**result, "reason": "No Kafka broker is configured for the Web monitor"}
+    if fresh:
+        observation = await _stream_positions(selected, group)
+    else:
+        observation = await _STREAM.read((group, selected), lambda: _stream_positions(selected, group))
+    return {**result, **observation}
+
+
+async def _stream_positions(selected, group):
+    result = {"resumeAvailable": False}
+    try:
+        positions = await asyncio.wait_for(_kafka_positions(selected, group), timeout=15)
+    except HTTPException as exc:
+        return {**result, "reason": str(exc.detail)}
+    except Exception:
+        return {**result, "reason": "Unable to read Kafka partitions. Check broker connectivity, TLS and consumer group access."}
     try:
         redis = await _REDIS.ensure_connected(raise_errors=True)
         if redis is None:
             raise ConnectionError("Redis is unavailable")
-        positions = await asyncio.wait_for(_kafka_positions(selected, group), timeout=15)
         keys = [f"offset:{group}:{selected}:{item['partition']}" for item in positions]
         pending_keys = [f"{OVERRIDE_KEY_PREFIX}:{group}:{selected}:{item['partition']}" for item in positions]
-        values = await redis.mget([*keys, *pending_keys])
+        values = await asyncio.wait_for(redis.mget([*keys, *pending_keys]), timeout=3)
         saved, pending = values[:len(keys)], values[len(keys):]
-        for item, value, override in zip(positions, saved, pending, strict=True):
-            current = value
-            if override is not None:
-                value = override
-            item["offset"] = (
-                int(value) if value is not None else
-                item["committedOffset"] if item["committedOffset"] is not None else
-                item["beginningOffset"]
-            )
-            item["source"] = "pending_override" if override is not None else "redis" if value is not None else "kafka"
-            item["pending"] = override is not None
-            item["currentOffset"] = int(current) if current is not None else item["committedOffset"]
-            item["lag"] = max(0, item["endOffset"] - item["offset"])
-        return {**result, "available": True, "offsets": positions}
-    except HTTPException as exc:
-        return {**result, "reason": str(exc.detail)}
+        result["resumeAvailable"] = True
     except Exception:
         _REDIS.mark_unavailable()
-        return {**result, "reason": "Kafka or Redis is unavailable; live resume positions could not be read"}
+        saved = pending = [None] * len(positions)
+        result["reason"] = "Redis checkpoints and pending overrides could not be read."
+    for item, checkpoint, override in zip(positions, saved, pending, strict=True):
+        committed = item["committedOffset"]
+        item["lag"] = max(0, item["endOffset"] - committed) if committed is not None else None
+        item["currentOffset"] = int(checkpoint) if checkpoint is not None else committed
+        item["pending"] = override is not None
+        item["offset"] = int(override) if override is not None else item["currentOffset"]
+        item["source"] = "pending_override" if override is not None else "redis" if checkpoint is not None else "kafka"
+        if item["offset"] is None:
+            item["offset"] = item["beginningOffset"]
+            item["source"] = "earliest retained"
+    return {**result, "available": True, "offsets": positions, "checkedAt": datetime.now(timezone.utc).isoformat()}
 
 
 async def set_offset(layer: str, table: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -176,8 +199,8 @@ async def set_offset(layer: str, table: str, payload: dict[str, Any]) -> dict[st
     partition, offset = payload.get("partition"), payload.get("offset")
     if type(partition) is not int or partition < 0 or type(offset) is not int or offset < 0:
         raise HTTPException(422, "Partition and offset must be non-negative integers")
-    state = await stream(layer, table, payload.get("topic"))
-    if not state["available"]:
+    state = await stream(layer, table, payload.get("topic"), include_hidden=True, fresh=True)
+    if not state["available"] or not state["resumeAvailable"]:
         raise HTTPException(503, state.get("reason", "Stream is unavailable"))
     position = next((item for item in state["offsets"] if item["partition"] == partition), None)
     if position is None:

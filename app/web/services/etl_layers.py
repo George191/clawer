@@ -15,6 +15,9 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
+from app.config.settings import settings as etl_settings
+from app.etl.cdc import cdc_schemas
+
 from app.etl.schema.object_relations import (
     ObjectRelationsNotInitialized,
     merge_object_relations,
@@ -36,6 +39,13 @@ from app.web.services.snapshot_intent_scope import SNAPSHOT_INTENT_PRIVATE_SCHEM
 from app.web.services.synthetic_governance import PROTECTED_SYNTHETIC_SCHEMA
 
 RESERVED_BATCH_TARGET = (BATCH_TARGET_SCHEMA, INCREMENTAL_TARGET)
+ROW_VERSION_SQL = "encode(sha256(pg_catalog.record_send(t)), 'hex')"
+
+
+def allows_physical_delete(schema: str) -> bool:
+    return etl_settings.etl_output_mode != "debezium" or schema not in cdc_schemas()
+
+
 RESERVED_BATCH_RANGE_TARGET = (BATCH_TARGET_SCHEMA, BATCH_RANGE_TARGET)
 _RESERVED_BATCH_REGCLASS = ".".join(RESERVED_BATCH_TARGET)
 _RESERVED_BATCH_RANGE_REGCLASS = ".".join(RESERVED_BATCH_RANGE_TARGET)
@@ -801,6 +811,23 @@ class EtlLayers:
             raise HTTPException(404, "Table does not exist in this schema")
         return found
 
+    async def runtime_table(self, layer: str, table: str, *, include_hidden: bool) -> dict[str, Any]:
+        """Resolve one visible parent without scanning sizes of every table in its schema."""
+        schema = _object_schema(layer)
+        require_ordinary_table(schema, table)
+        quote_identifier(table)
+        async with self.session() as session:
+            row = (await session.execute(text(f"""
+                SELECT n.nspname AS "schemaName", c.relname AS name
+                FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                {_OBJECT_METADATA_JOIN}
+                WHERE {_OBJECT_TABLE_SQL} AND c.relname = :table AND n.nspname = :schema
+                  AND (:include_hidden OR COALESCE(o.visibility, 'normal') <> 'hidden')
+            """), {"table": table, "schema": schema, "include_hidden": include_hidden})).mappings().first()
+        if row is None:
+            raise HTTPException(404, "Table does not exist in this schema")
+        return dict(row)
+
     async def transfer_endpoints(self, source: tuple[str, str], target: tuple[str, str]) -> dict[tuple[str, str], bool]:
         """Return eligible visible tables and whether they have a valid primary key."""
         async with self.session() as session:
@@ -1033,7 +1060,8 @@ class EtlLayers:
         max_offset = PREVIEW_ROWS_MAX_OFFSET if preview_rows else 1_000_000
         if not 1 <= limit <= max_limit or not 0 <= offset <= max_offset:
             raise HTTPException(400, "Pagination is outside supported bounds")
-        params: dict[str, Any] = {"limit": limit + int(preview_rows), "offset": offset}
+        paged = preview_rows or scope is not None
+        params: dict[str, Any] = {"limit": limit + int(paged), "offset": offset}
         where: list[str] = []
         for restriction in (scope or {}, payload):
             if restriction.get("search"):
@@ -1064,7 +1092,8 @@ class EtlLayers:
             order.append(f't.{quote_identifier(sort["field"])} {sort["direction"]}')
             sorted_fields.add(sort["field"])
         primary_key = [column["name"] for column in primary_columns]
-        if preview_rows:
+        editable = bool(primary_key and payload.get("forEditing") and scope is None)
+        if paged:
             order.extend(f't.{quote_identifier(field)} asc' for field in primary_key if field not in sorted_fields)
         predicate = " WHERE " + " AND ".join(f"({item})" for item in where) if where else ""
         ordering = " ORDER BY " + ", ".join(order) if order else ""
@@ -1087,21 +1116,33 @@ class EtlLayers:
                     if isinstance(plan, str):
                         plan = json.loads(plan)
                     total = max(total, int(plan[0]["Plan"]["Plan Rows"]))
-            result = await session.execute(text(f"SELECT t.* FROM {target} t{predicate}{ordering} LIMIT :limit OFFSET :offset"), params)
-            rows = [dict(row) for row in result.mappings()]
-        if preview_rows:
+            projection = f"t.*, {ROW_VERSION_SQL}" if editable else "t.*"
+            result = await session.execute(text(f"SELECT {projection} FROM {target} t{predicate}{ordering} LIMIT :limit OFFSET :offset"), params)
+            edit_metadata = {}
+            if editable:
+                fields = list(result.keys())[:-1]
+                records = result.all()
+                rows = [dict(zip(fields, record[:-1])) for record in records]
+                edit_metadata = {"rowVersions": [record[-1] for record in records[:limit]],
+                                 "rowActions": {"edit": True, "delete": allows_physical_delete(schema)}}
+            else:
+                rows = [dict(row) for row in result.mappings()]
+        page = {}
+        if paged:
             has_more = len(rows) > limit
             rows = rows[:limit]
             page = {"hasMore": has_more, "canPageFurther": has_more and offset + limit <= max_offset,
                     "stableOrder": bool(primary_key)}
-        else:
+        if not preview_rows:
             if rows:
                 total = max(total, offset + len(rows))
             elif offset == 0:
                 total, estimated = 0, False
-            page = {"total": total, "totalEstimated": estimated}
+            page.update(total=total, totalEstimated=estimated)
+            if scope is not None:
+                page.update(limit=limit, offset=offset, nextOffset=offset + limit if page["canPageFurther"] else None)
         return {"columns": [column["name"] for column in columns], "rows": rows,
-                "rowCount": len(rows), **page,
+                "rowCount": len(rows), **page, **edit_metadata,
                 "primaryKey": primary_key,
                 "columnTypes": {column["name"]: column["type"] for column in columns},
                 "elapsed": round(perf_counter() - started, 4)}

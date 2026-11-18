@@ -8,10 +8,9 @@ from fastapi_filter.contrib.sqlalchemy import Filter
 
 
 class ApiKeyFilter(Filter):
-    hashed_key: Optional[str] = None
     short_key: Optional[str] = None
     team_id: Optional[uuid.UUID] = None
-    onwer_id: Optional[uuid.UUID] = None
+    owner_id: Optional[uuid.UUID] = None
 
     created_at__gt: Optional[datetime] = None
     created_at__gte: Optional[datetime] = None
@@ -25,4 +24,4 @@ class ApiKeyFilter(Filter):
         model = ApiKey
         ordering_field_name = "order_by"
         search_field_name = "search"
-        search_model_fields = ["team", "description"]    
+        search_model_fields = ["short_key", "description"]

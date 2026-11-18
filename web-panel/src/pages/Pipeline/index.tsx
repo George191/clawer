@@ -1,8 +1,8 @@
 import  React,  {  useEffect,  useLayoutEffect,  useRef,  useState  }  from  'react';
 import  {  Link,  matchPath,  useLocation,  useNavigate  }  from  'react-router-dom';
-import  {  Button,  Checkbox,  ConfigProvider,  Dropdown,  Input,  InputNumber,  Modal,  Select,  Space,  Spin,  Table,  Tag,  Upload,  message  }  from  '@/components/ui';
+import  {  Button,  Checkbox,  ConfigProvider,  Drawer,  Dropdown,  Input,  InputNumber,  Modal,  Select,  Space,  Spin,  Table,  Tag,  Upload,  message  }  from  '@/components/ui';
 import  enUS  from  '@/components/ui/locale';
-import  {  AlertOutlined,  ArrowDownOutlined,  ArrowUpOutlined,  CheckOutlined,  CloseOutlined,  CodeOutlined,  DatabaseOutlined,  DeleteOutlined,  DownOutlined,  DownloadOutlined,  EditOutlined,  PlusOutlined,  ReloadOutlined,  RightOutlined,  SearchOutlined,  SettingOutlined,  UploadOutlined  }  from  '@/components/ui/icons';
+import  {  AlertOutlined,  ArrowDownOutlined,  ArrowUpOutlined,  CheckOutlined,  CloseOutlined,  CodeOutlined,  DatabaseOutlined,  DeleteOutlined,  DownOutlined,  DownloadOutlined,  EditOutlined,  PlusOutlined,  ReloadOutlined,  RightOutlined,  SearchOutlined,  SettingOutlined,  TableOutlined,  UploadOutlined  }  from  '@/components/ui/icons';
 import  '../ProductWorkspace/workspace.css';
 import CdcStatusPanel from './CdcStatusPanel';
 import OntologyExplorer, { schemaColor } from './OntologyExplorer';
@@ -16,6 +16,7 @@ import ExplorerCatalog from './ExplorerCatalog';
 import NewObjectType from './NewObjectType';
 import ExplorerTableSchema from './ExplorerTableSchema';
 import ExplorerTableEvidence from './ExplorerTableEvidence';
+import ExplorerStreamPositions, { topicRate } from './ExplorerStreamPositions';
 import SandboxPipelineBuilder from './SandboxPipelineBuilder';
 import ExplorerIndexCoverage from './ExplorerIndexCoverage';
 import ExplorerIndexedProjection from './ExplorerIndexedProjection';
@@ -299,6 +300,10 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     const  [editingRowKey,  setEditingRowKey]  =  useState<string>();
     const  [editingDraft,  setEditingDraft]  =  useState<Record<string,  unknown>  |  null>(null);
     const  [jsonRow,  setJsonRow]  =  useState<Record<string,  unknown>  |  null>(null);
+    const [rowDetails, setRowDetails] = useState<{ row: Record<string, unknown>; scope: string; version?: string }>();
+    const [rowDetailsView, setRowDetailsView] = useState<'properties' | 'json' | 'delete'>('properties');
+    const [rowDetailsError, setRowDetailsError] = useState('');
+    const editSnapshot = useRef<{ data: QueryResult; version: string }>();
     const  tableTabsRef  =  useRef<HTMLDivElement>(null);
     const  [filterOpen,  setFilterOpen]  =  useState(false);
     const  [filterText,  setFilterText]  =  useState('');
@@ -372,7 +377,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     const removeApi = (api: OpenApiAccess) => {
         if (!canManage || !selectedTableAvailable || apisLoading || mutationPending.current) return;
         const target = selection.current;
-        Modal.confirm({ className: 'flow-surface-modal', title: 'Revoke this read API?', content: api.url, onOk: async () => {
+        Modal.confirm({ className: 'flow-surface-modal', title: 'Delete this publication and its key?', content: api.url, onOk: async () => {
             if (selection.current !== target || !beginMutation()) return;
             apiRequest.current++;
             try { await deleteEtlApi(selectedSchema, table.name, api.id); if (selection.current === target) { setOpenApis((current) => current.filter((item) => item.id !== api.id)); if (openApis.length === 1) setApisDirty(false); } }
@@ -462,9 +467,16 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     }, [policyKey]);
     useEffect(() => {
         if (showPreview) return;
+        editSnapshot.current = undefined;
         setData(undefined); setPreviewPage(undefined); setEditingRowKey(undefined); setEditingDraft(null);
-        setJsonRow(null); setAnalysisOpen(false); setPreviewError(''); setPreviewUnavailable(false);
+        setJsonRow(null); setRowDetails(undefined); setAnalysisOpen(false); setPreviewError(''); setPreviewUnavailable(false);
     }, [policyKey, showPreview]);
+    useEffect(() => {
+        if (editSnapshot.current && editSnapshot.current.data !== data) {
+            editSnapshot.current = undefined;
+            setEditingRowKey(undefined); setEditingDraft(null);
+        }
+    }, [data]);
     const showStream = !isSchemas || resourceView === 'stream';
     const fieldCount = data?.columns.length ?? 0;
     const filterFields = data?.columns.length ? data.columns : repairFields;
@@ -474,18 +486,57 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     const primaryKey = (row: Record<string, unknown>) => Object.fromEntries((data?.primaryKey || []).map((key) => [key, row[key]]));
     const formatCell = (value: unknown) => value == null ? 'null' : typeof value === 'object' ? JSON.stringify(value) : String(value);
     const editCell = (key: string, value: unknown): string | null => value == null ? null : /^(jsonb?)(?:\s|$)|\[\]$/.test(data?.columnTypes?.[key]?.toLowerCase() || '') ? JSON.stringify(value) : typeof value === 'object' ? JSON.stringify(value) : String(value);
+    const activeRowDetails = isSchemas && showPreview && rowDetails?.scope === policyKey && dataRows.includes(rowDetails.row) ? rowDetails : undefined;
+    const canEditRows = canManage && data?.rowActions?.edit === true && !!data.primaryKey?.length;
+    const canDeleteRows = canManage && data?.rowActions?.delete === true && !!data.primaryKey?.length;
+    const rowVersion = (row: Record<string, unknown>) => {
+        const version = data?.rowVersions?.[dataRows.indexOf(row)];
+        return typeof version === 'string' && version ? version : undefined;
+    };
+    const openRowDetails = (row: Record<string, unknown>, trigger: HTMLTableRowElement) => {
+        if (!showPreview || loading || mutationPending.current) return;
+        trigger.focus();
+        setRowDetails({ row, scope: policyKey, version: rowVersion(row) });
+        setRowDetailsView('properties');
+        setRowDetailsError('');
+    };
     const startRowEdit = (key: string) => {
-        if (!showPreview || !canManage || !selectedTableAvailable || loading || mutationPending.current) return;
-        if (!data?.primaryKey?.length) { message.warning('This table has no primary key and cannot be edited safely'); return; }
+        if (!showPreview || !canEditRows || !data || !selectedTableAvailable || loading || mutationPending.current) return;
         const row = dataRows.find((item) => rowKey(item) === key);
         if (!row) return;
-        if (data.primaryKey.some((column) => typeof row[column] === 'number' && Number.isInteger(row[column]) && !Number.isSafeInteger(row[column]))) { message.error('Primary key exceeds safe numeric precision'); return; }
+        const version = isSchemas ? (activeRowDetails?.row === row ? activeRowDetails.version : undefined) : rowVersion(row);
+        if (!version) return;
+        if (data.primaryKey?.some((column) => typeof row[column] === 'number' && Number.isInteger(row[column]) && !Number.isSafeInteger(row[column]))) { message.error('Primary key exceeds safe numeric precision'); return; }
         if (editingRowKey && editingRowKey !== key) { message.warning('Save or cancel the current row edit first'); return; }
+        setRowDetailsError('');
+        editSnapshot.current = { data, version };
         setEditingRowKey(key); setEditingDraft(Object.fromEntries(Object.entries(row).map(([column, value]) => [column, editCell(column, value)])));
     };
-    const cancelRowEdit = () => { if (!mutationPending.current) { setEditingRowKey(undefined); setEditingDraft(null); } };
+    const cancelRowEdit = () => {
+        if (!mutationPending.current) { editSnapshot.current = undefined; setEditingRowKey(undefined); setEditingDraft(null); setRowDetailsError(''); }
+    };
+    const closeRowDetails = () => {
+        if (mutationPending.current) return;
+        cancelRowEdit();
+        setRowDetails(undefined);
+    };
+    const rowEditor = (key: string) => <Input size="small" aria-label={`Edit ${key}`} disabled={mutationLoading}
+        value={String(editingDraft?.[key] ?? '')} placeholder={editingDraft?.[key] === null ? 'SQL NULL' : undefined}
+        onKeyDown={(event) => { if (!isSchemas && event.key === 'Escape') { event.preventDefault(); cancelRowEdit(); } }}
+        addonAfter={<button type="button" disabled={mutationLoading} aria-label={`Set ${key} to null`} title="Set SQL NULL" onClick={() => setEditingDraft((current) => current ? { ...current, [key]: null } : current)}>NULL</button>}
+        onChange={(event) => setEditingDraft((current) => current ? { ...current, [key]: event.target.value } : current)} />;
+    const rowMutationError = (error: unknown) => {
+        const response = (error as { response?: { status?: number; data?: { detail?: { code?: string }; errors?: { code?: string } } } })?.response;
+        if (response?.status !== 409 || (response.data?.errors?.code ?? response.data?.detail?.code) !== 'row_version_conflict') return errorText(error);
+        setRowDetails(current => current ? { ...current, version: undefined } : current);
+        return isSchemas ? 'This row changed. Close the details, refresh the catalog, and open the row again.'
+            : 'This row changed. Cancel the edit and refresh the workspace before trying again.';
+    };
     const saveRowEdit = async () => {
-        if (!showPreview || !selectedTableAvailable || !editingDraft || !data?.primaryKey?.length || !beginMutation()) return;
+        const snapshot = editSnapshot.current;
+        if (!showPreview || loading || !canEditRows || !selectedTableAvailable || !editingDraft || !snapshot || snapshot.data !== data ||
+            (isSchemas && activeRowDetails?.version !== snapshot.version) || !beginMutation()) return;
+        setRowDetailsError('');
         const target = selection.current;
         const original = dataRows.find((item) => rowKey(item) === editingRowKey);
         try {
@@ -515,21 +566,40 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                 }
                 return [key, value];
             }));
-            if (Object.keys(values).length) await updateEtlRow(selectedSchema, table.name, primaryKey(original), values);
-            if (selection.current === target) { setEditingRowKey(undefined); setEditingDraft(null); if (Object.keys(values).length) setRefreshVersion((value) => value + 1); }
+            if (Object.keys(values).length) await updateEtlRow(selectedSchema, table.name, primaryKey(original), values, snapshot.version);
+            if (selection.current === target) {
+                editSnapshot.current = undefined;
+                setEditingRowKey(undefined); setEditingDraft(null);
+                if (Object.keys(values).length) { setRowDetails(undefined); setRefreshVersion((value) => value + 1); }
+            }
             if (Object.keys(values).length) message.success('Row saved');
-        } catch (error) { message.error(errorText(error)); } finally { endMutation(); }
+        } catch (error) {
+            const detail = rowMutationError(error);
+            if (isSchemas) setRowDetailsError(detail); else message.error(detail);
+        } finally { endMutation(); }
     };
     const removeRow = (row: Record<string, unknown>) => {
-        if (!showPreview || !canManage || !selectedTableAvailable || !data?.primaryKey?.length || mutationPending.current) return;
-        if (data.primaryKey.some((key) => typeof row[key] === 'number' && Number.isInteger(row[key]) && !Number.isSafeInteger(row[key]))) { message.error('Primary key exceeds safe numeric precision'); return; }
+        if (!showPreview || !canDeleteRows || !data || !selectedTableAvailable || loading || mutationPending.current) return;
+        const version = isSchemas ? (activeRowDetails?.row === row ? activeRowDetails.version : undefined) : rowVersion(row);
+        if (!version) return;
+        if (data.primaryKey?.some((key) => typeof row[key] === 'number' && Number.isInteger(row[key]) && !Number.isSafeInteger(row[key]))) { message.error('Primary key exceeds safe numeric precision'); return; }
         const target = selection.current;
         const reviewedScope = policyKey;
-        Modal.confirm({ className: 'flow-surface-modal', title: 'Delete this row?', content: JSON.stringify(primaryKey(row)), onOk: async () => {
+        const key = primaryKey(row);
+        const commit = async () => {
             if (selection.current !== target || classicPreviewScope.current !== reviewedScope || !beginMutation()) return;
-            try { await deleteEtlRow(selectedSchema, table.name, primaryKey(row)); if (selection.current === target) setRefreshVersion((value) => value + 1); }
-            catch (error) { message.error(errorText(error)); throw error; } finally { endMutation(); }
-        } });
+            setRowDetailsError('');
+            try {
+                await deleteEtlRow(selectedSchema, table.name, key, version);
+                if (selection.current === target) { setRowDetails(undefined); setRefreshVersion((value) => value + 1); }
+            } catch (error) {
+                const detail = rowMutationError(error);
+                if (isSchemas) setRowDetailsError(detail);
+                else { message.error(detail); throw error; }
+            } finally { endMutation(); }
+        };
+        if (isSchemas) { if (rowDetailsView === 'delete') void commit(); }
+        else Modal.confirm({ className: 'flow-surface-modal', title: 'Delete this row?', content: JSON.stringify(key), onOk: commit });
     };
     const appliedSort = appliedQuery.sorts[0];
     const toggleHeaderSort = (field: string) => {
@@ -628,36 +698,27 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
             }}><button type="button" className={`flow-column-menu${sort ? ' is-sorted' : ''}`} aria-label={`Column actions for ${key}`} title={key}><span>{key}</span>{sort ? <SortDirectionIcon direction={sort.direction} /> : <DownOutlined />}</button></Dropdown> : <span className="flow-col-head"><span className="flow-col-head-label" title={key}>{isSchemas ? key : key.toUpperCase()}</span><button type="button" className={`flow-col-sort-btn${appliedSort?.field === key ? ` is-active is-${appliedSort.direction}` : ''}`} aria-label={`Sort by ${key}`} title="Sort" onClick={(event) => { event.stopPropagation(); toggleHeaderSort(key); }}><SortDirectionIcon direction={appliedSort?.field === key ? appliedSort.direction : 'asc'} /></button></span>,
             dataIndex: key, key,
             render: (value: unknown, row: Record<string, unknown>) => {
-                if (editingRowKey === rowKey(row) && editingDraft) return <Input size="small" aria-label={`Edit ${key}`} disabled={mutationLoading} value={editingDraft[key] == null ? '' : String(editingDraft[key])} placeholder={editingDraft[key] === null ? 'SQL NULL' : undefined} onKeyDown={(event) => { if (event.key === 'Escape') { event.preventDefault(); cancelRowEdit(); } }} addonAfter={<button type="button" disabled={mutationLoading} aria-label={`Set ${key} to null`} title="Set SQL NULL" onClick={() => setEditingDraft((current) => current ? { ...current, [key]: null } : current)}>NULL</button>} onChange={(event) => setEditingDraft((current) => current ? { ...current, [key]: event.target.value } : current)} />;
+                if (!isSchemas && editingRowKey === rowKey(row) && editingDraft) return rowEditor(key);
                 const shown = formatCell(value);
                 const scalar = isSchemas ? exactCellValue(value, data?.columnTypes?.[key]) : undefined;
                 if (scalar === undefined) return shown;
-                return <Dropdown overlayClassName="flow-menu-popup flow-explorer-menu" trigger={['click']} menu={{
+                return <div className="flow-explorer-value"><span title={shown}>{shown || 'Empty'}</span><Dropdown overlayClassName="flow-menu-popup flow-explorer-menu" trigger={['click']} menu={{
                     items: [{ key: 'include', label: 'Include this value' }, { key: 'exclude', label: 'Exclude this value' }],
                     onClick: ({ key: action }) => quickCellFilter(key, scalar, action === 'exclude'),
-                }}><button type="button" className="flow-cell-menu" title={`Filter ${key} by ${shown || 'empty string'}`}><span>{shown || 'Empty'}</span><DownOutlined /></button></Dropdown>;
+                }}><button type="button" className="flow-cell-menu" aria-label={`Filter ${key} by ${shown || 'empty string'}`} title={`Filter ${key} by ${shown || 'empty string'}`}><DownOutlined /></button></Dropdown></div>;
             },
         };
     });
-    dataColumns.push({
-        title: isSchemas ? 'Row' : 'ACTION', key: 'action', fixed: 'right', width: isSchemas ? 68 : 112,
+    if (!isSchemas) dataColumns.push({
+        title: 'ACTION', key: 'action', fixed: 'right', width: 112,
         render: (_: unknown, row: Record<string, unknown>) => {
             if (editingRowKey === rowKey(row)) return <span className="flow-row-actions is-editing"><button type="button" aria-label="Save row" disabled={mutationLoading} onClick={saveRowEdit}><CheckOutlined /></button><button type="button" aria-label="Cancel row edit" disabled={mutationLoading} onClick={cancelRowEdit}><CloseOutlined /></button></span>;
-            if (!isSchemas) return <span className="flow-row-actions flow-row-hover-actions"><button type="button" aria-label="Preview row JSON" title="Preview row JSON" onClick={() => setJsonRow(row)}><CodeOutlined /></button>{canManage && data?.primaryKey?.length ? <><button type="button" aria-label="Edit row" disabled={mutationLoading || loading} onClick={() => startRowEdit(rowKey(row))}><EditOutlined /></button><button type="button" aria-label="Delete row" disabled={mutationLoading || loading} onClick={() => removeRow(row)}><DeleteOutlined /></button></> : null}</span>;
-            return <Dropdown overlayClassName="flow-menu-popup flow-explorer-menu" trigger={['click']} placement="bottomRight" menu={{
-                items: [
-                    { key: 'json', label: 'Preview row JSON', icon: <CodeOutlined /> },
-                    ...(canManage && data?.primaryKey?.length ? [
-                        { key: 'edit', label: 'Edit row', icon: <EditOutlined />, disabled: mutationLoading || loading },
-                        { key: 'delete', label: 'Delete row', icon: <DeleteOutlined />, disabled: mutationLoading || loading, danger: true },
-                    ] : []),
-                ],
-                onClick: ({ key: action }) => {
-                    if (action === 'json') setJsonRow(row);
-                    if (action === 'edit') startRowEdit(rowKey(row));
-                    if (action === 'delete') removeRow(row);
-                },
-            }}><button type="button" className="flow-row-menu" aria-label="Row actions" title="Row actions"><span aria-hidden="true">⋯</span></button></Dropdown>;
+            const version = rowVersion(row);
+            return <span className="flow-row-actions flow-row-hover-actions">
+                <button type="button" aria-label="Preview row JSON" title="Preview row JSON" onClick={() => setJsonRow(row)}><CodeOutlined /></button>
+                {canEditRows && version && <button type="button" aria-label="Edit row" disabled={mutationLoading || loading} onClick={() => startRowEdit(rowKey(row))}><EditOutlined /></button>}
+                {canDeleteRows && version && <button type="button" aria-label="Delete row" disabled={mutationLoading || loading} onClick={() => removeRow(row)}><DeleteOutlined /></button>}
+            </span>;
         },
     });
 
@@ -757,7 +818,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
         setLoading(true); setPreviewError(''); setPreviewUnavailable(false);
         const controller = new AbortController();
         const offset = (pageNumber - 1) * pageSize;
-        const query = { ...appliedQuery, limit: pageSize, offset, partition };
+        const query = { ...appliedQuery, limit: pageSize, offset, partition, forEditing: canManage };
         const current = () => {
             const session = getSessionState();
             return version === dataRequest.current && !controller.signal.aborted && classicPreviewScope.current === policyKey &&
@@ -794,7 +855,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
             }
         }, 100);
         return () => { window.clearTimeout(timer); controller.abort(); dataRequest.current++; };
-    }, [selectedSchema, table.name, partition, appliedQuery, pageNumber, pageSize, refreshVersion, previewRevision, selectedTableAvailable, showPreview, isSchemas, policyKey]);
+    }, [selectedSchema, table.name, partition, appliedQuery, pageNumber, pageSize, refreshVersion, previewRevision, selectedTableAvailable, showPreview, isSchemas, policyKey, canManage]);
     useEffect(() => {
         if (!isSchemas || !showPreview || !selectedTableAvailable || !previewError || filterFields.length) return;
         const controller = new AbortController();
@@ -812,14 +873,15 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
         setStreamLoading(true);
         let active = true;
         let timer: number | undefined;
+        let previous: EtlStreamState | undefined;
         const refresh = async () => {
             const version = ++streamRequest.current;
             try {
                 const result = await fetchTableStream(selectedSchema, table.name, inputTopics[activeTopicIndex]);
                 if (!active || version !== streamRequest.current) return;
-                setStream(result); setOffsets(result.offsets || []); setStreamError('');
+                setStream({ ...result, throughput: topicRate(previous, result) }); previous = result; setOffsets(result.offsets || []); setStreamError('');
                 setOffsetPartition((current) => result.offsets?.some((item) => item.partition === current) ? current : result.offsets?.[0]?.partition);
-                if (result.topic) setInputTopics((current) => current.includes(result.topic!) ? current : [result.topic!]);
+                if (result.topics?.length) setInputTopics(result.topics);
             } catch (error) { if (active && version === streamRequest.current) { setStream(undefined); setOffsets([]); setStreamError(errorText(error)); } }
             finally { if (active) { setStreamLoading(false); timer = window.setTimeout(refresh, 5000); } }
         };
@@ -893,14 +955,21 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
             <div className="flow-filter-api-title"><strong>{isSchemas ? 'Published APIs' : 'Open APIs'}</strong><span className="flow-api-status flow-api-status--enabled">Token required · Validity window enforced</span>{!isSchemas && <button type="button" className="flow-filter-api-close" aria-label="Close APIs" onClick={() => setApiListOpen(false)}><CloseOutlined /></button>}</div>
             {apiCount === 0 ? <div className="flow-filter-api-empty"><span>{apisLoading ? 'Loading published APIs…' : 'No published APIs'}</span><button type="button" className="flow-filter-api-add" disabled={mutationLoading || apisLoading} onClick={addApi}><PlusOutlined /> Add API</button></div> : <>
                 <div className="flow-filter-api-list">{openApis.map((api, index) => <div className="flow-filter-api-item" key={api.id}>
-                    <div className="flow-filter-api-item-head"><strong>API {index + 1}</strong><span>Token required</span><Button size="small" danger disabled={mutationLoading || apisLoading} onClick={() => removeApi(api)}>Revoke</Button></div>
+                    <div className="flow-filter-api-item-head"><strong>API {index + 1}</strong><span>Token required</span><Button size="small" danger disabled={mutationLoading || apisLoading} onClick={() => removeApi(api)}>Delete publication</Button></div>
                     <div className="flow-filter-api-grid">
-                        <div className="flow-filter-api-token"><span>Auto-generated token</span><code>{api.token}</code></div>
+                        <div className="flow-filter-api-token"><span>API key · {api.keyStatus}</span><a href={'/account/settings?tab=security&publication=' + encodeURIComponent(api.id)}>Manage API key</a></div>
                         <label>Valid from<Input size="small" disabled={mutationLoading} type="datetime-local" value={api.validFrom ? new Date(new Date(api.validFrom).getTime() - new Date(api.validFrom).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''} onChange={(event) => updateApi(api.id, { validFrom: event.target.value ? new Date(event.target.value).toISOString() : '' })} /></label>
                         <label>Expires at<Input size="small" disabled={mutationLoading} type="datetime-local" value={api.validUntil ? new Date(new Date(api.validUntil).getTime() - new Date(api.validUntil).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''} onChange={(event) => updateApi(api.id, { validUntil: event.target.value ? new Date(event.target.value).toISOString() : '' })} /></label>
                     </div>
                     <div className="flow-filter-api-range"><span>Data range</span><Select popupClassName="flow-select-popup" className="flow-api-filter" disabled={mutationLoading} mode="tags" size="small" placeholder="Data type" value={api.filterType} onChange={(value) => updateApi(api.id, { filterType: value })} options={[...new Set(dataRows.map((row) => String(row.data_type || '')).filter(Boolean))].map((value) => ({ value, label: value }))} allowClear /><Select popupClassName="flow-select-popup" className="flow-api-filter" disabled={mutationLoading} mode="tags" size="small" placeholder="Source" value={api.filterSource} onChange={(value) => updateApi(api.id, { filterSource: value })} options={[...new Set(dataRows.map((row) => String(row.source || row.data_source || '')).filter(Boolean))].map((value) => ({ value, label: value }))} allowClear /></div>
-                    <div className="flow-filter-api-permissions"><span>Permission scope</span><strong>Read data · filtered rows only</strong></div><div className="flow-api-preview">GET <a href={api.url} target="_blank" rel="noreferrer">{api.url}</a></div>
+                    <div className="flow-filter-api-permissions"><span>Permission scope</span><strong>Read data · filtered rows only</strong></div>
+                    <div className="flow-api-preview">GET <code>{api.url}</code></div>
+                    <details>
+                        <summary>Request parameters</summary>
+                        <p>Send the key in the <code>X-API-Key</code> header. Use <code>search</code> for text or pass a URL-encoded JSON array in <code>filters</code>.</p>
+                        <p>Example filter for a table with a category column: <code>{'[{"field":"category","operator":"=","value":"alpha"}]'}</code></p>
+                        <p>Set <code>limit</code> (1–500, default 50) and <code>offset</code> (default 0). Use the returned <code>nextOffset</code> until it is null. Filters narrow the published data range.</p>
+                    </details>
                 </div>)}</div>
                 <div className="flow-filter-api-add-row"><Button size="small" loading={mutationLoading} disabled={apisLoading || !openApis.length} onClick={saveApis}>Save API settings</Button><button type="button" className="flow-filter-api-add" disabled={mutationLoading || apisLoading} onClick={addApi}><PlusOutlined /> Add API</button></div>
             </>}
@@ -924,9 +993,9 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
             <section  className="flow-layer-main">
                 {(loading || tablesLoading) && <Spin size="small" />}
                 {requestError && <div role="alert" style={{ padding: 12, color: '#ff7875' }}>{requestError} <Button size="small" onClick={() => { setRefreshVersion((value) => value + 1); refreshCatalog().catch((error) => setRequestError(errorText(error))); }}>Retry</Button></div>}
-                <nav className="flow-asset-breadcrumb" aria-label="Breadcrumb"><button type="button" onClick={() => navigate('/ontology')}>Ontology Foundry</button><RightOutlined /><span>{isSchemas ? 'Explorer' : 'Transformations'}</span>{selectedSchema && <><RightOutlined /><strong>{selectedSchema}</strong></>}{isSchemas && table.name && <><RightOutlined /><strong aria-current="page" title={table.name}>{table.name}</strong></>}</nav>
+                <nav className="flow-asset-breadcrumb" aria-label="Breadcrumb">{isSchemas ? <span>Explorer</span> : <><button type="button" onClick={() => navigate('/ontology')}>Ontology Foundry</button><RightOutlined /><span>Transformations</span></>}{selectedSchema && <><RightOutlined /><strong>{selectedSchema}</strong></>}{isSchemas && table.name && <><RightOutlined /><strong aria-current="page" title={table.name}>{table.name}</strong></>}</nav>
                 {(!isSchemas || !table.name) && <div className="flow-layer-overview" style={{ '--schema-color': selectedSchema ? schemaColor(selectedSchema) : undefined } as React.CSSProperties}>
-                    <div  className="flow-layer-glyph"><PostgresIcon  className="flow-layer-glyph-svg"  /></div>
+                    {isSchemas ? <span className="flow-schema-asset-icon" aria-hidden="true"><DatabaseOutlined /></span> : <div className="flow-layer-glyph"><PostgresIcon className="flow-layer-glyph-svg" /></div>}
                     <h3>{schemaAliases[selectedSchema] || selectedSchema || 'No schema selected'}<em>{selectedSchema}{schemaNode?.database ? ` · ${schemaNode.database}` : ''}</em></h3>
                     <div  className="flow-layer-overview-stats">
                         <span><b>{schemaNode?.tables ?? serverTables.length}</b> tables</span>
@@ -970,7 +1039,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                 {!selectedTableAvailable ? <div className="flow-workspace-empty" role="status"><DatabaseOutlined /><h3>{tablesLoading || !catalogLoaded && !requestError ? 'Loading schema resources…' : selectedSchema ? serverTables.length ? 'No table selected' : 'No tables in this schema' : 'No schema selected'}</h3><p>{schemaNode?.status === 'stopped' ? 'This schema is not available in the connected database.' : serverTables.length ? 'Select a table from the catalog.' : 'Select a schema to explore its tables and data.'}</p></div> : <div className="flow-inspector">
                     <div  className="flow-table-header">
                         <div className="flow-table-header-left">
-                            {isSchemas && <div className="flow-schema-asset-icon"><TemplateGlyph kind={inferSiteKind(table.dataType || '', table.name)} source={table.name} /></div>}
+                            {isSchemas && <span className="flow-schema-asset-icon" aria-hidden="true"><TableOutlined /></span>}
                             <div><h2>{table.name}</h2>{isSchemas && <p className="flow-schema-asset-source">{schemaNode?.database ? <span>{schemaNode.database}</span> : null}<code>{tableDescription}</code></p>}</div>
                         </div>
                         {!isSchemas && <div className="flow-stream-pipeline">
@@ -978,7 +1047,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                                 <div  className="flow-pipeline-line-row">
                                     <DownloadOutlined  className="flow-pipeline-icon  flow-pipeline-icon--in"  />
                                     <strong>{inputTopics[activeTopicIndex]  ||  'Not  configured'}</strong>
-                                    <em title={stream?.throughputReason}>· {stream?.throughput == null ? 'Unavailable' : `${stream.throughput}/s`}</em>
+                                    <em title={stream?.throughputReason}>· {stream?.throughput == null ? 'Sampling' : `${stream.throughput.toFixed(1)} offsets/s`}</em>
                                     <code>[{offsets.map((item)  =>  `p${item.partition}:  ${item.offset.toLocaleString('en-US')}`).join('    ·    ')}]</code>
                                 </div>
                             </div>
@@ -993,7 +1062,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                         <div className="flow-table-header-right">
                             <div className="flow-health-badge" title={isSchemas ? undefined : stream?.reason || streamError}><i className={`flow-dot ${(!isSchemas && stream?.available) || schemaNode?.status === 'running' ? 'flow-dot--green' : ''}`} /><span>{!isSchemas && stream?.available ? 'Stream available' : schemaNode?.status === 'running' ? 'Schema accessible' : 'Unavailable'}</span></div>
                             {selectedSchema === 'ts_task' && table.name === 'task_vulnerability' && <Button size="small" onClick={() => setKeywordsOpen(true)}>Satellite extraction</Button>}
-                            {canManage && !isSchemas && <Button size="small" disabled={!stream?.available || !offsets.length} onClick={() => { setOffsetPartition(offsets[0]?.partition); setOffset(offsets[0]?.offset); setTopicDraft(stream?.topic || ''); setOffsetOpen(true); }}>Adjust offset</Button>}
+                            {canManage && !isSchemas && <Button size="small" disabled={!stream?.resumeAvailable || !offsets.length} onClick={() => { setOffsetPartition(offsets[0]?.partition); setOffset(offsets[0]?.offset); setTopicDraft(stream?.topic || ''); setOffsetOpen(true); }}>Adjust offset</Button>}
                         </div>
                     </div>
                     {!isSchemas && <p className="flow-table-desc">{tableDescription}{streamError ? ` · ${streamError}` : !stream?.available ? ` · ${stream?.reason || 'Stream unavailable'}` : ''}</p>}
@@ -1035,7 +1104,6 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                             {isSchemas && <>
                                 {partitions.length > 0 && <button type="button" className={`flow-tool ${partitionOpen || partition ? 'is-active' : ''}`} aria-expanded={partitionOpen} onClick={() => activateTool('partition')}>{partition ? `Partition: ${partition}` : 'Partitions'}</button>}
                                 <span className="flow-schema-preview-summary" role="status">{loading ? 'Loading preview…' : data ? `${dataRows.length.toLocaleString('en-US')} shown · ${fieldCount.toLocaleString('en-US')} columns` : 'Preview unavailable'}</span>
-                                <button type="button" className="flow-tool flow-schema-reload" aria-label="Refresh table preview" title="Refresh table preview" onClick={refreshWorkspace}><ReloadOutlined /></button>
                             </>}
                         </div>}
                         {isSchemas && showPreview && (filterCount > 0 || sortCount > 0) && <div className="flow-schema-applied flow-query-chips" aria-label="Applied conditions">
@@ -1054,19 +1122,19 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                         {isSchemas && resourceView === 'evidence' && <ExplorerTableEvidence key={tableDescription} schema={selectedSchema} table={table.name} canManage={canManage} />}
                         {isSchemas && resourceView === 'stream' && <section className="flow-schema-details flow-explorer-stream" aria-label="Stream status">
                             <header>
-                                <div><h3>Stream</h3><p>Consumer status and partition offsets for this table.</p></div>
+                                <div><h3>Stream</h3><p>Kafka input topic and consumer group positions. Shared topics include traffic for other tables.</p></div>
                                 <div className="flow-explorer-stream-actions">
                                     <Button size="small" icon={<CodeOutlined />} onClick={() => activateTool('script')}>Layer script</Button>
-                                    {canManage && <Button size="small" disabled={!stream?.available || !offsets.length} onClick={() => { setOffsetPartition(offsets[0]?.partition); setOffset(offsets[0]?.offset); setTopicDraft(stream?.topic || ''); setOffsetOpen(true); }}>Adjust offset</Button>}
+                                    {canManage && <Button size="small" disabled={!stream?.resumeAvailable || !offsets.length} onClick={() => { setOffsetPartition(offsets[0]?.partition); setOffset(offsets[0]?.offset); setTopicDraft(stream?.topic || ''); setOffsetOpen(true); }}>Adjust offset</Button>}
                                 </div>
                             </header>
+                            {!!inputTopics.length && <label>Input topic <select aria-label="Input topic" value={inputTopics[activeTopicIndex] || ''} onChange={event => { setActiveTopicIndex(inputTopics.indexOf(event.target.value)); setStream(undefined); setOffsets([]); setStreamLoading(true); }}>
+                                {inputTopics.map(topic => <option key={topic} value={topic}>{topic}</option>)}
+                            </select></label>}
                             {streamLoading && !stream && !streamError ? <div className="flow-schema-state" role="status">Checking stream status…</div>
                                 : streamError ? <div className="flow-schema-state" role="alert"><strong>Stream status unavailable</strong><p>{streamError}</p></div>
                                 : !stream?.available ? <div className="flow-schema-state" role="status"><strong>{stream?.topic ? 'Stream unavailable' : 'No active stream'}</strong><p>{stream?.reason || 'There is no stream information for this table.'}</p></div>
-                                : <>
-                                    <dl className="flow-explorer-stream-meta"><div><dt>Topic</dt><dd>{stream.topic || 'Not reported'}</dd></div><div><dt>Consumer group</dt><dd>{stream.consumerGroup || 'Not reported'}</dd></div><div><dt>Throughput</dt><dd title={stream.throughputReason}>{stream.throughput == null ? 'Unavailable' : `${stream.throughput.toLocaleString()} events/s`}</dd></div></dl>
-                                    {offsets.length ? <table><thead><tr><th scope="col">Partition</th><th scope="col">Offset</th></tr></thead><tbody>{offsets.map((item) => <tr key={item.partition}><td>{item.partition}</td><td>{item.offset.toLocaleString()}</td></tr>)}</tbody></table> : <div className="flow-schema-state">No consumer offsets reported.</div>}
-                                </>}
+                                : <ExplorerStreamPositions stream={stream} />}
                         </section>}
                         {showPreview && previewError && <div className="flow-schema-state flow-preview-error" role="alert">
                             <strong>Data preview unavailable</strong><p>{previewError}</p>
@@ -1091,7 +1159,21 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                             {isSchemas && resourceView === 'api' && (canManage ? apiPanel : <div className="flow-schema-state" role="status">Published APIs are available to administrators only.</div>)}
                             {showPreview && partitionOpen &&  <div  className="flow-partition-tags">{partitions.map((item)  =>  <Tag.CheckableTag  key={item.name}  checked={partition  ===  item.name}  onChange={() => { if (editingRowKey) { message.warning('Save or cancel the current row edit first'); return; } setPartition(partition === item.name ? undefined : item.name); setPageNumber(1); }}>{item.name.replace('p2026_',  '')}</Tag.CheckableTag>)}</div>}
                             {showPreview && !previewError && (isSchemas ? <>
-                                <ConfigProvider locale={enUS}><Table className="flow-data-table" size="small" loading={loading} pagination={false} rowKey={rowKey} scroll={{ x: 'max-content' }} dataSource={dataRows} columns={dataColumns} onRow={(row) => ({ onDoubleClick: () => startRowEdit(rowKey(row)), className: editingRowKey === rowKey(row) ? 'flow-row-editing' : undefined })} /></ConfigProvider>
+                                <ConfigProvider locale={enUS}><Table className="flow-data-table" size="small" loading={loading} pagination={false} rowKey={rowKey} scroll={{ x: 'max-content' }} dataSource={dataRows} columns={dataColumns} onRow={(row) => ({
+                                    className: 'flow-explorer-result-row',
+                                    tabIndex: loading ? -1 : 0,
+                                    'aria-haspopup': 'dialog',
+                                    onClick: (event: React.MouseEvent<HTMLTableRowElement>) => {
+                                        if (!(event.target instanceof Element) || event.target.closest('button')) return;
+                                        openRowDetails(row, event.currentTarget);
+                                    },
+                                    onKeyDown: (event: React.KeyboardEvent<HTMLTableRowElement>) => {
+                                        if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+                                            event.preventDefault();
+                                            openRowDetails(row, event.currentTarget);
+                                        }
+                                    },
+                                })} /></ConfigProvider>
                                 {previewPage && <footer className="flow-preview-pager">
                                     {(!previewPage.result.stableOrder || previewPage.result.hasMore && !previewPage.result.canPageFurther) && <div className="flow-preview-pager-notices" role="status">
                                         {!previewPage.result.stableOrder && <span>No stable primary key. Rows may repeat or be skipped when paging.</span>}
@@ -1162,7 +1244,42 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
             </div>
         </Modal>
         <Modal className="flow-surface-modal"  title="Data  analysis"  open={showPreview && analysisOpen}  onCancel={()  =>  setAnalysisOpen(false)}  footer={<Button  onClick={()  =>  setAnalysisOpen(false)}>Close</Button>}><div  className="flow-analysis-grid"><div><span>Visible  rows</span><strong>{dataRows.length}</strong></div><div><span>Partitions</span><strong>{new  Set(dataRows.map((row)  =>  row.partition)).size}</strong></div><div><span>Ready</span><strong>{dataRows.filter((row)  =>  row.status  ===  'ready').length}</strong></div></div></Modal>
-        <Modal  className="flow-surface-modal flow-json-preview-modal"  title={jsonRow  ?  `Row  JSON  ·  ${table.name}`  :  'Row  JSON'}  open={showPreview && !!jsonRow}  onCancel={()  =>  setJsonRow(null)}  footer={<Button  onClick={()  =>  setJsonRow(null)}>Close</Button>}  width={720}>
+        {activeRowDetails && <Drawer open title="Row details" onClose={closeRowDetails} width="min(480px, 100vw)"
+            rootClassName="flow-surface-modal flow-explorer-row-details" keyboard={!mutationLoading} closable={!mutationLoading} maskClosable={!mutationLoading}>
+            <p className="flow-explorer-row-table"><code>{tableDescription}</code></p>
+            {rowDetailsError && <p role="alert" className="flow-explorer-row-error">{rowDetailsError}</p>}
+            {editingDraft && editingRowKey ?
+                <form onSubmit={event => { event.preventDefault(); void saveRowEdit(); }}>
+                    <div className="flow-explorer-row-fields">{data?.columns.map(key => <div key={key} className="flow-explorer-row-field"><span>{key}</span>{rowEditor(key)}</div>)}</div>
+                    <div className="flow-explorer-row-tools">
+                        <Button htmlType="submit" type="primary" loading={mutationLoading} disabled={loading || !canEditRows || !activeRowDetails.version}>Save row</Button>
+                        <Button disabled={mutationLoading} onClick={cancelRowEdit}>Cancel edit</Button>
+                    </div>
+                </form>
+            : rowDetailsView === 'delete' ? <section aria-label="Confirm row deletion">
+                <p>Delete this row from <strong>{tableDescription}</strong>?</p>
+                <code className="flow-explorer-row-key">{JSON.stringify(primaryKey(activeRowDetails.row))}</code>
+                <div className="flow-explorer-row-tools">
+                    <Button danger type="primary" loading={mutationLoading} disabled={loading || !canDeleteRows || !activeRowDetails.version} onClick={() => removeRow(activeRowDetails.row)}>Confirm delete</Button>
+                    <Button disabled={mutationLoading} onClick={() => { setRowDetailsView('properties'); setRowDetailsError(''); }}>Cancel deletion</Button>
+                </div>
+            </section> : <>
+                <div className="flow-explorer-row-tools">
+                    <Button aria-pressed={rowDetailsView === 'json'} icon={<CodeOutlined />} onClick={() => setRowDetailsView(rowDetailsView === 'json' ? 'properties' : 'json')}>JSON preview</Button>
+                    {canEditRows && activeRowDetails.version && <Button disabled={loading} icon={<EditOutlined />} onClick={() => {
+                        setRowDetailsView('properties');
+                        startRowEdit(rowKey(activeRowDetails.row));
+                    }}>Edit row</Button>}
+                    {canDeleteRows && activeRowDetails.version && <Button disabled={loading} danger icon={<DeleteOutlined />} onClick={() => setRowDetailsView('delete')}>Delete row</Button>}
+                </div>
+                {rowDetailsView === 'json'
+                    ? <div className="flow-json-tree" aria-label="Row JSON" role="region"><JsonTreeValue name="" value={activeRowDetails.row} depth={0} comma={false} /></div>
+                    : <dl className="flow-explorer-row-fields">{data?.columns.map(key => <div key={key} className="flow-explorer-row-field">
+                        <dt>{key}</dt><dd>{formatCell(activeRowDetails.row[key])}</dd>
+                    </div>)}</dl>}
+            </>}
+        </Drawer>}
+        <Modal  className="flow-surface-modal flow-json-preview-modal"  title={jsonRow  ?  `Row  JSON  ·  ${table.name}`  :  'Row  JSON'}  open={!isSchemas && showPreview && !!jsonRow}  onCancel={()  =>  setJsonRow(null)}  footer={<Button  onClick={()  =>  setJsonRow(null)}>Close</Button>}  width={720}>
             <div  className="flow-json-tree">{jsonRow  ?  <JsonTreeValue  name=""  value={jsonRow}  depth={0}  comma={false}  />  :  null}</div>
         </Modal>
     </div>;

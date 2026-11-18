@@ -231,6 +231,8 @@ export interface EtlTableColumn {
 }
 
 export interface QueryResult {
+  rowVersions?: string[];
+  rowActions?: { edit: boolean; delete: boolean };
   primaryKey?: string[];
   total?: number;
   totalEstimated?: boolean;
@@ -427,7 +429,13 @@ export interface EtlStreamState {
   reason?: string;
   consumerGroup?: string;
   topic?: string;
-  offsets?: { partition: number; offset: number }[];
+  topics?: string[];
+  checkedAt?: string;
+  resumeAvailable?: boolean;
+  offsets?: {
+    partition: number; offset: number; beginningOffset: number; endOffset: number;
+    committedOffset: number | null; lag: number | null; source: string; pending: boolean;
+  }[];
   throughput: number | null;
   throughputReason?: string;
 }

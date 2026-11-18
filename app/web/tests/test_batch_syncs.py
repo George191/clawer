@@ -71,7 +71,11 @@ class BatchSyncContracts(unittest.IsolatedAsyncioTestCase):
                 BatchSyncPayload.model_validate({**PAYLOAD, **alteration})
 
     async def test_capability_default_off_and_admin_gate(self):
-        with patch.object(settings, "BATCH_SYNC_SANDBOX_ENABLED", False):
+        with (
+            patch.object(settings, "BATCH_SYNC_SANDBOX_ENABLED", False),
+            patch.object(settings, "BATCH_SYNC_INCREMENTAL_ENABLED", False),
+            patch("app.web.services.batch_lineage._limits", new_callable=AsyncMock) as read_lineage,
+        ):
             async with api(True) as client:
                 response = await client.get(f"{RUNS}/capabilities")
                 self.assertEqual(response.json(), {"enabled": False, "targetSchema": "ts_batch_sync_sandbox",
@@ -85,6 +89,7 @@ class BatchSyncContracts(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await client.get(f"{RUNS}/{uuid4()}/attempts")).status_code, 403)
                 self.assertEqual((await client.get("/etl/batch-sync-schedules")).status_code, 403)
                 self.assertEqual((await client.get(f"{RUNS}/{uuid4()}/schedule")).status_code, 403)
+            read_lineage.assert_not_awaited()
 
 
 @unittest.skipUnless(URL, "Requires explicitly isolated ontology_batch_sync_regression PostgreSQL")
@@ -142,6 +147,37 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
     async def provider(self):
         async with self.pg.session() as session:
             yield session
+
+    async def test_lineage_capability_requires_the_registered_target(self):
+        asset = {"schema": "ts_batch_sync_sandbox", "table": "committed_batch_fixture"}
+        with patch.object(settings, "ENVIRONMENT", "local"), patch.object(settings, "BATCH_SYNC_INCREMENTAL_ENABLED", True):
+            async with api(True, self.provider) as client:
+                absent = await client.get(f"{RUNS}/capabilities")
+                self.assertEqual(absent.status_code, 200, absent.text)
+                self.assertNotIn("lineageAsset", absent.json())
+                await self.pg.execute("CREATE TABLE ts_batch_sync_sandbox.committed_batch_fixture (id integer PRIMARY KEY, value text NOT NULL)")
+                invalid = await client.get(f"{RUNS}/capabilities")
+                self.assertEqual(invalid.status_code, 200, invalid.text)
+                self.assertNotIn("incrementalLineage", invalid.json())
+                await self.pg.execute("ALTER TABLE ts_batch_sync_sandbox.committed_batch_fixture ALTER COLUMN id TYPE bigint")
+                available = await client.get(f"{RUNS}/capabilities")
+                self.assertEqual(available.status_code, 200, available.text)
+                self.assertEqual(available.json()["lineageAsset"], asset)
+                self.assertIs(available.json()["incrementalLineage"], True)
+                await self.pg.execute("""
+                    INSERT INTO public.ontology_batch_sync_incremental_watermark
+                    (singleton, connection_id, source_identity_fingerprint, source_stream_digest,
+                     target_oid, target_file_node, applied_through)
+                    SELECT true, :connection, repeat('a', 64), repeat('b', 64), oid, relfilenode, 0
+                    FROM pg_catalog.pg_class WHERE oid = 'ts_batch_sync_sandbox.committed_batch_fixture'::regclass
+                """, {"connection": UUID(PAYLOAD["connectionId"])})
+                await self.pg.execute("DROP TABLE ts_batch_sync_sandbox.committed_batch_fixture")
+                archived = await client.get(f"{RUNS}/capabilities")
+                self.assertEqual(archived.status_code, 200, archived.text)
+                self.assertEqual(archived.json()["lineageAsset"], asset)
+                timeline = await client.get("/etl/ts_batch_sync_sandbox/committed_batch_fixture/batch-lineage-timeline")
+                self.assertEqual(timeline.status_code, 200, timeline.text)
+                self.assertEqual(timeline.json()["lineage"]["state"], "archived")
 
     async def test_same_target_lock_before_source_read_and_atomic_receipt(self):
         async with api(True, self.provider) as client:

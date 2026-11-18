@@ -345,18 +345,31 @@ class ObjectCatalogTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("ORDER BY", session.calls[-1][0])
         self.assertEqual(session.calls[-1][1]["limit"], 1)
 
-    async def test_legacy_range_keeps_its_count_and_does_not_append_primary_keys(self):
+    async def test_published_range_counts_and_appends_primary_keys(self):
         fields = [column("id", "bigint", True, 1, False), column("name")]
-        instance, session = service(Result(fields), Result(scalar=2), Result([{"id": 12}]))
+        instance, session = service(Result(fields), Result(scalar=2), Result([{"id": 12}, {"id": 13}]))
         result = await instance.data("ods", "objects", {"limit": 1}, scope={
             "filters": [{"field": "name", "operator": "=", "value": "Scoped"}],
             "sorts": [{"field": "name", "direction": "desc"}],
         })
         self.assertEqual((result["total"], result["totalEstimated"], result["rowCount"]), (2, False, 1))
-        self.assertNotIn("hasMore", result)
+        self.assertTrue(result["hasMore"])
+        self.assertEqual(result["nextOffset"], 1)
         self.assertIn("count(*)", session.calls[-2][0])
         sql, params = session.calls[-1]
         self.assertIn('t."name" = (jsonb_populate_record', sql)
+        self.assertIn('ORDER BY t."name" desc, t."id" asc LIMIT', sql)
+        self.assertEqual(params["limit"], 2)
+
+    async def test_unscoped_range_keeps_its_count_and_sort(self):
+        fields = [column("id", "bigint", True, 1, False), column("name")]
+        instance, session = service(Result(fields), Result(scalar=2), Result([{"id": 12}]))
+        result = await instance.data("ods", "objects", {"limit": 1, "filters": [
+            {"field": "name", "operator": "=", "value": "Scoped"}
+        ], "sorts": [{"field": "name", "direction": "desc"}]})
+        self.assertEqual(result["total"], 2)
+        self.assertNotIn("hasMore", result)
+        sql, params = session.calls[-1]
         self.assertIn('ORDER BY t."name" desc LIMIT', sql)
         self.assertEqual(params["limit"], 1)
 

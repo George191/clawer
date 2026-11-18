@@ -267,7 +267,7 @@ export const updateEtlObjectFavorite = (schema: string, table: string, favorite:
 };
 
 export const fetchCdcStatus = (signal?: AbortSignal): Promise<CdcStatus> =>
-  client.get('/cdc/status', { signal }).then((r) => unwrap<CdcStatus>(r.data));
+  client.get('/cdc/status', { signal, timeout: 22000 }).then((r) => unwrap<CdcStatus>(r.data));
 
 export const fetchLayerTables = (layer: string, tableRole = 'current'): Promise<LayerTable[]> =>
   client.get(`/etl/${layer}/tables`, { params: { tableRole } }).then((r) => unwrap<LayerTable[]>(r.data));
@@ -478,6 +478,18 @@ export type ExplorerTableEvidenceSnapshot = {
 export const fetchExplorerTableEvidence = (schema: string, table: string, signal?: AbortSignal): Promise<ExplorerTableEvidenceSnapshot> =>
   client.get(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/evidence`, { signal }).then((r) => unwrap<ExplorerTableEvidenceSnapshot>(r.data));
 
+export type CdcTableCapture = ({
+  state: 'observed'; topic: string; partition: number; offset: number; operation: string;
+  sourceLsn: string; eventTimeMs: number | null; checkedAt: string;
+} | {
+  state: 'outside_capture' | 'unavailable' | 'no_sample' | 'no_topic' | 'unconfigured';
+  reason: string; topic?: string;
+}) & { recordLink?: { state: 'matched'; source: string; target: string; eventTime: string; checkedAt: string }
+  | { state: 'no_sample' | 'unavailable'; reason: string } };
+export const fetchTableCapture = (schema: string, table: string, signal: AbortSignal) =>
+  client.get(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/cdc-evidence`, { signal, timeout: 20000 })
+    .then((r) => unwrap<CdcTableCapture>(r.data));
+
 export type SandboxIndexPreviewQuery = {
   mode: 'explain' | 'preview'; idEquals?: string; idFrom?: string; idTo?: string; limit: number; cursor?: string;
 };
@@ -625,7 +637,7 @@ export const fetchTablePartitions = (layer: string, table: string): Promise<EtlP
   client.get(`/etl/${layer}/${table}/partitions`).then((r) => unwrap<EtlPartition[]>(r.data));
 
 export const fetchTableStream = (layer: string, table: string, topic?: string): Promise<EtlStreamState> =>
-  client.get(`/etl/${layer}/${table}/stream`, { params: { topic } }).then((r) => unwrap<EtlStreamState>(r.data));
+  client.get(`/etl/${layer}/${table}/stream`, { params: { topic }, timeout: 25000 }).then((r) => unwrap<EtlStreamState>(r.data));
 
 export type SandboxCdcStatus = {
   available: boolean;
@@ -829,7 +841,8 @@ export const fetchBatchSourceIdentity = (id: string, signal?: AbortSignal): Prom
   client.get(batchSourceIdentityPath(id), { signal }).then(r => unwrap<BatchSourceIdentity>(r.data));
 export const verifyBatchSourceIdentity = (id: string, expectedSourceUpdatedAt: string, signal?: AbortSignal): Promise<BatchSourceIdentity> =>
   client.post(batchSourceIdentityPath(id), { expectedSourceUpdatedAt }, { signal, timeout: 45000 }).then(r => unwrap<BatchSourceIdentity>(r.data));
-export type BatchSyncCapabilities = { rangeSnapshot?: true; incrementalLineage?: true; incrementalBatchSync?: true; incrementalPreflight?: true; incrementalMaxRows?: number; incrementalMaxBytes?: number; sourceIdentityRequired?: true; enabled: boolean; maxRows: number; maxBytes: number; targetSchema: string; scheduledBatchSync: boolean };
+export type ManagedBatchLineageAsset = { schema: string; table: string };
+export type BatchSyncCapabilities = { rangeSnapshot?: true; incrementalLineage?: true; lineageAsset?: ManagedBatchLineageAsset; incrementalBatchSync?: true; incrementalPreflight?: true; incrementalMaxRows?: number; incrementalMaxBytes?: number; sourceIdentityRequired?: true; enabled: boolean; maxRows: number; maxBytes: number; targetSchema: string; scheduledBatchSync: boolean };
 export type BatchSyncMapping = { sourceColumn: string; targetColumn: string };
 export type BatchSyncInput = {
   name: string; connectionId: string; sourceSchema: string; sourceTable: string; sourceKeyColumn: string; targetTable: string;
@@ -1004,14 +1017,29 @@ export const setDataSourcePaused = (id: string, request: { paused: boolean; expe
 export const deleteDataSource = (id: string): Promise<void> =>
   client.delete(`/etl/data-connections/${id}`).then(() => undefined);
 export interface EtlDataQuery {
+  forEditing?: boolean;
   limit: number; offset: number; partition?: string; search?: string;
   filters: Array<{ id: string; field: string; operator: string; value: string; active: boolean; join: string }>;
   sorts: Array<{ field: string; direction: 'asc' | 'desc' }>;
 }
 export interface EtlPublishedApi {
-  id: string; token: string; validFrom: string; validUntil: string; filterType: string[]; filterSource: string[]; url: string;
+  id: string; keyStatus: 'active' | 'unissued' | 'revoked'; validFrom: string; validUntil: string; filterType: string[]; filterSource: string[]; url: string;
   filters?: EtlDataQuery['filters']; sorts?: EtlDataQuery['sorts']; search?: string; partition?: string;
 }
+export type PublishedKey = Pick<EtlPublishedApi,'id'|'keyStatus'|'validFrom'|'validUntil'|'url'> & {schema:string;table:string};
+export type TeamKey = {id: string; short_key:string; description:string | null; status:number};
+export const publicationKeys = (q:string, offset:number) =>
+  client.get('/apikey/publications', {params:{q,offset,limit:25}}).then(r=>unwrap<{items:PublishedKey[];hasMore:boolean}>(r.data));
+export const issuePublicationKey = (id:string) =>
+  client.post('/apikey/publications/'+id+'/rotate').then(r=>unwrap<{key:string}>(r.data));
+export const revokePublicationKey = (id:string) => client.delete('/apikey/publications/'+id+'/key');
+export const teamKeys = (team:string,page:number) =>
+  client.get('/apikey/'+team,{params:{page,size:25}}).then(r=>unwrap<{items:TeamKey[];pages:number}>(r.data));
+export const createTeamKey = (team:string,description:string) =>
+  client.post('/apikey/',{description},{params:{team_id:team}}).then(r=>unwrap<{key:string}>(r.data));
+export const rotateTeamKey = (team:string,id:string) =>
+  client.post('/apikey/'+id+'/rotate',null,{params:{team_id:team}}).then(r=>unwrap<{key:string}>(r.data));
+export const deleteTeamKey = (team:string,id:string) => client.delete('/apikey/'+id,{params:{team_id:team}});
 export const queryEtlTable = (layer: string, table: string, query: EtlDataQuery, signal?: AbortSignal): Promise<QueryResult> =>
   client.post(`/etl/${layer}/${table}/data`, query, { signal }).then((r) => unwrap<QueryResult>(r.data));
 export const queryExplorerPreview = (layer: string, table: string, query: EtlDataQuery, signal?: AbortSignal): Promise<ExplorerPreviewResult> =>
@@ -1031,10 +1059,10 @@ export const deleteEtlSchema = (schema: string): Promise<void> =>
   client.delete(`/etl/schemas/${schema}`).then(() => undefined);
 export const createEtlTable = (layer: string, payload: Record<string, unknown>): Promise<LayerTable> =>
   client.post(`/etl/${layer}/tables`, payload).then((r) => unwrap<LayerTable>(r.data));
-export const updateEtlRow = (layer: string, table: string, key: Record<string, unknown>, values: Record<string, unknown>): Promise<void> =>
-  client.patch(`/etl/${layer}/${table}/rows`, { key, values }).then(() => undefined);
-export const deleteEtlRow = (layer: string, table: string, key: Record<string, unknown>): Promise<void> =>
-  client.delete(`/etl/${layer}/${table}/rows`, { data: { key } }).then(() => undefined);
+export const updateEtlRow = (layer: string, table: string, key: Record<string, unknown>, values: Record<string, unknown>, expectedVersion: string): Promise<void> =>
+  client.patch(`/etl/${layer}/${table}/rows`, { key, values, expectedVersion }).then(() => undefined);
+export const deleteEtlRow = (layer: string, table: string, key: Record<string, unknown>, expectedVersion: string): Promise<void> =>
+  client.delete(`/etl/${layer}/${table}/rows`, { data: { key, expectedVersion } }).then(() => undefined);
 export const fetchEtlApis = (layer: string, table: string): Promise<EtlPublishedApi[]> =>
   client.get(`/etl/${layer}/${table}/apis`).then((r) => unwrap<EtlPublishedApi[]>(r.data));
 export const createEtlApi = (layer: string, table: string, payload: Partial<EtlPublishedApi>): Promise<EtlPublishedApi> =>
@@ -1278,11 +1306,12 @@ export type CommittedBatchLineageDetail = CommittedBatchLineageEntry & {
 export type CommittedBatchLineagePage = {
   lineage: CommittedBatchLineageSummary; entries: CommittedBatchLineageEntry[]; nextCursor: string | null; from: string; to: string;
 };
-const committedBatchLineagePath = '/etl/ts_batch_sync_sandbox/committed_batch_fixture/batch-lineage-timeline';
-export const fetchCommittedBatchLineage = (params: { from?: string; to?: string; limit?: number; cursor?: string } = {}, signal?: AbortSignal): Promise<CommittedBatchLineagePage> =>
-  client.get(committedBatchLineagePath, { params, signal }).then(r => unwrap<CommittedBatchLineagePage>(r.data));
-export const fetchCommittedBatchLineageEntry = (kind: CommittedBatchLineageEntry['kind'], id: string, signal?: AbortSignal): Promise<CommittedBatchLineageDetail> =>
-  client.get(`${committedBatchLineagePath}/${kind}/${encodeURIComponent(id)}`, { signal }).then(r => unwrap<CommittedBatchLineageDetail>(r.data));
+const committedBatchLineagePath = ({ schema, table }: ManagedBatchLineageAsset) =>
+  `/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/batch-lineage-timeline`;
+export const fetchCommittedBatchLineage = (asset: ManagedBatchLineageAsset, params: { from?: string; to?: string; limit?: number; cursor?: string }, signal?: AbortSignal): Promise<CommittedBatchLineagePage> =>
+  client.get(committedBatchLineagePath(asset), { params, signal }).then(r => unwrap<CommittedBatchLineagePage>(r.data));
+export const fetchCommittedBatchLineageEntry = (asset: ManagedBatchLineageAsset, kind: CommittedBatchLineageEntry['kind'], id: string, signal?: AbortSignal): Promise<CommittedBatchLineageDetail> =>
+  client.get(`${committedBatchLineagePath(asset)}/${kind}/${encodeURIComponent(id)}`, { signal }).then(r => unwrap<CommittedBatchLineageDetail>(r.data));
 
 export type CollectedStatisticsSample = {
   capturedAt: string; policyGeneration: number; planUpdatedAt: string; estimatedRows: string | null; lastAnalyzedAt: string | null;

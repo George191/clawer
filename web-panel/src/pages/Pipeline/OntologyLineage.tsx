@@ -2,7 +2,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowDownOutlined, ArrowLeftOutlined, ArrowRightOutlined, ArrowUpOutlined, BarsOutlined, BranchesOutlined, CheckOutlined, CloseOutlined, CopyOutlined, DatabaseOutlined, ExportOutlined, EyeOutlined, FullscreenOutlined, MinusOutlined, PauseOutlined, PlayFilled, PlusOutlined, ReloadOutlined, SearchOutlined } from '@/components/ui/icons';
 import { Spin } from '@/components/ui';
-import { fetchCurrentUserContext, fetchLayers } from '../../services/api';
+import { fetchBatchSyncCapabilities, fetchCurrentUserContext, fetchLayers, type ManagedBatchLineageAsset } from '../../services/api';
 import { getSessionState } from '../../services/session';
 import type { LayerNode } from '../../services/types';
 import { schemaColor } from './OntologyExplorer';
@@ -54,6 +54,7 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
   const [inspectorOpen, setInspectorOpen] = useState(Boolean(selected));
   const [panel, setPanel] = useState<'details' | 'upstream' | 'downstream' | 'transfers'>(selectedSchedule ? 'transfers' : 'details');
   const [canPlanTransfers, setCanPlanTransfers] = useState(false);
+  const [managedAsset, setManagedAsset] = useState<ManagedBatchLineageAsset | null>();
   const [copyStatus, setCopyStatus] = useState<'copied' | 'manual' | ''>('');
   const id = useId().replace(/:/g, '');
   const [schemas, setSchemas] = useState<LayerNode[]>([]);
@@ -81,14 +82,20 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
     }
   }, [schemas, loading, error, selected, setParams]);
   useEffect(() => {
-    let active = true;
+    const request = new AbortController();
     const identity = getSessionState().identity;
+    const current = () => !request.signal.aborted && getSessionState().identity === identity;
     setCanPlanTransfers(false);
-    fetchCurrentUserContext().then(context => {
-      if (active && getSessionState().identity === identity) setCanPlanTransfers(context.user.is_superuser === true);
-    }).catch(() => { if (active) setCanPlanTransfers(false); });
-    return () => { active = false; };
-  }, [version]);
+    setManagedAsset(undefined);
+    fetchCurrentUserContext().then(async context => {
+      if (!current()) return;
+      const administrator = context.user.is_superuser === true;
+      setCanPlanTransfers(administrator);
+      const capability = administrator ? await fetchBatchSyncCapabilities(request.signal) : undefined;
+      if (current()) setManagedAsset(capability?.lineageAsset ?? null);
+    }).catch(() => { if (current()) setManagedAsset(null); });
+    return () => request.abort();
+  }, [version, refreshToken]);
   const visible = schemas.filter((schema) => `${schema.key} ${schema.label} ${schema.alias || ''}`.toLowerCase().includes(search.trim().toLowerCase()));
   const independent = visible.filter((schema) => !stages[schema.key]).sort((a, b) => a.key.localeCompare(b.key));
   const hasPipeline = visible.some((schema) => stages[schema.key]);
@@ -249,9 +256,12 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
       <label className="flow-lineage-search"><SearchOutlined /><input ref={searchRef} aria-label="Search lineage nodes" placeholder="Find schemas" value={search} onChange={event => updateQuery({ q: event.target.value || null }, true)} />{search && <button type="button" aria-label="Clear lineage search" onClick={() => { updateQuery({ q: null }, true); searchRef.current?.focus(); }}><CloseOutlined /></button>}</label>
       <span className="flow-lineage-notice" title="Relationships are predefined ETL processor contracts, not discovered data lineage.">Relationships predefined</span>
     </div>
-    {canPlanTransfers && <ManagedBatchLineage selected={managedSelected} exactReceipt={managedReceipt} version={version + refreshToken}
+    {canPlanTransfers && managedAsset && <ManagedBatchLineage asset={managedAsset} selected={managedSelected} exactReceipt={managedReceipt} version={version + refreshToken}
       onSelect={() => { if (!managedSelected) updateQuery({ managedAsset: MANAGED_BATCH_ASSET, batchReceipt: null, schema: null, table: null, tableLineage: null, column: null, transferPlan: null, scheduleKind: null }); }}
       onClose={() => updateQuery({ managedAsset: null, batchReceipt: null }, true)} />}
+    {managedSelected && managedAsset === null && <div className="flow-lineage-managed-unavailable" role="status">
+      Managed asset unavailable. <button type="button" className="flow-lineage-action" onClick={() => updateQuery({ managedAsset: null, batchReceipt: null }, true)}>Dismiss</button>
+    </div>}
     {error ? <div className="flow-lineage-state" role="alert">Unable to load lineage assets.<button type="button" className="flow-lineage-action" onClick={() => setVersion(value => value + 1)}>Retry</button></div>
       : loading ? <div className="flow-lineage-state"><Spin /></div>
         : !nodes.length ? <div className="flow-lineage-state">{search ? 'No matching assets' : 'No schemas to display'}</div>

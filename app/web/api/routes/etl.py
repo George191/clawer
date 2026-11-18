@@ -6,7 +6,7 @@ from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from anyio import fail_after
-from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Path, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 from pydantic import AwareDatetime
 from sqlalchemy.exc import DBAPIError, MultipleResultsFound
@@ -128,7 +128,7 @@ from app.web.services.asset_weekly_job_quality import (
     weekly_evidence_unavailable,
 )
 from app.web.services.data_connections import connector_types, get_data_connections
-from app.web.services.batch_lineage import list_batch_lineage, read_batch_lineage
+from app.web.services.batch_lineage import available_batch_lineage_asset, list_batch_lineage, read_batch_lineage
 from app.web.services.batch_source_identity import read_source_identity, verify_source_identity
 from app.web.services.batch_incremental_preflight import preflight_incremental_batch
 from app.web.services.batch_syncs import (
@@ -764,10 +764,49 @@ async def acknowledge_freshness_incident(
     return await acknowledge_quality_incident(session, schema, table, incident_id, payload, user.id)
 
 
-@router.get("/published/{token}")
-async def published_data(token: str, limit: int = Query(50, ge=1, le=500),
-                         offset: int = Query(0, ge=0, le=1_000_000)) -> dict[str, Any]:
-    return await get_etl_workspace().published_data(token, {"limit": limit, "offset": offset})
+def published_query(
+    request: Request,
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0, le=1_000_000),
+    search: str = Query("", max_length=1000),
+    filters: str = Query(
+        "[]",
+        max_length=8192,
+        description='JSON filter rows, e.g. [{"field":"category","operator":"=","value":"alpha"}]',
+    ),
+) -> dict[str, Any]:
+    if set(request.query_params) - {"limit", "offset", "search", "filters"}:
+        raise HTTPException(422, "Supported parameters are filters, search, limit and offset")
+    try:
+        rows = json.loads(filters)
+    except (ValueError, RecursionError):
+        raise HTTPException(422, "filters must be a JSON array") from None
+    if not isinstance(rows, list) or len(rows) > 100 or any(not isinstance(row, dict) for row in rows):
+        raise HTTPException(422, "filters must contain up to 100 filter rows")
+    return {"limit": limit, "offset": offset, "search": search, "filters": rows}
+
+
+@router.get("/published/{publication_id}/data")
+async def published_rows(
+    publication_id: UUID,
+    response: Response,
+    query: Annotated[dict, Depends(published_query)],
+    key: Annotated[str | None, Header(alias="X-API-Key", max_length=256)] = None,
+) -> dict[str, Any]:
+    """Read rows within the published scope. Use nextOffset for the next page."""
+    if not key:
+        raise HTTPException(401, "X-API-Key is required")
+    response.headers["Cache-Control"] = "private, no-store"
+    return await get_etl_workspace().published_data(key, query, publication_id=str(publication_id))
+
+
+@router.get("/published/{token}", deprecated=True)
+async def published_data(
+    token: str, response: Response, query: Annotated[dict, Depends(published_query)]
+) -> dict[str, Any]:
+    """Previously issued URL tokens remain valid until rotated, revoked or expired."""
+    response.headers["Cache-Control"] = "private, no-store"
+    return await get_etl_workspace().published_data(token, query)
 
 
 @read.get("/layers")
@@ -1042,8 +1081,17 @@ async def batch_lineage_entry(
 
 
 @write.get("/batch-syncs/capabilities")
-async def get_batch_sync_capabilities() -> BatchSyncCapabilities:
-    return batch_sync_capabilities()
+async def get_batch_sync_capabilities(
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> BatchSyncCapabilities:
+    capabilities = batch_sync_capabilities()
+    try:
+        asset = await available_batch_lineage_asset(session)
+    except DBAPIError:
+        raise HTTPException(503, "Managed batch lineage availability is temporarily unavailable") from None
+    capabilities.lineageAsset = asset
+    capabilities.incrementalLineage = True if asset else None
+    return capabilities
 
 
 def export_destination(request: Request, destination: ExportDestination = "primary") -> ExportDestination:
@@ -1834,12 +1882,16 @@ async def unfavorite_object(layer: str, table: str, payload: FavoriteMutation | 
 
 
 @read.post("/{layer}/{table}/data")
-async def filtered_data(layer: str, table: str, payload: DataQuery) -> dict[str, Any]:
+async def filtered_data(layer: str, table: str, payload: DataQuery, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+    if payload.forEditing:
+        get_current_active_superuser(current_user)
     return await get_etl_layers().data(layer, table, payload.model_dump())
 
 
 @read.post("/{layer}/{table}/preview-rows")
-async def table_preview_rows(layer: str, table: str, payload: PreviewRowsQuery) -> dict[str, Any]:
+async def table_preview_rows(layer: str, table: str, payload: PreviewRowsQuery, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+    if payload.forEditing:
+        get_current_active_superuser(current_user)
     return await get_etl_layers().data(layer, table, payload.model_dump(), preview_rows=True)
 
 
@@ -1859,8 +1911,18 @@ async def partitions(layer: str, table: str) -> list[dict[str, Any]]:
 
 
 @read.get("/{layer}/{table}/stream")
-async def stream(layer: str, table: str, topic: str | None = None) -> dict[str, Any]:
-    return await etl_runtime.stream(layer, table, topic)
+async def stream(layer: str, table: str, topic: str | None = None,
+                 current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+    return await etl_runtime.stream(layer, table, topic, include_hidden=current_user.is_superuser)
+
+
+@read.get("/{layer}/{table}/cdc-evidence")
+async def capture_evidence(layer: str, table: str, response: Response,
+                           current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+    from app.web.services.etl_capture import capture
+
+    response.headers["Cache-Control"] = "no-store"
+    return await capture(layer, table, include_hidden=current_user.is_superuser)
 
 
 @write.put("/{layer}/{table}/offset")
