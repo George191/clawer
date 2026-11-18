@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import './style.css';
 
 export const DOT_ACTIVITIES = {
+  Sleep: { label: '休息', detail: '原生困倦眼睑与休息姿态' },
   None: { label: '空闲 / 睡眠', detail: '原生待机与休息动作' },
   Working: { label: '工作', detail: '原版全息终端与操作动作' },
   Searching: { label: '搜索', detail: '原版搜索道具与动作' },
@@ -71,7 +72,7 @@ export default function NativeDot({ activity = 'None', paused = false, dark = tr
   }, []);
   return <div className="native-dot-view" data-renderer="dot-original" data-state={state} data-activity={activity}>
     <iframe ref={frameRef} className="native-dot-frame" src="/dot/frame.html" title={`Helio · ${DOT_ACTIVITIES[activity].label}`} onLoad={configure} />
-    {state === 'loading' && <span className="native-dot-message" role="status">正在准备原生 Dot…</span>}
+    {state === 'loading' && <span className="native-dot-loading" role="status" aria-label="伙伴正在准备"><i /><i /><i /></span>}
     {error && <span className="native-dot-message is-error" role="alert">{error}</span>}
   </div>;
 }

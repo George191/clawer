@@ -18,5 +18,5 @@ export default function ScoutDot() {
     update();
     return () => cancelAnimationFrame(frame);
   }, []);
-  return <div className="scout-dot-host" style={{ position: 'fixed', left: anchor?.left ?? -200, top: anchor?.top ?? 0, width: anchor?.width ?? 112, height: anchor?.height ?? 112, zIndex: 20, pointerEvents: anchor ? 'auto' : 'none' }}><NativeDot activity={anchor?.activity ?? 'None'} preload /></div>;
+  return <div className="scout-dot-host" style={{ position: 'fixed', left: anchor?.left ?? -200, top: anchor?.top ?? 0, width: anchor?.width ?? 112, height: anchor?.height ?? 112, zIndex: 20, pointerEvents: anchor ? 'auto' : 'none' }}><NativeDot activity={anchor?.activity ?? 'Sleep'} preload /></div>;
 }

@@ -3,6 +3,7 @@ import { Category, ActivityKind, ActivityCommandType, ActivityEntry, ActivityOut
 
 const canvas = document.querySelector('canvas');
 const events = new AbortController();
+let appearance, sleeping;
 let character, frame = 0, disposed = false, suspended = false, failed = false, ready = false, firstFrame = false;
 let activity = ActivityKind.None, sequence = 0n, episode = 0n;
 let active = true, reduced = false, paused = false, dark = true, requested = 'Thinking';
@@ -19,7 +20,15 @@ function visible() { return active && !document.hidden && !disposed && !suspende
 function schedule() { if (!frame && character && visible()) frame = requestAnimationFrame(render); }
 function setActivity() {
   if (!character) return;
-  const next = ActivityKind[requested];
+  const sleep = requested === 'Sleep';
+  if (sleeping !== sleep) {
+    const eyes = sleep ? 'sleepy_lids' : appearance.selections.Eyes;
+    const eyewear = sleep ? 'none' : appearance.selections.Eyewear;
+    if ((!character.isSelected(Category.Eyes, eyes) && !character.select(Category.Eyes, eyes)) || (!character.isSelected(Category.Eyewear, eyewear) && !character.select(Category.Eyewear, eyewear))) throw new Error('Dot rejected rest appearance');
+    sleeping = sleep;
+    canvas.dataset.sleeping = String(sleep);
+  }
+  const next = sleep ? ActivityKind.None : ActivityKind[requested];
   if (next === activity) return;
   const stopping = next === ActivityKind.None;
   const result = character.applyActivity({ command: stopping ? ActivityCommandType.Stop : ActivityCommandType.Start, sequence: ++sequence, episodeId: stopping ? episode : ++episode, episodeHighWater: 0n, activity: stopping ? activity : next, outcome: ActivityOutcome.Neutral, entry: ActivityEntry.Start });
@@ -90,7 +99,7 @@ addEventListener('message', event => {
   if (event.data?.type !== 'helio-dot-config') return;
   try {
     const data = event.data;
-    if (!Object.hasOwn(ActivityKind, data.activity)) throw new Error('Unknown Dot activity.');
+    if (data.activity !== 'Sleep' && !Object.hasOwn(ActivityKind, data.activity)) throw new Error('Unknown Dot activity.');
     requested = data.activity;
     active = data.active === true; reduced = data.reduced === true; paused = data.paused === true; dark = data.dark === true;
     configure();
@@ -129,7 +138,7 @@ send('loaded');
 try {
   const response = await fetch('./appearance.json');
   if (!response.ok) throw new Error(`Dot appearance failed to load: ${response.status}`);
-  const appearance = await response.json();
+  appearance = await response.json();
   const engine = await createOrbitModule({ locateFile: file => new URL('./runtime/' + file, import.meta.url).href });
   if (!disposed) {
     character = new engine.Character('#character', 512, 512, { activities: true });

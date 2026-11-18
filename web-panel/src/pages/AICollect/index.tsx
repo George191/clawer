@@ -1479,7 +1479,7 @@ const AICollect: React.FC = () => {
     : runStatus === 'running' && (preflightLoading || browserAnalysisActive) ? 'Searching'
     : runStatus === 'running' ? 'Working'
     : runStatus === 'ready' || runStatus === 'completed' ? 'Ready'
-    : 'None';
+    : 'Sleep';
   const displayWorkflowPhase = guidePreviewPhase ?? workflowPhase;
   const templateCollapsed = displayWorkflowPhase === 'generating-adapter' || displayWorkflowPhase === 'release-template';
   const sessionGuideSteps = useMemo<SessionGuideStepId[]>(() => {
