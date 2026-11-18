@@ -9,7 +9,7 @@ from anyio import fail_after
 from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 from pydantic import AwareDatetime
-from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import DBAPIError, MultipleResultsFound
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.etl.tasks.extractors.keyword_files import MAX_FILE_SIZE
@@ -135,6 +135,7 @@ from app.web.services.cdc_sandbox import (
 )
 from app.web.services.cdc_sandbox_versions import compare_cdc_versions, list_cdc_versions, read_cdc_version
 from app.web.services.pipeline_handoff_copy import copy_handoff
+from app.web.services.pipeline_handoff_sender import SenderProofUnavailable, read_sender_proof
 from app.web.services.pipeline_handoff_recipient import (
     read_recipient_proof, recipient_proof_capability, recipient_proof_unavailable,
 )
@@ -445,6 +446,29 @@ async def post_pipeline_handoff_recipient_proof(
             return await read_recipient_proof(session, current_user.id, payload)
     except (DBAPIError, TimeoutError, OSError):
         raise recipient_proof_unavailable() from None
+
+
+@write.post("/pipeline-sandbox/handoff/sender-proof", response_model=PipelineHandoffCopyReceipt)
+async def post_pipeline_handoff_sender_proof(
+    current_user: CurrentActiveSuperuser, request: Request, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> PipelineHandoffCopyReceipt | JSONResponse:
+    headers = {"Cache-Control": "private, no-store"}
+    response.headers.update(headers)
+    denied = JSONResponse({"detail": "No authorized recorded sender proof is available"}, status_code=404,
+                          headers=headers)
+    try:
+        data = await _parse_snapshot_intent_json(request)
+        payload = PipelineHandoffCopyRequest.model_validate(data)
+        if any(data[key] != str(getattr(payload, key)) for key in ("requestId", "outputId", "expectedSinkGeneration")):
+            return denied
+    except (ValueError, TimeoutError, RecursionError):
+        return denied
+    try:
+        with fail_after(3):
+            return await read_sender_proof(session, current_user.id, payload)
+    except (SenderProofUnavailable, DBAPIError, MultipleResultsFound, TimeoutError, OSError):
+        return denied
 
 
 @write.post("/pipeline-sandbox/handoff/copies", status_code=201)

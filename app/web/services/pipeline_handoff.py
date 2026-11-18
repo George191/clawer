@@ -60,8 +60,18 @@ async def handoff_capability(session: AsyncSession, actor_id: UUID) -> PipelineH
                 available = await copy_available(session, actor_id, grant)
         except DBAPIError:
             pass
+    sender_available = False
+    if settings.ONTOLOGY_SANDBOX_HANDOFF_SENDER_PROOF_ENABLED:
+        from app.web.services.pipeline_handoff_sender import sender_proof_available
+
+        try:
+            async with session.begin_nested():
+                sender_available = await sender_proof_available(session, actor_id, grant.generation)
+        except DBAPIError:
+            pass
     return PipelineHandoffCapability(available=True, sink=PipelineHandoffSink(generation=grant.generation),
-                                    copyAvailable=True if available else None)
+                                    copyAvailable=True if available else None,
+                                    senderProofAvailable=True if sender_available else None)
 
 
 async def handoff_eligibility(

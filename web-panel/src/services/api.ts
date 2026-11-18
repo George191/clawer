@@ -1415,7 +1415,7 @@ export const acknowledgeMinimumRowHealthIncident = (id: string, expectedGenerati
   client.post(`${minimumRowHealthPath}/incidents/${encodeURIComponent(id)}/acknowledge`, { expectedGeneration }).then(r => unwrap<AssetQualityIncident>(r.data));
 
 export type SandboxHandoffSink = { id: 'synthetic-review-sink'; label: string; generation: string };
-export type SandboxHandoffCapability = { available: boolean; sink?: SandboxHandoffSink; copyAvailable?: true };
+export type SandboxHandoffCapability = { available: boolean; sink?: SandboxHandoffSink; copyAvailable?: true; senderProofAvailable?: true };
 export type SandboxHandoffEligibility = {
   outputId: string; sink: SandboxHandoffSink; eligible: boolean; reason: 'eligible_for_review' | 'clearance_mismatch'; markings: string[];
 };
@@ -1445,5 +1445,7 @@ export type SandboxHandoffCopyRequest = {
 export type SandboxHandoffCopyReceipt = {
   id: string; requestId: string; outputId: string; sink: SandboxHandoffSink; markings: string[]; rowsCopied: number; recordedAt: string;
 };
+export const checkSandboxHandoffSenderProof = (request: SandboxHandoffCopyRequest, signal?: AbortSignal): Promise<SandboxHandoffCopyReceipt> =>
+  client.post(`${sandboxPipelinePath}/handoff/sender-proof`, request, { signal, _noAutomaticAuthReplay: true } as AxiosRequestConfig & { _noAutomaticAuthReplay: true }).then(r => unwrap<SandboxHandoffCopyReceipt>(r.data));
 export const copySandboxHandoff = (request: SandboxHandoffCopyRequest, signal?: AbortSignal): Promise<SandboxHandoffCopyReceipt> =>
-  client.post(`${sandboxPipelinePath}/handoff/copies`, request, { signal }).then(r => unwrap<SandboxHandoffCopyReceipt>(r.data));
+  client.post(`${sandboxPipelinePath}/handoff/copies`, request, { signal, _noAutomaticAuthReplay: true } as AxiosRequestConfig & { _noAutomaticAuthReplay: true }).then(r => unwrap<SandboxHandoffCopyReceipt>(r.data));

@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from app.web.api.models.pipeline_handoff import PipelineHandoffCopyReceipt, PipelineHandoffCopyRequest, PipelineHandoffSink
 from app.web.api.models.pipeline_sandbox_outputs import PipelineSandboxOutputRow
 from app.web.core.config import settings
+from app.web.core.config.sandbox_handoff import HandoffCopyGrant, HandoffSinkGrant
 from app.web.services.pipeline_handoff import _sink_grant, _unavailable
 from app.web.services.pipeline_handoff_scope import HANDOFF_PRIVATE_SCHEMA
 from app.web.services.pipeline_sandbox_outputs import (
@@ -52,13 +53,19 @@ _COLUMNS = """id, request_id, output_id, sink_generation, actor_id, config_hash,
               stream_marker, marking_level, rows_copied, recorded_at"""
 
 
-def _granted(actor_id: UUID, grant) -> bool:
+def _copy_approval(actor_id: UUID, grant: HandoffSinkGrant) -> HandoffCopyGrant | None:
     approval = settings.ONTOLOGY_SANDBOX_HANDOFF_COPY_GRANTS.get(actor_id)
-    return bool(settings.ONTOLOGY_SANDBOX_HANDOFF_COPY_ENABLED and approval is not None
-                and (approval.scope, approval.generation, approval.streamMarker, approval.clearance) ==
-                    (grant.scope, grant.generation, grant.streamMarker, grant.clearance)
-                and approval.databaseMarker == settings.ONTOLOGY_SANDBOX_HANDOFF_COPY_DATABASE_MARKER
-                and approval.physicalDigest == settings.ONTOLOGY_SANDBOX_HANDOFF_COPY_PHYSICAL_DIGEST)
+    if (approval is not None
+            and (approval.scope, approval.generation, approval.streamMarker, approval.clearance) ==
+                (grant.scope, grant.generation, grant.streamMarker, grant.clearance)
+            and approval.databaseMarker == settings.ONTOLOGY_SANDBOX_HANDOFF_COPY_DATABASE_MARKER
+            and approval.physicalDigest == settings.ONTOLOGY_SANDBOX_HANDOFF_COPY_PHYSICAL_DIGEST):
+        return approval
+    return None
+
+
+def _granted(actor_id: UUID, grant) -> bool:
+    return settings.ONTOLOGY_SANDBOX_HANDOFF_COPY_ENABLED and _copy_approval(actor_id, grant) is not None
 
 
 async def _physical(session: AsyncSession):

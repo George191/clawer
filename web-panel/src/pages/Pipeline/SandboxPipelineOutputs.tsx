@@ -183,8 +183,8 @@ export default function SandboxPipelineOutputs({ reviewed, scopeKey, onScopeDeni
               </li>)}
             </ol> : <p>No committed sandbox output receipts.</p>}
           </>}
-    {handoffOutput && handoffSink && list?.available && <SandboxPipelineHandoff key={`${handoffOutput.id}:${handoffSink.generation}`}
-      output={handoffOutput} sink={handoffSink} copyAvailable={handoff?.copyAvailable === true} scopeKey={scopeKey} onClose={() => setHandoffOutput(undefined)} onScopeDenied={invalidate} />}
+    {handoffOutput && handoffSink && list?.available && <SandboxPipelineHandoff key={JSON.stringify([handoffOutput.id, handoffOutput.configHash, handoffOutput.resultHash, handoffSink.generation, handoff?.copyAvailable, handoff?.senderProofAvailable])}
+      output={handoffOutput} sink={handoffSink} copyAvailable={handoff?.copyAvailable === true} senderProofAvailable={handoff?.senderProofAvailable === true} scopeKey={scopeKey} onClose={() => setHandoffOutput(undefined)} onScopeDenied={invalidate} />}
     {comparisonOpen && list?.available && <SandboxPipelineOutputComparison outputs={list.outputs}
       onClose={() => setComparisonOpen(false)} onScopeDenied={invalidate} />}
     {recordHistoryOpen && list?.available && <SandboxPipelineRecordHistory key={JSON.stringify([identity, scopeKey, refresh])} outputs={list.outputs}

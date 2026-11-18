@@ -18,6 +18,7 @@ class PipelineHandoffSink(BaseModel):
 class PipelineHandoffCapability(BaseModel):
     available: bool
     copyAvailable: Literal[True] | None = Field(default=None, exclude_if=lambda value: value is None)
+    senderProofAvailable: Literal[True] | None = Field(default=None, exclude_if=lambda value: value is None)
     sink: PipelineHandoffSink | None = Field(default=None, exclude_if=lambda value: value is None)
 
 

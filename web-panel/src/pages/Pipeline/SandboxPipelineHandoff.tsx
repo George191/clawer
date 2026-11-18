@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Modal } from '@/components/ui';
-import { checkSandboxHandoffEligibility, copySandboxHandoff } from '../../services/api';
+import { checkSandboxHandoffEligibility, checkSandboxHandoffSenderProof, copySandboxHandoff } from '../../services/api';
 import type { SandboxHandoffCopyReceipt, SandboxHandoffCopyRequest, SandboxHandoffEligibility, SandboxHandoffSink, SandboxPipelineOutput } from '../../services/api';
 import { getSessionState } from '../../services/session';
+import { canonicalTransferReceipt } from './transferReceiptFocus';
 import { SandboxMarkings, sandboxScopeDenied } from './SandboxMarkings';
 
 const v4 = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
@@ -16,33 +17,43 @@ function existing(key: string, binding: Binding): SandboxHandoffCopyRequest | un
   } catch { /* This is a tab-scoped recovery aid; no new request can start without it. */ }
 }
 
-export default function SandboxPipelineHandoff({ output, sink, copyAvailable, scopeKey, onClose, onScopeDenied }: {
-  output: SandboxPipelineOutput; sink: SandboxHandoffSink; copyAvailable: boolean; scopeKey?: string; onClose: () => void; onScopeDenied: () => void;
+export default function SandboxPipelineHandoff({ output, sink, copyAvailable, senderProofAvailable, scopeKey, onClose, onScopeDenied }: {
+  output: SandboxPipelineOutput; sink: SandboxHandoffSink; copyAvailable: boolean; senderProofAvailable: boolean; scopeKey?: string; onClose: () => void; onScopeDenied: () => void;
 }) {
-  const [busy, setBusy] = useState<'check' | 'copy'>();
+  const [busy, setBusy] = useState<'check' | 'copy' | 'proof'>();
   const [result, setResult] = useState<SandboxHandoffEligibility>();
   const [failed, setFailed] = useState(false);
   const [copyReview, setCopyReview] = useState<'new' | 'retry'>();
+  const [recordedProof, setRecordedProof] = useState(false);
   const [receipt, setReceipt] = useState<SandboxHandoffCopyReceipt>();
   const [copyNotice, setCopyNotice] = useState('');
   const [blocked, setBlocked] = useState(false);
   const request = useRef<AbortController>();
-  const identity = useRef(getSessionState().identity).current;
-  const key = `ontology-local-handoff:${JSON.stringify([identity, scopeKey, output.id, sink.id, sink.generation])}`;
+  const session = useRef(getSessionState()).current;
+  const identity = session.identity;
+  const key = `ontology-local-handoff-v2:${JSON.stringify([session.subject, output.id, sink.id, sink.generation])}`;
+  const legacyKey = `ontology-local-handoff:${JSON.stringify([identity, scopeKey, output.id, sink.id, sink.generation])}`;
   const binding = { outputId: output.id, expectedConfigHash: output.configHash, expectedResultHash: output.resultHash, expectedSinkGeneration: sink.generation };
-  const [pending, setPending] = useState(() => existing(key, binding));
-  const isCurrent = (read: AbortController) => {
-    const session = getSessionState();
-    return !read.signal.aborted && session.authenticated && !session.locked && session.identity === identity;
+  const [pending, setPending] = useState(() => session.subject ? existing(key, binding) ?? existing(legacyKey, binding) : undefined);
+  useEffect(() => {
+    if (!session.subject || existing(key, binding)) return;
+    const previous = existing(legacyKey, binding);
+    if (!previous) return;
+    try { sessionStorage.setItem(key, JSON.stringify(previous)); sessionStorage.removeItem(legacyKey); }
+    catch { /* Continue with the retained exact same-session request only. */ }
+  }, [key, legacyKey]);
+  const isCurrent = (read?: AbortController) => {
+    const live = getSessionState();
+    return !read?.signal.aborted && live.authenticated && !live.locked && live.identity === identity && live.subject === session.subject;
   };
   const sinkMatches = (other: SandboxHandoffSink) => other.id === sink.id && other.generation === sink.generation;
   const forget = () => {
-    try { sessionStorage.removeItem(key); } catch { /* Original request stays idempotent. */ }
+    try { sessionStorage.removeItem(key); sessionStorage.removeItem(legacyKey); } catch { /* Original request stays idempotent. */ }
     setPending(undefined);
   };
   useEffect(() => () => request.current?.abort(), []);
   const qualify = async () => {
-    if (request.current) return;
+    if (request.current || !isCurrent()) return;
     const read = new AbortController();
     request.current = read; setBusy('check'); setResult(undefined); setFailed(false); setCopyReview(undefined);
     try {
@@ -57,7 +68,7 @@ export default function SandboxPipelineHandoff({ output, sink, copyAvailable, sc
     }
   };
   const runCopy = async () => {
-    if (!copyAvailable || request.current || !copyReview || blocked || receipt) return;
+    if (!isCurrent() || !session.subject || !copyAvailable || request.current || !copyReview || blocked || receipt) return;
     let exact = pending;
     if (copyReview === 'new') {
       if (!result?.eligible || exact) return;
@@ -90,6 +101,29 @@ export default function SandboxPipelineHandoff({ output, sink, copyAvailable, sc
       if (request.current === read && isCurrent(read)) { request.current = undefined; setBusy(undefined); }
     }
   };
+  const checkRecordedCopy = async () => {
+    if (!session.subject || !senderProofAvailable || !pending || request.current || receipt) return;
+    if (!isCurrent()) return;
+    const exact = existing(key, binding) ?? existing(legacyKey, binding);
+    if (!exact || exact.requestId !== pending.requestId) return;
+    const read = new AbortController(); request.current = read;
+    setBusy('proof'); setCopyNotice(''); setCopyReview(undefined);
+    try {
+      const value = await checkSandboxHandoffSenderProof(exact, read.signal);
+      if (!isCurrent(read)) return;
+      const markings = [...(output.markings ?? [])].sort();
+      if (typeof value.id !== 'string' || !canonicalTransferReceipt(value.id) || value.requestId !== exact.requestId ||
+          value.outputId !== exact.outputId || !value.sink || !sinkMatches(value.sink) || !Array.isArray(value.markings) ||
+          JSON.stringify([...value.markings].sort()) !== JSON.stringify(markings) ||
+          !Number.isSafeInteger(value.rowsCopied) || value.rowsCopied < 0 || value.rowsCopied !== output.outputRows ||
+          typeof value.recordedAt !== 'string' || !Number.isFinite(Date.parse(value.recordedAt))) throw new Error('Unverified local evidence');
+      forget(); setRecordedProof(true); setReceipt(value);
+    } catch {
+      if (isCurrent(read)) setCopyNotice('Recorded local copy evidence could not be verified. The original request is still retained.');
+    } finally {
+      if (request.current === read && isCurrent(read)) { request.current = undefined; setBusy(undefined); }
+    }
+  };
   return <Modal open destroyOnHidden footer={null} className="flow-surface-modal" title="Check governed handoff?"
     onCancel={() => { request.current?.abort(); onClose(); }}>
     <section className="flow-sandbox-builder flow-sandbox-builder__compare" aria-label="Governed handoff eligibility">
@@ -106,6 +140,10 @@ export default function SandboxPipelineHandoff({ output, sink, copyAvailable, sc
         {!result.eligible && result.reason === 'clearance_mismatch' && <p>The sink’s reviewed clearance does not cover the output’s effective markings.</p>}
         {!receipt && !pending && <p>No data was sent by this eligibility check.</p>}
       </>}
+      {senderProofAvailable && pending && !receipt && !copyReview && <div className="flow-sandbox-builder__actions">
+        <Button size="small" loading={busy === 'proof'} disabled={Boolean(busy)} onClick={() => void checkRecordedCopy()}>Check recorded local copy</Button>
+        <p>Read a recorded receipt for the exact original request only. This does not copy or resend data.</p>
+      </div>}
       {copyAvailable && !blocked && !receipt && !copyReview && <div className="flow-sandbox-builder__actions">
         {pending ? <Button size="small" disabled={Boolean(busy)} onClick={() => setCopyReview('retry')}>Retry original local copy</Button>
           : result?.eligible && <Button size="small" disabled={Boolean(busy)} onClick={() => setCopyReview('new')}>Review local copy</Button>}
@@ -121,7 +159,8 @@ export default function SandboxPipelineHandoff({ output, sink, copyAvailable, sc
       {busy === 'copy' && <p role="status">Checking the exact local copy outcome…</p>}
       {copyNotice && <p role="status">{copyNotice}</p>}
       {receipt && <section aria-label="Committed local handoff receipt" className="flow-sandbox-builder__compare-result">
-        <h2>Committed local handoff receipt</h2>
+        <h2>{recordedProof ? 'Verified recorded local handoff receipt' : 'Committed local handoff receipt'}</h2>
+        {recordedProof && <p>This verifies historical receipt metadata only. No copy was sent by this check.</p>}
         <span>Receipt: <code>{receipt.id}</code></span>
         <span>Rows copied: {receipt.rowsCopied}</span>
         <span>Recorded at: <time dateTime={receipt.recordedAt}>{new Date(receipt.recordedAt).toLocaleString()}</time></span>

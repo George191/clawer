@@ -706,6 +706,7 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
                 # Even after replica contents were removed in this isolated fixture,
                 # the recipient can verify the historical receipt, not replica integrity.
                 await self.assert_recipient_handoff_proof(route, receipt, approval)
+                await self.assert_sender_handoff_proof(client, route, body, receipt, approval)
 
                 restarted = grant.model_copy(update={"generation": uuid4(), "clearance": "sandbox-restricted"})
                 approved = HandoffCopyGrant(**restarted.model_dump(), databaseMarker=marker, physicalDigest=physical)
@@ -740,6 +741,69 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RuntimeError, "Cannot remove provisioned synthetic handoff"):
             async with self.pg.session() as session:
                 await session.run_sync(migrate, migration.downgrade)
+
+    async def assert_sender_handoff_proof(self, client, route, original_body, original_receipt, approval):
+        endpoint = route + "/sender-proof"
+        execute = AsyncSession.execute
+        lookups = []
+
+        async def no_payload(session, query, params=None, **kwargs):
+            sql = " ".join(str(query).lower().split())
+            self.assertNotIn("from only ontology_handoff_private.copy_rows", sql)
+            self.assertNotIn("ontology_pipeline_sandbox_output_rows", sql)
+            self.assertNotIn("ontology_cdc_sandbox_version_rows", sql)
+            self.assertFalse(sql.startswith(("insert ", "update ", "delete ")))
+            if "from only ontology_handoff_private.copies" in sql:
+                self.assertIn("and actor_id=:actor", sql)
+                lookups.append(sql)
+            return await execute(session, query, params, **kwargs)
+
+        with (patch.object(settings, "ONTOLOGY_SANDBOX_HANDOFF_COPY_ENABLED", False),
+              patch.object(settings, "ONTOLOGY_SANDBOX_HANDOFF_PROOF_GRANTS", {}),
+              patch.object(AsyncSession, "execute", no_payload)):
+            off = await client.post(endpoint, json=original_body)
+            self.assertEqual(off.status_code, 404, off.text)
+            self.assertEqual(off.headers["cache-control"], "private, no-store")
+            self.assertEqual(lookups, [])
+            with patch.object(settings, "ONTOLOGY_SANDBOX_HANDOFF_SENDER_PROOF_ENABLED", True):
+                cap = await client.get(route)
+                self.assertTrue(cap.json().get("senderProofAvailable"), cap.text)
+                self.assertNotIn("copyAvailable", cap.json())
+                self.assertEqual(lookups, [])
+                found = await client.post(endpoint, json=original_body)
+                self.assertEqual(found.status_code, 200, found.text)
+                self.assertEqual(found.json(), original_receipt)
+                self.assertEqual(found.headers["cache-control"], "private, no-store")
+                self.assertEqual(len(lookups), 1)
+                for edits in (
+                    {"expectedConfigHash": "a" * 64}, {"expectedResultHash": "e" * 64},
+                    {"expectedSinkGeneration": str(uuid4())}, {"outputId": str(uuid4())},
+                    {"extra": "ignore"}, {"requestId": original_body["requestId"].upper()},
+                ):
+                    denied = await client.post(endpoint, json={**original_body, **edits})
+                    self.assertEqual((denied.status_code, denied.json()), (404, off.json()))
+                    self.assertEqual(denied.headers["cache-control"], "private, no-store")
+                self.assertEqual(len(lookups), 1)
+                self.assertEqual((await client.post(endpoint + "?scope=any", json=original_body)).json(), off.json())
+                duplicate = json.dumps(original_body)[:-1] + ',"requestId":' + json.dumps(original_body["requestId"]) + '}'
+                self.assertEqual((await client.post(endpoint, content=duplicate,
+                                                   headers={"Content-Type": "application/json"})).json(), off.json())
+                missing = await client.post(endpoint, json={**original_body, "requestId": str(uuid4())})
+                self.assertEqual((missing.status_code, missing.json()), (404, off.json()))
+                self.assertEqual(len(lookups), 2)
+                with patch.object(settings, "ONTOLOGY_SANDBOX_HANDOFF_COPY_GRANTS", {}):
+                    self.assertNotIn("senderProofAvailable", (await client.get(route)).json())
+                    self.assertEqual((await client.post(endpoint, json=original_body)).json(), off.json())
+                with patch.object(settings, "ONTOLOGY_SANDBOX_HANDOFF_COPY_PHYSICAL_DIGEST", "4" * 64):
+                    self.assertEqual((await client.post(endpoint, json=original_body)).json(), off.json())
+                self.assertEqual(len(lookups), 2)
+                async with api(False, self.sessions) as reader:
+                    self.assertEqual((await reader.post(endpoint, json=original_body)).status_code, 403)
+                async with self.pg.session() as holder:
+                    # A busy private heap must not become a false statement that nothing was recorded.
+                    await holder.execute(text("LOCK TABLE ontology_handoff_private.copies IN ACCESS EXCLUSIVE MODE"))
+                    busy = await client.post(endpoint, json=original_body)
+                    self.assertEqual((busy.status_code, busy.json()), (404, off.json()))
 
     async def assert_recipient_handoff_proof(self, route, historical, enrollment):
         recipient = uuid4()
