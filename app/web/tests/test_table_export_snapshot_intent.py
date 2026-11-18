@@ -17,8 +17,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from app.web.core.config import snapshot_intent
 from app.web.services import table_export_snapshot_intent as intent
 from app.web.services import table_export_snapshot_delivery as delivery
+from app.web.services import table_export_snapshot_intent_web as web_intent
 from app.web.services.table_export_snapshot_publication import SnapshotPublicationHead, SnapshotPublicationResult
 from app.web.services.table_export_snapshot_publication_receiver import SnapshotPublicationProfile
+from app.web.tests.test_transfer_plans import TEST_ACTOR, api
 
 _URL = os.getenv("ONTOLOGY_TABLE_EXPORT_TEST_URL")
 _SCOPE = "ontology_snapshot_intent_private"
@@ -33,7 +35,7 @@ class SnapshotIntentPGTests(unittest.IsolatedAsyncioTestCase):
             self.fail("Only the exact disposable sender database may be used")
         engine = create_async_engine(url)
         self.addAsyncCleanup(engine.dispose)
-        source_marker, private_marker, actor = uuid4(), uuid4(), uuid4()
+        source_marker, private_marker, actor = uuid4(), uuid4(), TEST_ACTOR
         migration = importlib.import_module("app.web.alembic.versions.fb804e491f6d_ontology_private_snapshot_intent")
 
         delivery_migration = importlib.import_module(
@@ -136,8 +138,73 @@ class SnapshotIntentPGTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNone(await db.scalar(text(f"SELECT 1 FROM {_SCOPE}.intents LIMIT 1")))
                 self.assertIsNone(await db.scalar(text(f"SELECT 1 FROM {_SCOPE}.records LIMIT 1")))
 
+            async def web_session():
+                async with AsyncSession(engine) as db:
+                    yield db
+
+            web_path = "/etl/table-export-sandbox/snapshot-intent"
+            original_reader = intent._read_source
+            with (
+                patch.object(intent.settings, "TABLE_EXPORT_SNAPSHOT_INTENT_WEB_ENABLED", False),
+                patch.object(web_intent, "read_snapshot_publication_head", new=receiver_head),
+            ):
+                async with api(True, web_session) as client, api(False, web_session) as reader:
+                    self.assertEqual((await reader.get(web_path)).status_code, 403)
+                    self.assertEqual((await client.get(web_path)).json(), {"available": False})
+                    intent.settings.TABLE_EXPORT_SNAPSHOT_INTENT_WEB_ENABLED = True
+                    before = receiver_head.await_count
+                    cap = await client.get(web_path)
+                    self.assertEqual(cap.status_code, 200)
+                    self.assertEqual(cap.headers["cache-control"], "private, no-store")
+                    self.assertTrue(cap.json()["available"], cap.text)
+                    self.assertEqual(receiver_head.await_count, before)
+                    config = cap.json()["configRevision"]
+                    self.assertNotEqual(config, str(profile.config_revision))
+                    self.assertEqual((await client.post(web_path + "/head", json={"expectedConfigRevision": config})).json(),
+                                     {"generation": 0})
+                    proof = {"requestId": str(uuid4()), "expectedConfigRevision": config, "expectedPreviousGeneration": 0}
+                    receiver_head.return_value = SnapshotPublicationHead(generation=1)
+                    with patch.object(intent, "_read_source", new_callable=AsyncMock) as source:
+                        mismatch = await client.post(web_path, json=proof)
+                        self.assertEqual((mismatch.status_code, mismatch.json()["detail"]["code"]), (409, "predecessor_changed"))
+                        source.assert_not_awaited()
+                    receiver_head.return_value = SnapshotPublicationHead(generation=0)
+
+                    async def revoke_before_business_read(*args, **kwargs):
+                        intent.settings.TABLE_EXPORT_SNAPSHOT_INTENT_WEB_ENABLED = False
+                        return SnapshotPublicationHead(generation=0)
+
+                    with (
+                        patch.object(intent, "read_snapshot_publication_head", new=AsyncMock(side_effect=revoke_before_business_read)),
+                        patch.object(intent, "_read_source", new_callable=AsyncMock) as source,
+                    ):
+                        revoked = await client.post(web_path, json=proof)
+                        self.assertEqual((revoked.status_code, revoked.headers["cache-control"]), (404, "private, no-store"))
+                        source.assert_not_awaited()
+                    intent.settings.TABLE_EXPORT_SNAPSHOT_INTENT_WEB_ENABLED = True
+
+                    async def revoke_before_local_writes(*args, **kwargs):
+                        rows = await original_reader(*args, **kwargs)
+                        intent.settings.TABLE_EXPORT_SNAPSHOT_INTENT_WEB_ENABLED = False
+                        return rows
+
+                    with patch.object(intent, "_read_source", new=AsyncMock(side_effect=revoke_before_local_writes)):
+                        self.assertEqual((await client.post(web_path, json=proof)).status_code, 404)
+                    async with engine.connect() as db:
+                        self.assertIsNone(await db.scalar(text(f"SELECT 1 FROM {_SCOPE}.intents LIMIT 1")))
+                        self.assertIsNone(await db.scalar(text(f"SELECT 1 FROM {_SCOPE}.records LIMIT 1")))
+                    intent.settings.TABLE_EXPORT_SNAPSHOT_INTENT_WEB_ENABLED = True
+                    for bad in ({**proof, "extra": 0}, {**proof, "expectedPreviousGeneration": True}):
+                        self.assertEqual((await client.post(web_path, json=bad)).status_code, 404)
+
+                    original_web = await client.post(web_path, json={**proof, "requestId": str(request_id)})
+                    self.assertEqual(original_web.status_code, 200, original_web.text)
+                    self.assertEqual(original_web.headers["cache-control"], "private, no-store")
+                    self.assertEqual(set(original_web.json()), {"id", "expectedPreviousGeneration", "rowCount", "createdAt"})
+
             completed = await freeze(request_id)
             self.assertEqual(completed.row_count, 1)
+            self.assertEqual(str(completed.id), original_web.json()["id"])
             async with engine.connect() as db:
                 frozen_scope = await db.scalar(text(f"SELECT scope_digest FROM {_SCOPE}.intents"))
                 frozen_digest = await db.scalar(text(f"SELECT payload_hash FROM {_SCOPE}.intents"))
@@ -204,6 +271,16 @@ class SnapshotIntentPGTests(unittest.IsolatedAsyncioTestCase):
                 await db.execute(text(f"DROP SCHEMA {_SOURCE} CASCADE"))
             calls = receiver_head.await_count
             receiver_head.side_effect = OSError("fixture: receiver is unavailable")
+            with patch.object(intent.settings, "TABLE_EXPORT_SNAPSHOT_INTENT_WEB_ENABLED", True):
+                async with api(True, web_session) as client:
+                    cap = await client.get(web_path)
+                    proof = {"requestId": str(request_id), "expectedConfigRevision": cap.json()["configRevision"],
+                             "expectedPreviousGeneration": 0}
+                    web_replay = await client.post(web_path, json=proof)
+                    self.assertEqual(web_replay.status_code, 200, web_replay.text)
+                    self.assertEqual(web_replay.json()["id"], str(completed.id))
+                    self.assertEqual(set(web_replay.json()), {"id", "expectedPreviousGeneration", "rowCount", "createdAt"})
+                    self.assertEqual((await client.post(web_path, json={**proof, "expectedPreviousGeneration": 1})).status_code, 404)
             self.assertEqual(await freeze(request_id), completed)
             with self.assertRaises(intent.SnapshotPublicationIntentUnavailable):
                 await freeze(request_id, prior=1)

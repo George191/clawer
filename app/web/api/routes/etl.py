@@ -56,6 +56,10 @@ from app.web.api.models.pipeline_sandbox_outputs import (
     PipelineSandboxOutputDetail, PipelineSandboxOutputsPage,
     PipelineSandboxRecordHistory, PipelineSandboxRecordHistoryRequest,
 )
+from app.web.api.models.snapshot_intent_web import (
+    SnapshotIntentWebCapability, SnapshotIntentWebHead, SnapshotIntentWebHeadRequest, SnapshotIntentWebPrepareRequest,
+    SnapshotIntentWebPrepared,
+)
 from app.web.api.models.snapshot_delivery_evidence import (
     SnapshotDeliveryEvidence, SnapshotDeliveryEvidenceCapability, SnapshotDeliveryEvidenceRequest,
 )
@@ -137,6 +141,12 @@ from app.web.services.pipeline_sandbox_outputs import (
 from app.web.services.push_inbox import change_push_intake, read_push_status
 from app.web.services.push_inbox_apply import apply_push_range, read_push_apply, review_push_apply
 from app.web.services.table_export_snapshot import compare_table_export_snapshots, read_snapshot_preview_capability
+from app.web.services.table_export_snapshot_intent import (
+    SnapshotPublicationIntentPredecessorChanged, SnapshotPublicationIntentUnavailable,
+)
+from app.web.services.table_export_snapshot_intent_web import (
+    snapshot_intent_web_capability, snapshot_intent_web_head, snapshot_intent_web_prepare,
+)
 from app.web.services.table_export_snapshot_delivery_evidence import (
     read_snapshot_delivery_evidence, read_snapshot_delivery_evidence_capability, SnapshotDeliveryEvidenceUnavailable,
 )
@@ -1019,6 +1029,70 @@ async def post_table_export_snapshot_delivery_evidence(
         return await read_snapshot_delivery_evidence(session, current_user.id, payload)
     except SnapshotDeliveryEvidenceUnavailable:
         return denied
+
+
+async def _parse_snapshot_intent_json(request: Request):
+    if request.query_params or request.headers.get("content-type", "").split(";", 1)[0].lower() != "application/json":
+        raise ValueError("Invalid request")
+    body = bytearray()
+    with fail_after(2):
+        async for chunk in request.stream():
+            if len(chunk) > 1024 - len(body):
+                raise ValueError("Invalid request")
+            body.extend(chunk)
+    return json.loads(body.decode("utf-8"), object_pairs_hook=_unique_delivery_evidence_keys)
+
+
+def _snapshot_intent_web_denied() -> JSONResponse:
+    return JSONResponse({"detail": "Snapshot preparation unavailable"}, status_code=404,
+                        headers={"Cache-Control": "private, no-store"})
+
+
+@write.get("/table-export-sandbox/snapshot-intent", response_model_exclude_none=True)
+async def get_snapshot_intent_web(
+    request: Request, response: Response, current_user: CurrentActiveSuperuser,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> SnapshotIntentWebCapability:
+    response.headers["Cache-Control"] = "private, no-store"
+    if request.query_params:
+        return SnapshotIntentWebCapability(available=False)
+    return await snapshot_intent_web_capability(session, current_user.id)
+
+
+@write.post("/table-export-sandbox/snapshot-intent/head", response_model=SnapshotIntentWebHead,
+            response_model_exclude_none=True)
+async def post_snapshot_intent_web_head(
+    request: Request, response: Response, current_user: CurrentActiveSuperuser,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> SnapshotIntentWebHead | JSONResponse:
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        payload = SnapshotIntentWebHeadRequest.model_validate(await _parse_snapshot_intent_json(request))
+    except Exception:
+        return _snapshot_intent_web_denied()
+    try:
+        return await snapshot_intent_web_head(session, current_user.id, payload)
+    except SnapshotPublicationIntentUnavailable:
+        return _snapshot_intent_web_denied()
+
+
+@write.post("/table-export-sandbox/snapshot-intent", response_model=SnapshotIntentWebPrepared)
+async def post_snapshot_intent_web_prepare(
+    request: Request, response: Response, current_user: CurrentActiveSuperuser,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> SnapshotIntentWebPrepared | JSONResponse:
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        payload = SnapshotIntentWebPrepareRequest.model_validate(await _parse_snapshot_intent_json(request))
+    except Exception:
+        return _snapshot_intent_web_denied()
+    try:
+        return await snapshot_intent_web_prepare(session, current_user.id, payload)
+    except SnapshotPublicationIntentPredecessorChanged:
+        return JSONResponse({"detail": {"code": "predecessor_changed", "message": "Reviewed predecessor changed"}},
+                            status_code=409, headers={"Cache-Control": "private, no-store"})
+    except SnapshotPublicationIntentUnavailable:
+        return _snapshot_intent_web_denied()
 
 
 @write.get("/table-export/capabilities")

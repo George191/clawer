@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { AxiosError, InternalAxiosRequestConfig, AxiosResponse } from 'axios';
+import type { AxiosError, AxiosRequestConfig, InternalAxiosRequestConfig, AxiosResponse } from 'axios';
 import { clearSession, getAccessToken, getRefreshToken, getSessionState, lockSession, updateAccessToken } from './session';
 import type {
   DashboardMetrics,
@@ -174,9 +174,10 @@ client.interceptors.response.use(
     return response;
   },
   async (error: AxiosError) => {
-    const config = error.config as (InternalAxiosRequestConfig & { _authRetried?: boolean; _loadingCounted?: boolean; _sessionIdentity?: string }) | undefined;
+    const config = error.config as (InternalAxiosRequestConfig & { _authRetried?: boolean; _loadingCounted?: boolean; _sessionIdentity?: string; _noAutomaticAuthReplay?: boolean }) | undefined;
     if (config?._loadingCounted) { setLoading(false); config._loadingCounted = false; }
     if (axios.isCancel(error)) return Promise.reject(error);
+    if (config?._noAutomaticAuthReplay) return Promise.reject(error);
     if (isAuthenticationError(error) && config) {
       if (config._sessionIdentity !== getSessionState().identity) return Promise.reject(error);
       if (!getSessionState().authenticated) { requireLogin(); return Promise.reject(error); }
@@ -857,6 +858,16 @@ export const checkSnapshotDeliveryEvidence = (request: {
   intentId: string; requestId: string; expectedConfigRevision: string;
 }, signal?: AbortSignal): Promise<SnapshotDeliveryEvidence> =>
   client.post(snapshotDeliveryEvidencePath, request, { signal }).then(r => unwrap<SnapshotDeliveryEvidence>(r.data));
+const snapshotIntentPath = '/etl/table-export-sandbox/snapshot-intent';
+export type SnapshotIntentRequest = { requestId: string; expectedConfigRevision: string; expectedPreviousGeneration: number };
+export type SnapshotIntentHead = { generation: number };
+export type SnapshotIntentResult = { id: string; expectedPreviousGeneration: number; rowCount: number; createdAt: string };
+export const fetchSnapshotIntentCapability = (signal?: AbortSignal): Promise<SnapshotDeliveryCapability> =>
+  client.get(snapshotIntentPath, { signal }).then(r => unwrap<SnapshotDeliveryCapability>(r.data));
+export const checkSnapshotIntentHead = (expectedConfigRevision: string, signal?: AbortSignal): Promise<SnapshotIntentHead> =>
+  client.post(`${snapshotIntentPath}/head`, { expectedConfigRevision }, { signal }).then(r => unwrap<SnapshotIntentHead>(r.data));
+export const prepareSnapshotIntent = (request: SnapshotIntentRequest, signal?: AbortSignal): Promise<SnapshotIntentResult> =>
+  client.post(snapshotIntentPath, request, { signal, _noAutomaticAuthReplay: true } as AxiosRequestConfig & { _noAutomaticAuthReplay: true }).then(r => unwrap<SnapshotIntentResult>(r.data));
 export type TableExportDestination = 'primary' | 'secondary';
 export type TableExportDestinationOption = { id: TableExportDestination; label: string };
 export type TableExportWriteMode = 'upsert' | 'append';

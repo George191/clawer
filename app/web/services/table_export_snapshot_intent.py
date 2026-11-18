@@ -1,6 +1,7 @@
 """Freeze a complete sender-local synthetic publication intent; never publish."""
 
 import asyncio
+from collections.abc import Callable
 from datetime import datetime
 from hashlib import sha256
 from ipaddress import ip_address
@@ -32,6 +33,10 @@ _DELIVERY_RELATIONS = ("deliveries",)
 
 class SnapshotPublicationIntentUnavailable(Exception):
     """No trusted prepared-only intent could be confirmed."""
+
+
+class SnapshotPublicationIntentPredecessorChanged(SnapshotPublicationIntentUnavailable):
+    """An exact new preparation proved the receiver head is no longer the reviewed predecessor."""
 
 
 class SnapshotPublicationIntent(BaseModel):
@@ -191,14 +196,22 @@ def _grant_for(actor_id, expected_config_revision):
 
 async def freeze_snapshot_publication_intent(
     session: AsyncSession, *, actor_id: UUID, request_id: UUID, expected_previous_generation: int,
-    expected_config_revision: UUID,
+    expected_config_revision: UUID, web_approval: Callable[[], None] | None = None,
 ) -> SnapshotPublicationIntent:
     """Caller supplies authenticated actor identity and a fresh owned sender Session."""
     if (not isinstance(request_id, UUID) or request_id.version != 4
         or type(expected_previous_generation) is not int or not 0 <= expected_previous_generation < _MAX_INTENTS):
         raise _unavailable()
     grant, profile = _grant_for(actor_id, expected_config_revision)
+
+    def revalidate() -> None:
+        if _grant_for(actor_id, expected_config_revision) != (grant, profile):
+            raise _unavailable()
+        if web_approval is not None:
+            web_approval()
+
     try:
+        revalidate()
         sender = _sender_scope(session)
         approved = make_url(str(settings.SQLALCHEMY_RUNNABLE_DATABASE_URI))
         if (approved.drivername != "postgresql+asyncpg" or approved.query
@@ -222,6 +235,7 @@ async def freeze_snapshot_publication_intent(
             """))).all()
             if markers != [grant.privateMarker]:
                 raise _unavailable()
+            revalidate()
             prior = (await session.execute(text(f"""
                 SELECT id,actor_id,config_revision,expected_previous_generation,scope_digest,payload_hash,row_count,created_at
                 FROM ONLY {_PRIVATE}.intents WHERE request_id=:request
@@ -231,9 +245,9 @@ async def freeze_snapshot_publication_intent(
                     or prior["expected_previous_generation"] != expected_previous_generation
                     or not hmac.compare_digest(prior["scope_digest"], scope_digest)):
                     raise _unavailable()
+                revalidate()
                 await _verify_frozen(session, prior)
-                if _grant_for(actor_id, expected_config_revision) != (grant, profile):
-                    raise _unavailable()
+                revalidate()
                 return _result(prior)
 
             intents = (await session.scalars(text(f"SELECT 1 FROM ONLY {_PRIVATE}.intents LIMIT 16"))).all()
@@ -242,16 +256,17 @@ async def freeze_snapshot_publication_intent(
             if not hmac.compare_digest(await compute_snapshot_intent_source_proof(session), grant.sourceProofSha256):
                 raise _unavailable()
             await require_export_sender_marker(session, grant.sourceMarker)
+            revalidate()
             head = await read_snapshot_publication_head(
                 expected_config_revision=expected_config_revision, sender_port=sender.port,
                 sender_database=sender.database, sender_username=sender.username, sender_marker=grant.sourceMarker,
             )
-            if head.generation != expected_previous_generation or _grant_for(actor_id, expected_config_revision) != (grant, profile):
-                raise _unavailable()
+            revalidate()
+            if head.generation != expected_previous_generation:
+                raise SnapshotPublicationIntentPredecessorChanged()
             rows = _normalize(SnapshotPublicationRow(id=str(key), caption=value) for key, value in
                               await _read_source(session, grant.sourceMarker, snapshot_preview=True))
-            if _grant_for(actor_id, expected_config_revision) != (grant, profile):
-                raise _unavailable()
+            revalidate()
             identity = uuid4()
             intent = (await session.execute(text(f"""
                 INSERT INTO {_PRIVATE}.intents
@@ -261,11 +276,17 @@ async def freeze_snapshot_publication_intent(
             """), {"id": identity, "actor": actor_id, "request": request_id, "revision": expected_config_revision,
                    "previous": expected_previous_generation, "scope": scope_digest, "digest": _seal(rows),
                    "count": len(rows)})).mappings().one()
+            revalidate()
             await session.execute(text(f"""
                 INSERT INTO {_PRIVATE}.records (intent_id,ordinal,id,caption)
                 VALUES (:intent,:ordinal,:id,:caption)
             """), [{"intent": identity, "ordinal": ordinal, "id": key, "caption": value}
                     for ordinal, (key, value) in enumerate(rows, 1)])
+            revalidate()
             return _result(intent)
+    except SnapshotPublicationIntentPredecessorChanged:
+        if web_approval is not None:
+            raise
+        raise _unavailable() from None
     except Exception:
         raise _unavailable() from None
