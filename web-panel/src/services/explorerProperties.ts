@@ -2,6 +2,18 @@ import client, { unwrap } from './api';
 import type { Presentation } from './explorerLayouts';
 
 export type ExplorerPropertyType = 'string' | 'integer' | 'number' | 'boolean' | 'date' | 'datetime' | 'json';
+
+export function explorerPropertyType(sqlType: string): ExplorerPropertyType {
+  const type = sqlType.toLowerCase();
+  if (type.endsWith('[]') || /^jsonb?$/.test(type)) return 'json';
+  if (/^(smallint|integer|bigint|int[248]?|smallserial|serial[248]?|bigserial)$/.test(type)) return 'integer';
+  if (/^(real|double precision|float[48]?|numeric|decimal)(\(.*\))?$/.test(type)) return 'number';
+  if (type === 'boolean' || type === 'bool') return 'boolean';
+  if (type === 'date') return 'date';
+  if (type.startsWith('timestamp')) return 'datetime';
+  return 'string';
+}
+
 export interface ExplorerMappedProperty {
   id: string;
   name: string;

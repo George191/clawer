@@ -1,29 +1,20 @@
+import PropertyTypeIcon from './PropertyTypeIcon';
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui';
 import { FilterOutlined, PlusOutlined, SearchOutlined } from '@/components/ui/icons';
 import { fetchEtlTableColumns } from '../../services/api';
-import { fetchExplorerProperties, saveExplorerProperties, type ExplorerMappedProperty as Property, type ExplorerPropertyMapping as Mapping } from '../../services/explorerProperties';
+import { explorerPropertyType, fetchExplorerProperties, saveExplorerProperties, type ExplorerMappedProperty as Property, type ExplorerPropertyMapping as Mapping } from '../../services/explorerProperties';
 import { ontologyError } from '../../services/ontology';
 import type { EtlTableColumn } from '../../services/types';
 import { getSessionState } from '../../services/session';
 import ExplorerMappingPreview from './ExplorerMappingPreview';
-import ExplorerPropertyInspector, { PropertyBadges, propertyFormatters, readable, typeGlyph } from './ExplorerPropertyInspector';
+import ExplorerPropertyInspector, { PropertyBadges, propertyFormatters, readable } from './ExplorerPropertyInspector';
 import { useSandboxIdentity } from './SandboxMarkings';
 import './semantic-properties-workbench.css';
 import './physical-property-workbench.css';
 
 type Props = { schema: string; table: string; canManage?: boolean; onSaved?: () => void; onDirtyChange?: (dirty: boolean) => void };
-function sqlType(type: string): Property['type'] {
-    type=type.toLowerCase();
-    if (type.endsWith('[]') || /^jsonb?$/.test(type)) return 'json';
-    if (/^(smallint|integer|bigint)$/.test(type)) return 'integer';
-    if (/^(real|double precision|numeric|decimal)/.test(type)) return 'number';
-    if (type === 'boolean') return 'boolean';
-    if (type === 'date') return 'date';
-    if (type.startsWith('timestamp')) return 'datetime';
-    return 'string';
-}
 function nextId(name: string, properties: Property[]) {
     let base = name.toLowerCase().replace(/[^a-z0-9_-]+/g,'_');
     if (!/^[a-z]/.test(base)) base = 'property_' + base;
@@ -36,7 +27,7 @@ function nextId(name: string, properties: Property[]) {
 }
 const sourceFields = (column?: EtlTableColumn) => ({
     sourceColumn:column?.name || null, sqlType:column?.type || null, primaryKeyPosition:column?.primaryPosition ?? null,
-    ...(column ? {type:sqlType(column.type)} : {}),
+    ...(column ? {type:explorerPropertyType(column.type)} : {}),
 });
 function makeProperty(properties: Property[], column?: EtlTableColumn): Property {
     const id = nextId(column?.name || 'property',properties);
@@ -94,7 +85,7 @@ function Workbench({schema,table,canManage,identity,onSaved,onDirtyChange}: Prop
         const items = [...draft.properties];
         for (const col of columns) {
             if (mapped.has(col.name)) continue;
-            const i=items.findIndex(v=>!v.sourceColumn && v.id===col.name && v.type===sqlType(col.type));
+            const i=items.findIndex(v=>!v.sourceColumn && v.id===col.name && v.type===explorerPropertyType(col.type));
             if (i>=0) items[i]={...items[i],...sourceFields(col)}; else items.push(makeProperty(items,col));
         }
         change({...draft,properties:items});setFilter('');setTerm('');
@@ -155,7 +146,7 @@ function Workbench({schema,table,canManage,identity,onSaved,onDirtyChange}: Prop
                     {mode==='properties'?<><thead><tr>{['Property name','Status','Visibility','Base formatter','Column'].map(s=><th key={s} scope="col">{s}</th>)}</tr></thead><tbody>
                         {items.map(({item,index})=><tr key={index} className={index===selected?'is-selected':''} onClick={()=>choose(index)}>
                             <td><button type="button" className="flow-foundry-property-select" aria-label={'Inspect '+item.name} aria-pressed={index===selected} onClick={()=>choose(index)}>
-                                <span className="physical-selection" aria-hidden="true"/><span className="physical-property-glyph">{typeGlyph(item.type)}</span>{item.name || item.id}
+                                <span className="physical-selection" aria-hidden="true"/><PropertyTypeIcon type={item.type} />{item.name || item.id}
                                 <PropertyBadges property={item} title={draft.titleProperty}/></button></td>
                             <td><span className={'physical-chip status-'+item.status}>{readable(item.status)}</span></td>
                             <td>{editable ? <select className="physical-chip visibility" aria-label={'Visibility for '+item.name} value={item.visibility}

@@ -44,8 +44,7 @@
 .flow-foundry-property-select { display: inline-flex; min-height: 24px; align-items: center; flex-wrap: wrap; gap: 5px; }
 .flow-foundry-property-link { display: block; color: var(--ontology-link); }
 .flow-foundry-property-link:hover { text-decoration: underline; }
-.flow-foundry-property-type-icon, .flow-foundry-property-tag { display: inline-flex; align-items: center; justify-content: center; flex: none; border-radius: 2px; }
-.flow-foundry-property-type-icon { width: 19px; height: 19px; font-size: 9px; font-weight: 600; background: var(--ontology-bg); color: var(--ontology-muted); border: 1px solid var(--ontology-border); }
+.flow-foundry-property-tag { display: inline-flex; align-items: center; justify-content: center; flex: none; border-radius: 2px; }
 .flow-foundry-property-tag { padding: 1px 4px; font-size: 11px; line-height: 16px; white-space: nowrap; }
 .flow-foundry-property-tag.is-key { background: color-mix(in srgb, #7961d1 21%, var(--ontology-panel)); color: color-mix(in srgb, #7961d1 67%, var(--ontology-text)); }
 .flow-foundry-property-tag.is-title { background: color-mix(in srgb, #2d9c93 18%, var(--ontology-panel)); color: color-mix(in srgb, #2d9c93 62%, var(--ontology-text)); }
@@ -62,7 +61,6 @@
 .flow-foundry-property-fields .flow-create-field { gap: 3px; color: var(--ontology-muted); }
 .flow-foundry-property-fields .ui-input, .flow-foundry-property-fields .ui-select { font-size: 13px; }
 .flow-foundry-property-fields small { font-size: 12px; color: var(--ontology-muted); }
-.flow-foundry-property-remove { justify-self: start; }
 .flow-foundry-property-preview { margin-top: 12px; }
 .flow-foundry-property-preview-tools strong { display: inline-flex; align-items: center; gap: 6px; margin-right: auto; font-size: 13px; overflow-wrap: anywhere; }
 .flow-foundry-property-preview .flow-foundry-property-table-wrap { max-height: 230px; border-top: 1px solid var(--ontology-border); }
@@ -91,7 +89,12 @@
 /* The table, inspector and sample scroll independently inside the wizard. */
 .flow-create-step:has(.flow-semantic-properties) { display: flex; flex-direction: column; }
 .flow-create-step > div:has(> .flow-semantic-properties) { flex: 1; min-height: 0; }
-.flow-semantic-properties { display: flex; flex-direction: column; height: 100%; box-sizing: border-box; padding: 8px 16px 14px; }
+.flow-foundry-workbench.flow-semantic-properties {
+  --foundry-text-size: 13px; --foundry-title-size: 16px;
+}
+.flow-semantic-properties {
+  display: flex; flex-direction: column; height: 100%; box-sizing: border-box; padding: 6px 12px 10px;
+}
 .flow-semantic-properties .flow-foundry-property-workspace {
   flex: 1; min-height: 0; height: auto; grid-template-columns: minmax(0, 1fr) clamp(230px, 30%, 320px);
   grid-template-rows: minmax(0, 1fr); align-items: stretch; gap: 0;
@@ -109,13 +112,21 @@
 .flow-semantic-properties .flow-foundry-property-list table[aria-label="Properties"] th:first-child { width: 40%; }
 .flow-semantic-properties .flow-foundry-property-list table[aria-label="Properties"]:has(th:nth-child(4)) th:nth-child(2),
 .flow-semantic-properties .flow-foundry-property-list table[aria-label="Properties"]:has(th:nth-child(4)) th:nth-child(3) { width: 17%; }
-.flow-semantic-properties .flow-foundry-property-list :is(td,th) { height: 34px; padding: 4px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flow-semantic-properties .flow-foundry-property-list :is(td,th) { height: 29px; padding: 2px 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .flow-semantic-properties .flow-foundry-property-select { width: 100%; flex-wrap: nowrap; }
 .flow-semantic-properties :is(.flow-property-name, .flow-foundry-property-inspector header strong, .flow-foundry-property-link) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .flow-semantic-properties :is(.flow-foundry-property-inspector, .flow-property-inspector-idle) { min-height: 0; border-left: 1px solid var(--ontology-border); overflow: auto; scrollbar-gutter: stable; }
 .flow-property-inspector-idle { padding: 16px; color: var(--ontology-muted); font-size: 13px; }
-.flow-semantic-properties .flow-foundry-property-inspector header { position: sticky; top: 0; z-index: 1; flex-wrap: nowrap; background: var(--ontology-panel); }
-.flow-semantic-properties .flow-foundry-property-inspector header button { flex-shrink: 0; }
+.flow-semantic-properties .flow-foundry-property-inspector header { position: sticky; top: 0; z-index: 1; min-height: 36px; padding: 4px 10px; flex-wrap: nowrap; background: var(--ontology-panel); }
+.flow-semantic-properties .flow-foundry-property-list tbody tr.is-selected td { background: var(--ontology-selected); }
+.flow-semantic-properties .flow-foundry-property-inspector header button { flex: 0 0 26px; height: 26px; display: grid; place-items: center; }
+.flow-semantic-properties .flow-foundry-property-inspector header button:hover { background: var(--ontology-hover); }
+.flow-semantic-properties .flow-foundry-property-inspector header button:last-child { margin-left: 0; }
+.flow-semantic-properties .flow-foundry-property-fields { padding: 10px 12px; gap: 7px; }
+.flow-semantic-properties .flow-property-configuration { border-top: 1px solid var(--ontology-border); }
+.flow-semantic-properties .flow-property-configuration .ui-checkbox-wrapper { flex-direction: row-reverse; justify-content: space-between; margin: 0; min-height: 24px; }
+.flow-semantic-properties .flow-foundry-property-header nav button { min-height: 29px; }
+.flow-semantic-properties :is(.flow-foundry-property-tools,.flow-foundry-property-preview-tools) { min-height: 34px; padding: 4px 8px; }
 .flow-semantic-properties .flow-foundry-property-preview { flex: none; margin-top: 8px; }
 .flow-semantic-properties .flow-foundry-property-preview .flow-foundry-property-table-wrap { height: clamp(80px, 16dvh, 160px); }
 @media(max-width:900px) {

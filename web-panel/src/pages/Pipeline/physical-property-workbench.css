@@ -44,8 +44,7 @@
 .physical-property-search { padding:0 10px 7px; flex-wrap:wrap; }
 .physical-property-changes { flex-wrap:wrap; justify-content:flex-end; padding:6px 8px; margin-bottom:8px; background:var(--ontology-toolbar); }
 .physical-property-changes [role=alert] { margin-right:auto; }
-.physical-property-glyph,.physical-selection { display:inline-grid; place-items:center; flex:none; width:14px; height:14px; }
-.physical-property-glyph { color:var(--ontology-muted); border:1px solid var(--ontology-border); border-radius:2px; background:var(--ontology-bg); width:18px; height:18px; font-size:10px; font-weight:600; }
+.physical-selection { display:inline-grid; place-items:center; flex:none; width:14px; height:14px; }
 .physical-selection { border:1px solid var(--ontology-border); border-radius:2px; }
 .is-selected .physical-selection { background:var(--ontology-primary); color:var(--ontology-panel); }
 .is-selected .physical-selection::before { content:'✓'; font-size:10px; }

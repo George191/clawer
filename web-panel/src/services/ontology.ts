@@ -52,6 +52,8 @@ export function ontologyError(error: unknown, fallback: string): string {
 }
 
 export const listOntologyProjects = () => client.get<{items: OntologyProject[]}>('/projects', config).then(r => data(r.data).items);
+export const listOntologyTypeGroups = (q: string, signal: AbortSignal) =>
+  client.get<{items: string[]}>('/type-groups', { ...config, params: { q }, signal }).then(r => data(r.data).items);
 export const createOntologyProject = (teamId: string, name: string) =>
   client.post<OntologyProject>('/projects', { teamId, name }, config).then(r => data(r.data));
 export const listOntologyPrincipals = (projectId: string) => client.get<{items: OntologyPrincipal[]}>('/projects/' + encodeURIComponent(projectId) + '/principals', config).then(r => data(r.data).items);

@@ -12,7 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
-from app.web.api.routes.ontology_registry import published_type, published_types
+from app.web.api.routes.ontology_registry import published_type, published_types, type_groups
 from app.web.api.models.ontology_registry import Definition, OntologyDefinitionRow
 from app.web.services import ontology_registry as registry
 from app.web.services.ontology_registry_policy import AccessContext, Principal
@@ -104,6 +104,7 @@ async def test_published_catalog_pages_visible_matches_and_projects_fields(db):
             definition = {
                 "id": key, "name": key, "description": "Mixed%_Case" if key != "unmatched" else "MixedABCase",
                 "projectId": str(project), "source": {"mode": "none"},
+                "groups": ["Private"] if key == "hidden" else ["Aviation", "Tags%_1"],
                 "properties": [{"id": name, "name": name, "type": "string"} for name in ("key", "secret")],
                 "primaryKey": ["key"], "titleKey": "secret",
                 "security": {"mode": "explicit", "objectReaders": [{"kind": kind, "id": str(reader)}],
@@ -118,6 +119,8 @@ async def test_published_catalog_pages_visible_matches_and_projects_fields(db):
         assert [item["definition"]["id"] for item in page["items"]] == ["one", "two"]
         assert page["hasMore"]
         last = await published_types(session, actor, 2, 2, "miXed%_")
+        assert await type_groups(session, actor, "") == {"items": ["Aviation", "Tags%_1"]}
+        assert await type_groups(session, actor, "%_") == {"items": ["Tags%_1"]}
         assert [item["definition"]["id"] for item in last["items"]] == ["three"]
         assert not last["hasMore"]
         item = await published_type(row_ids["one"], session, actor)

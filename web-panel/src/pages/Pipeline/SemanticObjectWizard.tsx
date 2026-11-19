@@ -11,6 +11,9 @@ import {
   type SemanticDefinition, type SemanticProperty, type SemanticAction, type SemanticSource, type Principal, type PublishedOntologyType,
 } from '../../services/ontology';
 import SemanticPropertiesWorkbench from './SemanticPropertiesWorkbench';
+import SemanticTypeAppearance from './SemanticTypeAppearance';
+import SemanticTypeGlyph from './SemanticTypeGlyph';
+import { explorerPropertyType } from '../../services/explorerProperties';
 import { ontologyTypeIcons } from './ontologyTypeIcons';
 import OntologyRecordPolicyEditor from './OntologyRecordPolicyEditor';
 import './ontology-create.css';
@@ -37,17 +40,8 @@ function problem(failure: unknown, fallback: string) {
   return fallback;
 }
 const fromError = (failure: unknown) => (failure as { response?: { status?: number } }).response?.status;
-function propertyType(dbType: string) {
-  if (/bool/i.test(dbType)) return 'boolean';
-  if (/int|serial/i.test(dbType)) return 'integer';
-  if (/numeric|decimal|float|double|real/i.test(dbType)) return 'number';
-  if (/timestamp/i.test(dbType)) return 'datetime';
-  if (/^date$/i.test(dbType)) return 'date';
-  if (/json/i.test(dbType)) return 'json';
-  return 'string';
-}
 function makeProperty(column: EtlObjectPreview['properties'][number]): SemanticProperty {
-  return { id: column.name, name: column.displayName || column.name, type: propertyType(column.type), sourceColumn: column.name, required: !column.nullable };
+  return { id: column.name, name: column.displayName || column.name, type: explorerPropertyType(column.type), sourceColumn: column.name, required: !column.nullable };
 }
 type Load<T> = { data?: T; error?: string; loading?: boolean };
 function IssueList({ title, issues }: { title: string; issues: OntologyIssue[] }) {
@@ -346,20 +340,24 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
         </section>}
         {stage === 'wizard' && currentStep === 'Metadata' && <section className="flow-create-section">
           <Heading title="Object type metadata" detail="Business display names are separate from the stable API ID." />
-          <div className="flow-create-grid">
-            <label className="flow-create-field"><span>Display name</span><Input maxLength={120} value={definition.name} onChange={event => set({ name: event.target.value })} placeholder="Airport" /></label>
-            <label className="flow-create-field"><span>Plural display name</span><Input maxLength={120} value={definition.pluralName} onChange={event => set({ pluralName: event.target.value })} placeholder="Airports" /></label>
-            <label className="flow-create-field"><span>API ID</span><Input aria-label="API ID" value={definition.id} maxLength={63} onChange={event => set({ id: event.target.value })} placeholder="airport" /><small>Lowercase letters, digits, hyphens and underscores. Start with a letter.</small></label>
-            <fieldset className="flow-object-icon-picker is-wide"><legend>Object type icon</legend>
-              <label><input type="radio" name="semantic-icon" checked={!definition.icon} onChange={() => set({ icon: '' })} /><span>Automatic</span></label>
-              {Object.entries(ontologyTypeIcons).map(([name, Icon]) => <label key={name} title={name}>
-                <input type="radio" name="semantic-icon" aria-label={name} checked={definition.icon === name} onChange={() => set({ icon: name })} />
-                <Icon />
-              </label>)}
-            </fieldset>
-            <label className="flow-create-field"><span>Color</span><Input value={definition.color} placeholder="#3b82f6" onChange={event => set({ color: event.target.value })} /></label>
-            <label className="flow-create-field"><span>Groups (comma-separated)</span><Input key={saved?.id || 'new-groups'} defaultValue={definition.groups.join(', ')} onBlur={event => { const groups = [...new Set(event.target.value.split(',').map(value => value.trim()).filter(Boolean))]; if (JSON.stringify(groups) !== JSON.stringify(definition.groups)) set({ groups }); }} placeholder="Aviation, infrastructure" /></label>
+          <div className="flow-create-grid flow-type-metadata">
+            <div className="flow-metadata-identity">
+              <div className="flow-create-field"><span>Icon</span>
+                <Select aria-label="Object type icon" className="flow-ontology__select flow-object-icon-select"
+                  popupClassName="flow-ontology__select-popup flow-object-icon-popup" popupMatchSelectWidth={216}
+                  value={definition.icon} onChange={icon => set({ icon })}
+                  options={['', ...Object.keys(ontologyTypeIcons)].map(icon => ({
+                    value: icon, label: <span title={icon || 'Automatic'} className="flow-object-icon-choice">
+                      <SemanticTypeGlyph definition={{ ...definition, icon }} />
+                      <span className="flow-published-sr-only">{icon || 'Automatic'}</span>
+                    </span>,
+                  }))} />
+              </div>
+              <label className="flow-create-field"><span>Display name</span><Input maxLength={120} value={definition.name} onChange={event => set({ name: event.target.value })} placeholder="Airport" /></label>
+              <label className="flow-create-field"><span>Plural display name</span><Input aria-label="Plural display name" maxLength={120} value={definition.pluralName} onChange={event => set({ pluralName: event.target.value })} placeholder="Airports" /><small>Collection title in Published. For Airport, use Airports.</small></label>
+            </div>
             <label className="flow-create-field is-wide"><span>Description</span><Input.TextArea rows={4} value={definition.description} onChange={event => set({ description: event.target.value })} /></label>
+            <SemanticTypeAppearance definition={definition} drafts={drafts.data || []} onChange={set} />
           </div>
         </section>}
         {stage === 'wizard' && currentStep === 'Properties' && <SemanticPropertiesWorkbench key={sourceKey || 'unbacked'}
