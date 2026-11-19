@@ -67,7 +67,6 @@
 .flow-create-summary dt { color: var(--ontology-muted); }
 .flow-create-summary dd { margin: 0; overflow-wrap: anywhere; }
 .flow-create-review-table .ui-table { min-width: 560px; }
-@media (max-width: 1150px) { .flow-ontology__topbar { flex-wrap: wrap; } .flow-ontology__search { flex-basis: 100%; } }
 @media (max-width: 700px) {
   .flow-create-modal .ui-modal-header { padding: 16px; }
   .flow-create-section { padding: 16px; }

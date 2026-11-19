@@ -56,6 +56,22 @@ def test_existing_source_requires_proven_unique_key():
     )
 
 
+def test_upstream_connection_is_saved_separately_from_the_readable_dataset():
+    connection_id = uuid4()
+    definition = bound_definition(source={
+        "mode": "existing", "schema": "ts_ods", "table": "aircraft", "upstreamConnectionId": connection_id,
+    })
+    saved = Definition.model_validate_json(definition.model_dump_json(by_alias=True))
+    assert saved.source.upstreamConnectionId == connection_id
+    assert not assess_definition(saved, bound_catalog()).errors
+    assert source_signature(saved, bound_catalog()) == source_signature(bound_definition(), bound_catalog())
+    saved.source.mode = "none"
+    saved.source.schema_name = saved.source.table = None
+    for prop in saved.properties:
+        prop.sourceColumn = None
+    assert "source" in {issue.path for issue in assess_definition(saved).errors}
+
+
 @pytest.mark.parametrize("schema", ["ts_rds", "ts_task", "ts_dws", "ts_dim", "ts_ads"])
 def test_current_managed_layers_can_back_definitions(schema):
     definition = bound_definition(source={"mode": "existing", "schema": schema, "table": "aircraft"})

@@ -12,7 +12,7 @@ import os
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
@@ -93,6 +93,7 @@ class DataConnectionsIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def test_crud_encrypts_and_keeps_original_ciphertext_when_password_is_blank(self):
         saved = await self.service.save(payload(), "admin")
+        self.assertTrue(await self.service.exists(UUID(saved["id"])))
         row = await self.stored(saved["id"])
         ciphertext = row["credentials_ciphertext"]
         self.assertNotIn(PAYLOAD["credentials"]["password"], json.dumps(dict(row), default=str))
@@ -115,6 +116,7 @@ class DataConnectionsIntegration(unittest.IsolatedAsyncioTestCase):
                                                    expected_updated_at=datetime.fromisoformat(renamed["updatedAt"])))["ok"])
         self.probe.assert_awaited()
         await self.service.delete(saved["id"])
+        self.assertFalse(await self.service.exists(UUID(saved["id"])))
         self.assertEqual(await self.service.list(), [])
 
     async def test_list_capabilities_use_local_metadata_not_saved_source_or_secrets(self):

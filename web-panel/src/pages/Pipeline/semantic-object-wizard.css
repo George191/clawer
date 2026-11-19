@@ -1,4 +1,14 @@
 .flow-semantic-wizard { --wizard-inset: clamp(14px, 1.6vw, 20px); font: 400 13px/1.4 var(--ontology-font); }
+.flow-source-dataset { display: grid; gap: 10px; }
+.flow-source-connection-row { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; }
+.flow-source-connection-row a { align-self: end; line-height: 30px; color: var(--ontology-link); }
+.flow-source-connection:not(.has-selection) { width: 170px; }
+.flow-source-connection.has-selection { width: 62px; }
+.flow-source-connection-option { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+.flow-source-connection-option .ontology-connectors__mark { width: 24px; height: 24px; flex-basis: 24px; border: 0; background: transparent; }
+.flow-source-connection.has-selection .ui-select-selection-item .flow-source-connection-name { display: none; }
+.flow-source-connection-menu { min-width: min(240px, calc(100vw - 32px)); max-width: calc(100vw - 32px); }
+.flow-source-connection-menu .flow-source-connection-name { overflow-wrap: anywhere; }
 .flow-semantic-wizard .ui-modal-title { font: 600 15px/21px var(--ontology-font); }
 .flow-semantic-wizard .ui-modal-header { padding: 11px 16px; }
 .flow-semantic-wizard .ui-modal-close { top: 9px; }

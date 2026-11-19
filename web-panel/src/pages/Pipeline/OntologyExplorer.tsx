@@ -420,6 +420,11 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     Object.entries(changes).forEach(([key, value]) => value ? next.set(key, value) : next.delete(key));
     return next;
   }, { replace });
+  const catalogSearch = publishedCatalog ? params.get('publishedQ') || '' : keyword;
+  const searchLabel = publishedCatalog ? 'Search published types' : 'Search object types';
+  const changeCatalogSearch = (value: string) => updateQuery(
+    publishedCatalog ? { publishedQ: value || null, publishedOffset: null } : { q: value || null }, true,
+  );
   const selectPublished = (id = '') => updateQuery({ catalog: 'published', objectType: id || null, schema: null, table: null, tab: null });
   const selectObject = (object: { schema: string; table: string }) => updateQuery({ schema: object.schema, table: object.table, tab: null });
   const closeInspector = () => {
@@ -508,19 +513,29 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
             <button type="button" aria-pressed={!publishedCatalog} onClick={() => { if (publishedCatalog) updateQuery({ catalog: null, objectType: null }); }}><DatabaseOutlined />Storage-backed</button>
             <button type="button" aria-pressed={publishedCatalog} onClick={() => { if (!publishedCatalog) selectPublished(); }}><AppstoreOutlined />Published</button>
           </nav>
+          {!publishedId && <div className="flow-ontology__topbar">
+            <div className="flow-ontology__search" role="search">
+              <SearchOutlined /><input ref={searchRef} data-testid="ontology-search" aria-label={searchLabel} placeholder={searchLabel + '…'}
+                value={catalogSearch} maxLength={publishedCatalog ? 200 : undefined} onChange={event => changeCatalogSearch(event.target.value)}
+                onKeyDown={event => {
+                  if (!publishedCatalog && event.key === 'ArrowDown' && renderedObjects.length) {
+                    event.preventDefault(); cardRefs.current[renderedObjects[0].id]?.focus();
+                  }
+                }} />
+              {catalogSearch && <button type="button" aria-label={publishedCatalog ? 'Clear published search' : 'Clear search'}
+                onClick={() => { changeCatalogSearch(''); searchRef.current?.focus(); }}><CloseOutlined /></button>}
+            </div>
+            {!publishedCatalog && <>
+              <div className="flow-ontology__view-switch" aria-label="Catalog view"><button type="button" aria-label="Grid view" aria-pressed={view === 'grid'} className={view === 'grid' ? 'is-active' : ''} onClick={() => updateQuery({ view: null })}><AppstoreOutlined /><span>Grid</span></button><button type="button" aria-label="List view" aria-pressed={view === 'list'} className={view === 'list' ? 'is-active' : ''} onClick={() => updateQuery({ view: 'list' })}><BarsOutlined /><span>List</span></button></div>
+              {canManage && <Checkbox className="flow-ontology__show-hidden" checked={includeHidden} onChange={(event) => setShowHidden(event.target.checked)}>Show hidden object types</Checkbox>}
+              <span className="flow-ontology__summary" aria-busy={loading} aria-label={confirmedTotal === null ? 'Object type count not loaded' : `${number(confirmedTotal)} object types${loading ? ', updating' : error ? ', last loaded count' : ''}`}><span className="flow-ontology__summary-value">{confirmedTotal === null ? '…' : number(confirmedTotal)}</span><span>object types</span></span>
+            </>}
+          </div>}
           {(canManage || semanticProjectAccess) && <button type="button" className="flow-ontology__button flow-ontology__button--primary flow-ontology__create-action" onClick={startNewObject}><PlusOutlined />New object type</button>}
         </div>
-        {!publishedCatalog && <div className={`flow-ontology__topbar${canManage ? ' is-manage' : ''}`}>
-          <div className="flow-ontology__search" role="search">
-            <SearchOutlined /><input ref={searchRef} data-testid="ontology-search" aria-label="Search object types" value={keyword} onChange={(event) => updateQuery({ q: event.target.value || null }, true)} onKeyDown={(event) => { if (event.key === 'ArrowDown' && renderedObjects.length) { event.preventDefault(); cardRefs.current[renderedObjects[0].id]?.focus(); } }} placeholder="Search object types..." />{keyword && <button type="button" aria-label="Clear search" onClick={() => { updateQuery({ q: null }, true); searchRef.current?.focus(); }}><CloseOutlined /></button>}
-          </div>
-          <div className="flow-ontology__view-switch" aria-label="Catalog view"><button type="button" aria-label="Grid view" aria-pressed={view === 'grid'} className={view === 'grid' ? 'is-active' : ''} onClick={() => updateQuery({ view: null })}><AppstoreOutlined /><span>Grid</span></button><button type="button" aria-label="List view" aria-pressed={view === 'list'} className={view === 'list' ? 'is-active' : ''} onClick={() => updateQuery({ view: 'list' })}><BarsOutlined /><span>List</span></button></div>
-          {canManage && <Checkbox className="flow-ontology__show-hidden" checked={includeHidden} onChange={(event) => setShowHidden(event.target.checked)}>Show hidden object types</Checkbox>}
-          <span className="flow-ontology__summary" aria-busy={loading} aria-label={confirmedTotal === null ? 'Object type count not loaded' : `${number(confirmedTotal)} object types${loading ? ', updating' : error ? ', last loaded count' : ''}`}><span className="flow-ontology__summary-value">{confirmedTotal === null ? '…' : number(confirmedTotal)}</span><span>object types</span></span>
-        </div>}
       </header>
       <div className="flow-ontology__body">
-        {publishedCatalog ? <PublishedOntology key={publishedId} selection={publishedId} onSelect={selectPublished} /> : <>
+        {publishedCatalog ? <PublishedOntology key={publishedId} selection={publishedId} onSelect={selectPublished} onClearSearch={() => changeCatalogSearch('')} /> : <>
         <aside className="flow-ontology__sidebar" aria-label="Object type groups"><nav aria-busy={loading}>
           {groups.map((item) => {
             const expanded = expandedGroup === item.key;

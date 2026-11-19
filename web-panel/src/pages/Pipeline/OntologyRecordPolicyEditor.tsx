@@ -1,6 +1,5 @@
 import React from 'react';
 import { Button, Input, Select } from '@/components/ui';
-import OntologyMarkingsEditor from './OntologyMarkingsEditor';
 import type { OntologyPrincipal, Principal, RecordRule, SemanticDefinition, SemanticSecurity } from '../../services/ontology';
 
 type Props = {
@@ -31,12 +30,10 @@ export default function OntologyRecordPolicyEditor({ definition, principals, onC
   const update = (index: number, rule: RecordRule) => change(rules.map((item, i) => i === index ? rule : item));
   const readers = new Map(principals.map(principal => [principalKey(principal), principal]));
   for (const rule of rules) for (const p of rule.readers) {
-    if (!readers.has(principalKey(p))) readers.set(principalKey(p), { ...p, name: p.id });
+    if (!readers.has(principalKey(p))) readers.set(principalKey(p), { ...p, name: 'Name unavailable' });
   }
 
   return <section className="flow-semantic-config" aria-label="Record access rules">
-    <OntologyMarkingsEditor key={definition.projectId} project={definition.projectId} value={definition.security.markings ?? []} principals={principals}
-      onChange={markings => onChange({ ...definition.security, markings })} />
     <h4>Record access</h4>
     <p className="flow-create-help">{rules.length
       ? 'A reader must match at least one rule as well as the object policy. Actions check the record before and after an edit.'

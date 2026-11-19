@@ -21,7 +21,7 @@ const pageSize = 25;
 const maxOffset = 100_000;
 type ActionInputs = Record<string, { text: string; isNull: boolean }>;
 type Operation = { kind: SemanticAction['kind']; fields: string[]; record?: OntologyRecord; initialInputs: ActionInputs };
-type Props = { selection: string; onSelect: (id: string) => void };
+type Props = { selection: string; onSelect: (id: string) => void; onClearSearch: () => void };
 function show(value: unknown): string {
   if (value == null) return '—';
   return typeof value === 'object' ? JSON.stringify(value) : String(value);
@@ -68,7 +68,7 @@ function RecordHistory({ objectType, recordId, onChanged }: { objectType: string
   </section>;
 }
 
-export default function PublishedOntology({ selection, onSelect }: Props) {
+export default function PublishedOntology({ selection, onSelect, onClearSearch }: Props) {
   const [params, setParams] = useSearchParams();
   const search = params.get('publishedQ') || '';
   const keyword = search.trim();
@@ -96,12 +96,6 @@ export default function PublishedOntology({ selection, onSelect }: Props) {
   const identity = useRef(getSessionState().identity).current;
   const current = () => active.current && identity === getSessionState().identity;
   const reload = () => setVersion(value => value + 1);
-  const changeCatalogSearch = (value: string) => setParams(previous => {
-    const next = new URLSearchParams(previous);
-    if (value) next.set('publishedQ', value); else next.delete('publishedQ');
-    next.delete('publishedOffset');
-    return next;
-  }, { replace: true });
   const changeCatalogOffset = (value: number) => setParams(previous => {
     const next = new URLSearchParams(previous);
     if (value) next.set('publishedOffset', String(value)); else next.delete('publishedOffset');
@@ -199,7 +193,7 @@ export default function PublishedOntology({ selection, onSelect }: Props) {
         {selection ? <div className="flow-published-results-context">
           <Button size="small" icon={<ArrowLeftOutlined />} onClick={returnToTypes}>Back to published types</Button>
           {object && <div className="flow-published-type-title"><SemanticTypeGlyph definition={object.definition} /><h2>{object.definition.name}</h2><code>{object.definition.id}</code></div>}
-        </div> : <><h2>Published object types</h2><div className="flow-published-catalog-search" role="search"><Input prefix={<SearchOutlined />} aria-label="Search published types" placeholder="Search published types" value={search} maxLength={200} onChange={event => changeCatalogSearch(event.target.value)} allowClear /></div></>}
+        </div> : <h2>Published object types</h2>}
       </header>
         <section className="flow-create-section">
           {error && <p className="flow-create-error" role="alert">{error}<Button size="small" icon={<ReloadOutlined />} onClick={reload}>Retry</Button></p>}
@@ -218,7 +212,7 @@ export default function PublishedOntology({ selection, onSelect }: Props) {
             </div> : <div className="flow-published-catalog-empty">
               {catalogPage.keyword ? <SearchOutlined /> : <AppstoreOutlined />}
               <h3>{catalogPage.offset ? 'No published object types on this page.' : catalogPage.keyword ? 'No published object types match your search.' : 'No published object types are available to this account.'}</h3>
-              {catalogPage.keyword ? <Button size="small" onClick={() => changeCatalogSearch('')}>Clear search</Button> : !catalogPage.offset && <p>Object types appear here after publication when your project grants you access.</p>}
+              {catalogPage.keyword ? <Button size="small" onClick={onClearSearch}>Clear search</Button> : !catalogPage.offset && <p>Object types appear here after publication when your project grants you access.</p>}
             </div>}
             {(catalogPage.offset > 0 || catalogPage.hasMore) && <footer className="flow-published-results-pagination" aria-label="Published object types pagination">
               <span>{catalogPage.items.length ? `${catalogPage.offset + 1}–${catalogPage.offset + catalogPage.items.length} shown` : '0 shown'}</span>

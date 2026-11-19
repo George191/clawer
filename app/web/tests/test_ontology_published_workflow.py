@@ -43,7 +43,7 @@ class PublishedWorkflow(unittest.IsolatedAsyncioTestCase):
             async with sessions() as seed:
                 owner = User(email="owner@example.org", phone="10000000001", hashed_password=get_password_hash(password),
                              is_superuser=True)
-                reader = User(email="reader@example.org", phone="10000000002", hashed_password=owner.hashed_password)
+                reader = User(email="reader@example.org", phone="10000000002", full_name="Policy Reviewer", hashed_password=owner.hashed_password)
                 invite = InviteCodes(code="workflow-test")
                 seed.add_all([owner, reader, invite])
                 await seed.commit()
@@ -77,6 +77,14 @@ class PublishedWorkflow(unittest.IsolatedAsyncioTestCase):
                 project = await client.post(BASE + "/projects", headers=manager, json=profile)
                 self.assertEqual(project.status_code, 201, project.text)
                 self.assertEqual(project.json()["ownerId"], str(owner.id))
+                directory = f"{BASE}/projects/{team_id}/principals"
+                for term, expected in (("owner@", owner.email), ("reader@", "Policy Reviewer"), ("reviewer", "Policy Reviewer")):
+                    matches = await client.get(directory, headers=manager, params={"search": term})
+                    self.assertEqual(matches.status_code, 200, matches.text)
+                    self.assertEqual([p["name"] for p in matches.json()["items"]], [expected])
+                self.assertEqual((await client.get(directory, headers=member)).status_code, 404)
+                resolved = await client.get(directory, headers=manager, params=[("user_id", str(reader.id)), ("user_id", str(uuid4()))])
+                self.assertEqual([p["name"] for p in resolved.json()["items"]], ["Policy Reviewer"])
                 self.assertEqual((await client.post(BASE + "/projects", headers=manager, json=profile)).status_code, 409)
                 projects = await client.get(BASE + "/projects", headers=manager)
                 self.assertIn(project.json(), projects.json()["items"])

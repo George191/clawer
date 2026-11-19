@@ -1,6 +1,6 @@
 import client from './api';
 
-export type SemanticSource = { mode: 'existing' | 'none'; schema?: string; table?: string };
+export type SemanticSource = { mode: 'existing' | 'none'; schema?: string; table?: string; upstreamConnectionId?: string | null };
 export type SemanticProperty = { id: string; name: string; type: string; sourceColumn?: string; required: boolean };
 export type Principal = { kind: 'user' | 'group' | 'organization'; id: string };
 export type SemanticAction = { kind: 'create' | 'modify' | 'delete'; submitters: Principal[]; fields: string[] };
@@ -20,7 +20,7 @@ export type OntologyDraft = { id: string; revision: number; definition: Semantic
 export type OntologyIssue = { path: string; message: string };
 export type OntologyValidation = { errors: OntologyIssue[]; warnings: OntologyIssue[] };
 export type OntologyProject = { id: string; name: string; teamName: string; tenantId: string; ownerId: string | null; canName: boolean };
-export type OntologyPrincipal = Principal & { name: string };
+export type OntologyPrincipal = Principal & { name: string; email?: string | null };
 export type PublishedOntologyType = { id: string; revision: number; definition: SemanticDefinition };
 const config = { baseURL: '/api/ontology/v1' };
 export function newOntologyRequestId() {
@@ -56,7 +56,11 @@ export const listOntologyTypeGroups = (q: string, signal: AbortSignal) =>
   client.get<{items: string[]}>('/type-groups', { ...config, params: { q }, signal }).then(r => data(r.data).items);
 export const createOntologyProject = (teamId: string, name: string) =>
   client.post<OntologyProject>('/projects', { teamId, name }, config).then(r => data(r.data));
-export const listOntologyPrincipals = (projectId: string) => client.get<{items: OntologyPrincipal[]}>('/projects/' + encodeURIComponent(projectId) + '/principals', config).then(r => data(r.data).items);
+export const listOntologyPrincipals = (projectId: string, search = '', signal?: AbortSignal, userIds: string[] = []) => {
+  const params = new URLSearchParams({ search });
+  userIds.forEach(id => params.append('user_id', id));
+  return client.get<{items: OntologyPrincipal[]}>('/projects/' + encodeURIComponent(projectId) + '/principals', { ...config, params, signal }).then(r => data(r.data).items);
+};
 export const listOntologyDrafts = () => client.get<{items: OntologyDraft[]}>('/drafts', config).then(r => data(r.data).items);
 export const fetchOntologyDraft = (id: string) => client.get<OntologyDraft>(draftPath(id), config).then(r => data(r.data));
 export const createOntologyDraft = (definition: SemanticDefinition) => client.post<OntologyDraft>('/drafts', definition, config).then(r => data(r.data));

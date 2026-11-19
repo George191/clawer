@@ -5,6 +5,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from pydantic import BaseModel
+from sqlalchemy import func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -17,6 +18,7 @@ class PrincipalOption(Principal):
     """An eligible project-scoped principal and its display label."""
 
     name: str
+    email: str | None = None
 
 
 class PrincipalOptions(BaseModel):
@@ -41,6 +43,7 @@ async def project_principals(
     *,
     search: str = "",
     limit: int = 200,
+    user_ids: list[UUID] | None = None,
 ) -> list[PrincipalOption]:
     """List active project members and the project's team and organization."""
     scope = await _scope(session, project_id)
@@ -60,13 +63,17 @@ async def project_principals(
             User.status == StatusTypes.ENABLE,
         )
     )
+    if user_ids:
+        statement = statement.where(User.id.in_(user_ids))
+        options = []
     if search:
         pattern = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        statement = statement.where(User.full_name.ilike(f"%{pattern}%", escape="\\"))
+        statement = statement.where(or_(User.full_name.ilike(f"%{pattern}%", escape="\\"), User.email.ilike(f"%{pattern}%", escape="\\")))
         options = [option for option in options if search.casefold() in option.name.casefold()]
-    users = await session.scalars(statement.order_by(User.full_name, User.id).limit(limit))
+    display_name = func.coalesce(func.nullif(func.trim(User.full_name), ""), User.email)
+    users = await session.scalars(statement.order_by(display_name, User.id).limit(limit))
     options.extend(
-        PrincipalOption(kind="user", id=user.id, name=user.full_name or str(user.id))
+        PrincipalOption(kind="user", id=user.id, name=(user.full_name or "").strip() or user.email, email=user.email)
         for user in users
     )
     return options
