@@ -173,17 +173,22 @@ async def migrate_layer(connection, plan, layer, ids, locked, archives):
                     "conflicting source DELETE differs")
         if layer == "rds" and canonical:
             expected = await routing_rows(connection, layer, canonical, old, new)
-            changed = await connection.fetch(f"""
-                WITH b AS MATERIALIZED(SELECT value FROM jsonb_array_elements($1::jsonb))
-                UPDATE {table} t SET raw_data=({pg.routing_sql('to_jsonb(t)', 'rds')})->'raw_data'
-                FROM b WHERE t.record_id=b.value->>'record_id' AND t.data_source=$3::text
-                  AND t.data_type=$4::text AND to_jsonb(t)=b.value
-                  AND t.raw_data IS DISTINCT FROM ({pg.routing_sql('to_jsonb(t)', 'rds')})->'raw_data'
-                RETURNING t.record_id,to_jsonb(t)::text AS raw
-            """, "[" + ",".join(canonical.values()) + "]", old, new, kind)
+            # Both snapshots use PostgreSQL jsonb::text, preserving numeric values and serialization.
+            candidates = {rid: raw for rid, raw in canonical.items() if expected[rid] != raw}
+            changed = []
+            if candidates:
+                changed = await connection.fetch(f"""
+                    WITH b AS MATERIALIZED(SELECT value FROM jsonb_array_elements($1::jsonb))
+                    UPDATE {table} t SET raw_data=({pg.routing_sql('to_jsonb(t)', 'rds')})->'raw_data'
+                    FROM b WHERE t.record_id=b.value->>'record_id' AND t.data_source=$3::text
+                      AND t.data_type=$4::text AND to_jsonb(t)=b.value
+                      AND t.raw_data IS DISTINCT FROM ({pg.routing_sql('to_jsonb(t)', 'rds')})->'raw_data'
+                    RETURNING t.record_id,to_jsonb(t)::text AS raw
+                """, "[" + ",".join(candidates.values()) + "]", old, new, kind)
             actual = dict(canonical)
             actual.update((r["record_id"], r["raw"]) for r in changed)
-            require(len({r["record_id"] for r in changed}) == len(changed) and actual == expected,
+            require(len(changed) == len(candidates)
+                    and {r["record_id"] for r in changed} == set(candidates) and actual == expected,
                     "canonical routing UPDATE afterimages differ")
             canonical = actual
     return canonical

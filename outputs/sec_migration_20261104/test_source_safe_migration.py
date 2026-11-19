@@ -275,6 +275,63 @@ class SafeMigrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(any("DELETE FROM" in sql or "INSERT INTO ts_" in sql for sql, _ in connection.calls))
         self.assertFalse((self.root / "baseline-ready.json").exists())
 
+    async def test_canonical_rows_skip_update_but_keep_complete_verification(self):
+        connection = Connection([(layer, self.row(number, "patent_google", layer))
+                                 for layer in ("rds", "ods") for number in range(2)])
+        before = dict(connection.rows)
+        with patch.object(migration, "verify_chunk", AsyncMock(wraps=migration.verify_chunk)) as verify:
+            state = await self.apply(connection, [self.document(number) for number in range(2)])
+        self.assertEqual(state["processed"], 2)
+        self.assertEqual(connection.rows, before)
+        self.assertFalse(any("UPDATE " in sql for sql, _ in connection.calls))
+        verify.assert_awaited_once()
+        receipt = migration.pg.read(next((self.root / "transactions").glob("*.committed.json")))
+        self.assertEqual(receipt["after_sha256"], {
+            layer: {str(number): migration.pg.sha(before[(layer, str(number), "patent_google")])
+                    for number in range(2)} for layer in ("rds", "ods")})
+
+    async def test_mixed_canonical_rows_update_only_incorrect_routing(self):
+        rows = [(layer, self.row(number, "patent_google", layer, 123456789123456789123456789))
+                for layer in ("rds", "ods") for number in range(3)]
+        rows[1][1]["raw_data"]["data_source"] = "google_patent"
+        rows[2][1]["raw_data"]["_meta"]["source"] = "google_patent"
+        connection = Connection(rows)
+        before = dict(connection.rows)
+        await self.apply(connection, [self.document(number) for number in range(3)])
+        updates = [(sql, args) for sql, args in connection.calls
+                   if "UPDATE " in sql and "SET raw_data=" in sql]
+        self.assertEqual(len(updates), 1)
+        self.assertEqual({row["record_id"] for row in json.loads(updates[0][1][0])}, {"1", "2"})
+        self.assertEqual(connection.rows[("rds", "0", "patent_google")], before[("rds", "0", "patent_google")])
+        for layer, row in rows:
+            self.assertEqual(json.loads(connection.rows[(layer, row["record_id"], "patent_google")]),
+                             routed(row, layer, "google_patent", "patent_google"))
+
+    async def test_missing_canonical_cas_result_rolls_back_prior_rename(self):
+        rows = [(layer, self.row(number, "google_patent" if number == 0 else "patent_google", layer))
+                for layer in ("rds", "ods") for number in range(2)]
+        rows[1][1]["raw_data"]["data_source"] = "google_patent"
+        connection = Connection(rows)
+        before = dict(connection.rows)
+        fetch = connection.fetch
+        attempts = []
+
+        async def missing_cas(sql, *args):
+            if "UPDATE " in sql and "SET raw_data=" in sql:
+                self.assertIn(("rds", "0", "patent_google"), connection.rows)
+                attempts.append(json.loads(args[0]))
+                return []
+            return await fetch(sql, *args)
+
+        with patch.object(connection, "fetch", missing_cas):
+            with self.assertRaisesRegex(RuntimeError, "canonical routing UPDATE afterimages differ"):
+                await self.apply(connection, [self.document(number) for number in range(2)])
+        self.assertEqual([[row["record_id"] for row in attempt] for attempt in attempts], [["1"]])
+        self.assertEqual(connection.rows, before)
+        self.assertFalse((self.root / "worker-0.json").exists())
+        self.assertFalse(list((self.root / "transactions").glob("*.prepared.json")))
+        self.assertFalse(list((self.root / "transactions").glob("*.committed.json")))
+
     async def test_canonical_wins_and_conflicting_old_rows_are_archived(self):
         rows = [(layer, self.row(0, source, layer, source)) for layer in ("rds", "ods") for source in ("google_patent", "patent_google")]
         connection = Connection(rows)
