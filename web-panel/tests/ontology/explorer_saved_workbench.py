@@ -93,6 +93,18 @@ def exercise(page, base, asset, owner, reader=None):
             expect(other.get_by_role("combobox", name="Property")).to_have_value(next(iter(key)))
         finally:
             peer.close()
+    page.goto(link)
+    expect(chart).to_be_visible()
+    page.get_by_role("button", name="New exploration", exact=False).click()
+    expect(result).to_be_visible()
+    catalog = page.get_by_role("complementary", name="Explorer catalog")
+    expect(catalog.get_by_role("textbox", name="Search catalog")).to_be_focused()
+    assert "saved" not in parse_qs(urlsplit(page.url).query)
+    page.go_back()
+    expect(chart).to_be_visible()
+    expect(catalog).to_be_hidden()
+    assert page.url == link
+    button("Share").click()
     button("Stop sharing").click()
     expect(button("Enable link sharing")).to_be_visible()
     page.keyboard.press("Escape")
@@ -127,6 +139,7 @@ def exercise(page, base, asset, owner, reader=None):
             "chart",
             "save exploration",
             "link sharing",
+            "new exploration and browser history",
             "revoke link",
             "reload exploration",
             "property filter",
