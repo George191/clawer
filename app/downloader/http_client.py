@@ -36,7 +36,7 @@ from app.config.settings import settings
 from app.downloader.resume import DownloadTruncatedError, ResumeProtocolError, ResumeState
 from app.logger import get_logger
 from app.models.template import RequestConfig
-from app.utils.runtime_control import check_control_state, get_crawl_proxy_mode
+from app.utils.runtime_control import check_control_state, controlled_sleep, get_crawl_proxy_mode
 
 logger = get_logger(__name__)
 
@@ -226,11 +226,13 @@ class HttpClient:
                 proxy_url = await _proxy_pool.lease_proxy(
                     task_id, adapter_name, exclude_proxy_url=exclude_proxy_url,
                 )
-                if not proxy_url:
-                    await asyncio.sleep(0)
-                    raise ProxyError("The template requires an available exit proxy")
-                self._leased_proxies[task_id] = proxy_url
-                self._last_proxy_urls[task_id] = proxy_url
+                if proxy_url:
+                    self._leased_proxies[task_id] = proxy_url
+                    self._last_proxy_urls[task_id] = proxy_url
+            if not proxy_url:
+                # The pool waits a minute before it reloads an exhausted source.
+                await controlled_sleep(60)
+                raise ProxyError("The template requires an available exit proxy")
             pre_proxy_url = front_proxy
         logger.info(
             "Collection proxy route: exit_pool=%s front_proxy=%s exit_proxy=%s",

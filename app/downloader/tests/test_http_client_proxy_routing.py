@@ -58,12 +58,36 @@ class TemplateProxyRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.pool.lease_proxy.return_value = None
         token = set_crawl_proxy_mode(True)
         try:
-            with self.assertRaisesRegex(ProxyError, "available exit proxy"):
+            with (
+                patch.object(module, "controlled_sleep", new_callable=AsyncMock) as wait,
+                self.assertRaisesRegex(ProxyError, "available exit proxy"),
+            ):
                 await self.client._select_proxy(False, adapter_name="fixture")
+            wait.assert_awaited_once_with(60)
         finally:
             reset_crawl_proxy_mode(token)
         self.pool.lease_proxy.assert_awaited_once()
         self.assertEqual(self.client._leased_proxies, {})
+
+    async def test_waiting_for_an_exit_does_not_hold_the_client_lease_lock(self):
+        sleeping = asyncio.Event()
+        release = asyncio.Event()
+
+        async def backoff(_seconds):
+            sleeping.set()
+            await release.wait()
+
+        self.pool.lease_proxy.side_effect = [None, EXIT]
+        with patch.object(module, "controlled_sleep", backoff):
+            first = asyncio.create_task(self.client._select_proxy(True))
+            try:
+                await asyncio.wait_for(sleeping.wait(), 1)
+                route = await asyncio.wait_for(self.client._select_proxy(True), 1)
+                self.assertEqual(route, (EXIT, FRONT))
+            finally:
+                release.set()
+                with self.assertRaisesRegex(ProxyError, "available exit proxy"):
+                    await first
 
     async def test_enabled_template_requires_a_configured_pool(self):
         self.pool.enabled = False

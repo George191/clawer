@@ -1,4 +1,4 @@
-"""Immediate empty-pool retries cannot starve cancellation or peer work."""
+"""An exhausted exit pool waits cooperatively before allowing another attempt."""
 
 import asyncio
 from types import SimpleNamespace
@@ -9,7 +9,7 @@ from app.downloader import http_client as module
 
 
 class EmptyPoolControlTests(unittest.IsolatedAsyncioTestCase):
-    async def test_immediate_empty_pool_retries_allow_heartbeat_and_cancellation(self):
+    async def test_empty_pool_backoff_allows_heartbeat_and_cancellation(self):
         attempts = 0
 
         async def empty_lease(*args, **kwargs):
@@ -44,5 +44,4 @@ class EmptyPoolControlTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(asyncio.CancelledError):
                 await retry_task
         self.assertEqual(len(heartbeats), 3)
-        self.assertTrue(all(0 < count < 200 for count in heartbeats))
-        self.assertEqual(heartbeats, sorted(heartbeats))
+        self.assertEqual(heartbeats, [1, 1, 1])
