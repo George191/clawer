@@ -63,23 +63,22 @@ export default function OntologyIconPicker({ definition, disabled, onChange }: P
       aria-expanded={open} title={selected} onClick={show} disabled={disabled}>
       <SemanticTypeGlyph definition={definition} /><DownOutlined />
     </button>
-    {open && <Modal open centered title="Icon appearance" width={360} zIndex={1100}
+    {open && <Modal open centered title="Icon appearance" width={480} zIndex={1100}
       className="flow-surface-modal flow-create-modal flow-appearance-dialog" onCancel={() => setOpen(false)}
       footer={<Button type="primary" onClick={() => setOpen(false)}>Done</Button>}>
       <div className="flow-appearance-preview">
         <SemanticTypeGlyph definition={definition} size="preview" />
-        <small>Icon {definition.iconColor ?? '#000000'} · {definition.color === '' ? 'No background' : 'Background ' + (definition.color ?? '#ffffff')}</small>
-      </div>
-      <div className="flow-appearance-tabs" role="tablist" aria-label="Icon appearance settings">
-        {tabs.map((name, index) => <button type="button" role="tab" key={name} id={id + '-tab-' + index}
-          tabIndex={name === tab ? 0 : -1} aria-selected={name === tab} aria-controls={id + '-panel'}
-          onClick={() => setTab(name)} onKeyDown={event => {
-            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-            event.preventDefault();
-            const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
-              : (index + (event.key === 'ArrowLeft' ? -1 : 1) + tabs.length) % tabs.length;
-            setTab(tabs[next]); document.getElementById(id + '-tab-' + next)?.focus();
-          }}>{name}</button>)}
+        <div className="flow-appearance-tabs" role="tablist" aria-label="Icon appearance settings">
+          {tabs.map((name, index) => <button type="button" role="tab" key={name} id={id + '-tab-' + index}
+            tabIndex={name === tab ? 0 : -1} aria-selected={name === tab} aria-controls={id + '-panel'}
+            onClick={() => setTab(name)} onKeyDown={event => {
+              if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+              event.preventDefault();
+              const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
+                : (index + (event.key === 'ArrowLeft' ? -1 : 1) + tabs.length) % tabs.length;
+              setTab(tabs[next]); document.getElementById(id + '-tab-' + next)?.focus();
+            }}>{name}</button>)}
+        </div>
       </div>
       <div id={id + '-panel'} role="tabpanel" aria-labelledby={id + '-tab-' + tabs.indexOf(tab)} className="flow-appearance-panel">
         {tab === 'Icons' ? <>

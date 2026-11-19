@@ -17,13 +17,12 @@
 .flow-appearance-dialog .ui-modal-footer { justify-content: flex-end; }
 .flow-appearance-dialog .ui-modal-body { min-height: 0; overflow: auto; }
 .flow-appearance-dialog .ui-modal-close { top: 8px; }
-.flow-appearance-preview { display: flex; align-items: center; gap: 7px; padding: 8px 12px 4px; }
-.flow-appearance-preview small { color: var(--ontology-muted); }
+.flow-appearance-preview { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--ontology-border); }
 .flow-appearance-preview > .flow-semantic-type-glyph { width: 34px; height: 34px; font-size: 23px; }
 .flow-appearance-tabs {
-  display: flex; gap: 12px; padding-inline: 12px; border-bottom: 1px solid var(--ontology-border);
+  display: flex; flex-wrap: wrap; gap: 2px 12px;
 }
-.flow-appearance-tabs button { padding: 5px 0; border: 0; color: var(--ontology-muted); }
+.flow-appearance-tabs button { padding: 5px 0; border: 0; color: var(--ontology-muted); font-size: 12px; line-height: 16px; }
 .flow-appearance-tabs button[aria-selected="true"] { color: var(--ontology-text); text-decoration: underline; text-underline-offset: 4px; }
 .flow-appearance-panel { padding: 8px 10px; }
 .flow-appearance-panel:has(.flow-icon-options) { display: grid; gap: 5px; }
@@ -39,7 +38,7 @@
 .flow-appearance-dialog .flow-icon-search input:focus { outline: none; box-shadow: none; }
 .flow-icon-search:focus-within > .ui-icon { color: var(--ontology-text); }
 .flow-icon-options {
-  display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); align-content: start;
+  display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); align-content: start;
   gap: 2px; height: 214px; overflow-y: auto; scrollbar-gutter: stable;
 }
 .flow-icon-options button {
@@ -57,12 +56,11 @@
   content: ''; position: absolute; bottom: 0; width: 12px; height: 2px; background: currentColor;
 }
 .flow-icon-pagination { display: flex; align-items: center; gap: 5px; padding-top: 6px; border-top: 1px solid var(--ontology-border); }
-.flow-icon-pagination span[role="status"] { margin-right: auto; color: var(--ontology-muted); }
+.flow-icon-pagination span[role="status"] { margin-right: auto; color: var(--ontology-muted); font-size: 11px; line-height: 15px; }
 .flow-icon-pagination .ui-btn { width: 28px; padding: 0; }
 .flow-appearance-panel > p { margin: 0; color: var(--ontology-muted); }
 .flow-icon-options:empty { display: none; }
 @media (max-width: 500px) {
-  .ui-modal.flow-appearance-dialog { max-width: min(312px, calc(100vw - 24px)); }
   .flow-icon-options { grid-template-columns: repeat(2, minmax(0,1fr)); height: 228px; }
   .flow-icon-options button { height: 44px; }
 }
