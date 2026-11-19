@@ -65,7 +65,7 @@ export default function OntologySdkDownload({ definitionId }: { definitionId: st
   };
   return <>
     <Button size="small" icon={<DownloadOutlined />} onClick={() => setOpen(true)}>TypeScript SDK</Button>
-    <Modal open={open} centered title="TypeScript SDK" onCancel={close} footer={<>
+    <Modal open={open} centered className="flow-surface-modal flow-published-dialog" title="TypeScript SDK" onCancel={close} footer={<>
       <Button onClick={close}>Close</Button>
       {download && <a className="ui-btn ui-btn-primary" href={download.url} download={download.filename}
         onClick={event => {

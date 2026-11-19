@@ -69,16 +69,17 @@ export const validateOntologyDraft = (id: string, revision: number) => client.po
 export const publishOntologyDraft = (id: string, revision: number) => client.post<{ id: string; revision: number; objectType: SemanticDefinition }>(draftPath(id) + '/publish', { revision }, config).then(r => data(r.data));
 export const testOntologyPolicy = (definition: SemanticDefinition, userId: string) => client.post<{ visible: boolean; visibleFields: string[] }>('/security/preview', { projectId: definition.projectId, userId, sourceMode: definition.source.mode, properties: definition.properties.map(item => item.id), security: definition.security }, config).then(r => data(r.data));
 export type PublishedOntologyPage = { items: PublishedOntologyType[]; hasMore: boolean };
-export const listPublishedOntologyTypes = (limit: number, offset: number, q: string, projectId?: string) =>
-  client.get<PublishedOntologyPage>('/object-types', { ...config, params: { limit, offset, q, projectId } }).then(r => data(r.data));
-export const fetchPublishedOntologyType = (id: string) => client.get<PublishedOntologyType>('/object-types/' + encodeURIComponent(id), config).then(r => data(r.data));
+export const listPublishedOntologyTypes = (limit: number, offset: number, q: string, projectId?: string, signal?: AbortSignal) =>
+  client.get<PublishedOntologyPage>('/object-types', { ...config, params: { limit, offset, q, projectId }, signal }).then(r => data(r.data));
+export const fetchPublishedOntologyType = (id: string, signal?: AbortSignal) =>
+  client.get<PublishedOntologyType>('/object-types/' + encodeURIComponent(id), { ...config, signal }).then(r => data(r.data));
 
 
 export type OntologyRecord = { id: string | null; revision: number | null; properties: Record<string, unknown>; title: unknown };
 export type OntologyRecordPage = { items: OntologyRecord[]; hasMore: boolean; actions?: Array<{ kind: SemanticAction['kind']; fields: string[] }> };
 type ActionInput = { values: Record<string, unknown> } | { recordId: string; expectedRevision: number; values?: Record<string, unknown> };
-export const listOntologyRecords = (id: string, limit: number, offset: number, deleted = false) =>
-  client.get<OntologyRecordPage>('/object-types/' + encodeURIComponent(id) + '/records', { ...config, params: { limit, offset, deleted } }).then(r => data(r.data));
+export const listOntologyRecords = (id: string, limit: number, offset: number, deleted = false, signal?: AbortSignal) =>
+  client.get<OntologyRecordPage>('/object-types/' + encodeURIComponent(id) + '/records', { ...config, signal, params: { limit, offset, deleted } }).then(r => data(r.data));
 export type OntologyRecordHistoryPage = { items: Array<{ kind: SemanticAction['kind']; revision: number; createdAt: string;
   changes?: Record<string, { before?: unknown; after?: unknown }> | null; canUndo: boolean }>; hasMore: boolean };
 export const listOntologyRecordHistory = (id: string, recordId: string, limit: number, offset: number, signal: AbortSignal) =>

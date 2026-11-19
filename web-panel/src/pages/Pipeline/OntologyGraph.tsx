@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Button } from '@/components/ui';
 import {
   listOntologyRecords,
   ontologyError,
@@ -15,9 +16,9 @@ import {
   type SetResult,
 } from '../../services/ontology_graph';
 import { getSessionState } from '../../services/session';
-import './OntologyGraph.css';
 
 const size = 20;
+const operatorLabels = { eq: 'Equals', contains: 'Contains', gt: 'Greater than', lt: 'Less than' };
 const objectPath = (id: string) => '/object-types/' + encodeURIComponent(id);
 function display(x: unknown) {
   return x == null ? '—' : typeof x === 'object' ? JSON.stringify(x) : String(x);
@@ -46,12 +47,12 @@ function usePage<T>(key: string, load: (signal: AbortSignal) => Promise<T>) {
 function Pages({ offset, more, change }: { offset: number; more?: boolean; change: (n: number) => void }) {
   return offset > 0 || more ? (
     <div className="ontology-graph-pages">
-      <button type="button" disabled={!offset} onClick={() => change(Math.max(0, offset - size))}>
+      <Button disabled={!offset} onClick={() => change(Math.max(0, offset - size))}>
         Previous
-      </button>
-      <button type="button" disabled={!more} onClick={() => change(offset + size)}>
+      </Button>
+      <Button disabled={!more} onClick={() => change(offset + size)}>
         Next
-      </button>
+      </Button>
     </div>
   ) : null;
 }
@@ -86,7 +87,7 @@ function NewType({ object, onSaved }: { object: PublishedOntologyType; onSaved: 
     }
   }
   return (
-    <form
+    <form className="flow-tool-fields"
       onSubmit={(e) => {
         e.preventDefault();
         void save();
@@ -145,9 +146,9 @@ function NewType({ object, onSaved }: { object: PublishedOntologyType; onSaved: 
           ))}
         </select>
       </label>
-      <button type="submit" disabled={busy}>
+      <Button type="primary" htmlType="submit" disabled={busy}>
         Save relationship type
-      </button>
+      </Button>
       <Message text={error || types?.error} />
     </form>
   );
@@ -244,21 +245,21 @@ function Links({ anchor, move }: { anchor: Anchor; move: (a: Anchor) => void }) 
           <ul>
             {relations?.data?.items.map(({ linkId, record }) => (
               <li key={linkId}>
-                <button
+                <Button
                   onClick={() =>
                     move({ type: target!, record: record.id!, title: display(record.title ?? record.id) })
                   }
                 >
                   {display(record.title ?? record.id)}
-                </button>
+                </Button>
                 {types?.data?.canManage && (
-                  <button
+                  <Button
                     disabled={busy}
                     aria-label={'Remove link to ' + display(record.title ?? record.id)}
                     onClick={() => void mutate(record.id!, linkId)}
                   >
                     Remove link
-                  </button>
+                  </Button>
                 )}
               </li>
             ))}
@@ -286,9 +287,9 @@ function Links({ anchor, move }: { anchor: Anchor; move: (a: Anchor) => void }) 
                   pick('');
                 }}
               />
-              <button disabled={!choice || busy} onClick={() => void mutate(choice)}>
+              <Button disabled={!choice || busy} onClick={() => void mutate(choice)}>
                 Add link
-              </button>
+              </Button>
             </>
           )}
         </>
@@ -319,32 +320,37 @@ function Panel({ objectType, recordId }: Props) {
     (recordId ? { type: objectType.id, record: recordId, title: recordId } : undefined);
   return (
     <section className="ontology-graph" aria-label="Object relationships and sets">
-      <h3>Relationships</h3>
-      {rights?.data?.canManage && (
-        <button onClick={() => toggle((v) => !v)}>
-          {create ? 'Cancel relationship type' : 'New relationship type'}
-        </button>
-      )}
-      {create && (
-        <NewType
-          object={objectType}
-          onSaved={() => {
-            toggle(false);
-            reload((n) => n + 1);
-          }}
-        />
-      )}
-      {anchor ? (
-        <>
-          <p>
-            Browsing {anchor.title}{' '}
-            {trail.length > 0 && <button onClick={() => walk((t) => t.slice(0, -1))}>Back one record</button>}
-          </p>
-          <Links key={anchor.record + ':' + version} anchor={anchor} move={(a) => walk((t) => [...t, a])} />
-        </>
-      ) : (
-        <p>Select a record to browse or edit its relationships.</p>
-      )}
+      <section className="flow-tool-section" aria-label="Relationships">
+        <header className="flow-tool-heading">
+          <h3>Relationships</h3>
+          {rights?.data?.canManage && (
+            <Button size="small" aria-expanded={create} onClick={() => toggle((v) => !v)}>
+              {create ? 'Cancel relationship type' : 'New relationship type'}
+            </Button>
+          )}
+        </header>
+        <Message text={rights?.error} />
+        {create && (
+          <NewType
+            object={objectType}
+            onSaved={() => {
+              toggle(false);
+              reload((n) => n + 1);
+            }}
+          />
+        )}
+        {anchor ? (
+          <>
+            <p>
+              Browsing {anchor.title}{' '}
+              {trail.length > 0 && <Button onClick={() => walk((t) => t.slice(0, -1))}>Back one record</Button>}
+            </p>
+            <Links key={anchor.record + ':' + version} anchor={anchor} move={(a) => walk((t) => [...t, a])} />
+          </>
+        ) : (
+          <p>Select a record to browse or edit its relationships.</p>
+        )}
+      </section>
       <ObjectSets object={objectType} />
     </section>
   );
@@ -355,6 +361,9 @@ function ObjectSets({ object }: { object: PublishedOntologyType }) {
   const [field, setField] = useState(''),
     [op, setOp] = useState<SetQuery['filters'][number]['op']>('eq'),
     [raw, setRaw] = useState('');
+  const fieldType = props.find(p => p.id === field)?.type;
+  const operators: (keyof typeof operatorLabels)[] = fieldType === 'string' ? ['eq', 'contains']
+    : fieldType === 'integer' || fieldType === 'number' ? ['eq', 'gt', 'lt'] : ['eq'];
   const [filters, change] = useState<SetQuery['filters']>([]),
     [group, groupBy] = useState(''),
     [sum, sumField] = useState('');
@@ -427,119 +436,119 @@ function ObjectSets({ object }: { object: PublishedOntologyType }) {
   }
   const data = result?.data;
   return (
-    <div>
-      <h3>Dynamic object sets</h3>
-      <label>
-        Filter property
-        <select
-          value={field}
-          onChange={(e) => {
-            setField(e.target.value);
-            setOp('eq');
-          }}
-        >
-          <option value="">Select property</option>
-          {props.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label>
-        Operator
-        <select value={op} onChange={(e) => setOp(e.target.value as typeof op)}>
-          {[
-            'eq',
-            ...(props.find((p) => p.id === field)?.type === 'string'
-              ? ['contains']
-              : ['integer', 'number'].includes(props.find((p) => p.id === field)?.type ?? '')
-                ? ['gt', 'lt']
-                : []),
-          ].map((o) => (
-            <option key={o}>{o}</option>
-          ))}
-        </select>
-      </label>
-      <label>
-        Filter value
-        <input value={raw} onChange={(e) => setRaw(e.target.value)} />
-      </label>
-      <button disabled={!field || filters.length >= 20} onClick={add}>
-        Add filter
-      </button>
-      <ul>
+    <section className="flow-tool-section" aria-label="Dynamic object sets">
+      <header className="flow-tool-heading"><h3>Dynamic object sets</h3></header>
+      <div className="flow-tool-fields">
+        <label>
+          Filter property
+          <select
+            value={field}
+            onChange={(e) => {
+              setField(e.target.value);
+              setOp('eq');
+            }}
+          >
+            <option value="">Select property</option>
+            {props.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Operator
+          <select value={op} onChange={(e) => setOp(e.target.value as typeof op)}>
+            {operators.map(o => <option key={o} value={o}>{operatorLabels[o]}</option>)}
+          </select>
+        </label>
+        <label>
+          Filter value
+          <input value={raw} onChange={(e) => setRaw(e.target.value)} />
+        </label>
+        <Button disabled={!field || filters.length >= 20} onClick={add}>
+          Add filter
+        </Button>
+      </div>
+      {!!filters.length && <ul className="flow-set-filters">
         {filters.map((f, i) => (
           <li key={i}>
-            {f.field} {f.op} {display(f.value)}{' '}
-            <button
+            {props.find(property => property.id === f.field)?.name ?? f.field} {operatorLabels[f.op]} {display(f.value)}{' '}
+            <Button
               aria-label={'Remove filter ' + (i + 1)}
               onClick={() => change((list) => list.filter((_, n) => n !== i))}
             >
               Remove
-            </button>
+            </Button>
           </li>
         ))}
-      </ul>
-      <label>
-        Group by
-        <select value={group} onChange={(e) => groupBy(e.target.value)}>
-          <option value="">None</option>
-          {props
-            .filter((p) => p.type !== 'json')
-            .map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
+      </ul>}
+      <div className="flow-tool-fields">
+        <label>
+          Group by
+          <select value={group} onChange={(e) => groupBy(e.target.value)}>
+            <option value="">None</option>
+            {props
+              .filter((p) => p.type !== 'json')
+              .map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+          </select>
+        </label>
+        <label>
+          Sum property
+          <select value={sum} onChange={(e) => sumField(e.target.value)}>
+            <option value="">None</option>
+            {props
+              .filter((p) => ['number', 'integer'].includes(p.type))
+              .map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+          </select>
+        </label>
+        <Button type="primary" onClick={() => execute()}>Preview set</Button>
+      </div>
+      <div className="flow-tool-fields flow-set-save">
+        <label>
+          Set name
+          <input maxLength={120} value={name} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <Button disabled={!name.trim() || busy} onClick={() => void mutate()}>
+          Save object set
+        </Button>
+      </div>
+      <div className="flow-tool-fields">
+        <label>
+          Saved set
+          <select value={chosen} onChange={(e) => choose(e.target.value)}>
+            <option value="">Select set</option>
+            {saved?.data?.items.map((v) => (
+              <option key={v.id} value={v.id}>
+                {v.name}
               </option>
             ))}
-        </select>
-      </label>
-      <label>
-        Sum property
-        <select value={sum} onChange={(e) => sumField(e.target.value)}>
-          <option value="">None</option>
-          {props
-            .filter((p) => ['number', 'integer'].includes(p.type))
-            .map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-        </select>
-      </label>
-      <button onClick={() => execute()}>Preview set</button>
-      <label>
-        Set name
-        <input maxLength={120} value={name} onChange={(e) => setName(e.target.value)} />
-      </label>
-      <button disabled={!name.trim() || busy} onClick={() => void mutate()}>
-        Save object set
-      </button>
-      <label>
-        Saved set
-        <select value={chosen} onChange={(e) => choose(e.target.value)}>
-          <option value="">Select set</option>
-          {saved?.data?.items.map((v) => (
-            <option key={v.id} value={v.id}>
-              {v.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <Pages
-        offset={off}
-        more={saved?.data?.hasMore}
-        change={(n) => {
-          page(n);
-          choose('');
-        }}
-      />
-      <button disabled={!chosen} onClick={() => execute(chosen)}>
-        Run saved set
-      </button>
-      <button disabled={!chosen || busy} onClick={() => void mutate(true)}>
-        Delete saved set
-      </button>
+          </select>
+        </label>
+        <Pages
+          offset={off}
+          more={saved?.data?.hasMore}
+          change={(n) => {
+            page(n);
+            choose('');
+          }}
+        />
+        <Button disabled={!chosen} onClick={() => execute(chosen)}>
+          Run saved set
+        </Button>
+        <Button disabled={!chosen || busy} onClick={() => void mutate(true)}>
+          Delete saved set
+        </Button>
+      </div>
+      {active && !result && <p role="status">Loading object set…</p>}
       {data && (
         <div aria-label="Object set results">
           <p>
@@ -574,17 +583,17 @@ function ObjectSets({ object }: { object: PublishedOntologyType }) {
           )}
           {(groupOff > 0 || data.groupsHasMore) && (
             <div>
-              <button disabled={!groupOff} onClick={() => groupPage((n) => n - 50)}>
+              <Button disabled={!groupOff} onClick={() => groupPage((n) => n - 50)}>
                 Previous groups
-              </button>
-              <button disabled={!data.groupsHasMore} onClick={() => groupPage((n) => n + 50)}>
+              </Button>
+              <Button disabled={!data.groupsHasMore} onClick={() => groupPage((n) => n + 50)}>
                 Next groups
-              </button>
+              </Button>
             </div>
           )}
         </div>
       )}
       <Message text={error || saved?.error || result?.error} />
-    </div>
+    </section>
   );
 }

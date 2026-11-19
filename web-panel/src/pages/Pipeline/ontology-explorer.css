@@ -117,6 +117,10 @@
 .flow-ontology__schema-tag > span:not(.ui-icon) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transform: translateY(-1px); }
 .flow-ontology__assets { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 12px; }
 .flow-ontology__assets.is-list { grid-template-columns: minmax(0, 1fr); }
+.flow-catalog-skeleton .flow-ontology__asset { gap: 12px; padding: 10px 15px; }
+.flow-catalog-skeleton :is(i, span) { background: var(--ontology-elevated); border-radius: 3px; }
+.flow-catalog-skeleton i { width: 30px; height: 30px; }
+.flow-catalog-skeleton span { width: 44%; height: 12px; }
 /* Keep glyphs on the same paint boundary when card motion settles. */
 .flow-ontology__asset { position: relative; contain: paint; display: flex; align-items: center; min-width: 0; height: 62px; border: 1px solid var(--ontology-border); border-radius: 4px; background: var(--ontology-surface); transition: border-color .12s; }
 .flow-ontology__asset-ghost { z-index: 2; pointer-events: none; user-select: none; }
