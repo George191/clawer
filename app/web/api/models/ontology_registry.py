@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
-from sqlalchemy import BigInteger, Column, DateTime, func
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, false, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field as DBField
 from sqlmodel import SQLModel
@@ -99,6 +99,10 @@ class Revision(Payload):
     revision: int = Field(ge=1, strict=True)
 
 
+class CatalogChange(Revision):
+    operation: Literal["hide", "unhide", "delete", "restore"]
+
+
 class UpdateDraft(Revision):
     definition: Definition
 
@@ -124,6 +128,8 @@ class OntologyDefinitionRow(SQLModel, table=True):
     draft_definition: dict = DBField(sa_column=Column(JSONB, nullable=False))
     published_definition: dict | None = DBField(default=None, sa_column=Column(JSONB(none_as_null=True), nullable=True))
     source_oid: int | None = DBField(default=None, sa_type=BigInteger)
+    hidden: bool = DBField(default=False, sa_column=Column(Boolean, server_default=false(), nullable=False))
+    deleted: bool = DBField(default=False, sa_column=Column(Boolean, server_default=false(), nullable=False))
     source_signature: dict | None = DBField(default=None, sa_column=Column(JSONB(none_as_null=True), nullable=True))
     published_at: datetime | None = DBField(default=None, sa_type=DateTime(timezone=True))
     created_at: datetime | None = DBField(

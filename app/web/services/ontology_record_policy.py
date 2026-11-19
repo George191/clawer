@@ -83,6 +83,7 @@ def _related_records(definition, definition_id, rule, record_id=None, context=No
             link_type.key == rule.linkType,
             own_type == definition_id,
             other_definition.project_id == definition.projectId,
+            other_definition.deleted.is_(False),
             other.id == rule.relatedRecordId,
             other.deleted.is_(False),
         )

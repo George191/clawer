@@ -13,6 +13,7 @@ import OntologyRevisions from './OntologyRevisions';
 import OntologySdkDownload from './OntologySdkDownload';
 import OntologyTransactions from './OntologyTransactions';
 import { parsePropertyValue } from './ontologyPropertyValue';
+import { PublishedTypeActions } from './PublishedTypeActions';
 import SemanticTypeGlyph from './SemanticTypeGlyph';
 import OntologyCatalogSkeleton from './OntologyCatalogSkeleton';
 import './ontology-create.css';
@@ -24,8 +25,8 @@ const maxOffset = 100_000;
 type RecordQuery = { deleted: boolean; offset: number };
 type ActionInputs = Record<string, { text: string; isNull: boolean }>;
 type Operation = { kind: SemanticAction['kind']; fields: string[]; record?: OntologyRecord; initialInputs: ActionInputs };
-export type PublishedCatalogPage = PublishedOntologyPage & { offset: number; keyword: string; identity: string };
-type Props = { selection: string; view: 'grid' | 'list'; catalogPage?: PublishedCatalogPage; onCatalogPage: (page?: PublishedCatalogPage) => void; onSelect: (id: string) => void; onClearSearch: () => void };
+export type PublishedCatalogPage = PublishedOntologyPage & { offset: number; keyword: string; identity: string; includeHidden: boolean; includeDeleted: boolean };
+type Props = { selection: string; view: 'grid' | 'list'; includeHidden: boolean; includeDeleted: boolean; managedProjects: string[]; catalogPage?: PublishedCatalogPage; onCatalogPage: (page?: PublishedCatalogPage) => void; onSelect: (id: string) => void; onClearSearch: () => void };
 function show(value: unknown): string {
   if (value == null) return '—';
   return typeof value === 'object' ? JSON.stringify(value) : String(value);
@@ -72,7 +73,7 @@ function RecordHistory({ objectType, recordId, onChanged }: { objectType: string
   </section>;
 }
 
-export default function PublishedOntology({ selection, view, catalogPage: retainedPage, onCatalogPage, onSelect, onClearSearch }: Props) {
+export default function PublishedOntology({ selection, view, includeHidden, includeDeleted, managedProjects, catalogPage: retainedPage, onCatalogPage, onSelect, onClearSearch }: Props) {
   const [params, setParams] = useSearchParams();
   const search = params.get('publishedQ') || '';
   const keyword = search.trim();
@@ -80,7 +81,8 @@ export default function PublishedOntology({ selection, view, catalogPage: retain
   const catalogOffset = Number.isInteger(requestedOffset) && requestedOffset >= 0 && requestedOffset <= maxOffset ? requestedOffset : 0;
   const [hasLoadedCatalog, setHasLoadedCatalog] = useState(false);
   const sameCatalogQuery = retainedPage?.keyword === keyword && retainedPage.offset === catalogOffset;
-  const catalogPage = hasLoadedCatalog || sameCatalogQuery ? retainedPage : undefined;
+  const sameFilters = retainedPage?.includeHidden === includeHidden && retainedPage.includeDeleted === includeDeleted;
+  const catalogPage = (hasLoadedCatalog || sameCatalogQuery) && sameFilters ? retainedPage : undefined;
   const [metadata, setMetadata] = useState<{ version: number; object?: PublishedOntologyType; error?: string }>();
   const [query, setQuery] = useState<RecordQuery>({ deleted: false, offset: 0 });
   const { deleted, offset } = query;
@@ -102,6 +104,7 @@ export default function PublishedOntology({ selection, view, catalogPage: retain
   const identity = useRef(getSessionState().identity).current;
   const current = () => active.current && identity === getSessionState().identity;
   const reload = () => setVersion(value => value + 1);
+  const reloadCatalog = () => { onCatalogPage(undefined); reload(); };
   const changeCatalogOffset = (value: number) => setParams(previous => {
     const next = new URLSearchParams(previous);
     if (value) next.set('publishedOffset', String(value)); else next.delete('publishedOffset');
@@ -113,10 +116,10 @@ export default function PublishedOntology({ selection, view, catalogPage: retain
     const request = new AbortController();
     setCatalogLoading(true); setCatalogError('');
     const timer = window.setTimeout(() => {
-      listPublishedOntologyTypes(pageSize, catalogOffset, keyword, undefined, request.signal)
+      listPublishedOntologyTypes(pageSize, catalogOffset, keyword, undefined, request.signal, includeHidden, includeDeleted)
         .then(data => {
           if (!request.signal.aborted && current()) {
-            onCatalogPage({ ...data, offset: catalogOffset, keyword, identity });
+            onCatalogPage({ ...data, offset: catalogOffset, keyword, identity, includeHidden, includeDeleted });
             setHasLoadedCatalog(true);
           }
         }, failure => {
@@ -128,13 +131,13 @@ export default function PublishedOntology({ selection, view, catalogPage: retain
         .finally(() => { if (!request.signal.aborted && current()) setCatalogLoading(false); });
     }, keyword ? 250 : 0);
     return () => { request.abort(); window.clearTimeout(timer); };
-  }, [selection, catalogOffset, keyword, version, identity, onCatalogPage]);
+  }, [selection, catalogOffset, keyword, version, identity, onCatalogPage, includeHidden, includeDeleted]);
 
   const object = metadata?.object;
   const pageRead = recordRead?.query === query && recordRead.version === version ? recordRead : undefined;
   const records = pageRead?.page;
   const metadataError = metadata?.version === version ? metadata.error : undefined;
-  const loading = selection ? !metadataError && !pageRead : catalogLoading || (!!catalogPage && !sameCatalogQuery);
+  const loading = selection ? !metadataError && !pageRead : catalogLoading || (!catalogError && (!catalogPage || !sameCatalogQuery));
   const error = selection ? metadataError : catalogError;
   useEffect(() => {
     if (!selection) return;
@@ -238,25 +241,26 @@ export default function PublishedOntology({ selection, view, catalogPage: retain
           {!selection && catalogPage && <>
             {!!catalogPage.items.length && view === 'grid' && <div className="flow-published-catalog-scroll flow-published-catalog-cards" role="region" aria-label="Published type cards" ref={element => { if (element) element.inert = loading; }}>
               <div className="flow-ontology__assets">
-                {catalogPage.items.map(({ id, definition }) => <article className="flow-ontology__asset" key={id}>
-                  <button type="button" className="flow-ontology__asset-main" data-published-type-link aria-label={definition.name} onClick={() => onSelect(id)}>
-                    <SemanticTypeGlyph definition={definition} />
+                {catalogPage.items.map(item => <article className="flow-ontology__asset" key={item.id}>
+                  <button type="button" className="flow-ontology__asset-main" data-published-type-link aria-label={item.definition.name} disabled={item.deleted} onClick={() => onSelect(item.id)}>
+                    <SemanticTypeGlyph definition={item.definition} />
                     <span className="flow-ontology__asset-name">
-                      <span className="flow-ontology__asset-heading"><strong title={definition.name}>{definition.name}</strong></span>
-                      <span className="flow-ontology__asset-description" title={definition.description || definition.id}>{definition.description || definition.id}</span>
+                      <span className="flow-ontology__asset-heading"><strong title={item.definition.name}>{item.definition.name}</strong>{(item.hidden || item.deleted) && <small className="flow-ontology__asset-visibility">{item.deleted ? 'Deleted' : 'Hidden'}</small>}</span>
+                      <span className="flow-ontology__asset-description" title={item.definition.description || item.definition.id}>{item.definition.description || item.definition.id}</span>
                     </span>
                   </button>
+                  {managedProjects.includes(item.definition.projectId) && <PublishedTypeActions item={item} onChanged={reloadCatalog} />}
                 </article>)}
               </div>
             </div>}
             {!!catalogPage.items.length && view === 'list' && <div className="flow-published-catalog-scroll" role="region" aria-label="Published types table" tabIndex={0} ref={element => { if (element) element.inert = loading; }}>
               <table className="flow-published-catalog-table">
-                <thead><tr><th scope="col">Object type</th><th scope="col">API ID</th><th scope="col">Datasource</th><th scope="col">Revision</th></tr></thead>
-                <tbody>{catalogPage.items.map(({id, definition, revision}) => <tr key={id} onClick={() => onSelect(id)}>
-                  <th scope="row"><div className="flow-published-catalog-identity"><SemanticTypeGlyph definition={definition} /><div><button type="button" data-published-type-link onClick={event => { event.stopPropagation(); onSelect(id); }} title={definition.name}>{definition.name}</button>{definition.description && <small title={definition.description}>{definition.description}</small>}</div></div></th>
-                  <td><code title={definition.id}>{definition.id}</code></td>
-                  <td>{definition.source.mode === 'existing' ? <code title={`${definition.source.schema}.${definition.source.table}`}>{definition.source.schema}.{definition.source.table}</code> : 'Object-managed records'}</td>
-                  <td>{revision}</td>
+                <thead><tr><th scope="col">Object type</th><th scope="col">API ID</th><th scope="col">Datasource</th><th scope="col">Revision</th>{managedProjects.length > 0 && <th scope="col" className="flow-published-actions-heading"><span className="flow-published-sr-only">Manage type</span></th>}</tr></thead>
+                <tbody>{catalogPage.items.map(item => <tr key={item.id} onClick={() => { if (!item.deleted) onSelect(item.id); }}>
+                  <th scope="row"><div className="flow-published-catalog-identity"><SemanticTypeGlyph definition={item.definition} /><div><button type="button" data-published-type-link disabled={item.deleted} onClick={event => { event.stopPropagation(); onSelect(item.id); }} title={item.definition.name}>{item.definition.name}</button>{(item.deleted || item.hidden) && <small>{item.deleted ? 'Deleted' : 'Hidden'}</small>}{item.definition.description && <small title={item.definition.description}>{item.definition.description}</small>}</div></div></th>
+                  <td><code title={item.definition.id}>{item.definition.id}</code></td>
+                  <td>{item.definition.source.mode === 'existing' ? <code title={`${item.definition.source.schema}.${item.definition.source.table}`}>{item.definition.source.schema}.{item.definition.source.table}</code> : 'Object-managed records'}</td>
+                  <td>{item.revision}</td>{managedProjects.length > 0 && <td>{managedProjects.includes(item.definition.projectId) && <PublishedTypeActions item={item} onChanged={reloadCatalog} />}</td>}
                 </tr>)}</tbody>
               </table>
             </div>}
