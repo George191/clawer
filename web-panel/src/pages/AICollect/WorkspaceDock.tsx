@@ -3956,7 +3956,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         }
         .workspace-dock-linked-task-count.is-link:hover,
         .workspace-dock-linked-task-count.is-link:focus-visible {
-          color: #002FA7;
+          color: var(--ui-action-link);
           text-decoration: underline;
           text-underline-offset: 2px;
         }
@@ -4685,13 +4685,16 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           transform: none;
         }
         .workspace-dock-inline-action.is-primary {
-          border-color: rgba(138, 180, 255, 0.42);
-          background: rgba(138, 180, 255, 0.14);
-          color: #DCE8FF;
+          border-color: var(--ui-action-bg);
+          background: var(--ui-action-bg);
+          color: var(--ui-action-text);
         }
         .workspace-dock-inline-action.is-primary:hover:not(:disabled) {
-          background: rgba(138, 180, 255, 0.24);
-          color: #F5F8FF;
+          background: var(--ui-action-hover);
+          color: var(--ui-action-text);
+        }
+        .workspace-dock-inline-action.is-primary:active:not(:disabled) {
+          background: var(--ui-action-active);
         }
         .workspace-dock-inline-action.is-icon-only {
           width: 32px;
@@ -4699,15 +4702,15 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           padding: 0;
           gap: 0;
           border-radius: 10px;
-          border-color: rgba(138, 180, 255, 0.24);
+          border-color: color-mix(in srgb, var(--ui-action-link) 24%, transparent);
           background:
-            linear-gradient(180deg, rgba(138, 180, 255, 0.18), rgba(138, 180, 255, 0.08)),
+            linear-gradient(180deg, color-mix(in srgb, var(--ui-action-link) 18%, transparent), color-mix(in srgb, var(--ui-action-link) 8%, transparent)),
             rgba(255, 255, 255, 0.035);
           box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 8px 20px rgba(0, 0, 0, 0.18);
         }
         .workspace-dock-inline-action.is-icon-only:hover:not(:disabled) {
           background:
-            linear-gradient(180deg, rgba(138, 180, 255, 0.3), rgba(138, 180, 255, 0.16)),
+            linear-gradient(180deg, color-mix(in srgb, var(--ui-action-link) 30%, transparent), color-mix(in srgb, var(--ui-action-link) 16%, transparent)),
             rgba(255, 255, 255, 0.07);
         }
         .workspace-dock-inline-action.is-icon-only .ui-icon {
@@ -4780,13 +4783,9 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           box-shadow: none !important;
           font-size: 9px !important;
         }
-        .workspace-dock-log-run-select.ui-select-focused .ui-select-selector,
         .workspace-dock-log-run-select:focus-within .ui-select-selector {
-          border: 0 !important;
-          outline: 0 !important;
-          box-shadow: none !important;
-        }
-        .workspace-dock-log-run-select:focus-visible .ui-select-selector {
+          outline: 2px solid var(--ui-focus-ring) !important;
+          outline-offset: 1px;
           border-radius: 4px;
           background: ${aura.surfaceSoft} !important;
         }

@@ -621,7 +621,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
       ))}
       <div style={{ height: 1, margin: '4px 14px 6px', background: palette.border }} />
       <div style={{ padding: '0 7px' }}>
-        <Button type="primary" block style={{ height: 32, borderRadius: 5, borderColor: '#0D9394', background: '#0D9394', fontSize: 11, boxShadow: 'none' }}>View all notifications</Button>
+        <Button type="primary" block style={{ height: 32, borderRadius: 5, fontSize: 11, boxShadow: 'none' }}>View all notifications</Button>
       </div>
     </div>
   );

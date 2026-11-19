@@ -2,7 +2,7 @@
 .result-column-header .flow-column-menu { min-width: 0; }
 .result-column-header .result-grip, .result-column-config .result-grip { cursor: grab; color: var(--ontology-muted); user-select: none; }
 .result-resizer { cursor: col-resize; touch-action: none; align-self: stretch; position: absolute; right: -7px; width: 9px; top: -7px; bottom: -7px; z-index: 1; }
-.result-resizer:hover, .result-resizer:focus-visible { border-right: 2px solid var(--ontology-link, #2684c5); }
+.result-resizer:hover, .result-resizer:focus-visible { border-right: 2px solid var(--ui-focus-ring); }
 .flow-console--ontology .flow-data-table th:has(.result-column-header) .ui-table-heading { display: flex; width: 100%; }
 .flow-console--ontology .flow-data-table td.result-cell-clip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .flow-console--ontology .flow-data-table td.result-cell-wrap,

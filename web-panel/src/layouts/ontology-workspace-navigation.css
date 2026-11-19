@@ -27,7 +27,7 @@
   background: var(--ui-elevated, #2a2e3a);
 }
 .ontology-workspace-navigation a:focus-visible {
-  outline: 2px solid var(--ui-primary, #018bff);
+  outline: 2px solid var(--ui-focus-ring);
   outline-offset: -2px;
 }
 .ontology-workspace-navigation a[aria-current="page"] {

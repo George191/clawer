@@ -10,7 +10,7 @@
   --ontology-text: var(--ui-text, #e4e7eb);
   --ontology-muted: var(--ui-muted, #9ca3af);
   --ontology-control-border: var(--ui-border, rgba(255,255,255,.08));
-  --ontology-primary: var(--ui-primary, #018bff);
+  --ontology-primary: var(--ui-primary);
   --ontology-link: color-mix(in srgb, var(--ontology-primary) 80%, var(--ontology-text));
   --ontology-hover: color-mix(in srgb, var(--ontology-text) 6%, var(--ontology-panel));
   --ontology-selected: color-mix(in srgb, var(--ontology-primary) 18%, var(--ontology-panel));
@@ -26,19 +26,17 @@ html[data-theme="light"] :is(.flow-console--ontology,.flow-surface-modal,.flow-m
 .flow-console.flow-console--ontology { display:flex; flex:1; flex-direction:column; min-width:0; min-height:0; height:100%; padding:0; overflow:hidden; background:var(--ontology-bg); animation:none; }
 .flow-console.flow-console--ontology > .flow-core { display:flex; flex:1; min-width:0; min-height:0; width:100%; max-width:none; height:auto; overflow:hidden; margin:0; padding:0; }
 .flow-console--ontology :is(button,a):focus-visible,
-.flow-surface-modal :is(button,a):focus-visible { outline:2px solid var(--ontology-primary); outline-offset:2px; }
+.flow-surface-modal :is(button,a):focus-visible { outline:2px solid var(--ui-focus-ring); outline-offset:2px; }
 .flow-console--ontology .ui-btn,
 .flow-surface-modal .ui-btn { min-height:28px; border-radius:3px; box-shadow:none; font-size:12px; font-weight:400; }
 .flow-console--ontology .ui-btn-default,
 .flow-surface-modal .ui-btn-default { border-color:var(--ontology-control-border); background:var(--ontology-bg); color:var(--ontology-text); }
 .flow-console--ontology .ui-btn-default:not(:disabled):hover,
 .flow-surface-modal .ui-btn-default:not(:disabled):hover { border-color:var(--ontology-control-border); background:var(--ontology-hover); color:var(--ontology-text); }
-.flow-console--ontology .ui-btn-primary,
-.flow-surface-modal .ui-btn-primary { border-color:var(--ontology-link); background:var(--ontology-primary); color:#fff; }
 .flow-console--ontology :is(.ui-input,.ui-input-affix-wrapper,.ui-select-selector),
 .flow-surface-modal :is(.ui-input,.ui-input-affix-wrapper,.ui-select-selector) { border-color:var(--ontology-control-border); border-radius:3px; background:var(--ontology-panel); color:var(--ontology-text); font-size:12px; }
 .flow-console--ontology .ui-input-affix-wrapper:focus-within,
-.flow-surface-modal .ui-input-affix-wrapper:focus-within { border-color:var(--ontology-primary); box-shadow:0 0 0 1px var(--ontology-primary); }
+.flow-surface-modal .ui-input-affix-wrapper:focus-within { border-color:var(--ui-focus-ring); box-shadow:var(--ui-focus-shadow); }
 .flow-console--ontology .ui-tag,
 .flow-surface-modal .ui-tag { border-radius:3px; font-size:12px; font-weight:400; }
 .flow-console--ontology .flow-ontology-runtime { flex:1; min-width:0; padding:28px 32px; overflow:auto; overscroll-behavior:contain; scroll-padding:16px; background:var(--ontology-bg); }

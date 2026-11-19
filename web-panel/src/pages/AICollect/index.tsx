@@ -3490,7 +3490,7 @@ const AICollect: React.FC = () => {
                 style={{ marginTop: 6 }}
               />
             </label>
-            <Button className="ai-aura-primary" type="primary" icon={<RobotOutlined />} block onClick={handleAnalyze}>
+            <Button type="primary" icon={<RobotOutlined />} block onClick={handleAnalyze}>
               开始智能分析
             </Button>
           </div>
@@ -5495,6 +5495,8 @@ const AICollect: React.FC = () => {
               linear-gradient(180deg, #101212 0%, ${aura.bg} 58%, #141818 100%) !important;
           }
           .ai-collect-workbench {
+            --ui-focus-ring: var(--ui-focus-on-dark);
+            --ui-action-link: var(--ui-link-on-dark);
             --ai-session-prompt-bottom: 18px;
             --ai-session-prompt-height: 96px;
             --ai-session-template-tail-gap: calc(var(--ai-session-prompt-height) + 38px);
@@ -5633,23 +5635,17 @@ const AICollect: React.FC = () => {
             color: ${aura.text};
             box-shadow: inset 0 0 0 1px rgba(138, 180, 255, 0.18);
           }
-          .ai-collect-workbench .ui-btn {
+          .ai-collect-workbench .ui-btn { border-radius: 8px; }
+          .ai-collect-workbench .ui-btn:where(:not(.ui-btn-primary)) {
             background: rgba(255, 255, 255, 0.03);
             border-color: ${aura.border};
             color: ${aura.text};
             box-shadow: none;
-            border-radius: 8px;
           }
           .ai-collect-workbench .ui-btn-link {
             border: none;
-            color: ${aura.accent};
+            color: var(--ui-action-link);
             background: transparent;
-          }
-          .ai-collect-workbench .ui-btn-primary,
-          .ai-collect-workbench .ai-aura-primary {
-            border-color: rgba(138, 180, 255, 0.18) !important;
-            background: ${aura.accentSoft} !important;
-            color: ${aura.text} !important;
           }
           .ai-collect-workbench .ui-tag {
             background: transparent;
@@ -6638,7 +6634,7 @@ const AICollect: React.FC = () => {
           .ai-session-release-action:focus-visible,
           .ai-session-release-action.is-selected {
             color: #ffffff;
-            background: rgba(138, 180, 255, 0.15);
+            background: color-mix(in srgb, var(--ui-action-link) 15%, transparent);
           }
           .ai-session-release-action .ui-icon {
             font-size: 15px;
