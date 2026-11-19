@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState } from 'react';
 import { ProfileOutlined } from '@/components/ui/icons';
 import { inferSiteKind, TemplateGlyph } from '../AICollect/WorkspaceDock';
 import { fetchExplorerProperties, type ExplorerPropertyMapping } from '../../services/explorerProperties';
+import { accentStyle } from '../../theme/tokens';
 
 export type ExplorerOverviewPresentation = ExplorerPropertyMapping;
 export type ExplorerPresentationRead = { presentation?: ExplorerOverviewPresentation; error?: true };
@@ -65,7 +66,9 @@ export function useExplorerPresentation(schema: string, table: string, revision:
 
 export function ExplorerTypeIcon({ dataType, table, compact }: { dataType?: string; table: string; compact?: boolean }) {
   const className = `flow-explorer-selection__icon${compact ? ' is-compact' : ''}`;
-  return <span aria-hidden="true" className={className}><TemplateGlyph kind={inferSiteKind(dataType || '', table)} source={table} /></span>;
+  return <span aria-hidden="true" className={className} style={accentStyle(dataType || '')}>
+    <TemplateGlyph kind={inferSiteKind(dataType || '', table)} source={table} />
+  </span>;
 }
 
 export function explorerFields(row: ExplorerPreviewRow, columns: readonly string[], presentation?: ExplorerOverviewPresentation,

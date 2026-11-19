@@ -97,10 +97,19 @@ def run():
         expect(panel.get_by_role("heading", name="Preview row 01")).to_be_visible()
         header_glyph = page.locator(".wb-type .workspace-glyph")
         expect(header_glyph).to_be_visible()
-        glyph = header_glyph.inner_html()
-        assert page.locator(".wb-current .workspace-glyph").inner_html() == glyph
-        assert row(page, 1).locator(".workspace-glyph").inner_html() == glyph
-        assert panel.locator(".workspace-glyph").inner_html() == glyph
+
+        def glyph_style(locator):
+            return locator.evaluate("""el => ({
+                svg: el.innerHTML,
+                color: getComputedStyle(el).color,
+                background: getComputedStyle(el.parentElement).backgroundColor,
+            })""")
+
+        glyph = glyph_style(header_glyph)
+        assert glyph["color"] == "rgb(255, 255, 255)"
+        assert glyph_style(page.locator(".wb-current .workspace-glyph")) == glyph
+        assert glyph_style(row(page, 1).locator(".workspace-glyph")) == glyph
+        assert glyph_style(panel.locator(".workspace-glyph")) == glyph
         assert panel.evaluate("""el => {
             const style = getComputedStyle(el);
             const root = getComputedStyle(document.documentElement);
@@ -123,7 +132,7 @@ def run():
             panel.get_by_role("link", name="Open full view").click()
         full = full_opened.value
         expect(full.get_by_role("heading", name="Preview row 01")).to_be_visible()
-        assert full.locator(".explorer-full-record > header .workspace-glyph").inner_html() == glyph
+        assert glyph_style(full.locator(".explorer-full-record > header .workspace-glyph")) == glyph
         expect(full.get_by_role("region", name="Key Service trip Information")).to_contain_text("Legacy record 01")
         if screenshots:
             full.screenshot(path=Path(screenshots) / "selection-full-overview.png", animations="disabled")

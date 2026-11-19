@@ -11,7 +11,7 @@ import {
 import { fetchCurrentUserContext, fetchEtlObjectFavorites, fetchEtlObjectPreview, fetchEtlObjectTypes, fetchLayers, importEtlObjectFavorites, updateEtlObjectFavorite, updateEtlObjectVisibility } from '../../services/api';
 import { getSessionState } from '../../services/session';
 import type { EtlObjectCatalog, EtlObjectPreview, EtlObjectType, EtlObjectVisibility, LayerNode } from '../../services/types';
-import { layerColors } from '../../theme/tokens';
+import { accentStyle, schemaColor } from '../../theme/tokens';
 import { inferSiteKind, TemplateGlyph } from '../AICollect/WorkspaceDock';
 import SemanticObjectWizard from './SemanticObjectWizard';
 import PublishedOntology, { type PublishedCatalogPage } from './PublishedOntology';
@@ -31,7 +31,6 @@ const favoriteStorageKey = 'flow-favorite-object-types';
 const favoriteImportOwnerKey = 'flow-favorite-object-types-import-owner';
 const catalogBatchSize = 500;
 const emptyCatalog: EtlObjectCatalog = { items: [], total: 0, limit: catalogBatchSize, offset: 0, schemaCounts: {}, groupCounts: {}, groupSchemaCounts: {} };
-const accentStyle = (dataType: string) => ({ '--asset-color': schemaColor(dataType.trim().toLowerCase()) } as React.CSSProperties);
 const number = (value: number) => value.toLocaleString('en-US');
 const visibilityLabels: Record<EtlObjectVisibility, string> = { normal: 'Normal', prominent: 'Prominent', hidden: 'Hidden' };
 const visibilityDescriptions: Record<EtlObjectVisibility, string> = {
@@ -109,18 +108,7 @@ function useCatalogMotion(root: React.RefObject<HTMLDivElement>, scope: string, 
   }, []);
 }
 
-export function schemaColor(key: string): string {
-  const normalized = key.trim().toLowerCase();
-  const known = normalized.replace(/^ts_/, '').toUpperCase();
-  if (layerColors[known]) return layerColors[known];
-  if (known === 'DIM') return '#38BDF8';
-  let hash = 2166136261;
-  for (const character of normalized) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
-  hash = Math.imul(hash ^ (hash >>> 16), 0x7feb352d);
-  hash = Math.imul(hash ^ (hash >>> 15), 0x846ca68b);
-  hash ^= hash >>> 16;
-  return `hsl(${((hash >>> 0) / 4294967296 * 360).toFixed(3)} 68% 66%)`;
-}
+export { schemaColor };
 
 export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: number }) {
   const navigate = useNavigate();

@@ -1,3 +1,5 @@
+import type { CSSProperties } from 'react';
+
 import type { AliasToken } from '@/components/ui/types';
 
 /** 扩展自定义 Design Token — Tellius 风格 */
@@ -98,6 +100,21 @@ export const layerColors: Record<string, string> = {
   DWS: '#EC4899',
   ADS: '#EF4444',
 };
+
+export function schemaColor(key: string): string {
+  const normalized = key.trim().toLowerCase();
+  const known = normalized.replace(/^ts_/, '').toUpperCase();
+  if (layerColors[known]) return layerColors[known];
+  if (known === 'DIM') return '#38BDF8';
+  let hash = 2166136261;
+  for (const character of normalized) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
+  hash = Math.imul(hash ^ (hash >>> 16), 0x7feb352d);
+  hash = Math.imul(hash ^ (hash >>> 15), 0x846ca68b);
+  hash ^= hash >>> 16;
+  return `hsl(${((hash >>> 0) / 4294967296 * 360).toFixed(3)} 68% 66%)`;
+}
+
+export const accentStyle = (dataType: string) => ({ '--asset-color': schemaColor(dataType) } as CSSProperties);
 
 /** 图表调色板 */
 export const chartPalette = [
