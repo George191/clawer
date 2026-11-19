@@ -67,10 +67,11 @@ async def principals(
     project_id: UUID,
     search: str = Query(default="", max_length=100),
     limit: int = Query(default=100, ge=1, le=200),
+    user_id: list[UUID] | None = Query(default=None, max_length=100),
 ) -> PrincipalOptions:
     """List identities available to a verified project manager."""
     await ontology_registry.get_project(session, current_user, project_id, manage=True)
-    items = await project_principals(session, project_id, search=search.strip(), limit=limit)
+    items = await project_principals(session, project_id, search=search.strip(), limit=limit, user_ids=user_id)
     return PrincipalOptions(items=items)
 
 

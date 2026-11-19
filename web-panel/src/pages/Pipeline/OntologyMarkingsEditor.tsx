@@ -32,7 +32,7 @@ export default function OntologyMarkingsEditor({ project, value, onChange, princ
   if (!project) return null;
   const choices = editing && !result.items.some(item => item.id === editing.id) ? [...result.items, editing] : result.items;
   const options = new Map(principals.map(p => [key(p), p]));
-  for (const reader of readers) if (!options.has(key(reader))) options.set(key(reader), { ...reader, name: reader.id });
+  for (const reader of readers) if (!options.has(key(reader))) options.set(key(reader), { ...reader, name: 'Name unavailable' });
   const selectMark = (mark?: Marking) => {
     setEditing(mark); setReaders(mark?.readers ?? []); setName(mark?.name ?? ''); setError(''); setHistory([]); setMoreHistory(false);
   };
@@ -47,7 +47,7 @@ export default function OntologyMarkingsEditor({ project, value, onChange, princ
   return <section aria-label="Security markings" className="flow-semantic-config">
     <h4>Security markings</h4>
     <label className="flow-create-field"><span>Required project markings</span>
-      <Select mode="multiple" aria-label="Required project markings" value={value}
+      <Select mode="multiple" aria-label="Required project markings" value={value} placeholder={choices.length ? "Select markings" : "No project markings available"}
         options={choices.map(item => ({value:item.id,label:item.name}))}
         onChange={(ids: string[]) => onChange(ids)} /></label>
     <p className="flow-create-help">Readers need every selected clearance to access this type and its records.</p>
@@ -72,7 +72,7 @@ export default function OntologyMarkingsEditor({ project, value, onChange, princ
         })}>{editing ? 'Save clearances' : 'Create marking'}</Button>
         {editing && <Button onClick={() => audit(0)}>View clearance history</Button>}
         {!!history.length && <ol aria-label="Clearance history">{history.map(change => <li key={change.revision}>
-          Revision {change.revision} · {new Date(change.createdAt).toLocaleString()} · {principals.find(p => p.kind === 'user' && p.id === change.actorId)?.name ?? change.actorId} · {change.readers.map(p => options.get(key(p))?.name ?? p.id).join(', ') || 'No holders'}
+          Revision {change.revision} · {new Date(change.createdAt).toLocaleString()} · {principals.find(p => p.kind === 'user' && p.id === change.actorId)?.name ?? 'Name unavailable'} · {change.readers.map(p => options.get(key(p))?.name ?? 'Name unavailable').join(', ') || 'No holders'}
         </li>)}</ol>}{moreHistory && <Button onClick={() => audit(history.length)}>Load older clearance changes</Button>}
       </fieldset></details>}
     {error && <p role="alert">{error} <Button onClick={() => {selectMark(); refresh(v => v + 1);}}>Reload markings</Button></p>}

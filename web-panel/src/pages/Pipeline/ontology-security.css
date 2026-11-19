@@ -13,22 +13,34 @@
   font: inherit;
   cursor: pointer;
 }
-.flow-security-nav button[aria-pressed="true"] { color: var(--ontology-link); border-bottom-color: currentColor; }
+.flow-security-nav button[aria-selected="true"] { color: var(--ontology-link); border-bottom-color: currentColor; }
 .flow-security-nav button:hover { color: var(--ontology-text); }
-.flow-security-panel { display: grid; align-content: start; gap: 12px; min-width: 0; }
+.flow-security-panel {
+  display: grid; align-content: start; gap: 12px; min-width: 0;
+  padding: 16px; border: 1px solid var(--ontology-border); border-top: 0;
+}
+.flow-security-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); margin: 0; gap: 6px 18px; }
+.flow-security-facts dt, .flow-security-results li > :last-child { color: var(--ontology-muted); }
+.flow-security-facts dd { margin: 0; overflow-wrap: anywhere; }
+.flow-security-panel .flow-security-test-button { justify-self: start; }
+.flow-security-results { margin: 0; padding: 0; list-style: none; }
+.flow-security-results li { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; border-top: 1px solid var(--ontology-border); }
+.flow-security-panel .flow-create-notice { min-width: 0; overflow-wrap: anywhere; }
+.flow-security-panel .flow-create-property-heading { align-items: center; justify-content: space-between; }
+.flow-security-panel fieldset.flow-semantic-config { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); align-items: end; gap: 10px; }
 .flow-security-panel h4 { margin: 0; font-size: 15px; }
 .flow-security-panel .flow-create-help { margin: 0; }
-.flow-security-panel .flow-create-field, .flow-security-test { width: 100%; max-width: 540px; }
+.flow-security-panel .flow-create-field { width: 100%; max-width: 540px; }
 .flow-security-panel .flow-semantic-config { min-width: 0; margin: 0; }
 .flow-security-panel > .flow-semantic-config,
 .flow-security-panel section[aria-label="Security markings"] {
   display: grid; gap: 10px; padding: 0; background: transparent; border: 0;
 }
 .flow-security-panel section[aria-label="Security markings"] {
-  padding-bottom: 16px; margin-bottom: 4px; border-bottom: 1px solid var(--ontology-border);
+  padding-top: 12px; border-top: 1px solid var(--ontology-border);
 }
-.flow-security-panel .flow-create-grid, .flow-security-test { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-.flow-security-test > .ui-select { flex: 1 1 180px; }
+.flow-security-panel .flow-create-grid { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+
 .flow-security-panel details summary { cursor: pointer; }
 .flow-security-panel details[open] > fieldset { margin-top: 10px; }
 .flow-security-panel fieldset > label { display: grid; gap: 4px; }

@@ -186,6 +186,11 @@ async def evaluate(session, user, row):
         session, row.project_id, definition_principals(definition.actions, definition.security),
     )
     result = assess_definition(definition, source, eligible=eligible)
+    if definition.source.mode == "existing" and definition.source.upstreamConnectionId:
+        from app.web.services.data_connections import get_data_connections
+
+        if not await get_data_connections().exists(definition.source.upstreamConnectionId):
+            result.errors.append(DefinitionIssue(path="source.upstreamConnectionId", message="The selected data connection no longer exists"))
     from app.web.services.ontology_record_policy import validate_record_policy_refs
 
     for message in await validate_record_policy_refs(session, row.id, definition):

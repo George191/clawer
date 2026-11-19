@@ -233,7 +233,7 @@ def assess_definition(
             keys = tuple(properties[key].sourceColumn for key in definition.primaryKey if key in properties)
             if not any(len(keys) == len(candidate) and set(keys) == set(candidate) for candidate in source.unique_keys):
                 error("primaryKey", "Select the columns of a non-null database primary or unique key")
-    elif definition.source.schema_name or definition.source.table or any(item.sourceColumn for item in definition.properties):
+    elif definition.source.upstreamConnectionId or definition.source.schema_name or definition.source.table or any(item.sourceColumn for item in definition.properties):
         error("source", "Objects without a source cannot have warehouse column mappings")
 
     for issue in definition_policy_errors(

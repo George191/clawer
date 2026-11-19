@@ -1,5 +1,6 @@
 import { Button, Checkbox, Input, Select } from '@/components/ui';
 import type { OntologyPrincipal, Principal, SemanticAction, SemanticDefinition, SemanticProperty } from '../../services/ontology';
+import OntologyMarkingsEditor from './OntologyMarkingsEditor';
 import OntologyRecordPolicyEditor from './OntologyRecordPolicyEditor';
 import OntologyFunctionEditor from './OntologyFunctionEditor';
 import OntologyIconPicker from './OntologyIconPicker';
@@ -111,6 +112,8 @@ export default function OntologyRevisionsEditor({ initial, definition, principal
         {principalSelect(id + ' readers', fields, readers => change({ security: { ...security, fieldReaders: { ...security.fieldReaders, [id]: readers } } }))}
         <Button size="small" disabled={disabled} onClick={() => change({ security: { ...security, fieldReaders: Object.fromEntries(Object.entries(security.fieldReaders).filter(([key]) => key !== id)) } })}>Remove property policy</Button>
       </div>)}
+      <OntologyMarkingsEditor key={definition.projectId} project={definition.projectId} value={security.markings ?? []} principals={principals}
+        onChange={markings => { if (!disabled) change({ security: { ...security, markings } }); }} />
       <OntologyRecordPolicyEditor definition={definition} principals={principals} onChange={next => { if (!disabled) change({ security: next }); }} />
     </details>
   </div>;

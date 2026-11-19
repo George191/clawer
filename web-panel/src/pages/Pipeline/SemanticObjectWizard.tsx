@@ -12,8 +12,10 @@ import {
 } from '../../services/ontology';
 import SemanticPropertiesWorkbench from './SemanticPropertiesWorkbench';
 import OntologyIconPicker from './OntologyIconPicker';
+import OntologySourceConnection, { warehouseConnection } from './OntologySourceConnection';
 import SemanticTypeAppearance from './SemanticTypeAppearance';
-import { explorerPropertyType } from '../../services/explorerProperties';
+import { initialProperties, propertyIssue, sourceProperties } from './semanticWizardProperties';
+import OntologyMarkingsEditor from './OntologyMarkingsEditor';
 import OntologyRecordPolicyEditor from './OntologyRecordPolicyEditor';
 import './ontology-create.css';
 import './semantic-object-wizard.css';
@@ -24,11 +26,17 @@ const idPattern = /^[a-z][a-z0-9_-]{0,62}$/;
 const selectStyle = { className: 'flow-ontology__select', popupClassName: 'flow-ontology__select-popup' };
 const actionTypes: SemanticAction['kind'][] = ['create', 'modify', 'delete'];
 const principalKey = (p: Principal) => p.kind + ':' + p.id;
+const principalLabel = (p: OntologyPrincipal) => p.email && p.email !== p.name ? p.name + ' · ' + p.email : p.name;
+const policyPrincipals = (d: SemanticDefinition): Principal[] => [
+  ...d.security.objectReaders, ...Object.values(d.security.fieldReaders).flat(),
+  ...(d.security.recordRules || []).flatMap(rule => rule.readers), ...d.actions.flatMap(action => action.submitters),
+];
+const securityTabs = ['Object access', 'Record access', 'Property access', 'Test access'] as const;
 const opt = (values: readonly string[]) => values.map(value => ({ value, label: value }));
 const path = (schema: string, table: string) => [schema, table].filter(Boolean).join('.');
 const emptyDefinition = (schema = '', allowedSource = true): SemanticDefinition => ({
   id: '', name: '', pluralName: '', description: '', icon: '', color: '#ffffff', iconColor: '#000000', groups: [], projectId: '',
-  source: allowedSource ? { mode: 'existing', schema, table: '' } : { mode: 'none' }, properties: [], primaryKey: [], titleKey: '', actions: [],
+  source: allowedSource ? { mode: 'existing', schema, table: '' } : { mode: 'none' }, ...initialProperties(allowedSource), actions: [],
   security: { mode: allowedSource ? 'inherit' : 'explicit', objectReaders: [], fieldReaders: {} },
 });
 function problem(failure: unknown, fallback: string) {
@@ -39,9 +47,6 @@ function problem(failure: unknown, fallback: string) {
   return fallback;
 }
 const fromError = (failure: unknown) => (failure as { response?: { status?: number } }).response?.status;
-function makeProperty(column: EtlObjectPreview['properties'][number]): SemanticProperty {
-  return { id: column.name, name: column.displayName || column.name, type: explorerPropertyType(column.type), sourceColumn: column.name, required: !column.nullable };
-}
 type Load<T> = { data?: T; error?: string; loading?: boolean };
 function IssueList({ title, issues }: { title: string; issues: OntologyIssue[] }) {
   return issues.length ? <section className="flow-semantic-issues"><h4>{title} ({issues.length})</h4><ul>{issues.map((item, index) => <li key={index}><strong>{item.path || 'Definition'}</strong> {item.message}</li>)}</ul></section> : null;
@@ -56,6 +61,8 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
   const startingSchema = sourceSchemas.some(schema => (schema.schemaName || schema.key) === initialSchema) ? initialSchema : '';
   const initial = useRef(emptyDefinition(startingSchema, allowedSource));
   const [definition, setDefinition] = useState(initial.current);
+  const [connectionChosen, setConnectionChosen] = useState(false);
+  const [connectionAvailable, setConnectionAvailable] = useState(false);
   const [saved, setSaved] = useState<OntologyDraft>();
   const [stage, setStage] = useState<'wizard' | 'review'>('wizard');
   const [step, setStep] = useState(0);
@@ -82,6 +89,7 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
   const [testPrincipal, setTestPrincipal] = useState('');
   const [policyResult, setPolicyResult] = useState<{ visible: boolean; visibleFields: string[] }>();
   const [securityView, setSecurityView] = useState('Object access');
+  const [principalQuery, setPrincipalQuery] = useState('');
   const existing = definition.source.mode === 'existing';
   const steps = existing ? allSteps.filter(label => label !== 'Actions') : allSteps;
   const currentStep = steps[step];
@@ -114,19 +122,48 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
     return () => { alive = false; };
   }, [identity, retry]);
   useEffect(() => {
-    let alive = true;
     if (!definition.projectId) { setPrincipals({}); return; }
+    const controller = new AbortController();
     setPrincipals({ loading: true });
-    listOntologyPrincipals(definition.projectId).then(data => { if (alive && current()) setPrincipals({ data }); }, failure => { if (alive && current()) setPrincipals({ error: problem(failure, 'Unable to load project principals.') }); });
-    return () => { alive = false; };
-  }, [definition.projectId, identity, retry]);
+    const load = async () => {
+      const data = await listOntologyPrincipals(definition.projectId, '', controller.signal);
+      if (saved?.definition.projectId === definition.projectId) {
+        const loaded = new Set(data.filter(p => p.kind === 'user').map(p => p.id));
+        const missing = [...new Set(policyPrincipals(saved.definition).filter(p => p.kind === 'user' && !loaded.has(p.id)).map(p => p.id))];
+        for (let index = 0; index < missing.length; index += 100) {
+          data.push(...await listOntologyPrincipals(definition.projectId, '', controller.signal, missing.slice(index, index + 100)));
+        }
+      }
+      return data;
+    };
+    load().then(data => {
+      if (!controller.signal.aborted && current()) setPrincipals(previous => ({ data: [...new Map([...data, ...(previous.data || [])].map(p => [principalKey(p), p])).values()] }));
+    }, failure => {
+      if (!controller.signal.aborted && current()) setPrincipals({ error: problem(failure, 'Unable to load project principals.') });
+    });
+    return () => controller.abort();
+  }, [definition.projectId, saved?.id, identity, retry]);
+  useEffect(() => {
+    const search = principalQuery.trim().slice(0, 100);
+    if (!search || !definition.projectId) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      listOntologyPrincipals(definition.projectId, search, controller.signal).then(items => {
+        if (controller.signal.aborted || !current()) return;
+        setPrincipals(previous => ({ data: [...new Map([...(previous.data || []), ...items].map(p => [principalKey(p), p])).values()] }));
+      }, failure => {
+        if (!controller.signal.aborted && current()) setPrincipals(previous => ({ ...previous, error: problem(failure, 'Unable to search project members.') }));
+      });
+    }, 200);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [definition.projectId, identity, principalQuery, retry]);
   useEffect(() => {
     let alive = true;
-    const key = definition.source.schema || '';
+    const key = connectionChosen ? definition.source.schema || '' : '';
     setTables({ key, loading: existing && !!key });
     if (existing && key) fetchLayerTables(key).then(data => { if (alive && current()) setTables({ key, data: data.filter(table => table.ontologySource) }); }, failure => { if (alive && current()) setTables({ key, error: problem(failure, 'Unable to load tables.') }); });
     return () => { alive = false; };
-  }, [definition.source.schema, existing, identity, retry]);
+  }, [connectionChosen, definition.source.schema, existing, identity, retry]);
   useEffect(() => {
     let alive = true;
     setSourcePreview({ key: sourceKey, loading: !!sourceKey });
@@ -154,10 +191,11 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
   const loadDraft = (id: string) => guards(() => void run(async () => {
     const item = await fetchOntologyDraft(id);
     if (!current()) return;
+    setConnectionChosen(item.definition.source.mode === 'existing');
     setSaved(item); setDefinition(item.definition); setValidation(undefined); setCheckedRevision(undefined);
     setPolicyResult(undefined); setTestPrincipal(''); setProjectName(''); setStep(0); setStage('wizard'); setStatus('Draft revision ' + item.revision + ' loaded.');
   }));
-  const sourceChange = (source: SemanticSource) => set({ source, properties: [], primaryKey: [], titleKey: '', actions: [], security: { mode: source.mode === 'existing' ? 'inherit' : 'explicit', objectReaders: [], fieldReaders: {} } });
+  const sourceChange = (source: SemanticSource) => set({ source, ...initialProperties(source.mode === 'existing'), actions: [], security: { mode: source.mode === 'existing' ? 'inherit' : 'explicit', objectReaders: [], fieldReaders: {} } });
   const projectChange = (projectId: string) => {
     setTestPrincipal('');
     setProjectName('');
@@ -182,37 +220,44 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
   const updateProperty = (position: number, value: Partial<SemanticProperty>) => {
     const previous = definition.properties[position];
     const nextId = value.id ?? previous.id;
-    const remap = (item: string) => item === previous.id ? nextId : item;
+    const properties = definition.properties.map((item, index) => index === position ? { ...item, ...value } : item);
+    if (nextId === previous.id) { set({ properties }); return; }
+    const isUnique = !!previous.id && !definition.properties.some((p, i) => i !== position && p.id === previous.id);
+    const referenced = definition.primaryKey.includes(previous.id) || definition.titleKey === previous.id
+      || definition.actions.some(action => action.fields.includes(previous.id))
+      || Object.prototype.hasOwnProperty.call(definition.security.fieldReaders, previous.id);
+    if (isUnique && referenced && (!nextId || definition.properties.some((p, i) => i !== position && p.id === nextId))) {
+      setError('Property ' + (position + 1) + ' (' + previous.name + ') · Replace its API name with a nonempty, unique identifier.');
+      return;
+    }
+    const remap = (item: string) => isUnique && item === previous.id ? nextId : item;
     set({
-      properties: definition.properties.map((item, index) => index === position ? { ...item, ...value } : item),
-      primaryKey: definition.primaryKey.map(remap).filter(Boolean), titleKey: remap(definition.titleKey),
+      properties,
+      primaryKey: definition.primaryKey.map(remap), titleKey: remap(definition.titleKey),
       actions: definition.actions.map(action => ({ ...action, fields: action.fields.map(remap).filter(Boolean) })),
       security: { ...definition.security, fieldReaders: Object.fromEntries(Object.entries(definition.security.fieldReaders).map(([id, readers]) => [remap(id), readers]).filter(([id]) => id)) },
     });
   };
   const removeProperty = (position: number) => {
-    const id = definition.properties[position].id;
-    set({ properties: definition.properties.filter((_, index) => index !== position), primaryKey: definition.primaryKey.filter(item => item !== id), titleKey: definition.titleKey === id ? '' : definition.titleKey,
+    const {id, sourceColumn} = definition.properties[position];
+    if ((id && (definition.primaryKey.includes(id) || definition.titleKey === id)) || (sourceColumn && preview?.primaryKey.includes(sourceColumn))) return;
+    set({ properties: definition.properties.filter((_, index) => index !== position),
       actions: definition.actions.map(action => ({ ...action, fields: action.fields.filter(field => field !== id) })),
       security: { ...definition.security, fieldReaders: Object.fromEntries(Object.entries(definition.security.fieldReaders).filter(([field]) => field !== id)) },
     });
   };
   const mapSource = () => {
     if (!preview) return;
-    const properties = preview.properties.map(makeProperty);
-    set({ properties, primaryKey: [...preview.primaryKey], titleKey: preview.titleProperty ?? '', security: { ...definition.security, fieldReaders: {} } });
+    set({ ...sourceProperties(preview), security: { ...definition.security, fieldReaders: {} } });
   };
   const propertyOptions = definition.properties.filter(item => idPattern.test(item.id)).map(item => ({ value: item.id, label: item.name ? item.name + ' · ' + item.id : item.id }));
   const unrestrictedProperties = propertyOptions.filter(({value}) => !definition.primaryKey.includes(value) && !Object.prototype.hasOwnProperty.call(definition.security.fieldReaders, value));
   function stepError(label: typeof allSteps[number]) {
-    if (label === 'Datasource' && existing && (!sourceKey || !preview)) return 'Choose a source table and load its columns.';
+    if (label === 'Datasource' && existing && !connectionChosen) return 'Select a data connection.';
+    if (label === 'Datasource' && existing && !connectionAvailable) return 'Choose an available connection or refresh the connection list.';
+    if (label === 'Datasource' && existing && (!sourceKey || !preview)) return 'Choose the backing dataset and load its columns.';
     if (label === 'Metadata' && (!idPattern.test(definition.id) || !definition.name.trim() || !definition.pluralName.trim())) return 'Enter a valid API ID and singular and plural display names.';
-    if (label === 'Properties') {
-      const ids = definition.properties.map(item => item.id);
-      if (!ids.length || new Set(ids).size !== ids.length || definition.properties.some(item => !idPattern.test(item.id) || !item.name.trim() || existing && !preview?.properties.some(column => column.name === item.sourceColumn))) return 'Define distinct property IDs, display names and an existing source column for every mapped property.';
-      if (!definition.primaryKey.length || definition.primaryKey.some(id => !definition.properties.some(item => item.id === id && item.required))) return 'Choose at least one required property as the primary key.';
-      if (!definition.titleKey || !ids.includes(definition.titleKey)) return 'Choose a title property.';
-    }
+    if (label === 'Properties') return propertyIssue(definition, preview || undefined)?.message || '';
     if (label === 'Actions' && definition.actions.some(item => !item.submitters.length || (item.kind !== 'delete' && !item.fields.length))) return 'Choose submitters and writable fields for each selected action.';
     if (label === 'Security' && definition.security.mode === 'explicit' && !definition.security.objectReaders.length) return 'Select who can read this object type.';
     if (label === 'Save location' && !projects.data?.some(item => item.id === definition.projectId)) return 'Select an available project.';
@@ -262,6 +307,7 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
   };
   const test = () => void run(async () => {
     if (!testPrincipal) return;
+    setPolicyResult(undefined);
     const result = await testOntologyPolicy(definition, testPrincipal);
     if (current()) setPolicyResult(result);
   });
@@ -271,9 +317,20 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
     set({ actions: checked ? [...definition.actions, { kind, submitters: [], fields }] : definition.actions.filter(action => action.kind !== kind) });
   };
   const projectOptions = (projects.data || []).map(item => ({ value: item.id, label: item.ownerId === null ? `${item.teamName} · Unnamed project` : `${item.name} · Team ${item.teamName}` }));
-  const principalOptions = (principals.data || []).map(principal => ({ value: principalKey(principal), label: principal.name + ' · ' + principal.kind }));
-  const principalList = (keys: string[]) => (principals.data || []).filter(principal => keys.includes(principalKey(principal))).map(({kind, id}) => ({kind, id}));
-  const userOptions = (principals.data || []).filter(principal => principal.kind === 'user').map(principal => ({ value: principal.id, label: principal.name }));
+  const principalOptions: { value: string; label: string; disabled?: boolean }[] = (principals.data || []).map(principal => ({ value: principalKey(principal), label: principalLabel(principal) + ' · ' + principal.kind }));
+  const available = new Set(principalOptions.map(option => option.value));
+  for (const reader of policyPrincipals(definition)) {
+    const value = principalKey(reader);
+    if (!available.has(value)) {
+      available.add(value);
+      principalOptions.push({ value, label: principals.loading ? 'Loading name…' : 'Name unavailable · ' + reader.kind, disabled: true });
+    }
+  }
+  const principalList = (keys: string[]): Principal[] => keys.map(key => {
+    const [kind, id] = key.split(':');
+    return { kind: kind as Principal['kind'], id };
+  });
+  const userOptions = (principals.data || []).filter(principal => principal.kind === 'user').map(principal => ({ value: principal.id, label: principalLabel(principal) }));
   const schemaOptions = sourceSchemas.map(schema => ({ value: schema.schemaName || schema.key, label: schema.alias ? schema.alias + ' · ' + (schema.schemaName || schema.key) : schema.schemaName || schema.key }));
   const retries = () => setRetry(value => value + 1);
   const projectInput = <div>
@@ -315,19 +372,27 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
           <Heading title="Choose a datasource" detail="An object type describes one kind of business record, such as an airport. Define its properties and access rules here, then publish the definition to a project so its readers can find it in Published." />
           <fieldset className="flow-create-source"><legend>Datasource</legend>
             <label className="flow-create-source-option">
-              <input type="radio" name="semantic-source" checked={!existing} disabled={busy} onChange={() => sourceChange({ mode: 'none' })} />
+              <input type="radio" name="semantic-source" checked={!existing} disabled={busy} onChange={() => { setConnectionChosen(false); sourceChange({ mode: 'none' }); }} />
               <AppstoreOutlined aria-hidden="true" /><span><strong>No backing datasource</strong><small>Start with an empty set of records. Enable a Create action if users should add objects after publication.</small></span><CheckOutlined aria-hidden="true" />
             </label>
             <label className="flow-create-source-option">
               <input type="radio" name="semantic-source" checked={existing} disabled={busy || !allowedSource} onChange={() => sourceChange({ mode: 'existing', schema: startingSchema, table: '' })} />
-              <TableOutlined aria-hidden="true" /><span><strong>Existing PostgreSQL table</strong><small>Each source row is a read-only object. Choose which columns appear as properties.</small></span><CheckOutlined aria-hidden="true" />
+              <TableOutlined aria-hidden="true" /><span><strong>Existing dataset</strong><small>Select a data connection and its backing dataset. Each row becomes a read-only object.</small></span><CheckOutlined aria-hidden="true" />
             </label>
           </fieldset>
           {!allowedSource && <p className="flow-create-help">A platform administrator is required to bind a warehouse table.</p>}
-          {existing && <div className="flow-create-grid">
-            <label className="flow-create-field"><span>Schema</span><Select {...selectStyle} aria-label="Object type schema" value={definition.source.schema || undefined} options={schemaOptions} disabled={busy} placeholder="Select a schema" onChange={(schema: string) => sourceChange({ mode: 'existing', schema, table: '' })} /></label>
-            <label className="flow-create-field"><span>Source table</span><Select {...selectStyle} aria-label="Source table" showSearch value={definition.source.table || undefined} disabled={busy || tables.loading || !definition.source.schema || tables.key !== definition.source.schema} options={opt((tables.key === definition.source.schema ? tables.data : [])?.map(item => item.name) || [])} placeholder="Select a table" onChange={(table: string) => sourceChange({ ...definition.source, table })} /></label>
-          </div>}
+          {existing && allowedSource && <OntologySourceConnection disabled={busy} onAvailabilityChange={setConnectionAvailable} warehouseName={sourceSchemas.find(schema => schema.database)?.database}
+            value={connectionChosen ? definition.source.upstreamConnectionId || warehouseConnection : undefined} onChange={id => {
+              if (connectionChosen && id === (definition.source.upstreamConnectionId || warehouseConnection)) return;
+              setConnectionChosen(true);
+              sourceChange({ mode: 'existing', schema: id === warehouseConnection ? startingSchema : '', table: '',
+                upstreamConnectionId: id === warehouseConnection ? undefined : id });
+            }}>
+            <div className="flow-create-grid">
+              <label className="flow-create-field"><span>{definition.source.upstreamConnectionId ? 'Destination schema' : 'Schema'}</span><Select {...selectStyle} aria-label="Object type schema" value={definition.source.schema || undefined} options={schemaOptions} disabled={busy} placeholder="Select a schema" onChange={(schema: string) => sourceChange({ ...definition.source, schema, table: '' })} /></label>
+              <label className="flow-create-field"><span>{definition.source.upstreamConnectionId ? 'Synced table' : 'Source table'}</span><Select {...selectStyle} aria-label="Source table" showSearch value={definition.source.table || undefined} disabled={busy || tables.loading || !definition.source.schema || tables.key !== definition.source.schema} options={opt((tables.key === definition.source.schema ? tables.data : [])?.map(item => item.name) || [])} placeholder="Select a table" onChange={(table: string) => sourceChange({ ...definition.source, table })} /></label>
+            </div>
+          </OntologySourceConnection>}
           {(tables.error || sourcePreview.error) && <p className="flow-create-error" role="alert">{tables.error || sourcePreview.error}<Button size="small" icon={<ReloadOutlined />} onClick={retries}>Retry</Button></p>}
           {(tables.loading || sourcePreview.loading) && <p role="status" className="flow-create-help">Reading source metadata…</p>}
           {preview && <p className="flow-create-notice">{preview.properties.length} source columns available. Primary key: {preview.primaryKey.join(', ') || 'None declared'}.</p>}
@@ -350,7 +415,7 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
           </div>
         </section>}
         {stage === 'wizard' && currentStep === 'Properties' && <SemanticPropertiesWorkbench key={sourceKey || 'unbacked'}
-          definition={definition} preview={preview || undefined} busy={busy} onAutoMap={mapSource}
+          definition={definition} preview={preview || undefined} busy={busy} showIssues={!!error} onAutoMap={mapSource}
           onChange={updateProperty} onRemove={removeProperty}
           onAdd={() => set({ properties: [...definition.properties, { id: '', name: '', type: 'string', required: false }] })}
           onPrimary={(key, enabled) => set({
@@ -368,7 +433,7 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
               return <section key={kind} className="flow-semantic-config">
                 <Checkbox checked={!!action} onChange={event => toggleAction(kind, event.target.checked)}>{kind[0].toUpperCase() + kind.slice(1)} objects</Checkbox>
                 {action && <div className="flow-create-grid">
-                  <label className="flow-create-field"><span>Submitters</span><Select {...selectStyle} aria-label={kind + ' action submitters'} mode="multiple" value={action.submitters.map(principalKey)} options={principalOptions} loading={principals.loading} disabled={!definition.projectId || principals.loading} onChange={(keys: string[]) => changeAction(kind, { submitters: principalList(keys) })} placeholder="Select users, groups or organization" /></label>
+                  <label className="flow-create-field"><span>Submitters</span><Select {...selectStyle} aria-label={kind + ' action submitters'} mode="multiple" onSearch={setPrincipalQuery} value={action.submitters.map(principalKey)} options={principalOptions} loading={principals.loading} disabled={!definition.projectId || principals.loading} onChange={(keys: string[]) => changeAction(kind, { submitters: principalList(keys) })} placeholder="Select users, groups or organization" /></label>
                   {kind !== 'delete' && <label className="flow-create-field"><span>Editable properties</span><Select {...selectStyle} aria-label={kind + ' action properties'} mode="multiple" value={action.fields} options={fields} onChange={(fields: string[]) => changeAction(kind, { fields })} /></label>}
                 </div>}
               </section>;
@@ -382,12 +447,28 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
         </section>}
         {stage === 'wizard' && currentStep === 'Security' && <section className="flow-create-section">
           <Heading title="Security policies" detail="Set access to this object type and preview the properties a project user can read." />
-          <nav className="flow-security-nav" aria-label="Security settings">{['Object access', 'Record access', 'Property access', 'Test access'].map(view => <button type="button" key={view} aria-pressed={securityView === view} onClick={() => setSecurityView(view)}>{view}</button>)}</nav>
-          <div className="flow-security-panel">
+          <div className="flow-security-nav" role="tablist" aria-label="Security settings">{securityTabs.map((view, index) =>
+            <button type="button" role="tab" id={'security-tab-' + index} aria-controls="security-panel" key={view}
+              aria-selected={securityView === view} tabIndex={securityView === view ? 0 : -1} onClick={() => setSecurityView(view)}
+              onKeyDown={e => {
+                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+                e.preventDefault();
+                const next = e.key === 'Home' ? 0 : e.key === 'End' ? securityTabs.length - 1
+                  : (index + (e.key === 'ArrowRight' ? 1 : -1) + securityTabs.length) % securityTabs.length;
+                setSecurityView(securityTabs[next]); document.getElementById('security-tab-' + next)?.focus();
+              }}>{view}</button>)}</div>
+          <div className="flow-security-panel" role="tabpanel" id="security-panel" aria-labelledby={'security-tab-' + securityTabs.findIndex(view => view === securityView)}>
           {securityView === 'Object access' && <>
-            <h4>Object security policy</h4>
-            <p className="flow-create-help">{existing ? 'This type inherits source access. Project members with platform administrator access can read the mapped rows, subject to any additional restrictions.' : 'Choose users, teams or organizations whose project members can read this type.'}</p>
-            {definition.security.mode === 'explicit' && <label className="flow-create-field"><span>Object readers</span><Select {...selectStyle} aria-label="Object readers" mode="multiple" options={principalOptions} loading={principals.loading} value={definition.security.objectReaders.map(principalKey)} onChange={(keys: string[]) => set({ security: { ...definition.security, objectReaders: principalList(keys) } })} placeholder="Choose who can read objects" /></label>}
+            <h4>Who can read these objects?</h4>
+            <dl className="flow-security-facts">
+              <dt>Project</dt><dd>{selectedProject?.name || selectedProject?.teamName}</dd>
+              <dt>Policy</dt><dd>{existing ? 'Inherit source access' : 'Selected project readers'}</dd>
+              {existing && <><dt>Data source</dt><dd>{sourceKey}</dd><dt>Eligible readers</dt><dd>Project members with platform administrator access</dd></>}
+            </dl>
+            <p className="flow-create-help">{existing ? 'Record and property rules can further restrict what these readers see.' : 'Select project users, teams or organizations to grant access.'}</p>
+            {definition.security.mode === 'explicit' && <label className="flow-create-field"><span>Object readers</span><Select {...selectStyle} aria-label="Object readers" mode="multiple" onSearch={setPrincipalQuery} options={principalOptions} loading={principals.loading} value={definition.security.objectReaders.map(principalKey)} onChange={(keys: string[]) => set({ security: { ...definition.security, objectReaders: principalList(keys) } })} placeholder="Choose who can read objects" /></label>}
+            <OntologyMarkingsEditor key={definition.projectId} project={definition.projectId} value={definition.security.markings ?? []}
+              principals={principals.data || []} onChange={markings => set({ security: { ...definition.security, markings } })} />
           </>}
           {principals.error && <p className="flow-create-error" role="alert">{principals.error}<Button size="small" onClick={retries}>Retry</Button></p>}
           {securityView === 'Record access' && <OntologyRecordPolicyEditor definition={definition} principals={principals.data || []} onChange={security => set({security})} />}
@@ -396,17 +477,19 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
             <p className="flow-create-help">{Object.keys(definition.security.fieldReaders).length ? 'Only the selected readers can see each restricted property.' : 'All properties currently inherit object access.'}</p>
             <label className="flow-create-field"><span>Restrict a property</span><Select {...selectStyle} aria-label="Add a property policy" value={undefined} disabled={!unrestrictedProperties.length} placeholder={unrestrictedProperties.length ? 'Choose a property' : 'No eligible properties'} options={unrestrictedProperties} onChange={(id: string) => set({ security: { ...definition.security, fieldReaders: { ...definition.security.fieldReaders, [id]: [] } } })} /></label>
             {Object.entries(definition.security.fieldReaders).map(([id, readers]) => <div key={id} className="flow-semantic-config">
-              <div className="flow-create-property-heading"><strong>{id}</strong><Button size="small" onClick={() => set({ security: { ...definition.security, fieldReaders: Object.fromEntries(Object.entries(definition.security.fieldReaders).filter(([field]) => field !== id)) } })}>Remove policy</Button></div>
-              <Select {...selectStyle} aria-label={id + ' property readers'} mode="multiple" options={principalOptions} value={readers.map(principalKey)} onChange={(keys: string[]) => set({ security: { ...definition.security, fieldReaders: { ...definition.security.fieldReaders, [id]: principalList(keys) } } })} placeholder="Choose who can read this property" />
+              <div className="flow-create-property-heading"><strong>{definition.properties.find(property => property.id === id)?.name || id}</strong><Button size="small" onClick={() => set({ security: { ...definition.security, fieldReaders: Object.fromEntries(Object.entries(definition.security.fieldReaders).filter(([field]) => field !== id)) } })}>Remove policy</Button></div>
+              <Select {...selectStyle} aria-label={id + ' property readers'} mode="multiple" onSearch={setPrincipalQuery} options={principalOptions} value={readers.map(principalKey)} onChange={(keys: string[]) => set({ security: { ...definition.security, fieldReaders: { ...definition.security.fieldReaders, [id]: principalList(keys) } } })} placeholder="Choose who can read this property" />
             </div>)}
           </>}
           {securityView === 'Test access' && <>
-            <h4>Test access as a project user</h4>
-            <div className="flow-security-test"><Select {...selectStyle} aria-label="Test policy user" showSearch options={userOptions} value={testPrincipal || undefined} onChange={(id: string) => { setTestPrincipal(id); setPolicyResult(undefined); }} placeholder="Select a project user" /><Button loading={busy} disabled={!testPrincipal} onClick={test}>Test policy</Button></div>
+            <h4>Preview a user's access</h4>
+            <p className="flow-create-help">Check which properties a project member can read under the current draft policy.</p>
+            <label className="flow-create-field"><span>Project member</span><Select {...selectStyle} aria-label="Test policy user" showSearch onSearch={setPrincipalQuery} loading={principals.loading} options={userOptions} value={testPrincipal || undefined} onChange={(id: string) => { setTestPrincipal(id); setPolicyResult(undefined); }} placeholder="Search by name or email" /></label>
+            <Button className="flow-security-test-button" loading={busy} disabled={!testPrincipal || !!principals.error} onClick={test}>Test policy</Button>
             {policyResult && <div className="flow-create-notice" role="status">
-              <strong>{policyResult.visible ? 'Object type visible' : 'Object type hidden for this user'}</strong>
-              {policyResult.visible && <><p>Eligible properties ({policyResult.visibleFields.length})</p>
-                <ul>{policyResult.visibleFields.map(field => <li key={field}>{propertyOptions.find(option => option.value === field)?.label || field}</li>)}</ul>
+              <strong>{userOptions.find(user => user.value === testPrincipal)?.label} · {policyResult.visible ? 'Object type visible' : 'Object type hidden'}</strong>
+              {policyResult.visible && <><p>{policyResult.visibleFields.length} of {definition.properties.length} properties visible</p>
+                <ul className="flow-security-results">{definition.properties.map(property => <li key={property.id}><span>{property.name || property.id}</span><span>{policyResult.visibleFields.includes(property.id) ? 'Visible' : 'Hidden'}</span></li>)}</ul>
                 {!!definition.security.recordRules?.length && <p>Access to each record also depends on its values and relationships.</p>}</>}
             </div>}
           </>}
@@ -422,7 +505,7 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
             {selectedProject && <><dt>Team</dt><dd>{selectedProject.teamName}</dd></>}
             <dt>Records after publication</dt><dd>{existing ? `Read-only rows from ${sourceKey}` : 'Records are managed in the ontology. Publishing the definition creates zero records.'}</dd><dt>Primary key</dt><dd>{definition.primaryKey.join(', ')}</dd>
             <dt>Title property</dt><dd>{definition.titleKey}</dd><dt>Actions</dt><dd>{definition.actions.map(action => action.kind).join(', ') || 'None'}</dd>
-            <dt>Who can read this type</dt><dd>{existing ? 'Project members with platform administrator access' : definition.security.objectReaders.map(reader => principalOptions.find(option => option.value === principalKey(reader))?.label || principalKey(reader)).join(', ')}</dd>
+            <dt>Who can read this type</dt><dd>{existing ? 'Project members with platform administrator access' : definition.security.objectReaders.map(reader => principalOptions.find(option => option.value === principalKey(reader))?.label || 'Name unavailable').join(', ')}</dd>
             <dt>Additional restrictions</dt><dd>{definition.security.markings?.length || 0} security markings · {definition.security.recordRules?.length || 0} record rules · {Object.keys(definition.security.fieldReaders).length} property restrictions</dd>
           </dl>
           <Table<SemanticProperty> className="flow-create-table flow-create-review-table" pagination={false} size="small" rowKey="id" dataSource={definition.properties} columns={[{ title: 'ID', dataIndex: 'id' }, { title: 'Display name', dataIndex: 'name' }, { title: 'Type', dataIndex: 'type' }, ...(existing ? [{ title: 'Source', dataIndex: 'sourceColumn' }] : [])]} />

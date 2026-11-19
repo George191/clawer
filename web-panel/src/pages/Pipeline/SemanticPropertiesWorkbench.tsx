@@ -1,11 +1,12 @@
 import PropertyTypeIcon from './PropertyTypeIcon';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button, Checkbox, Input, Select } from '@/components/ui';
 import { CloseOutlined, DeleteOutlined, PlusOutlined, SearchOutlined, TableOutlined } from '@/components/ui/icons';
 import { queryExplorerPreview } from '../../services/api';
 import { getSessionState } from '../../services/session';
 import type { SemanticDefinition, SemanticProperty } from '../../services/ontology';
 import type { EtlObjectPreview, ExplorerPreviewResult } from '../../services/types';
+import { propertyIssue } from './semanticWizardProperties';
 import './semantic-properties-workbench.css';
 
 const semanticPropertyTypes = ['string', 'integer', 'number', 'boolean', 'date', 'datetime', 'json'];
@@ -17,6 +18,7 @@ type Props = {
   definition: SemanticDefinition;
   preview?: EtlObjectPreview;
   busy: boolean;
+  showIssues: boolean;
   onAdd: () => void;
   onAutoMap: () => void;
   onChange: (position: number, value: Partial<SemanticProperty>) => void;
@@ -24,7 +26,7 @@ type Props = {
   onPrimary: (key: string, enabled: boolean) => void;
   onTitle: (key: string) => void;
 };
-export default function SemanticPropertiesWorkbench({ definition, preview, busy, onAdd, onAutoMap, onChange, onRemove, onPrimary, onTitle }: Props) {
+export default function SemanticPropertiesWorkbench({ definition, preview, busy, showIssues, onAdd, onAutoMap, onChange, onRemove, onPrimary, onTitle }: Props) {
   const { properties, primaryKey, titleKey, source } = definition;
   const sourceBacked = source.mode === 'existing';
   const [mode, setMode] = useState<'properties' | 'mapping'>('properties');
@@ -45,8 +47,29 @@ export default function SemanticPropertiesWorkbench({ definition, preview, busy,
   const picked = selected ?? 0;
   const activeName = property ? label(property) : '';
   const validId = !!property && /^[a-z][a-z0-9_-]{0,62}$/.test(property.id) && properties.filter(item => item.id === property.id).length === 1;
-  const primary = !!property && validId && primaryKey.includes(property.id);
-  const isTitle = !!property && validId && titleKey === property.id;
+  const primary = !!property && primaryKey.includes(property.id);
+  const isTitle = !!property && !!titleKey && titleKey === property.id;
+  const column = sourceColumns.find(c => c.name === property?.sourceColumn);
+  const physicalKey = !!column && !!preview?.primaryKey.includes(column.name);
+  const usesPhysicalKey = !!preview?.primaryKey.length && preview.primaryKey.length === primaryKey.length
+    && preview.primaryKey.every(name => properties.some(p => p.sourceColumn === name && primaryKey.includes(p.id)));
+  const removalHint = physicalKey ? 'The source primary key must stay mapped.'
+    : primary ? 'Assign a replacement primary key before removing this property.'
+    : isTitle ? 'Choose another title property before removing this property.' : '';
+  const issue = showIssues ? propertyIssue(definition, preview) : undefined;
+  const issueIndex = issue?.index, issueField = issue?.field;
+  const inspector = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (issueIndex === undefined) return;
+    setMode('properties');
+    setSearch('');
+    select(issueIndex);
+  }, [issueIndex, issueField]);
+  useEffect(() => {
+    if (issueIndex === undefined || selected !== issueIndex || !issueField) return;
+    inspector.current?.querySelector<HTMLElement>('input[aria-invalid="true"], [role="combobox"][aria-invalid="true"]')?.focus();
+  }, [issueIndex, issueField, selected]);
+
   const eligibleTitle = !!property && validId && property.type !== 'json';
   const eligiblePrimary = !!property && validId && !['number', 'json'].includes(property.type);
 
@@ -110,7 +133,7 @@ export default function SemanticPropertiesWorkbench({ definition, preview, busy,
           </nav>}
           <div className="flow-foundry-property-tools">
             <Input aria-label={mode === 'properties' ? 'Search properties' : 'Search source columns'} value={search} onChange={event => setSearch(event.target.value)} prefix={<SearchOutlined />} placeholder="Search" allowClear />
-            <Button size="small" icon={<PlusOutlined />} onClick={add}>Create property</Button>
+            <Button size="small" icon={<PlusOutlined />} disabled={properties.length >= 200} onClick={add}>Create property</Button>
           </div>
         </header>
         <section className="flow-foundry-property-list" aria-label={mode === 'properties' ? 'Properties list' : 'Source column mapping list'}>
@@ -138,22 +161,23 @@ export default function SemanticPropertiesWorkbench({ definition, preview, busy,
           </div>
         </section>
       </div>
-      {property ? <aside className="flow-foundry-property-inspector" aria-label="Property inspector">
+      {property ? <aside ref={inspector} className="flow-foundry-property-inspector" aria-label="Property inspector">
         <header><PropertyTypeIcon type={property.type} /><strong title={activeName}>{activeName}</strong>{markers(property)}
-          <button type="button" title="Remove property" aria-label="Remove property" onClick={() => { onRemove(picked); select(properties.length > 1 ? Math.min(picked, properties.length - 2) : undefined); }}><DeleteOutlined /></button>
+          <button type="button" title={removalHint || "Remove property"} aria-label="Remove property" disabled={!!removalHint} onClick={() => { onRemove(picked); select(properties.length > 1 ? Math.min(picked, properties.length - 2) : undefined); }}><DeleteOutlined /></button>
           <button type="button" aria-label="Close property inspector" onClick={() => select(undefined)}><CloseOutlined /></button></header>
         <div className="flow-foundry-property-fields">
           <h4>General</h4>
-          <label className="flow-create-field"><span>Name</span><Input aria-label="Property name" value={property.name} onChange={event => onChange(picked, { name: event.target.value })} /></label>
-          <label className="flow-create-field"><span>API name</span><Input aria-label="Property ID" value={property.id} onChange={event => onChange(picked, { id: event.target.value })} /></label>
-          <label className="flow-create-field"><span>Base type</span><Select {...selectStyle} aria-label="Property type" value={property.type} options={semanticPropertyTypes.map(value => ({ value, label: value[0].toUpperCase() + value.slice(1) }))} onChange={(type: string) => onChange(picked, { type })} /></label>
-          {sourceBacked && <label className="flow-create-field"><span>Source column</span><Select {...selectStyle} aria-label="Source column" allowClear showSearch value={property.sourceColumn || undefined} placeholder="Select a column" options={sourceColumns.filter(column => column.name === property.sourceColumn || !mapped.has(column.name)).map(column => ({ value: column.name, label: column.name }))} onChange={(sourceColumn?: string) => onChange(picked, { sourceColumn })} /></label>}
+          <label className="flow-create-field"><span>Name</span><Input aria-invalid={showIssues && selected === issueIndex && issueField === "name"} maxLength={120} aria-label="Property name" value={property.name} onChange={event => onChange(picked, { name: event.target.value })} /></label>
+          <label className="flow-create-field"><span>API name</span><Input aria-invalid={showIssues && selected === issueIndex && issueField === "id"} maxLength={63} aria-label="Property ID" value={property.id} onChange={event => onChange(picked, { id: event.target.value })} /></label>
+          <label className="flow-create-field"><span>Base type</span><Select {...selectStyle} aria-invalid={showIssues && selected === issueIndex && issueField === "type"} aria-label="Property type" value={property.type} options={semanticPropertyTypes.map(value => ({ value, label: value[0].toUpperCase() + value.slice(1), disabled: (primary && ['number', 'json'].includes(value)) || (isTitle && value === 'json') }))} onChange={(type: string) => onChange(picked, { type })} /></label>
+          {sourceBacked && <label className="flow-create-field"><span>Source column</span><Select {...selectStyle} aria-invalid={showIssues && selected === issueIndex && issueField === "sourceColumn"} aria-label="Source column" disabled={physicalKey} allowClear showSearch value={property.sourceColumn || undefined} placeholder="Select a column" options={sourceColumns.filter(column => column.name === property.sourceColumn || !mapped.has(column.name)).map(column => ({ value: column.name, label: column.name }))} onChange={(sourceColumn?: string) => onChange(picked, { sourceColumn })} /></label>}
         </div>
         <div className="flow-foundry-property-fields flow-property-configuration">
           <h4>Configuration</h4>
-          <Checkbox checked={property.required} disabled={primary} onChange={event => onChange(picked, { required: event.target.checked })}>Required</Checkbox>
-          <Checkbox checked={primary} disabled={!eligiblePrimary && !primary} onChange={event => onPrimary(property.id, event.target.checked)}>Primary key</Checkbox>
-          <Checkbox checked={isTitle} disabled={!eligibleTitle && !isTitle} onChange={event => onTitle(event.target.checked ? property.id : '')}>Title key</Checkbox>
+          <Checkbox aria-invalid={selected === issueIndex && issueField === 'required'} checked={property.required} disabled={(primary && property.required) || (column?.nullable && !property.required)} onChange={event => onChange(picked, { required: event.target.checked })}>Required</Checkbox>
+          <Checkbox checked={primary} disabled={usesPhysicalKey || (primary ? primaryKey.length === 1 : !eligiblePrimary || !!column?.nullable || primaryKey.length >= 16)} onChange={event => onPrimary(property.id, event.target.checked)}>Primary key</Checkbox>
+          <Checkbox checked={isTitle} disabled={isTitle || !eligibleTitle} onChange={event => onTitle(event.target.checked ? property.id : '')}>Title key</Checkbox>
+          {removalHint && <small>{removalHint}</small>}
           {titleKey && !isTitle && <small>Current title: {properties.find(item => item.id === titleKey)?.name || titleKey}</small>}
         </div>
       </aside> : <div className="flow-property-inspector-idle">Select a property to edit its settings.</div>}

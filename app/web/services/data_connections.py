@@ -331,6 +331,12 @@ class DataConnections:
         except (ConnectionError, OSError, TimeoutError) as error:
             raise HTTPException(503, "External source registry is unavailable") from error
 
+    async def exists(self, connection_id: uuid.UUID) -> bool:
+        async with self._session() as session:
+            return bool(await session.scalar(text(
+                "SELECT EXISTS (SELECT 1 FROM public.ontology_data_connections WHERE id = :id)"
+            ), {"id": connection_id}))
+
     async def list(self):
         # Identity also imports the saved-connection service for its explicit external verify action.
         from app.web.services.batch_source_identity import (
