@@ -87,3 +87,42 @@
   .flow-foundry-property-tools { justify-content: space-between; }
   .flow-foundry-property-tools strong { width: 100%; }
 }
+
+/* The table, inspector and sample scroll independently inside the wizard. */
+.flow-create-step:has(.flow-semantic-properties) { display: flex; flex-direction: column; }
+.flow-create-step > div:has(> .flow-semantic-properties) { flex: 1; min-height: 0; }
+.flow-semantic-properties { display: flex; flex-direction: column; height: 100%; box-sizing: border-box; padding: 8px 16px 14px; }
+.flow-semantic-properties .flow-foundry-property-workspace {
+  flex: 1; min-height: 0; height: auto; grid-template-columns: minmax(0, 1fr) clamp(230px, 30%, 320px);
+  grid-template-rows: minmax(0, 1fr); align-items: stretch; gap: 0;
+  border: 1px solid var(--ontology-border); border-radius: 3px; background: var(--ontology-panel);
+}
+.flow-semantic-properties .flow-foundry-property-main { min-height: 0; gap: 0; padding: 0; grid-template-rows: auto minmax(0, 1fr); }
+.flow-semantic-properties :is(.flow-foundry-property-header, .flow-foundry-property-list, .flow-foundry-property-inspector) { border: 0; border-radius: 0; }
+.flow-semantic-properties .flow-foundry-property-header > div { padding: 7px 12px; }
+.flow-semantic-properties .flow-foundry-property-header nav { border-bottom: 1px solid var(--ontology-border); }
+.flow-semantic-properties .flow-foundry-property-tools { flex-wrap: nowrap; }
+.flow-semantic-properties .flow-foundry-property-tools .ui-btn { flex-shrink: 0; }
+.flow-semantic-properties .flow-foundry-property-list { display: flex; min-height: 0; }
+.flow-semantic-properties .flow-foundry-property-list .flow-foundry-property-table-wrap { flex: 1; max-height: none; min-width: 0; }
+.flow-semantic-properties .flow-foundry-property-list table { table-layout: fixed; min-width: 400px; }
+.flow-semantic-properties .flow-foundry-property-list table[aria-label="Properties"] th:first-child { width: 40%; }
+.flow-semantic-properties .flow-foundry-property-list table[aria-label="Properties"]:has(th:nth-child(4)) th:nth-child(2),
+.flow-semantic-properties .flow-foundry-property-list table[aria-label="Properties"]:has(th:nth-child(4)) th:nth-child(3) { width: 17%; }
+.flow-semantic-properties .flow-foundry-property-list :is(td,th) { height: 34px; padding: 4px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flow-semantic-properties .flow-foundry-property-select { width: 100%; flex-wrap: nowrap; }
+.flow-semantic-properties :is(.flow-property-name, .flow-foundry-property-inspector header strong, .flow-foundry-property-link) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flow-semantic-properties :is(.flow-foundry-property-inspector, .flow-property-inspector-idle) { min-height: 0; border-left: 1px solid var(--ontology-border); overflow: auto; scrollbar-gutter: stable; }
+.flow-property-inspector-idle { padding: 16px; color: var(--ontology-muted); font-size: 13px; }
+.flow-semantic-properties .flow-foundry-property-inspector header { position: sticky; top: 0; z-index: 1; flex-wrap: nowrap; background: var(--ontology-panel); }
+.flow-semantic-properties .flow-foundry-property-inspector header button { flex-shrink: 0; }
+.flow-semantic-properties .flow-foundry-property-preview { flex: none; margin-top: 8px; }
+.flow-semantic-properties .flow-foundry-property-preview .flow-foundry-property-table-wrap { height: clamp(80px, 16dvh, 160px); }
+@media(max-width:900px) {
+  .flow-create-step > div:has(> .flow-semantic-properties) { flex: none; }
+  .flow-semantic-properties { height: auto; padding-inline: 10px; }
+  .flow-semantic-properties .flow-foundry-property-workspace { grid-template-columns: minmax(0,1fr); grid-template-rows: auto auto; }
+  .flow-semantic-properties .flow-foundry-property-list { height: clamp(112px, 25dvh, 250px); }
+  .flow-semantic-properties .flow-foundry-property-inspector { max-height: 48dvh; border-left: 0; border-top: 1px solid var(--ontology-border); }
+  .flow-semantic-properties .flow-property-inspector-idle { display: none; }
+}

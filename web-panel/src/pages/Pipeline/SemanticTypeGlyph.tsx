@@ -1,15 +1,7 @@
-import { AppstoreOutlined, DatabaseOutlined, FileTextOutlined, GlobalOutlined, PushpinOutlined, TeamOutlined } from '@/components/ui/icons';
+import { AppstoreOutlined } from '@/components/ui/icons';
+import { ontologyTypeIcon } from './ontologyTypeIcons';
 import type { SemanticDefinition } from '../../services/ontology';
 import { inferSiteKind, TemplateGlyph } from '../AICollect/WorkspaceDock';
-
-const configuredIcons = {
-  box: AppstoreOutlined,
-  database: DatabaseOutlined,
-  globe: GlobalOutlined,
-  'map-pin': PushpinOutlined,
-  users: TeamOutlined,
-  document: FileTextOutlined,
-} as const;
 
 type Props = {
   definition: Pick<SemanticDefinition, 'id' | 'name' | 'source' | 'icon' | 'color'>;
@@ -23,9 +15,7 @@ function glyphForeground(color: string) {
 }
 
 export default function SemanticTypeGlyph({ definition, size = 'row' }: Props) {
-  const ExplicitIcon = Object.prototype.hasOwnProperty.call(configuredIcons, definition.icon)
-    ? configuredIcons[definition.icon as keyof typeof configuredIcons]
-    : undefined;
+  const ExplicitIcon = ontologyTypeIcon(definition.icon);
   const names = [definition.id, definition.source.table || '', definition.name];
   const kind = names.map(name => inferSiteKind(name)).find(item => item !== 'generic');
   const flight = !kind && names.some(name => /(?:^|[\s_-])(?:flights?|airports?|aviation)(?:$|[\s_-])/i.test(name));

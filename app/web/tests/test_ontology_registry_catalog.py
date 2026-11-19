@@ -36,16 +36,16 @@ async def test_bound_record_page_orders_by_the_physical_key_when_an_alias_matche
     table = "aircraft_" + uuid4().hex
     definition = Definition.model_validate({
         "id": "aircraft", "name": "Aircraft", "pluralName": "Aircraft", "projectId": uuid4(),
-        "source": {"mode": "existing", "schema": "ts_ods", "table": table},
+        "source": {"mode": "existing", "schema": "ts_dim", "table": table},
         "properties": [
             {"id": "key", "name": "Key", "type": "integer", "sourceColumn": "id", "required": True},
             {"id": "id", "name": "Name", "type": "string", "sourceColumn": "name"},
         ], "primaryKey": ["key"], "titleKey": "id", "security": {"mode": "inherit"},
     })
     async with AsyncSession(db) as session:
-        await session.execute(text("CREATE SCHEMA IF NOT EXISTS ts_ods"))
-        await session.execute(text(f"CREATE TABLE ts_ods.{table} (id int PRIMARY KEY, name text)"))
-        await session.execute(text(f"INSERT INTO ts_ods.{table} VALUES (1,'Zulu'), (2,'Alpha')"))
+        await session.execute(text("CREATE SCHEMA IF NOT EXISTS ts_dim"))
+        await session.execute(text(f"CREATE TABLE ts_dim.{table} (id int PRIMARY KEY, name text)"))
+        await session.execute(text(f"INSERT INTO ts_dim.{table} VALUES (1,'Zulu'), (2,'Alpha')"))
         catalog = await registry._warehouse_table(session, definition.source)
         assert not registry.assess_definition(definition, catalog).errors
         row = OntologyDefinitionRow(published_definition=definition.model_dump(mode="json", by_alias=True),
