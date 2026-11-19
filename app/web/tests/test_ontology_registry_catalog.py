@@ -2,6 +2,7 @@
 
 import json
 import os
+from pathlib import Path
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from uuid import uuid4
@@ -11,9 +12,13 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from alembic.config import Config
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
+from alembic.script import ScriptDirectory
 
-from app.web.api.routes.ontology_registry import published_type, published_types, type_groups
-from app.web.api.models.ontology_registry import Definition, OntologyDefinitionRow
+from app.web.api.routes.ontology_registry import change_catalog_state, published_type, published_types, type_groups
+from app.web.api.models.ontology_registry import CatalogChange, Definition, OntologyDefinitionRow
 from app.web.services import ontology_registry as registry
 from app.web.services.ontology_registry_policy import AccessContext, Principal
 
@@ -29,6 +34,26 @@ async def db():
         yield engine
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_catalog_state_migration_preserves_existing_types(db):
+    config = Config()
+    config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "alembic"))
+    migration = ScriptDirectory.from_config(config).get_revision("86d5a031f9b2")
+    assert migration.down_revision == "81a1b2c3d4e5"
+    async with db.begin() as connection:
+        await connection.execute(text("CREATE TEMP TABLE ontology_registry_definitions (id integer PRIMARY KEY)"))
+        await connection.execute(text("INSERT INTO ontology_registry_definitions VALUES (11)"))
+        def exercise(conn):
+            with Operations.context(MigrationContext.configure(conn)):
+                migration.module.upgrade()
+                assert conn.execute(text("SELECT * FROM ontology_registry_definitions")).one() == (11, False, False)
+                migration.module.downgrade()
+                assert conn.execute(text("SELECT * FROM ontology_registry_definitions")).one() == (11,)
+                migration.module.upgrade()
+                assert conn.execute(text("SELECT * FROM ontology_registry_definitions")).one() == (11, False, False)
+        await connection.run_sync(exercise)
 
 
 @pytest.mark.asyncio
@@ -82,10 +107,12 @@ async def test_published_catalog_pages_visible_matches_and_projects_fields(db):
             "CREATE TYPE pg_temp.statustypes AS ENUM ('ENABLE','DISABLE')",
             "CREATE TEMP TABLE tenant (id uuid PRIMARY KEY, status statustypes)",
             'CREATE TEMP TABLE "user" (id uuid PRIMARY KEY, status statustypes)',
-            "CREATE TEMP TABLE team_user_join (team_id uuid, user_id uuid, status statustypes)",
+            "CREATE TYPE pg_temp.roletypes AS ENUM ('MEMBER','MODERATOR','ADMIN','OWNER')",
+            "CREATE TEMP TABLE team_user_join (team_id uuid, user_id uuid, status statustypes, role roletypes DEFAULT 'MEMBER')",
             "CREATE TEMP TABLE ontology_markings (id uuid PRIMARY KEY, project_id uuid, readers jsonb)",
             "CREATE TEMP TABLE ontology_registry_definitions (id uuid PRIMARY KEY, project_id uuid,"
-            " revision integer, published_at timestamptz, published_definition jsonb)",
+            " revision integer, published_at timestamptz, published_definition jsonb, hidden boolean DEFAULT false,"
+            " deleted boolean DEFAULT false, updated_at timestamptz)",
         ):
             await session.execute(text(ddl))
         ids = {"u": actor.id, "p": project, "t": tenant}
@@ -117,7 +144,7 @@ async def test_published_catalog_pages_visible_matches_and_projects_fields(db):
                 {"id": row_ids[key], "p": project, "position": position, "data": json.dumps(definition)})
         page = await published_types(session, actor, 2, 0, "miXed%_")
         assert [item["definition"]["id"] for item in page["items"]] == ["one", "two"]
-        assert page["hasMore"]
+        assert page["hasMore"] and page["total"] == 3
         last = await published_types(session, actor, 2, 2, "miXed%_")
         assert await type_groups(session, actor, "") == {"items": ["Aviation", "Tags%_1"]}
         assert await type_groups(session, actor, "%_") == {"items": ["Tags%_1"]}
@@ -131,7 +158,36 @@ async def test_published_catalog_pages_visible_matches_and_projects_fields(db):
         with pytest.raises(HTTPException) as hidden:
             await published_type(row_ids["hidden"], session, actor)
         assert hidden.value.status_code == 404
+        async def change(operation, revision):
+            return await change_catalog_state(row_ids["one"], CatalogChange(operation=operation, revision=revision), session, actor)
+
+        with pytest.raises(HTTPException) as denied:
+            await change("delete", 1)
+        assert denied.value.status_code == 404
+        await session.execute(text("UPDATE team_user_join SET role='ADMIN'"))
+        assert (await change("hide", 1))["hidden"]
+        assert (await published_types(session, actor, 2, 0, "miXed%_"))["total"] == 2
+        hidden_page = await published_types(session, actor, 2, 0, "miXed%_", includeHidden=True)
+        assert hidden_page["total"] == 3 and hidden_page["items"][0]["hidden"]
+        with pytest.raises(HTTPException) as conflict:
+            await change("delete", 1)
+        assert conflict.value.status_code == 409
+        assert (await change("delete", 2))["deleted"]
+        with pytest.raises(HTTPException) as removed:
+            await published_type(row_ids["one"], session, actor)
+        assert removed.value.status_code == 404
+        assert (await published_types(session, actor, 2, 0, "miXed%_", includeHidden=True, includeDeleted=True))["items"][0]["deleted"]
+        await session.execute(text("UPDATE team_user_join SET role='MEMBER'"))
+        assert (await published_types(session, actor, 2, 0, "miXed%_", includeHidden=True, includeDeleted=True))["total"] == 2
+        with pytest.raises(HTTPException) as denied_restore:
+            await change("restore", 3)
+        assert denied_restore.value.status_code == 404
+        await session.execute(text("UPDATE team_user_join SET role='OWNER'"))
+        restored = await change("restore", 3)
+        assert restored["hidden"] and not restored["deleted"]
+        assert not (await change("unhide", 4))["hidden"]
+        assert (await published_types(session, actor, 2, 999, "miXed%_")) == {"items": [], "hasMore": False, "total": 3}
         # Administrative access still requires an enabled project membership.
         actor.is_superuser = True
         await session.execute(text("UPDATE team_user_join SET status='DISABLE'"))
-        assert await published_types(session, actor, 2, 0, "") == {"items": [], "hasMore": False}
+        assert await published_types(session, actor, 2, 0, "") == {"items": [], "hasMore": False, "total": 0}

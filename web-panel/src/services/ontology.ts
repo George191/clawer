@@ -68,9 +68,12 @@ export const updateOntologyDraft = (id: string, revision: number, definition: Se
 export const validateOntologyDraft = (id: string, revision: number) => client.post<OntologyValidation>(draftPath(id) + '/validate', { revision }, config).then(r => data(r.data));
 export const publishOntologyDraft = (id: string, revision: number) => client.post<{ id: string; revision: number; objectType: SemanticDefinition }>(draftPath(id) + '/publish', { revision }, config).then(r => data(r.data));
 export const testOntologyPolicy = (definition: SemanticDefinition, userId: string) => client.post<{ visible: boolean; visibleFields: string[] }>('/security/preview', { projectId: definition.projectId, userId, sourceMode: definition.source.mode, properties: definition.properties.map(item => item.id), security: definition.security }, config).then(r => data(r.data));
-export type PublishedOntologyPage = { items: PublishedOntologyType[]; hasMore: boolean };
-export const listPublishedOntologyTypes = (limit: number, offset: number, q: string, projectId?: string, signal?: AbortSignal) =>
-  client.get<PublishedOntologyPage>('/object-types', { ...config, params: { limit, offset, q, projectId }, signal }).then(r => data(r.data));
+export type PublishedCatalogItem = PublishedOntologyType & { hidden: boolean; deleted: boolean };
+export type PublishedOntologyPage = { items: PublishedCatalogItem[]; hasMore: boolean; total: number };
+export const listPublishedOntologyTypes = (limit: number, offset: number, q: string, projectId?: string, signal?: AbortSignal, includeHidden = false, includeDeleted = false) =>
+  client.get<PublishedOntologyPage>('/object-types', { ...config, params: { limit, offset, q, projectId, includeHidden, includeDeleted }, signal }).then(r => data(r.data));
+export const changePublishedCatalogState = (id: string, revision: number, operation: 'hide' | 'unhide' | 'delete' | 'restore') =>
+  client.patch('/object-types/' + encodeURIComponent(id) + '/catalog-state', { revision, operation }, config);
 export const fetchPublishedOntologyType = (id: string, signal?: AbortSignal) =>
   client.get<PublishedOntologyType>('/object-types/' + encodeURIComponent(id), { ...config, signal }).then(r => data(r.data));
 

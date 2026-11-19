@@ -4,7 +4,7 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 're
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Checkbox, Drawer, Select, Tooltip } from '@/components/ui';
 import {
-  AppstoreOutlined, ArrowRightOutlined, BarsOutlined,
+  ApartmentOutlined, AppstoreOutlined, ArrowRightOutlined, BarsOutlined,
   CloseOutlined, DatabaseOutlined, EyeOutlined, InfoCircleOutlined,
   PlusOutlined, ReloadOutlined, RightOutlined, SearchOutlined, StarFilled, StarOutlined,
 } from '@/components/ui/icons';
@@ -152,7 +152,10 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const [showHidden, setShowHidden] = useState(false);
   const includeHidden = canManage && showHidden;
   const [createOpen, setCreateOpen] = useState(false);
-  const [semanticProjectAccess, setSemanticProjectAccess] = useState(false);
+  const [managedProjects, setManagedProjects] = useState<string[]>([]);
+  const semanticProjectAccess = managedProjects.length > 0;
+  const publishedHidden = semanticProjectAccess && params.get('publishedHidden') === 'true';
+  const publishedDeleted = semanticProjectAccess && params.get('publishedDeleted') === 'true';
   const [createSchema, setCreateSchema] = useState<string>();
   const [favoriteState, setFavoriteState] = useState<{ userId: string; ids: string[] }>({ userId: '', ids: [] });
   const favorites = favoriteState.userId === currentUserId ? favoriteState.ids : [];
@@ -220,9 +223,9 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     if (!currentUserId) return;
     let alive = true;
     listOntologyProjects().then(items => {
-      if (alive && getSessionState().identity === sessionIdentity) setSemanticProjectAccess(items.length > 0);
+      if (alive && getSessionState().identity === sessionIdentity) setManagedProjects(items.map(item => item.id));
     }).catch(() => {
-      if (alive && getSessionState().identity === sessionIdentity) setSemanticProjectAccess(false);
+      if (alive && getSessionState().identity === sessionIdentity) setManagedProjects([]);
     });
     return () => { alive = false; };
   }, [currentUserId, sessionIdentity, refreshToken]);
@@ -493,6 +496,10 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const visibleProperties = data ? inspectorAllProperties ? data.properties : data.properties.slice(0, 6) : [];
   const identity = data || catalog.items.find((object) => object.id === inspectorId);
   const selectedColor = identity ? accentStyle(identity.dataType) : undefined;
+  const matchingPublishedCount = publishedPage?.identity === sessionIdentity && publishedPage?.keyword === catalogSearch.trim()
+    && publishedPage.includeHidden === publishedHidden && publishedPage.includeDeleted === publishedDeleted ? publishedPage.total : null;
+  const displayedTotal = publishedCatalog ? matchingPublishedCount : confirmedTotal;
+  const lineageLink = <button type="button" className="flow-ontology__sidebar-link" onClick={() => navigate('/ontology/lineage')}><ApartmentOutlined /><span>Lineage &amp; impact</span><ArrowRightOutlined /></button>;
   const groupTotal = Object.values(facetGroupCounts).reduce((sum, count) => sum + count, 0);
 
   return <div ref={rootRef} className="flow-ontology" data-testid="ontology-explorer">
@@ -517,16 +524,17 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
                 onClick={() => { changeCatalogSearch(''); searchRef.current?.focus(); }}><CloseOutlined /></button>}
             </div>
             <div className="flow-ontology__view-switch" role="group" aria-label="Catalog view"><button type="button" aria-label="Grid view" aria-pressed={view === 'grid'} className={view === 'grid' ? 'is-active' : ''} onClick={() => updateQuery({ view: null })}><AppstoreOutlined /><span>Grid</span></button><button type="button" aria-label="List view" aria-pressed={view === 'list'} className={view === 'list' ? 'is-active' : ''} onClick={() => updateQuery({ view: 'list' })}><BarsOutlined /><span>List</span></button></div>
-            {!publishedCatalog && <>
-              {canManage && <Checkbox className="flow-ontology__show-hidden" checked={includeHidden} onChange={(event) => setShowHidden(event.target.checked)}>Show hidden object types</Checkbox>}
-              <span className="flow-ontology__summary" aria-busy={loading} aria-label={confirmedTotal === null ? 'Object type count not loaded' : `${number(confirmedTotal)} object types${loading ? ', updating' : error ? ', last loaded count' : ''}`}><span className="flow-ontology__summary-value">{confirmedTotal === null ? '…' : number(confirmedTotal)}</span><span>object types</span></span>
-            </>}
+            {(publishedCatalog ? semanticProjectAccess : canManage) && <Checkbox className="flow-ontology__show-hidden" checked={publishedCatalog ? publishedHidden : includeHidden} onChange={event => publishedCatalog ? updateQuery({ publishedHidden: event.target.checked ? 'true' : null, publishedOffset: null }) : setShowHidden(event.target.checked)}>Show hidden object types</Checkbox>}
+            {publishedCatalog && semanticProjectAccess && <Checkbox className="flow-ontology__show-hidden" checked={publishedDeleted} onChange={event => updateQuery({ publishedDeleted: event.target.checked ? 'true' : null, publishedOffset: null })}>Show deleted object types</Checkbox>}
+            <span className="flow-ontology__summary" aria-busy={publishedCatalog ? displayedTotal == null : loading}><span className="flow-ontology__summary-value">{displayedTotal == null ? '…' : number(displayedTotal)}</span><span>object types</span></span>
+            <button type="button" className="flow-ontology__button" onClick={() => navigate('/ontology/runtime')}>Runtime</button>
+            <button type="button" className="flow-ontology__button" onClick={() => navigate('/ontology/connections')}>Data Connections</button>
           </div>}
           {(canManage || semanticProjectAccess) && <button type="button" className="flow-ontology__button flow-ontology__button--primary flow-ontology__create-action" onClick={startNewObject}><PlusOutlined />New object type</button>}
         </div>
       </header>
       <div className="flow-ontology__body">
-        {publishedCatalog ? <PublishedOntology key={publishedId} selection={publishedId} view={view} catalogPage={publishedPage?.identity === getSessionState().identity ? publishedPage : undefined} onCatalogPage={setPublishedPage} onSelect={selectPublished} onClearSearch={() => changeCatalogSearch('')} /> : <>
+        {publishedCatalog ? <PublishedOntology key={publishedId} selection={publishedId} view={view} managedProjects={managedProjects} includeHidden={publishedHidden} includeDeleted={publishedDeleted} catalogPage={publishedPage?.identity === getSessionState().identity ? publishedPage : undefined} onCatalogPage={setPublishedPage} onSelect={selectPublished} onClearSearch={() => changeCatalogSearch('')} /> : <>
         <aside className="flow-ontology__sidebar" aria-label="Object type groups"><nav aria-busy={loading}>
           {groups.map((item) => {
             const expanded = expandedGroup === item.key;
@@ -552,6 +560,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
             </React.Fragment>;
           })}
         </nav>
+        {lineageLink}
       </aside>
         <main className="flow-ontology__main" aria-label="Object types" aria-busy={loading}>
           {error && <div className="flow-ontology__notice" role="alert"><span>{error}</span><button type="button" onClick={() => setVersion((value) => value + 1)}>Retry</button></div>}
@@ -570,6 +579,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
         </main>
         </>}
       </div>
+      {publishedCatalog && !publishedId && <footer className="flow-published-nav-footer">{lineageLink}</footer>}
     </div>
     <Drawer open={inspectorOpen} onClose={closeInspector} width="100%" title={`${inspectorId} Object type preview`} closable={false} destroyOnHidden rootClassName={`flow-ontology flow-ontology__drawer${inspectorClosing ? ' is-closing' : ''}`} styles={{ header: { display: 'none' }, body: { display: 'flex', padding: 0, overflow: 'hidden' } }}>
     <aside ref={inspectorRef} className="flow-ontology__inspector" data-testid="ontology-inspector" data-object-id={inspectorId} style={selectedColor}>

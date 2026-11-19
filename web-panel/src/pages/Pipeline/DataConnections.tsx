@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Button, Checkbox, Input, Modal, Select } from '@/components/ui';
 import { ArrowLeftOutlined, CheckCircleOutlined, DatabaseOutlined, DeleteOutlined, EyeOutlined, FolderOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, TableOutlined } from '@/components/ui/icons';
 import apiClient, { createDataSource, deleteDataSource, fetchCurrentUserContext, fetchDataConnectorTypes, fetchDataSourceCatalog, fetchDataSourceColumns, fetchDataSources, setDataSourcePaused, testDataSource, updateDataSource } from '../../services/api';
@@ -450,7 +450,7 @@ export default function DataConnections({ onChanged }: Props = {}) {
   return <>
     <div className="ontology-connectors ontology-connections-workspace" aria-busy={loading || pending}>
       <header className="ontology-connections-workspace__header">
-        <div><span className="ontology-connectors__eyebrow">Ontology Foundry</span><h1>Data connections</h1><p>Manage saved sources and verify access to external databases.</p></div>
+        <div><Link to="/ontology" className="ontology-connectors__eyebrow">Object types</Link><h1>Data connections</h1><p>Manage saved sources and verify access to external databases.</p></div>
         {canManage && <Button type="primary" icon={<PlusOutlined />} disabled={blocked} onClick={newSource}>New source</Button>}
       </header>
       <div className="ontology-connectors__status" aria-live="polite">

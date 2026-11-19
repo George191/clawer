@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
 import { AppstoreOutlined, BarChartOutlined, DownOutlined, SearchOutlined, TableOutlined } from '@/components/ui/icons';
 import { fetchExplorerRowByKey } from '../../services/api';
 import { createSaved, listSaved, openSaved, removeSaved, savedPath, sharing, type Exploration, type ListKey, type SavedDetail, type SavedKind, type SavedMeta, type WorkbenchQuery } from '../../services/explorerSaved';
@@ -32,9 +31,9 @@ type Props = {
     apply: (q: WorkbenchQuery) => void;
     addFilter: (field: string) => void;
     toggleCatalog: () => void;
-    openCatalog: () => void;
     closeCatalog: () => void;
     catalogOpen: boolean;
+    search: string;
     mode: 'explore' | 'results';
     setMode: (mode: 'explore' | 'results') => void;
     clearSelection: () => void;
@@ -139,13 +138,11 @@ export default function ExplorerWorkbenchHeader(p: Props) {
     const root = useRef<HTMLElement>(null);
     const propertySearch = useRef<HTMLLabelElement>(null);
     const popup = useRef<HTMLElement>(null);
-    const location = useLocation();
-    const navigate = useNavigate();
     const applyRef = useRef(p);
     applyRef.current = p;
     const link = () => new URL('/ontology/explorer?' + new URLSearchParams({ schema: p.schema, table: p.table }), window.location.origin);
     const kind = menu === 'lists' ? 'list' : 'exploration';
-    const preservedSavedId = new URLSearchParams(location.search).get('saved');
+    const preservedSavedId = new URLSearchParams(p.search).get('saved');
     useEffect(() => () => {
         opening.current?.abort();
     }, []);
@@ -261,25 +258,11 @@ export default function ExplorerWorkbenchHeader(p: Props) {
         }
     }
     function selectMode(mode: 'results' | 'explore') { p.selectResource('preview'); p.setMode(mode); show(''); }
-    function startExploration() {
-        opening.current?.abort();
-        setSaved(undefined); setSearch(''); choose(''); setChart(''); setError(''); setNotice(''); setShareLink('');
-        const params = new URLSearchParams(location.search);
-        params.delete('saved'); params.delete('view');
-        if (params.toString() !== new URLSearchParams(location.search).toString())
-            navigate(location.pathname + (params.size ? '?' + params.toString() : ''));
-        p.apply({ filters: [], sorts: [], search: '' });
-        p.clearSelection();
-        p.setMode('results');
-        show('');
-        p.openCatalog();
-    }
     const field = chart && p.fields.includes(chart) ? chart : p.fields[0] ?? '';
     const find = p.fields.filter(f => [f, p.names?.[f]].join(' ').toLowerCase().includes(search.toLowerCase())).slice(0, 30);
     const changeField = (f: string) => { choose(f); setSearch(p.names?.[f] || f); show('property'); };
     return <header className="wb-header" ref={root}>
         <div className="wb-line wb-top"><strong className="wb-current"><i>{p.glyph ?? <TableOutlined />}</i>{saved?.name || p.label}</strong>
-            <button type="button" className="wb-new-exploration" onClick={startExploration}>⊕ New exploration</button>
             <div className="wb-spacer"/><button onClick={() => openMenu('explorations')}>Explorations <DownOutlined /></button>
             <button onClick={() => openMenu('lists')}>Lists <DownOutlined /></button>
     </div>

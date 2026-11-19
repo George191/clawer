@@ -159,7 +159,9 @@ def visible_receipt(user, project_id):
     granted = allowed_for(user.id, project_id)
     current = OntologyDefinitionRow.published_definition["security"]["markings"]
     touched = touched_markings(OntologyTransaction.steps, project_id)
-    return covers(OntologyTransaction.markings, granted) & ~touched.where(~covers(current, granted)).exists()
+    return covers(OntologyTransaction.markings, granted) & ~touched.where(
+        or_(OntologyDefinitionRow.deleted.is_(True), ~covers(current, granted))
+    ).exists()
 
 
 async def _execute_steps(session, user, project_id, batch_id, steps):

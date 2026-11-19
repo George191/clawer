@@ -129,7 +129,6 @@ const App: React.FC = () => {
             <Route path="/ontology/explorer/record" element={<ExplorerRecordPage />} />
             <Route path="/ontology/connections" element={<Pipeline />} />
             <Route path="/ontology/lineage" element={<Pipeline />} />
-            <Route path="/ontology/transforms" element={<Pipeline />} />
             <Route path="/ontology/runtime" element={<Pipeline />} />
             <Route path="/ontology/quality" element={<Navigate to="/ontology/runtime" replace />} />
             <Route path="/ontology/runs" element={<Navigate to="/automation/runs?domain=etl-pipeline" replace />} />

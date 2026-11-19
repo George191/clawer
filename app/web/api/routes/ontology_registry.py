@@ -15,6 +15,7 @@ from app.web.api.dependencies import CurrentUser, SessionDep
 from app.web.api.models import Team, TeamUserJoin
 from app.web.api.models.ontology_registry import (
     Definition,
+    CatalogChange,
     DefinitionIssue,
     OntologyDefinitionRow,
     OntologyProjectProfile,
@@ -257,23 +258,52 @@ async def published_types(
     session: SessionDep, user: CurrentUser,
     limit: int = Query(100, ge=1, le=200), offset: int = Query(0, ge=0, le=100_000),
     q: str = Query("", max_length=200),
-    projectId: UUID | None = None,
+    projectId: UUID | None = None, includeHidden: bool = False, includeDeleted: bool = False,
 ):
-    statement = published_catalog_statement(user, q.strip())
+    statement = published_catalog_statement(user, q.strip(), include_hidden=includeHidden, include_deleted=includeDeleted)
     if projectId is not None:
         statement = statement.where(OntologyDefinitionRow.project_id == projectId)
-    result = await session.execute(statement.limit(limit + 1).offset(offset))
+    result = await session.execute(statement.add_columns(func.count().over()).limit(limit).offset(offset))
     rows = result.all()
-    items = [{"id": row.id, "revision": row.revision, "definition": catalog_definition(user, row, tenant_id)}
-             for row, tenant_id in rows[:limit]]
-    return {"items": items, "hasMore": len(rows) > limit}
+    total = rows[0][2] if rows else 0
+    if offset and not rows:
+        total = await session.scalar(statement.order_by(None).with_only_columns(func.count(OntologyDefinitionRow.id)))
+    items = [{"id": row.id, "revision": row.revision, "hidden": row.hidden, "deleted": row.deleted,
+              "definition": catalog_definition(user, row, tenant_id)} for row, tenant_id, _ in rows]
+    return {"items": items, "hasMore": offset + len(items) < total, "total": total}
+
+
+@router.patch("/object-types/{definition_id}/catalog-state")
+async def change_catalog_state(definition_id: UUID, payload: CatalogChange, session: SessionDep, user: CurrentUser):
+    model = OntologyDefinitionRow
+    manageable = projects_statement(user, manage=True).with_only_columns(Team.id)
+    statement = published_catalog_statement(user, include_hidden=True, include_deleted=True).where(
+        model.id == definition_id, model.project_id.in_(manageable),
+    ).with_for_update(of=model)
+    item = (await session.execute(statement)).one_or_none()
+    if item is None:
+        raise HTTPException(404, "Object type not found or not manageable")
+    row, _ = item
+    check_revision(row, payload.revision)
+    if row.deleted != (payload.operation == "restore"):
+        raise HTTPException(409, "This operation does not apply to the current object type state.")
+    if payload.operation in ("hide", "unhide"):
+        row.hidden = payload.operation == "hide"
+    else:
+        row.deleted = payload.operation == "delete"
+    row.revision += 1
+    row.updated_at = datetime.now(timezone.utc)
+    result = {"id": row.id, "revision": row.revision, "hidden": row.hidden, "deleted": row.deleted}
+    await session.commit()
+    return result
 
 
 @router.get("/object-types/{definition_id}")
 async def published_type(definition_id: UUID, session: SessionDep, user: CurrentUser):
-    result = await session.execute(published_catalog_statement(user).where(OntologyDefinitionRow.id == definition_id))
+    result = await session.execute(published_catalog_statement(user, include_hidden=True).where(OntologyDefinitionRow.id == definition_id))
     item = result.one_or_none()
     if item is None:
         raise HTTPException(404, "Object type not found")
     row, tenant_id = item
-    return {"id": row.id, "revision": row.revision, "definition": catalog_definition(user, row, tenant_id)}
+    return {"id": row.id, "revision": row.revision, "hidden": row.hidden, "deleted": row.deleted,
+            "definition": catalog_definition(user, row, tenant_id)}

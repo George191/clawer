@@ -89,6 +89,7 @@ async def authorized_type(session, actor, definition_id, *, need=None, lock=None
     statement = select(OntologyDefinitionRow).where(
         OntologyDefinitionRow.id == definition_id,
         OntologyDefinitionRow.published_at.is_not(None),
+        OntologyDefinitionRow.deleted.is_(False),
     )
     statement = statement.with_for_update(read=lock != "write")
     row = await session.scalar(statement.execution_options(populate_existing=True))
