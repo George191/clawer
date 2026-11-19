@@ -33,7 +33,12 @@ export default function OntologyIconPicker({ definition, disabled, onChange }: P
   const focusIndex = Math.max(0, visible.findIndex(({ value }) => value === focusedIcon));
   const selected = choices.find(({ value }) => value === definition.icon)?.label || definition.icon;
 
-  useEffect(() => { if (open) search.current?.focus(); }, [open]);
+  useEffect(() => { if (list.current) list.current.scrollTop = 0; }, [page, query]);
+  useEffect(() => {
+    if (!open) return;
+    search.current?.focus();
+    list.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
+  }, [open]);
   const show = () => {
     const selectedIndex = choices.findIndex(({ value }) => value === definition.icon);
     setPage(Math.floor(Math.max(0, selectedIndex) / pageSize));
@@ -92,6 +97,7 @@ export default function OntologyIconPicker({ definition, disabled, onChange }: P
               aria-selected={value === definition.icon} tabIndex={index === focusIndex ? 0 : -1} onFocus={() => setFocusedIcon(value)}
               onClick={() => onChange({ icon: value })}>
               <SemanticTypeGlyph definition={{ ...definition, icon: value, color: '#ffffff', iconColor: '#000000' }} />
+              <span className="flow-icon-option-name">{label}</span>
               {value === definition.icon && <CheckOutlined className="flow-icon-check" />}
             </button>)}
           </div>
