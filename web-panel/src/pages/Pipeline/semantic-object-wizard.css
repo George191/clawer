@@ -12,15 +12,6 @@
 .flow-semantic-wizard.flow-create-modal .ui-select-open > .ui-select-selector {
   border-color: var(--ontology-primary); box-shadow: none;
 }
-.flow-semantic-wizard .flow-object-icon-select { width: 54px; }
-.flow-object-icon-select .ui-select-selector { padding-inline: 5px 18px; }
-.flow-object-icon-choice { display: inline-flex; align-items: center; vertical-align: middle; }
-.flow-object-icon-choice .flow-semantic-type-glyph { width: 22px; height: 22px; font-size: 15px; }
-.flow-object-icon-popup [role="listbox"] { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 3px; }
-.flow-object-icon-popup.ui-select-dropdown [role="option"] { min-width: 0; padding: 4px; justify-content: center; }
-.flow-object-icon-popup .ui-select-item-option-content { flex: 0 0 auto; }
-.flow-object-icon-popup.ui-select-dropdown [role="option"] > span[aria-hidden="true"] { display: none; }
-.flow-object-icon-popup [aria-selected="true"] { outline: 1px solid var(--ontology-primary); outline-offset: -1px; }
 .flow-semantic-wizard .flow-create-layout { grid-template-columns: clamp(148px, 16%, 185px) minmax(0, 1fr); }
 .flow-semantic-wizard .flow-create-steps { padding: 0; }
 .flow-semantic-wizard .flow-create-steps > li {

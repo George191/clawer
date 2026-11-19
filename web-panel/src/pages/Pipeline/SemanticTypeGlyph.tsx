@@ -1,33 +1,36 @@
-import { AppstoreOutlined } from '@/components/ui/icons';
-import { ontologyTypeIcon } from './ontologyTypeIcons';
+import { AppstoreOutlined, PlaneFilled } from '@/components/ui/icons';
+import { ontologyIconStyle, ontologyTypeIcon } from './ontologyTypeIcons';
 import type { SemanticDefinition } from '../../services/ontology';
 import { inferSiteKind, TemplateGlyph } from '../AICollect/WorkspaceDock';
 
 type Props = {
   definition: Pick<SemanticDefinition, 'id' | 'name' | 'source' | 'icon' | 'color'>;
   size?: 'row' | 'preview';
+  className?: string;
 };
 
-function glyphForeground(color: string) {
-  const channels = [1, 3, 5].map(index => parseInt(color.slice(index, index + 2), 16) / 255)
-    .map(channel => channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4);
-  return .2126 * channels[0] + .7152 * channels[1] + .0722 * channels[2] > .179 ? '#000' : '#fff';
+function automaticIcon(definition: Props['definition']) {
+  const names = [definition.source.mode === 'existing' ? definition.source.table || '' : definition.id, definition.name];
+  const kind = names.map(name => inferSiteKind(name)).find(item => item !== 'generic');
+  if (kind) return kind;
+  return names.some(name => /(?:^|[\s_-])(?:flights?|airports?|aviation)(?:$|[\s_-])/i.test(name)) ? 'plane' : 'box';
 }
 
-export default function SemanticTypeGlyph({ definition, size = 'row' }: Props) {
+export default function SemanticTypeGlyph({ definition, size = 'row', className = '' }: Props) {
   const ExplicitIcon = ontologyTypeIcon(definition.icon);
-  const names = [definition.id, definition.source.table || '', definition.name];
-  const kind = names.map(name => inferSiteKind(name)).find(item => item !== 'generic');
-  const flight = !kind && names.some(name => /(?:^|[\s_-])(?:flights?|airports?|aviation)(?:$|[\s_-])/i.test(name));
-  const color = /^#[\da-f]{6}$/i.test(definition.color) ? definition.color : undefined;
-
-  return <span
-    className={`flow-semantic-type-glyph flow-semantic-type-glyph--${size}`}
-    aria-hidden="true"
-    style={color ? { backgroundColor: color, color: glyphForeground(color) } : undefined}
-  >
-    {ExplicitIcon ? <ExplicitIcon /> : flight ? <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor" focusable="false">
-      <path d="M21 3.2c-.6-.6-1.7-.5-2.3.1l-4 4-9.1-2-2 2 7.1 4-3.6 3.6-3.1-.5-1.5 1.5 4.4 2.2 2.2 4.4 1.5-1.5-.5-3.1 3.6-3.6 4 7.1 2-2-2-9.1 4-4c.6-.6.7-1.7.1-2.3Z" />
-    </svg> : kind ? <TemplateGlyph kind={kind} /> : <AppstoreOutlined />}
+  let glyph;
+  let key = definition.icon;
+  if (ExplicitIcon) {
+    glyph = <ExplicitIcon />;
+  } else {
+    const inferred = automaticIcon(definition);
+    key = inferred;
+    if (inferred === 'plane') glyph = <PlaneFilled />;
+    else if (inferred === 'box') glyph = <AppstoreOutlined />;
+    else glyph = <TemplateGlyph kind={inferred} />;
+  }
+  return <span className={`flow-semantic-type-glyph flow-semantic-type-glyph--${size} ${className}`} aria-hidden="true"
+    style={ontologyIconStyle(key, definition.color)}>
+    {glyph}
   </span>;
 }

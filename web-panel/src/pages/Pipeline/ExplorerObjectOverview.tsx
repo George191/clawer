@@ -1,7 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
-import type { CSSProperties } from 'react';
 import { ProfileOutlined, TableOutlined } from '@/components/ui/icons';
-import { ontologyTypeIcon } from './ontologyTypeIcons';
+import SemanticTypeGlyph from './SemanticTypeGlyph';
 import { fetchExplorerProperties, type ExplorerPropertyMapping } from '../../services/explorerProperties';
 
 export type ExplorerOverviewPresentation = ExplorerPropertyMapping;
@@ -64,22 +63,16 @@ export function useExplorerPresentation(schema: string, table: string, revision:
   return read?.key === key ? read : undefined;
 }
 
-function iconForeground(color: string) {
-  const linear = (offset: number) => {
-    const value = parseInt(color.slice(offset, offset + 2), 16) / 255;
-    return value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4;
-  };
-  return .2126 * linear(1) + .7152 * linear(3) + .0722 * linear(5) > .18 ? '#10222b' : '#fff';
-}
-
 export function ExplorerTypeIcon({ presentation, compact }: { presentation?: ExplorerOverviewPresentation; compact?: boolean }) {
   const name = presentation?.icon || '';
-  const Icon = ontologyTypeIcon(name) || TableOutlined;
-  const color = presentation?.color && /^#[0-9a-f]{6}$/i.test(presentation.color) ? presentation.color : undefined;
-  const style = color ? { '--type-icon-bg': color, '--type-icon-color': iconForeground(color) } as CSSProperties : undefined;
-  return <span aria-hidden="true" className={`flow-explorer-selection__icon${compact ? ' is-compact' : ''}`} style={style}>
-    {['plane', 'flight', 'airplane'].includes(name) ? <span className="flow-explorer-selection__plane">✈︎</span> : <Icon />}
-  </span>;
+  const className = `flow-explorer-selection__icon${compact ? ' is-compact' : ''}`;
+  if (!presentation?.sourceDefinitionId && !name && !presentation?.color) {
+    return <span aria-hidden="true" className={className}><TableOutlined /></span>;
+  }
+  const icon = name === 'flight' || name === 'airplane' ? 'plane' : name;
+  return <SemanticTypeGlyph className={className}
+    definition={{ id: '', name: presentation?.displayName || '', source: { mode: 'existing', table: presentation?.table },
+      icon: icon || (presentation?.sourceDefinitionId ? '' : 'table'), color: presentation?.color || '' }} />;
 }
 
 export function explorerFields(row: ExplorerPreviewRow, columns: readonly string[], presentation?: ExplorerOverviewPresentation,
