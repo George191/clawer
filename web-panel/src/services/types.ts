@@ -56,6 +56,7 @@ export interface LayerThroughputPoint {
 
 // ==================== ETL Layers ====================
 export interface LayerNode {
+  ontologySource?: boolean;
   schemaName?: string;
   alias?: string;
   database?: string;
@@ -71,6 +72,7 @@ export interface LayerNode {
 }
 
 export interface LayerTable {
+  ontologySource?: boolean;
   name: string;
   dataType?: string;
   schemaName?: string;

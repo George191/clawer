@@ -1,0 +1,38 @@
+.flow-security-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 12px;
+  border-bottom: 1px solid var(--ontology-border);
+}
+.flow-security-nav button {
+  padding: 8px 2px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--ontology-muted);
+  font: inherit;
+  cursor: pointer;
+}
+.flow-security-nav button[aria-pressed="true"] { color: var(--ontology-link); border-bottom-color: currentColor; }
+.flow-security-nav button:hover { color: var(--ontology-text); }
+.flow-security-panel { display: grid; align-content: start; gap: 12px; min-width: 0; }
+.flow-security-panel h4 { margin: 0; font-size: 15px; }
+.flow-security-panel .flow-create-help { margin: 0; }
+.flow-security-panel .flow-create-field, .flow-security-test { width: 100%; max-width: 540px; }
+.flow-security-panel .flow-semantic-config { min-width: 0; margin: 0; }
+.flow-security-panel > .flow-semantic-config,
+.flow-security-panel section[aria-label="Security markings"] {
+  display: grid; gap: 10px; padding: 0; background: transparent; border: 0;
+}
+.flow-security-panel section[aria-label="Security markings"] {
+  padding-bottom: 16px; margin-bottom: 4px; border-bottom: 1px solid var(--ontology-border);
+}
+.flow-security-panel .flow-create-grid, .flow-security-test { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.flow-security-test > .ui-select { flex: 1 1 180px; }
+.flow-security-panel details summary { cursor: pointer; }
+.flow-security-panel details[open] > fieldset { margin-top: 10px; }
+.flow-security-panel fieldset > label { display: grid; gap: 4px; }
+.flow-security-panel fieldset > .ui-btn { justify-self: start; }
+@media (max-width: 580px) {
+  .flow-security-nav { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+}

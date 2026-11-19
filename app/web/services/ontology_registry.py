@@ -25,11 +25,10 @@ from app.web.api.models.ontology_registry import (
 )
 from app.web.api.models.user import RoleTypes
 from app.web.api.utils.models import StatusTypes
-from app.web.services.etl_layers import get_etl_layers, quote_identifier
+from app.web.services.etl_layers import WAREHOUSE_SCHEMAS, get_etl_layers, ontology_source_predicate, quote_identifier
 from app.web.services.ontology_markings import allowed_ids, covers
 from app.web.services.ontology_registry_policy import AccessContext, Principal, definition_policy_errors, visibility
 
-WAREHOUSE_SCHEMAS = frozenset({"ts_ods", "ts_dwd"})
 IDENTIFIER = re.compile(r"^[a-z][a-z0-9_-]{0,62}$")
 COLUMN = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 SQL_TYPES: dict[str, str] = {
@@ -214,7 +213,7 @@ def assess_definition(
     if mode == "existing":
         selected = definition.source
         if selected.schema_name not in WAREHOUSE_SCHEMAS or not COLUMN.fullmatch(selected.table or ""):
-            error("source", "Choose a table in the managed ts_ods or ts_dwd schema")
+            error("source", "Choose an available table in a current warehouse layer")
         elif source is None:
             error("source", "Selected warehouse table is unavailable")
         else:
@@ -253,13 +252,12 @@ def assess_definition(
 async def _warehouse_table(session: AsyncSession, source: Source) -> WarehouseTable | None:
     if source.schema_name not in WAREHOUSE_SCHEMAS or not COLUMN.fullmatch(source.table or ""):
         return None
-    params = {"schema": source.schema_name, "table": source.table}
-    oid = await session.scalar(text("""
+    eligibility, scope = ontology_source_predicate()
+    params = {"schema": source.schema_name, "table": source.table, **scope}
+    oid = await session.scalar(text(f"""
         SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = :schema AND c.relname = :table
-          AND c.relkind IN ('r', 'p') AND NOT c.relispartition
-          AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = c.oid)
-          AND has_table_privilege(current_user, c.oid, 'SELECT')
+          AND ({eligibility})
         """), params)
     if oid is None:
         return None

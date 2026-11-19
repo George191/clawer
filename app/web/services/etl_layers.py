@@ -83,6 +83,7 @@ async def reserved_batch_target_exists(session) -> bool:
 
 
 LAYERS = ("rds", "ods", "task", "dwd", "dws", "dim", "ads")
+WAREHOUSE_SCHEMAS = frozenset(f"ts_{layer}" for layer in LAYERS)
 _OBJECT_GROUPS = ("ingestion", "processing", "serving", "other")
 _OBJECT_GROUP_SQL = "COALESCE(o.resource_group, 'other')"
 _OBJECT_METADATA_JOIN = """LEFT JOIN public.ontology_objects o
@@ -183,6 +184,24 @@ def resolve_schema(layer: str, table_role: str = "current") -> str:
 
 def _required_indexed_preview_tables() -> frozenset[tuple[str, str]]:
     return frozenset((asset.schema_name, asset.table) for asset in settings.ONTOLOGY_EXPLORER_REQUIRED_INDEXED_PREVIEW_TABLES)
+
+
+def ontology_source_predicate() -> tuple[str, dict]:
+    """The chooser and binding verifier must agree on which ordinary roots can be read directly."""
+    predicate = """c.relkind IN ('r','p') AND NOT c.relispartition
+        AND c.relname ~ '^[a-z_][a-z0-9_]{0,62}$'
+        AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = c.oid)
+        AND has_table_privilege(current_user, c.oid, 'SELECT')"""
+    restricted = _required_indexed_preview_tables()
+    if not restricted:
+        return predicate, {}
+    # A read of a root also reads its descendants. Exclude every ancestor of an index-only table.
+    predicate += """ AND c.oid NOT IN (
+        WITH RECURSIVE index_only(oid) AS (
+            SELECT to_regclass(name)::oid FROM unnest(CAST(:index_only_tables AS text[])) names(name)
+            UNION SELECT i.inhparent FROM pg_inherits i JOIN index_only r ON r.oid = i.inhrelid
+        ) SELECT oid FROM index_only WHERE oid IS NOT NULL)"""
+    return predicate, {"index_only_tables": [f'{quote_identifier(s)}.{quote_identifier(t)}' for s, t in sorted(restricted)]}
 
 
 def requires_indexed_projection(schema: str, table: str) -> bool:
@@ -313,17 +332,19 @@ class EtlLayers:
             "alias": found.get(schema, {}).get("alias") or "",
             "database": found.get(schema, {}).get("database", ""),
             "icon": "database", "status": "running" if schema in found else "stopped",
+            "ontologySource": schema in WAREHOUSE_SCHEMAS and schema in found,
             "rateIn": 0, "rateOut": 0, "lag": 0,
             "metricsAvailable": False, "tables": found.get(schema, {}).get("tables", 0),
         } for schema in schemas]
 
     async def tables(self, layer: str, table_role: str = "current") -> list[dict[str, Any]]:
         schema = resolve_schema(layer, table_role)
+        eligibility, scope = ontology_source_predicate() if schema in WAREHOUSE_SCHEMAS else ("FALSE", {})
         async with self.session() as session:
             result = await session.execute(text(f"""
                 SELECT c.relname AS name, c.relkind = 'p' OR storage.has_children AS partitioned,
                        o.data_type, {_OBJECT_DESCRIPTION_SQL} AS description,
-                       storage.rows, storage.size
+                       storage.rows, storage.size, ({eligibility}) AS ontology_source
                 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
                 {_OBJECT_METADATA_JOIN}
                 CROSS JOIN LATERAL (
@@ -343,10 +364,10 @@ class EtlLayers:
                   AND NOT c.relispartition
                   AND NOT (n.nspname = :batch_schema AND c.relname IN (:batch_target, :batch_range_target))
                 ORDER BY c.relname
-            """), {"schema": schema, "batch_schema": BATCH_TARGET_SCHEMA, "batch_target": INCREMENTAL_TARGET, "batch_range_target": BATCH_RANGE_TARGET})
+            """), {"schema": schema, "batch_schema": BATCH_TARGET_SCHEMA, "batch_target": INCREMENTAL_TARGET, "batch_range_target": BATCH_RANGE_TARGET, **scope})
             rows = result.mappings().all()
         return [{"name": row["name"], "schemaName": schema, "dataType": row["data_type"] or "",
-                 "tableRole": "history" if schema.endswith("_hist") else "current",
+                 "tableRole": "history" if schema.endswith("_hist") else "current", "ontologySource": row["ontology_source"],
                  "partitioned": row["partitioned"], "rowCount": int(row["rows"]),
                  "size": row["size"], "updatedAt": "", "description": row["description"] or "",
                  "rowCountEstimated": True} for row in rows]

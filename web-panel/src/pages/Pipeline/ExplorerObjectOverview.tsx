@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import type { CSSProperties } from 'react';
-import { AppstoreOutlined, DatabaseOutlined, FileTextOutlined, GlobalOutlined, ProfileOutlined, PushpinOutlined, TableOutlined, TeamOutlined } from '@/components/ui/icons';
+import { ProfileOutlined, TableOutlined } from '@/components/ui/icons';
+import { ontologyTypeIcon } from './ontologyTypeIcons';
 import { fetchExplorerProperties, type ExplorerPropertyMapping } from '../../services/explorerProperties';
 
 export type ExplorerOverviewPresentation = ExplorerPropertyMapping;
@@ -27,10 +28,6 @@ type Field = {
   presentation: ExplorerPropertyPresentation;
   summary?: boolean;
   group?: string | null;
-};
-const icons = {
-  box: AppstoreOutlined, table: TableOutlined, database: DatabaseOutlined, globe: GlobalOutlined,
-  'map-pin': PushpinOutlined, users: TeamOutlined, document: FileTextOutlined,
 };
 const ExplorerPropertyPreview = lazy(() => import('./ExplorerPropertyPreview'));
 const fieldValue = (record: RowValues, identity: RowValues, field: string) =>
@@ -77,7 +74,7 @@ function iconForeground(color: string) {
 
 export function ExplorerTypeIcon({ presentation, compact }: { presentation?: ExplorerOverviewPresentation; compact?: boolean }) {
   const name = presentation?.icon || '';
-  const Icon = Object.prototype.hasOwnProperty.call(icons, name) ? icons[name as keyof typeof icons] : TableOutlined;
+  const Icon = ontologyTypeIcon(name) || TableOutlined;
   const color = presentation?.color && /^#[0-9a-f]{6}$/i.test(presentation.color) ? presentation.color : undefined;
   const style = color ? { '--type-icon-bg': color, '--type-icon-color': iconForeground(color) } as CSSProperties : undefined;
   return <span aria-hidden="true" className={`flow-explorer-selection__icon${compact ? ' is-compact' : ''}`} style={style}>
