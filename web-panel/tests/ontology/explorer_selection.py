@@ -95,6 +95,12 @@ def run():
         row(page, 1).get_by_text(str(START), exact=True).click()
         expect(panel).to_be_visible()
         expect(panel.get_by_role("heading", name="Preview row 01")).to_be_visible()
+        header_glyph = page.locator(".wb-type .workspace-glyph")
+        expect(header_glyph).to_be_visible()
+        glyph = header_glyph.inner_html()
+        assert page.locator(".wb-current .workspace-glyph").inner_html() == glyph
+        assert row(page, 1).locator(".workspace-glyph").inner_html() == glyph
+        assert panel.locator(".workspace-glyph").inner_html() == glyph
         assert panel.evaluate("""el => {
             const style = getComputedStyle(el);
             const root = getComputedStyle(document.documentElement);
@@ -117,6 +123,7 @@ def run():
             panel.get_by_role("link", name="Open full view").click()
         full = full_opened.value
         expect(full.get_by_role("heading", name="Preview row 01")).to_be_visible()
+        assert full.locator(".explorer-full-record > header .workspace-glyph").inner_html() == glyph
         expect(full.get_by_role("region", name="Key Service trip Information")).to_contain_text("Legacy record 01")
         if screenshots:
             full.screenshot(path=Path(screenshots) / "selection-full-overview.png", animations="disabled")

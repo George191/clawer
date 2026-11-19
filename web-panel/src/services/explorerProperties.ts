@@ -33,6 +33,7 @@ export interface ExplorerMappedProperty {
 export interface ExplorerPropertyMapping {
   schema: string;
   table: string;
+  dataType: string;
   version: string;
   sourceDefinitionId: string | null;
   titleProperty: string | null;

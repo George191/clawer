@@ -48,7 +48,9 @@ async def props(publication_app, monkeypatch):
 
 
 def write(mapping):
-    value = {k: v for k, v in mapping.items() if k not in {"schema", "table", "primaryKey"}}
+    value = {key: mapping[key] for key in (
+        "version", "sourceDefinitionId", "titleProperty", "displayName", "description", "icon", "color", "groups"
+    )}
     value["properties"] = [
         {k: v for k, v in p.items() if k not in {"sqlType", "primaryKeyPosition"}}
         for p in mapping["properties"]
@@ -61,10 +63,16 @@ async def test_title_mapping_edit_scope_staleness_and_column_changes(props):
     _, c, engine, schema, admin, member, *_ = props
     endpoint = f"/api/v1/etl/{schema}/items/property-mapping"
     assert (await c.get(endpoint)).status_code == 401
+    async with engine.begin() as conn:
+        await conn.execute(text("""
+            INSERT INTO public.ontology_objects(layer,schema_name,table_name,data_type)
+            VALUES ('ods',:schema,'items','patent')
+        """), {"schema": schema})
     received = await c.get(endpoint, headers=member)
     assert received.status_code == 200, received.text
     origin = received.json()
     assert origin["titleProperty"] is None and origin["primaryKey"] == ["id"]
+    assert origin["dataType"] == "patent"
     draft = write(origin)
     draft.update(
         titleProperty="category", displayName="Flights", icon="plane", color="#2585A0", groups=["Overview"]
@@ -77,10 +85,12 @@ async def test_title_mapping_edit_scope_staleness_and_column_changes(props):
         if p["id"] == "source":
             p.update(visibility="hidden", description="Restricted styling")
     assert (await c.put(endpoint, headers=member, json=draft)).status_code == 403
+    assert (await c.put(endpoint, headers=admin, json={**draft, "dataType": "contract"})).status_code == 422
     responses = await asyncio.gather(*(c.put(endpoint, headers=admin, json=draft) for _ in range(2)))
     assert sorted(r.status_code for r in responses) == [200, 409]
     updated = next(r.json() for r in responses if r.status_code == 200)
     assert updated["version"] != origin["version"]
+    assert updated["dataType"] == "patent"
     reader = (await c.get(endpoint, headers=member)).json()
     assert reader["titleProperty"] == "category" and reader["displayName"] == "Flights"
     assert not any(p["id"] == "source" for p in reader["properties"])
@@ -118,7 +128,7 @@ async def test_title_mapping_edit_scope_staleness_and_column_changes(props):
     async with engine.begin() as conn:
         await conn.execute(
             text(
-                "INSERT INTO public.ontology_objects(layer,schema_name,table_name,visibility) VALUES ('ods',:s,'items','hidden')"
+                "UPDATE public.ontology_objects SET visibility='hidden' WHERE schema_name=:s AND table_name='items'"
             ),
             {"s": schema},
         )

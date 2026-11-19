@@ -117,7 +117,7 @@ function RecordPage({ schema, table, identity }: { schema: string; table: string
     return <article className="flow-console--ontology explorer-object-workspace explorer-full-record">
         <nav aria-label="Object location"><Link to="/ontology/explorer">Explorer</Link><span>/</span>
             <Link to={tablePath}>{schema}.{table}</Link></nav>
-        <header><ExplorerTypeIcon presentation={presentation} /><div className="record-heading">
+        <header><ExplorerTypeIcon dataType={presentation?.dataType} table={table} /><div className="record-heading">
             <span>{typeName}</span><h1>{title}</h1>
         </div><div className="record-operations">
             <Button onClick={showLink} disabled={!result}>Share link</Button>

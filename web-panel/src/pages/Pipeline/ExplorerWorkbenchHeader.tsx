@@ -19,7 +19,6 @@ type Props = {
     label: string;
     titleProperty?: string | null;
     primaryKey?: string[];
-    color?: string;
     glyph?: ReactNode;
     fields: string[];
     names?: Record<string, string>;
@@ -279,13 +278,13 @@ export default function ExplorerWorkbenchHeader(p: Props) {
     const find = p.fields.filter(f => [f, p.names?.[f]].join(' ').toLowerCase().includes(search.toLowerCase())).slice(0, 30);
     const changeField = (f: string) => { choose(f); setSearch(p.names?.[f] || f); show('property'); };
     return <header className="wb-header" ref={root}>
-        <div className="wb-line wb-top"><strong className="wb-current"><i style={{ background: p.color }}>{p.glyph ?? <TableOutlined />}</i>{saved?.name || p.label}</strong>
+        <div className="wb-line wb-top"><strong className="wb-current"><i>{p.glyph ?? <TableOutlined />}</i>{saved?.name || p.label}</strong>
             <button type="button" className="wb-new-exploration" onClick={startExploration}>⊕ New exploration</button>
             <div className="wb-spacer"/><button onClick={() => openMenu('explorations')}>Explorations <DownOutlined /></button>
             <button onClick={() => openMenu('lists')}>Lists <DownOutlined /></button>
     </div>
         <div className="wb-line wb-query"><button className="wb-catalog-toggle" onClick={p.toggleCatalog} aria-label="Browse object types" aria-expanded={p.catalogOpen}><SearchOutlined /></button>
-            <span className="wb-type"><i style={{ background: p.color }}>{p.glyph ?? <TableOutlined />}</i><strong>{p.label}</strong></span>
+            <span className="wb-type"><i>{p.glyph ?? <TableOutlined />}</i><strong>{p.label}</strong></span>
             <label className="wb-property-search" ref={propertySearch} onClick={() => show('search')}><SearchOutlined /><input aria-label="Search properties to add a chart or filter" placeholder="Search properties to add a chart or filter…" value={search} onFocus={() => show('search')} onChange={e => { setSearch(e.target.value); show('search'); }} onKeyDown={e => { if (e.key === 'Enter' && find[0])
         changeField(find[0]); }}/></label>
             <button onClick={() => openMenu('share')}>Share</button><button className="wb-primary" onClick={() => beginSave('exploration')}>Save</button></div>

@@ -1110,8 +1110,8 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                 {!selectedTableAvailable ? <div className="flow-workspace-empty" role="status"><DatabaseOutlined /><h3>{resolvingExplorerAsset || tablesLoading || !catalogLoaded && !requestError ? 'Loading schema resources…' : selectedSchema ? serverTables.length ? 'No table selected' : 'No tables in this schema' : 'No schema selected'}</h3>{!resolvingExplorerAsset && <p>{schemaNode?.status === 'stopped' ? 'This schema is not available in the connected database.' : serverTables.length ? 'Select a table from the catalog.' : 'Select a schema to explore its tables and data.'}</p>}</div> : <div className="flow-inspector">
                     {isSchemas && <fieldset className="wb-shell" disabled={workbenchLocked}>
                         <ExplorerWorkbenchHeader key={JSON.stringify([previewIdentity, selectedSchema, table.name])} schema={selectedSchema} table={table.name}
-                            label={mapping?.displayName || table.name} titleProperty={mapping?.titleProperty} primaryKey={mapping?.primaryKey} color={mapping?.color}
-                            glyph={<ExplorerTypeIcon compact presentation={mapping} />}
+                            label={mapping?.displayName || table.name} titleProperty={mapping?.titleProperty} primaryKey={mapping?.primaryKey}
+                            glyph={<ExplorerTypeIcon compact dataType={mapping?.dataType ?? table.dataType} table={table.name} />}
                             fields={data?.columns || filterFields} names={Object.fromEntries((mapping?.properties || []).flatMap(p => p.sourceColumn ? [[p.sourceColumn, p.name]] : []))}
                             rows={dataRows.map((row,i) => ({...row,...primaryKey(row,i)}))} selected={workbenchRows} query={{ ...appliedQuery, partition }} resource={resourceView} admin={canManage}
                             layoutControl={showPreview && <LayoutToolbar controls={resultLayout} admin={canManage} types={data?.columnTypes} />}
@@ -1243,7 +1243,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                             {showPreview && partitionOpen &&  <div  className="flow-partition-tags">{partitions.map((item)  =>  <Tag.CheckableTag  key={item.name}  checked={partition  ===  item.name}  onChange={() => { if (editingRowKey) { message.warning('Save or cancel the current row edit first'); return; } setPartition(partition === item.name ? undefined : item.name); setPageNumber(1); }}>{item.name.replace('p2026_',  '')}</Tag.CheckableTag>)}</div>}
                             {showPreview && !previewError && (isSchemas ?
                                 <ExplorerSelection onSelectedRowsChange={setWorkbenchRows} key={JSON.stringify([selectionEpoch, policyKey, pageNumber, pageSize, partition, appliedQuery])}
-                                    schema={selectedSchema} table={table.name} rows={dataRows} columns={data?.columns ?? emptyPreviewColumns}
+                                    schema={selectedSchema} table={table.name} dataType={mapping?.dataType ?? table.dataType} rows={dataRows} columns={data?.columns ?? emptyPreviewColumns}
                                     columnTypes={data?.columnTypes} metadata={explorerPresentation}
                                     dataColumns={dataColumns} rowKey={rowKey} rowIdentity={primaryKey} rowVersion={rowVersion}
                                     presentations={Object.fromEntries(resultLayout.columns.map(column => [column.field, column.presentation ?? 'value']))}
