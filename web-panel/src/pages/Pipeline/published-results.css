@@ -15,6 +15,10 @@
 .flow-published-catalog .flow-catalog-skeleton { padding: 12px; background: var(--ontology-bg); }
 .flow-published-catalog-cards .flow-ontology__asset-description { padding-inline-end: 0; }
 .flow-published-catalog-cards .flow-semantic-type-glyph { width: 30px; height: 30px; }
+.flow-published-type-actions button { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 3px; background: transparent; color: var(--ontology-text); font-size: 16px; cursor: pointer; }
+.flow-published-type-actions button:hover { background: var(--ontology-elevated); }
+.flow-published-catalog-cards .flow-published-type-actions { margin-inline-end: 6px; }
+.flow-published-catalog-table th.flow-published-actions-heading { width: 60px; }
 .flow-published-catalog-table { width: 100%; min-width: 590px; table-layout: fixed; border-spacing: 0; text-align: left; }
 .flow-published-catalog-table thead { position: sticky; top: 0; z-index: 1; background: var(--ontology-toolbar); }
 .flow-published-catalog-table thead th { color: var(--ontology-muted); font-size: 12px; font-weight: 600; }

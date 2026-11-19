@@ -17,10 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from app.web.api.dependencies.session import get_db
 from app.web.api.models import Team, TeamUserJoin, Tenant, User
 from app.web.api.models.ontology_graph import OntologyLink, OntologyLinkType, SetQuery
-from app.web.api.models.ontology_registry import Definition, OntologyDefinitionRow
+from app.web.api.models.ontology_registry import CatalogChange, Definition, OntologyDefinitionRow
 from app.web.api.models.ontology_revisions import OntologyRevisionGrant
 from app.web.api.models.ontology_runtime import OntologyActionEvent, OntologyRuntimeRecord
-from app.web.api.models.user import InviteCodes
+from app.web.api.models.user import InviteCodes, RoleTypes
+from app.web.api.routes.ontology_registry import change_catalog_state
 from app.web.api.routes.team import router as team_router
 from app.web.api.utils.models import StatusTypes
 from app.web.core.security import ALGORITHM, JWTTokenGenerator
@@ -120,6 +121,24 @@ async def runtime():
                 await connection.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
         finally:
             await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_restoring_object_type_preserves_record_identity_and_data(runtime):
+    engine, actor, definition_id, member_id = runtime
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        await session.execute(update(TeamUserJoin).where(TeamUserJoin.id == member_id).values(role=RoleTypes.ADMIN))
+        original = await submit_action(session, actor, definition_id, "create", ActionPayload(values={"key": "retained"}))
+        removed = await change_catalog_state(definition_id, CatalogChange(revision=1, operation="delete"), session, actor)
+        with pytest.raises(HTTPException) as invisible:
+            await list_records(session, actor, definition_id, limit=10, offset=0)
+        assert invisible.value.status_code == 404
+        with pytest.raises(HTTPException) as rejected:
+            await submit_action(session, actor, definition_id, "create", ActionPayload(values={"key": "blocked"}))
+        assert rejected.value.status_code == 404
+        await change_catalog_state(definition_id, CatalogChange(revision=removed["revision"], operation="restore"), session, actor)
+        records = await list_records(session, actor, definition_id, limit=10, offset=0)
+        assert [(item.id, item.properties["key"]) for item in records.items] == [(original.id, "retained")]
 
 
 @pytest.mark.asyncio

@@ -74,6 +74,7 @@ async def get_published(session: AsyncSession, user: User, definition_id: UUID, 
     accessible = projects_statement(user).with_only_columns(Team.id)
     statement = select(OntologyDefinitionRow).where(
         OntologyDefinitionRow.id == definition_id, OntologyDefinitionRow.published_at.is_not(None),
+        OntologyDefinitionRow.deleted.is_(False),
         OntologyDefinitionRow.project_id.in_(accessible),
     )
     if lock:
@@ -87,7 +88,7 @@ async def get_published(session: AsyncSession, user: User, definition_id: UUID, 
     return row
 
 
-def published_catalog_statement(user: User, search: str = ""):
+def published_catalog_statement(user: User, search: str = "", *, include_hidden=False, include_deleted=False):
     row = OntologyDefinitionRow
     definition = row.published_definition
     source = definition["source"]
@@ -96,7 +97,7 @@ def published_catalog_statement(user: User, search: str = ""):
     # Project membership is required even for administrators reading published objects.
     statement = (
         select(row, Team.tenant_id)
-        .options(load_only(row.id, row.revision, row.project_id, row.published_definition))
+        .options(load_only(row.id, row.revision, row.project_id, row.published_definition, row.hidden, row.deleted))
         .join(Team, Team.id == row.project_id)
         .join(Tenant, Tenant.id == Team.tenant_id)
         .join(TeamUserJoin, TeamUserJoin.team_id == Team.id)
@@ -105,6 +106,11 @@ def published_catalog_statement(user: User, search: str = ""):
                TeamUserJoin.status == StatusTypes.ENABLE, User.status == StatusTypes.ENABLE,
                User.id == user.id)
     )
+    for column, include in ((row.hidden, include_hidden), (row.deleted, include_deleted)):
+        if not include:
+            statement = statement.where(column.is_(False))
+        elif not user.is_superuser:
+            statement = statement.where(or_(column.is_(False), TeamUserJoin.role.in_((RoleTypes.ADMIN, RoleTypes.OWNER))))
     if not user.is_superuser:
         statement = statement.where(source["mode"].astext == "none")
     principals = (("user", User.id), ("group", Team.id), ("organization", Team.tenant_id))

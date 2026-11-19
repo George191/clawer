@@ -43,7 +43,6 @@ import { useThemeStore } from '@/stores/settings';
 import { fetchCurrentUserContext } from '@/services/api';
 import { clearSession } from '@/services/session';
 import type { CurrentUserContext } from '@/services/types';
-import './ontology-workspace-navigation.css';
 
 const { Header, Content } = Layout;
 
@@ -189,8 +188,6 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
         label: 'Workspace',
         children: [
           { key: '/ontology', icon: <SearchOutlined />, label: 'Discover' },
-          { key: '/ontology/explorer', icon: <DatabaseOutlined />, label: 'Explorer' },
-          { key: '/ontology/transforms', icon: <CodeOutlined />, label: 'Transforms' },
           { key: '/ontology/runtime', icon: <ExperimentOutlined />, label: 'Runtime' },
           { key: '/ontology/lineage', icon: <BranchesOutlined />, label: 'Lineage & Impact' },
         ],
@@ -891,18 +888,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
       </Header>
 
       <div style={{ height: HEADER_H, flexShrink: 0 }} />
-      {isFlowSurface && (
-        <nav className="ontology-workspace-navigation" aria-label="Ontology Foundry workspace">
-          {projectConfigs['etl-pipeline'].sections[0].children.map((item) => (
-            <React.Fragment key={item.key}>
-              <Link to={item.key} aria-current={matchPath({ path: item.key, end: item.key !== '/ontology/explorer' }, location.pathname) ? 'page' : undefined}>{item.icon}<span>{item.label}</span></Link>
-              {item.key === '/ontology/explorer' && currentUserContext?.user.is_superuser && (
-                <Link to="/ontology/connections" aria-current={matchPath('/ontology/connections', location.pathname) ? 'page' : undefined}><DatabaseOutlined /><span>Data Connections</span></Link>
-              )}
-            </React.Fragment>
-          ))}
-        </nav>
-      )}
       <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         {isMobile && !collapsed && !hideSidebar && (
           <button

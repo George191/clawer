@@ -4,6 +4,7 @@ from ipaddress import ip_address
 import json
 import os
 from pathlib import Path
+import re
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from playwright.async_api import expect, async_playwright
@@ -31,10 +32,19 @@ async def main():
         results = page.get_by_role("region", name="Object results", exact=True)
         await expect(results).to_be_visible()
 
-        # Re-enter from the workspace navigation while the catalog is still in flight.
-        navigation = page.get_by_role("navigation", name="Ontology Foundry workspace")
-        await navigation.get_by_role("link", name="Discover", exact=True).click()
-        await page.wait_for_url(lambda url: urlsplit(url).path == "/ontology")
+        # Bare entry is guidance, with no default catalog or record read.
+        reads = []
+        def record_reads(request):
+            if urlsplit(request.url).path.startswith("/api/v1/etl/"):
+                reads.append(request.url)
+        page.on("request", record_reads)
+        await page.goto(base + "/ontology/explorer")
+        await expect(page.get_by_role("region", name="Empty exploration")).to_be_visible()
+        await expect(page.get_by_role("link", name="Browse Storage-backed object types")).to_be_visible()
+        await expect(results).to_have_count(0)
+        assert not reads
+        page.remove_listener("request", record_reads)
+
         started, release, continued = (asyncio.Event() for _ in range(3))
 
         async def gate(route):
@@ -45,16 +55,16 @@ async def main():
 
         layers = base + "/api/v1/etl/layers"
         await page.route(layers, gate)
-        await navigation.get_by_role("link", name="Explorer", exact=True).click()
+        await page.goto(entry, wait_until="domcontentloaded")
         await asyncio.wait_for(started.wait(), 20)
         try:
             await expect(page.get_by_text("Loading schema resources…", exact=True)).to_be_visible()
+            await expect(page.get_by_role("heading", name=table, exact=True)).to_be_visible()
             await expect(page.get_by_role("complementary", name="Explorer catalog")).to_be_hidden(timeout=1000)
         finally:
             release.set()
         await asyncio.wait_for(continued.wait(), 20)
         await page.unroute(layers, gate)
-        await page.goto(entry)
         await expect(results).to_be_visible()
 
         catalog = page.get_by_role("complementary", name="Explorer catalog")
@@ -84,14 +94,73 @@ async def main():
         await page.locator(".wb-current").click()
         await expect(tools).to_have_count(0)
 
-        await page.get_by_role("button", name="New exploration", exact=False).click()
-        await expect(catalog.get_by_role("textbox", name="Search catalog")).to_be_focused()
-        await expect(property_search).to_have_value("")
-        await catalog.get_by_role("textbox", name="Search catalog").fill(table)
+        # Both tabs may open the same asset without sharing selection or view state.
+        tabs = page.get_by_role("navigation", name="Explorations", exact=True)
+        await page.get_by_role("button", name=re.compile("^Filter & sort")).click()
+        await page.get_by_role("textbox", name="Search all columns").fill("Legacy record 2")
+        await page.get_by_role("button", name="Apply filters", exact=True).click()
+        applied = page.locator(".flow-schema-applied:visible")
+        await expect(applied).to_contain_text("Legacy record 2")
+        await results.get_by_role("button", name="Column actions for id", exact=True).click()
+        await page.get_by_text("Sort descending", exact=True).last.click()
+        first_title = results.locator("tbody tr").first.locator(".flow-explorer-selection__table-title a")
+        await expect(first_title).to_contain_text("9007199254741017")
+        original_title = await first_title.inner_text()
+        await results.locator("tbody tr").first.get_by_role("checkbox").check()
+        preview = page.get_by_role("complementary", name="Selection Preview")
+        await expect(preview.get_by_role("heading", name=original_title, exact=True)).to_be_visible()
+
+        await tabs.get_by_role("button", name="New exploration", exact=True).click()
+        await expect(page.get_by_role("region", name="Empty exploration")).to_be_visible()
+        assert parse_qs(urlsplit(page.url).query).get("exploration")
+        assert "table" not in parse_qs(urlsplit(page.url).query)
+        await page.get_by_role("button", name="Browse object types").click()
+        await expect(catalog_search).to_be_focused()
+        await catalog.locator(".flow-catalog-schema").filter(has_text=schema).click()
         await catalog.get_by_role("button", name=table, exact=True).click()
         await expect(catalog).to_be_hidden()
-        assert parse_qs(urlsplit(page.url).query)["table"] == [table]
+        tab_url = page.url
+        assert parse_qs(urlsplit(tab_url).query)["table"] == [table]
         await expect(results).to_be_visible()
+        await expect(preview).to_have_count(0)
+        await expect(results.get_by_role("button", name="Column actions for id", exact=True)).not_to_contain_text("1")
+        await expect(applied).to_have_count(0)
+        await page.get_by_role("button", name="Explore", exact=True).click()
+        chart = page.get_by_role("region", name="Explore results")
+        await expect(chart).to_be_visible()
+
+        await tabs.get_by_role("button", name=table, exact=True).first.click()
+        await expect(preview.get_by_role("heading", name=original_title, exact=True)).to_be_visible()
+        await expect(results.get_by_role("button", name="Column actions for id", exact=True)).to_contain_text("1")
+        await expect(applied).to_contain_text("Legacy record 2")
+        await page.go_back()
+        await expect(chart).to_be_visible()
+        assert page.url == tab_url
+        await page.go_forward()
+        await expect(preview.get_by_role("heading", name=original_title, exact=True)).to_be_visible()
+        await page.go_back()
+        await expect(chart).to_be_visible()
+        await tabs.get_by_role("button", name="Close " + table, exact=True).last.click()
+        await expect(preview.get_by_role("heading", name=original_title, exact=True)).to_be_visible()
+        assert "exploration" not in parse_qs(urlsplit(page.url).query)
+
+        await preview.get_by_role("button", name="Actions").click()
+        await page.get_by_role("menuitem", name="Edit row").click()
+        await preview.get_by_role("textbox", name="Edit name").fill("Unsaved tab draft")
+        close_original = tabs.get_by_role("button", name="Close " + table, exact=True)
+        await expect(close_original).to_be_disabled()
+        await tabs.get_by_role("button", name="New exploration", exact=True).click()
+        await expect(page.get_by_role("region", name="Empty exploration")).to_be_visible()
+        await expect(close_original).to_be_disabled()
+        await tabs.get_by_role("button", name="Close Exploration 2", exact=True).click()
+        await expect(preview.get_by_role("textbox", name="Edit name")).to_have_value("Unsaved tab draft")
+        await preview.get_by_role("button", name="Cancel edit", exact=True).click()
+        await expect(close_original).to_be_enabled()
+
+        # The surviving tab still deep-links its own resource on a reload.
+        await page.reload()
+        await expect(results).to_be_visible()
+        assert parse_qs(urlsplit(page.url).query)["table"] == [table]
         await page.set_viewport_size({"width": 390, "height": 844})
         await toggle.locator(".ui-icon-search").click()
         await expect(catalog_search).to_be_focused()
@@ -102,7 +171,8 @@ async def main():
         await expect(catalog).to_be_hidden()
         await browser.close()
     print(json.dumps({"ok": True, "stableEntry": True, "catalogOutsideOrEscapeCloses": True,
-                      "propertyOptionSelects": True, "newExplorationOpensChooser": True,
+                      "propertyOptionSelects": True, "independentExplorationTabs": True, "historyAndRefresh": True,
+                      "tabFilterAndSortIsolation": True, "closePreservesPendingEdits": True,
                       "catalogIconFocusDesktopAndMobile": True}))
 
 
