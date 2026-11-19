@@ -303,10 +303,10 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
         <p className="flow-create-kicker">{stage === 'review' ? 'Publish review' : 'Step ' + (step + 1) + ' of ' + steps.length}</p>
         <div ref={stageContent}>
         {stage === 'wizard' && step === 0 && <section className="flow-create-section">
-          <Heading title="Choose a datasource" detail="Bind an existing PostgreSQL table without copying data, or start with no backing table." />
+          <Heading title="Choose a datasource" detail="An object type describes one kind of business record, such as an airport. Define its properties and access rules here, then publish the definition to a project so its readers can find it in Published." />
           <fieldset className="flow-create-source"><legend>Datasource option</legend>
-            <label className="flow-create-source-option"><input type="radio" name="semantic-source" checked={existing} disabled={busy || !allowedSource} onChange={() => sourceChange({ mode: 'existing', schema: warehouseSchemas.has(initialSchema || '') ? initialSchema : '', table: '' })} /><span><strong>Existing PostgreSQL table</strong><small>Map existing columns to semantic properties. The source table is not changed.</small></span></label>
-            <label className="flow-create-source-option"><input type="radio" name="semantic-source" checked={!existing} disabled={busy} onChange={() => sourceChange({ mode: 'none' })} /><span><strong>No backing datasource</strong><small>Define the object model independently from physical storage.</small></span></label>
+            <label className="flow-create-source-option"><input type="radio" name="semantic-source" checked={existing} disabled={busy || !allowedSource} onChange={() => sourceChange({ mode: 'existing', schema: warehouseSchemas.has(initialSchema || '') ? initialSchema : '', table: '' })} /><span><strong>Existing PostgreSQL table</strong><small>Each source row is a read-only object. Choose which columns appear as properties.</small></span></label>
+            <label className="flow-create-source-option"><input type="radio" name="semantic-source" checked={!existing} disabled={busy} onChange={() => sourceChange({ mode: 'none' })} /><span><strong>No backing datasource</strong><small>Start with an empty set of records. Enable a Create action if users should add objects after publication.</small></span></label>
           </fieldset>
           {!allowedSource && <p className="flow-create-help">A platform administrator is required to bind a warehouse table.</p>}
           {existing && <div className="flow-create-grid">
@@ -362,9 +362,9 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
           </>}
         </section>}
         {stage === 'wizard' && step === 4 && <section className="flow-create-section">
-          <Heading title="Choose where to save" detail="The chosen project owns the definition. The source table stays where it is." />
+          <Heading title="Choose the project for this object type" detail="The project owns the definition. Review access for its members in the Security step." />
           <div className="flow-create-grid">{projectInput}<div className="flow-create-field"><span>Resource</span><div className="flow-create-value">{definition.id || 'Object type'}</div></div></div>
-          <p className="flow-create-help">Saving a draft does not publish a resource or alter its data source.</p>
+          <p className="flow-create-help">Save draft lets you resume this work later. Select Publish object type on the review screen to add the definition to Published.</p>
         </section>}
         {stage === 'wizard' && step === 5 && <section className="flow-create-section">
           <Heading title="Configure security policies" detail="Select who can read objects and add restrictions for individual properties." />
@@ -391,16 +391,17 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
           </div>
         </section>}
         {stage === 'review' && <section className="flow-create-section">
-          <Heading title="Review and publish" detail="Review server validation for this saved revision before publishing the object type." />
+          <Heading title={`Publish “${definition.name}” to ${selectedProject?.name || definition.projectId}?`} detail="This publishes the object type definition, including its properties, keys, actions and access rules. Project members with read access can open it in Ontology → Published." />
           {busy && !validation && <p role="status">Checking draft…</p>}
           {canPublish && <p className="flow-create-notice" role="status">Validation passed for revision {saved?.revision}. Review any warnings before publishing.</p>}
           {validation && <><IssueList title="Blocking errors" issues={validation.errors} /><IssueList title="Warnings" issues={validation.warnings} /></>}
           <dl className="flow-create-summary">
             <dt>Object type</dt><dd>{definition.name} · {definition.id}</dd><dt>Ontology project</dt><dd>{selectedProject?.name || definition.projectId}</dd>
             {selectedProject && <><dt>Team</dt><dd>{selectedProject.teamName}</dd></>}
-            <dt>Datasource</dt><dd>{existing ? sourceKey : 'Unbacked object type'}</dd><dt>Primary key</dt><dd>{definition.primaryKey.join(', ')}</dd>
+            <dt>Records after publication</dt><dd>{existing ? `Read-only rows from ${sourceKey}` : 'Records are managed in the ontology. Publishing the definition creates zero records.'}</dd><dt>Primary key</dt><dd>{definition.primaryKey.join(', ')}</dd>
             <dt>Title property</dt><dd>{definition.titleKey}</dd><dt>Actions</dt><dd>{definition.actions.map(action => action.kind).join(', ') || 'None'}</dd>
-            <dt>Access policy</dt><dd>{definition.security.mode === 'inherit' ? 'Inherit source access' : 'Explicit readers'} · {Object.keys(definition.security.fieldReaders).length} property restrictions</dd>
+            <dt>Who can read this type</dt><dd>{existing ? 'Project members with platform administrator access' : definition.security.objectReaders.map(reader => principalOptions.find(option => option.value === principalKey(reader))?.label || principalKey(reader)).join(', ')}</dd>
+            <dt>Additional restrictions</dt><dd>{definition.security.markings?.length || 0} security markings · {definition.security.recordRules?.length || 0} record rules · {Object.keys(definition.security.fieldReaders).length} property restrictions</dd>
           </dl>
           <Table<SemanticProperty> className="flow-create-table flow-create-review-table" pagination={false} size="small" rowKey="id" dataSource={definition.properties} columns={[{ title: 'ID', dataIndex: 'id' }, { title: 'Display name', dataIndex: 'name' }, { title: 'Type', dataIndex: 'type' }, ...(existing ? [{ title: 'Source', dataIndex: 'sourceColumn' }] : [])]} />
         </section>}
