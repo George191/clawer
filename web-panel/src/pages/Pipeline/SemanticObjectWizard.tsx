@@ -27,7 +27,7 @@ const principalKey = (p: Principal) => p.kind + ':' + p.id;
 const opt = (values: readonly string[]) => values.map(value => ({ value, label: value }));
 const path = (schema: string, table: string) => [schema, table].filter(Boolean).join('.');
 const emptyDefinition = (schema = '', allowedSource = true): SemanticDefinition => ({
-  id: '', name: '', pluralName: '', description: '', icon: '', color: '', groups: [], projectId: '',
+  id: '', name: '', pluralName: '', description: '', icon: '', color: '#ffffff', iconColor: '#000000', groups: [], projectId: '',
   source: allowedSource ? { mode: 'existing', schema, table: '' } : { mode: 'none' }, properties: [], primaryKey: [], titleKey: '', actions: [],
   security: { mode: allowedSource ? 'inherit' : 'explicit', objectReaders: [], fieldReaders: {} },
 });

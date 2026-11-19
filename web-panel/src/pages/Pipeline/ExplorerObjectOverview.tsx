@@ -72,7 +72,8 @@ export function ExplorerTypeIcon({ presentation, compact }: { presentation?: Exp
   const icon = name === 'flight' || name === 'airplane' ? 'plane' : name;
   return <SemanticTypeGlyph className={className}
     definition={{ id: '', name: presentation?.displayName || '', source: { mode: 'existing', table: presentation?.table },
-      icon: icon || (presentation?.sourceDefinitionId ? '' : 'table'), color: presentation?.color || '' }} />;
+      icon: icon || (presentation?.sourceDefinitionId ? '' : 'table'), color: presentation?.color ?? '#ffffff',
+      iconColor: presentation?.iconColor }} />;
 }
 
 export function explorerFields(row: ExplorerPreviewRow, columns: readonly string[], presentation?: ExplorerOverviewPresentation,

@@ -12,7 +12,7 @@ export type RecordRule =
   | { kind: 'related'; readers: Principal[]; linkType: string; direction: 'incoming' | 'outgoing'; relatedRecordId: string };
 export type SemanticSecurity = { mode: 'inherit' | 'explicit'; objectReaders: Principal[]; fieldReaders: Record<string, Principal[]>; recordRules?: RecordRule[]; markings?: string[] };
 export type SemanticDefinition = {
-  id: string; name: string; pluralName: string; description: string; icon: string; color: string; groups: string[];
+  id: string; name: string; pluralName: string; description: string; icon: string; color: string; iconColor?: string; groups: string[];
   projectId: string; source: SemanticSource; properties: SemanticProperty[]; primaryKey: string[]; titleKey: string;
   actions: SemanticAction[]; security: SemanticSecurity; functions?: BusinessFunction[];
 };

@@ -9,14 +9,15 @@ import './semantic-icon-library.css';
 
 const choices = [{ value: '', label: 'Automatic' }, ...ontologyIconChoices];
 const pageSize = 24;
-const tabs = ['Icons', 'Background'] as const;
+const tabs = ['Icons', 'Icon color', 'Background'] as const;
 
 type Props = {
   definition: SemanticDefinition;
-  onChange: (fields: Pick<Partial<SemanticDefinition>, 'icon' | 'color'>) => void;
+  disabled?: boolean;
+  onChange: (fields: Pick<Partial<SemanticDefinition>, 'icon' | 'color' | 'iconColor'>) => void;
 };
 
-export default function OntologyIconPicker({ definition, onChange }: Props) {
+export default function OntologyIconPicker({ definition, disabled, onChange }: Props) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<typeof tabs[number]>('Icons');
   const [query, setQuery] = useState('');
@@ -54,7 +55,7 @@ export default function OntologyIconPicker({ definition, onChange }: Props) {
 
   return <>
     <button type="button" className="flow-icon-trigger" aria-label="Object type icon" aria-haspopup="dialog"
-      aria-expanded={open} title={selected} onClick={show}>
+      aria-expanded={open} title={selected} onClick={show} disabled={disabled}>
       <SemanticTypeGlyph definition={definition} /><DownOutlined />
     </button>
     {open && <Modal open centered title="Icon appearance" width={560} zIndex={1100}
@@ -62,19 +63,20 @@ export default function OntologyIconPicker({ definition, onChange }: Props) {
       footer={<Button type="primary" onClick={() => setOpen(false)}>Done</Button>}>
       <div className="flow-appearance-preview">
         <SemanticTypeGlyph definition={definition} size="preview" />
-        <div><strong>{selected}</strong><small>{definition.color || 'No background'}</small></div>
+        <div><strong>{selected}</strong><small>Icon {definition.iconColor ?? '#000000'} · {definition.color === '' ? 'No background' : 'Background ' + (definition.color ?? '#ffffff')}</small></div>
       </div>
       <div className="flow-appearance-tabs" role="tablist" aria-label="Icon appearance settings">
-        {tabs.map(name => <button type="button" role="tab" key={name} id={id + name}
+        {tabs.map((name, index) => <button type="button" role="tab" key={name} id={id + '-tab-' + index}
           tabIndex={name === tab ? 0 : -1} aria-selected={name === tab} aria-controls={id + '-panel'}
           onClick={() => setTab(name)} onKeyDown={event => {
             if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
             event.preventDefault();
-            const next = event.key === 'Home' ? 'Icons' : event.key === 'End' ? 'Background' : name === 'Icons' ? 'Background' : 'Icons';
-            setTab(next); document.getElementById(id + next)?.focus();
+            const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
+              : (index + (event.key === 'ArrowLeft' ? -1 : 1) + tabs.length) % tabs.length;
+            setTab(tabs[next]); document.getElementById(id + '-tab-' + next)?.focus();
           }}>{name}</button>)}
       </div>
-      <div id={id + '-panel'} role="tabpanel" aria-labelledby={id + tab} className="flow-appearance-panel">
+      <div id={id + '-panel'} role="tabpanel" aria-labelledby={id + '-tab-' + tabs.indexOf(tab)} className="flow-appearance-panel">
         {tab === 'Icons' ? <>
           <label className="flow-icon-search"><SearchOutlined />
             <input ref={search} type="search" aria-label="Search icons" placeholder="Search icons" value={query}
@@ -89,7 +91,7 @@ export default function OntologyIconPicker({ definition, onChange }: Props) {
             {visible.map(({ value, label }, index) => <button type="button" key={value} role="option" title={label}
               aria-selected={value === definition.icon} tabIndex={index === focusIndex ? 0 : -1} onFocus={() => setFocusedIcon(value)}
               onClick={() => onChange({ icon: value })}>
-              <SemanticTypeGlyph definition={{ ...definition, icon: value, color: '' }} /><span>{label}</span>
+              <SemanticTypeGlyph definition={{ ...definition, icon: value, color: '#ffffff', iconColor: '#000000' }} /><span>{label}</span>
             </button>)}
           </div>
           {matches.length ? <nav className="flow-icon-pagination" aria-label="Icon pages">
@@ -97,7 +99,9 @@ export default function OntologyIconPicker({ definition, onChange }: Props) {
             <Button size="small" icon={<RightOutlined rotate={180} />} aria-label="Previous icon page" disabled={page === 0} onClick={() => setPage(page - 1)} />
             <Button size="small" icon={<RightOutlined />} aria-label="Next icon page" disabled={page + 1 >= pageCount} onClick={() => setPage(page + 1)} />
           </nav> : <p role="status">No matching icons.</p>}
-        </> : <OntologyIconColorPicker value={definition.color} onChange={color => onChange({ color })} />}
+        </> : tab === 'Background'
+          ? <OntologyIconColorPicker key={tab} mode="background" value={definition.color ?? '#ffffff'} onChange={color => onChange({ color })} />
+          : <OntologyIconColorPicker key={tab} mode="foreground" value={definition.iconColor ?? '#000000'} onChange={iconColor => onChange({ iconColor })} />}
       </div>
     </Modal>}
   </>;

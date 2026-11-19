@@ -1,20 +1,29 @@
-import { useId, useState, type KeyboardEvent } from 'react';
+import { useEffect, useId, useState, type KeyboardEvent } from 'react';
 import { ontologyIconColors } from './ontologyIconColors';
 
-const swatches = [...Object.entries(ontologyIconColors).map(([key, color]) => ({
+const foregroundSwatches = Object.entries(ontologyIconColors).map(([key, color]) => ({
   name: key[0].toUpperCase() + key.slice(1).replace(/[A-Z]/g, letter => ' ' + letter.toLowerCase()), color,
-})), { name: 'No background', color: '' }];
+}));
+const backgroundSwatches = [...foregroundSwatches, { name: 'No background', color: '' }];
 
 type Props = {
+  mode: 'foreground' | 'background';
   value: string;
   onChange: (color: string) => void;
 };
 
-export default function OntologyIconColorPicker({ value, onChange }: Props) {
+export default function OntologyIconColorPicker({ mode, value, onChange }: Props) {
+  const background = mode === 'background';
+  const swatches = background ? backgroundSwatches : foregroundSwatches;
   const id = useId();
   const [hex, setHex] = useState(value);
   const [invalid, setInvalid] = useState(false);
-  const [active, setActive] = useState(() => Math.max(0, swatches.findIndex(swatch => swatch.color === value.toLowerCase())));
+  const [active, setActive] = useState(0);
+  useEffect(() => {
+    setHex(value);
+    setInvalid(false);
+    setActive(Math.max(0, swatches.findIndex(swatch => swatch.color === value.toLowerCase())));
+  }, [swatches, value]);
   const choose = (color: string) => {
     setHex(color);
     setInvalid(false);
@@ -35,7 +44,12 @@ export default function OntologyIconColorPicker({ value, onChange }: Props) {
   };
 
   return <section className="flow-color-palette" role="group" aria-label="VS Code color palette">
-    <span className="flow-color-caption">VS Code · Dark ANSI</span>
+    <div className="flow-color-custom">
+      <span className="flow-color-caption" style={{ gridColumn: 'span 2' }}>VS Code · Dark ANSI</span>
+      <button type="button" onClick={() => choose(background ? '#ffffff' : '#000000')}>
+        {background ? 'Default white' : 'Default black'}
+      </button>
+    </div>
     <div className="flow-color-swatches" onKeyDown={navigate}>
       {swatches.map(({ name, color }, index) => <button key={color} type="button" aria-label={name}
         tabIndex={active === index ? 0 : -1} onFocus={() => setActive(index)}

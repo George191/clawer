@@ -1,10 +1,10 @@
 import { AppstoreOutlined, PlaneFilled } from '@/components/ui/icons';
-import { ontologyIconStyle, ontologyTypeIcon } from './ontologyTypeIcons';
+import { ontologyTypeIcon } from './ontologyTypeIcons';
 import type { SemanticDefinition } from '../../services/ontology';
 import { inferSiteKind, TemplateGlyph } from '../AICollect/WorkspaceDock';
 
 type Props = {
-  definition: Pick<SemanticDefinition, 'id' | 'name' | 'source' | 'icon' | 'color'>;
+  definition: Pick<SemanticDefinition, 'id' | 'name' | 'source' | 'icon' | 'color' | 'iconColor'>;
   size?: 'row' | 'preview';
   className?: string;
 };
@@ -19,18 +19,16 @@ function automaticIcon(definition: Props['definition']) {
 export default function SemanticTypeGlyph({ definition, size = 'row', className = '' }: Props) {
   const ExplicitIcon = ontologyTypeIcon(definition.icon);
   let glyph;
-  let key = definition.icon;
   if (ExplicitIcon) {
     glyph = <ExplicitIcon />;
   } else {
     const inferred = automaticIcon(definition);
-    key = inferred;
     if (inferred === 'plane') glyph = <PlaneFilled />;
     else if (inferred === 'box') glyph = <AppstoreOutlined />;
     else glyph = <TemplateGlyph kind={inferred} />;
   }
   return <span className={`flow-semantic-type-glyph flow-semantic-type-glyph--${size} ${className}`} aria-hidden="true"
-    style={ontologyIconStyle(key, definition.color)}>
+    style={{ backgroundColor: definition.color === '' ? 'transparent' : definition.color ?? '#ffffff', color: definition.iconColor || '#000000' }}>
     {glyph}
   </span>;
 }

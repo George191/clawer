@@ -81,7 +81,8 @@ class Definition(Payload):
     pluralName: Label = ""
     description: str = Field(default="", max_length=4000)
     icon: Identifier = ""
-    color: Annotated[str, Field(max_length=20)] = ""
+    color: Annotated[str, Field(max_length=20)] = "#ffffff"
+    iconColor: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] = "#000000"
     groups: list[Label] = Field(default_factory=list, max_length=20)
     projectId: UUID
     source: Source
