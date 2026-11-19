@@ -13,20 +13,20 @@
 .flow-icon-trigger .flow-semantic-type-glyph { width: 21px; height: 21px; font-size: 16px; }
 .flow-appearance-dialog { max-width: calc(100vw - 24px); }
 .flow-appearance-dialog .ui-modal-content { display: flex; flex-direction: column; max-height: calc(100dvh - 32px); }
-.flow-appearance-dialog .ui-modal-header, .flow-appearance-dialog .ui-modal-footer { flex: none; padding: 11px 16px; }
+.flow-appearance-dialog .ui-modal-header, .flow-appearance-dialog .ui-modal-footer { flex: none; padding: 8px 12px; }
 .flow-appearance-dialog .ui-modal-footer { justify-content: flex-end; }
 .flow-appearance-dialog .ui-modal-body { min-height: 0; overflow: auto; }
 .flow-appearance-dialog .ui-modal-close { top: 8px; }
-.flow-appearance-preview { display: flex; align-items: center; gap: 10px; padding: 12px 16px 8px; }
+.flow-appearance-preview { display: flex; align-items: center; gap: 7px; padding: 8px 12px 4px; }
 .flow-appearance-preview small { color: var(--ontology-muted); }
 .flow-appearance-preview > .flow-semantic-type-glyph { width: 34px; height: 34px; font-size: 23px; }
 .flow-appearance-tabs {
-  display: flex; gap: 16px; padding-inline: 16px; border-bottom: 1px solid var(--ontology-border);
+  display: flex; gap: 12px; padding-inline: 12px; border-bottom: 1px solid var(--ontology-border);
 }
-.flow-appearance-tabs button { padding: 6px 0; border: 0; border-bottom: 2px solid transparent; border-radius: 0; }
-.flow-appearance-tabs button[aria-selected="true"] { color: var(--ontology-link); border-bottom-color: var(--ontology-primary); }
-.flow-appearance-panel { padding: 12px 16px; }
-.flow-appearance-panel:has(.flow-icon-options) { display: grid; gap: 8px; }
+.flow-appearance-tabs button { padding: 5px 0; border: 0; color: var(--ontology-muted); }
+.flow-appearance-tabs button[aria-selected="true"] { color: var(--ontology-text); text-decoration: underline; text-underline-offset: 4px; }
+.flow-appearance-panel { padding: 8px 10px; }
+.flow-appearance-panel:has(.flow-icon-options) { display: grid; gap: 5px; }
 .flow-icon-search { position: relative; display: block; }
 .flow-icon-search > .ui-icon {
   position: absolute; top: 50%; left: 9px; transform: translateY(-50%);
@@ -37,21 +37,23 @@
   appearance: none; border: 1px solid var(--ontology-border-hover); border-radius: 3px;
   color: var(--ontology-text); background: var(--ontology-bg); font: inherit;
 }
-.flow-appearance-dialog .flow-icon-search input:focus { border-color: var(--ontology-primary); outline: none; box-shadow: none; }
+.flow-appearance-dialog .flow-icon-search input:focus { border-color: var(--ontology-muted); outline: none; box-shadow: none; }
 .flow-icon-options {
-  display: grid; grid-template-columns: repeat(6, minmax(0,1fr)); align-content: start;
-  gap: 4px; min-height: 172px;
+  display: grid; grid-template-columns: repeat(8, minmax(0,1fr)); align-content: start;
+  gap: 2px; min-height: 112px;
 }
-.flow-icon-options button { justify-content: center; min-width: 0; height: 40px; padding: 3px; }
+.flow-icon-options button { justify-content: center; min-width: 0; height: 36px; padding: 2px; border: 0; }
 .flow-icon-options .flow-semantic-type-glyph { width: 28px; height: 28px; font-size: 19px; }
 .flow-icon-options button:hover, .flow-icon-trigger:hover { background: var(--ontology-elevated); }
-.flow-icon-options button[aria-selected="true"] { background: var(--ontology-selected); border-color: var(--ontology-primary); }
+.flow-icon-options button[aria-selected="true"] { background: color-mix(in srgb, var(--ontology-text) 22%, transparent); }
+.flow-appearance-dialog .flow-icon-options button:focus-visible { outline: 1px dotted var(--ontology-muted); outline-offset: -1px; }
 .flow-icon-pagination { display: flex; align-items: center; gap: 5px; padding-top: 6px; border-top: 1px solid var(--ontology-border); }
 .flow-icon-pagination span[role="status"] { margin-right: auto; color: var(--ontology-muted); }
 .flow-icon-pagination .ui-btn { width: 28px; padding: 0; }
 .flow-appearance-panel > p { margin: 0; color: var(--ontology-muted); }
 .flow-icon-options:empty { display: none; }
 @media (max-width: 500px) {
-  .flow-icon-options { grid-template-columns: repeat(4, minmax(0,1fr)); min-height: 260px; }
-  .flow-appearance-panel { padding-inline: 10px; }
+  .ui-modal.flow-appearance-dialog { max-width: min(312px, calc(100vw - 24px)); }
+  .flow-icon-options { grid-template-columns: repeat(6, minmax(0,1fr)); min-height: 182px; }
+  .flow-icon-options button { height: 44px; }
 }
