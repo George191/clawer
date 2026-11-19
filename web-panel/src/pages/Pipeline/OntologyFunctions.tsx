@@ -45,13 +45,16 @@ export default function OntologyFunctions({id, record, onStarted, onCommitted}: 
     } catch (e) {setError(ontologyError(e,'Unable to run function.'));}
     finally {busy.current=false;setPending(false);}
   };
-  return <section aria-label="Business function runner"><h4>Business functions</h4>
+  return <section className="flow-tool-section" aria-label="Business function runner"><h4>Business functions</h4>
     {error && <p role="alert">{error} <Button disabled={pending} onClick={() => setRefresh(n=>n+1)}>Reload functions</Button></p>}
+    {!catalog && !error && <p role="status">Loading functions…</p>}
     {catalog && (catalog.items.length ? <>
-      <label>Published function<select aria-label="Published function" value={selected} disabled={pending} onChange={e => {setSelected(e.target.value);setValues({});setError('');}}>
-        {catalog.items.map(item => <option key={item.key} value={item.key}>{item.name}</option>)}</select></label>
-      {fn?.parameters.map(p => <div key={p.key}><label>{p.key} ({p.type})<input aria-label={'Argument '+p.key} disabled={pending || values[p.key] === null} value={values[p.key] ?? ''} onChange={e => setValues(prev=>({...prev,[p.key]:e.target.value}))} /></label>
-        {p.nullable && <label><input type="checkbox" disabled={pending} checked={values[p.key] === null} onChange={e=>setValues(prev=>({...prev,[p.key]:e.target.checked ? null : ''}))} />Set {p.key} to null</label>}</div>)}
+      <div className="flow-function-fields">
+        <label>Published function<select aria-label="Published function" value={selected} disabled={pending} onChange={e => {setSelected(e.target.value);setValues({});setError('');}}>
+          {catalog.items.map(item => <option key={item.key} value={item.key}>{item.name}</option>)}</select></label>
+        {fn?.parameters.map(p => <div key={p.key}><label>{p.key} ({p.type})<input aria-label={'Argument '+p.key} disabled={pending || values[p.key] === null} value={values[p.key] ?? ''} onChange={e => setValues(prev=>({...prev,[p.key]:e.target.value}))} /></label>
+          {p.nullable && <label><input type="checkbox" disabled={pending} checked={values[p.key] === null} onChange={e=>setValues(prev=>({...prev,[p.key]:e.target.checked ? null : ''}))} />Set {p.key} to null</label>}</div>)}
+      </div>
       <p>{record?.id ? 'Selected record: '+String(record.title ?? record.id) : 'Select an active record in Results.'}</p>
       <Button disabled={!record?.id || !fn || pending} onClick={run}>Run function</Button>
     </> : <p>No published functions are available to this account.</p>)}

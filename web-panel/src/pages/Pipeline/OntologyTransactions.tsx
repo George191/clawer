@@ -161,41 +161,45 @@ export default function OntologyTransactions({objectType}: {objectType: Publishe
     finally {locked.current = false;setPending(false);}
   };
   return <section aria-label="Transaction workbench" className="ontology-transaction">
-    <h3>Cross-object transaction</h3>
-    <fieldset disabled={pending}><label>Transaction name<input maxLength={120} value={name} onChange={e => setName(e.target.value)} /></label>
-      <div className="ontology-tx-fields"><label>Step operation<select aria-label="Step operation" value={kind} onChange={e => {if (e.target.value === kind) return;setKind(e.target.value as Kind);if (!edge) resetLinks();resetStep();}}>
-        {(['create','modify','delete','link','unlink'] as const).map(k => <option key={k} value={k}>{k}</option>)}</select></label>
-      <label>Step object type<select aria-label="Step object type" value={typeId} onChange={e => {if (e.target.value === typeId) return;setTypeId(e.target.value);setActions([]);resetLinks();resetStep();}}>
-        {types.map(t => <option key={t.id} value={t.id}>{t.definition.name}</option>)}</select></label></div>
-      {moreTypes && <Button disabled={typesLoading || typeOffset + 50 > 100_000} onClick={() => {setTypesLoading(true);setTypeOffset(typeOffset+50);}}>Load more object types</Button>}
-      {edge ? <><label>Step relationship<select aria-label="Step relationship" value={linkId} onChange={e => {setLinkId(e.target.value);setSource('');setTarget('');}}>
-        <option value="">{links.length ? 'Select relationship' : linksLoading ? 'Loading relationships…' : 'No visible relationships'}</option>{links.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select></label>
-        {moreLinks && <Button disabled={linksLoading || linkOffset + 50 > 100_000} onClick={() => {setLinksLoading(true);setLinkOffset(linkOffset+50);}}>Load more relationships</Button>}
-        {link && <div className="ontology-tx-fields"><RecordPicker key={'source'+link.id} type={link.sourceDefinitionId} version={version}
-          label="Source record" aliases={aliasesFor(link.sourceDefinitionId)} value={source} change={setSource} />
-          <RecordPicker key={'target'+link.id} type={link.targetDefinitionId} version={version}
-            label="Target record" aliases={aliasesFor(link.targetDefinitionId)} value={target} change={setTarget} /></div>}</>
-        : <>{kind !== 'create' && <RecordPicker key={typeId} type={typeId} label="Step record" value={record.id} version={version}
-          change={(id,revision,title) => setRecord({id,revision:revision || 0,title:title || ''})} />}
-          <div className="ontology-tx-fields">{selectedType?.definition.properties.filter(p => action?.fields.includes(p.id)).map(p => <div key={p.id}>
-            <label>{p.name}<input aria-label={'Step value '+p.id} disabled={values[p.id] === null}
-              value={values[p.id] ?? ''} onChange={e => setValues({...values,[p.id]:e.target.value})} /></label>
-            {!p.required && <label><input type="checkbox" checked={values[p.id] === null} onChange={e => setValues(prev => {
-              const updated = {...prev}; if (e.target.checked) updated[p.id] = null; else delete updated[p.id];return updated;
-            })} />Set {p.name} to null</label>}</div>)}</div></>}
-      <Button disabled={entries.length >= 24 || (edge ? !link || !source || !target : !action || (kind !== 'create' && !record.id))} onClick={add}>Add step</Button>
-      <ol>{entries.map((entry,index) => <li key={index}>{entry.label}{index === entries.length-1 && <Button size="small" onClick={() => setEntries(entries.slice(0,-1))}>Remove last step</Button>}</li>)}</ol>
-      <Button type="primary" disabled={!entries.length || !name.trim()} onClick={() => perform()}>Commit transaction</Button>
-    </fieldset>
-    {error && <p role="alert">{error} <Button size="small" disabled={pending} onClick={() => {setError('');setVersion(v => v+1);}}>Refresh options</Button></p>}{status && <p role="status">{status}</p>}
-    <h4>My transactions</h4>
-    {historyLoading && <p role="status">Loading transactions…</p>}
-    {!historyLoading && !history.length && !error && <p>No transactions on this page.</p>}
-    <ul>{history.map(item => <li key={item.id}>{item.name} · {item.stepCount} steps · {new Date(item.createdAt).toLocaleString()} {' '}
-      {item.undoneAt ? <span>Undone</span> : <Button size="small" disabled={pending || historyLoading} onClick={() => perform(item)}>Undo transaction</Button>}
-      <Button size="small" aria-pressed={deliveryId === item.id} onClick={() => selectDelivery(deliveryId === item.id ? '' : item.id)}>Writeback</Button>
-      {deliveryId === item.id && <OntologyWriteback key={item.id} project={project} transaction={item.id}/>}</li>)}</ul>
-    {(offset > 0 || hasMore) && <div><Button disabled={!offset || historyLoading || pending} onClick={() => {setHistoryLoading(true);setOffset(offset-25);}}>Previous transactions</Button>
-      <Button disabled={!hasMore || historyLoading || pending || offset + 25 > 100_000} onClick={() => {setHistoryLoading(true);setOffset(offset+25);}}>Next transactions</Button></div>}
+    <section className="flow-tool-section" aria-label="Transaction steps">
+      <h3>Cross-object transaction</h3>
+      <fieldset disabled={pending}><label>Transaction name<input maxLength={120} value={name} onChange={e => setName(e.target.value)} /></label>
+        <div className="ontology-tx-fields"><label>Step operation<select aria-label="Step operation" value={kind} onChange={e => {if (e.target.value === kind) return;setKind(e.target.value as Kind);if (!edge) resetLinks();resetStep();}}>
+          {(['create','modify','delete','link','unlink'] as const).map(k => <option key={k} value={k}>{k}</option>)}</select></label>
+        <label>Step object type<select aria-label="Step object type" value={typeId} onChange={e => {if (e.target.value === typeId) return;setTypeId(e.target.value);setActions([]);resetLinks();resetStep();}}>
+          {types.map(t => <option key={t.id} value={t.id}>{t.definition.name}</option>)}</select></label></div>
+        {moreTypes && <Button disabled={typesLoading || typeOffset + 50 > 100_000} onClick={() => {setTypesLoading(true);setTypeOffset(typeOffset+50);}}>Load more object types</Button>}
+        {edge ? <><label>Step relationship<select aria-label="Step relationship" value={linkId} onChange={e => {setLinkId(e.target.value);setSource('');setTarget('');}}>
+          <option value="">{links.length ? 'Select relationship' : linksLoading ? 'Loading relationships…' : 'No visible relationships'}</option>{links.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select></label>
+          {moreLinks && <Button disabled={linksLoading || linkOffset + 50 > 100_000} onClick={() => {setLinksLoading(true);setLinkOffset(linkOffset+50);}}>Load more relationships</Button>}
+          {link && <div className="ontology-tx-fields"><RecordPicker key={'source'+link.id} type={link.sourceDefinitionId} version={version}
+            label="Source record" aliases={aliasesFor(link.sourceDefinitionId)} value={source} change={setSource} />
+            <RecordPicker key={'target'+link.id} type={link.targetDefinitionId} version={version}
+              label="Target record" aliases={aliasesFor(link.targetDefinitionId)} value={target} change={setTarget} /></div>}</>
+          : <>{kind !== 'create' && <RecordPicker key={typeId} type={typeId} label="Step record" value={record.id} version={version}
+            change={(id,revision,title) => setRecord({id,revision:revision || 0,title:title || ''})} />}
+            <div className="ontology-tx-fields">{selectedType?.definition.properties.filter(p => action?.fields.includes(p.id)).map(p => <div key={p.id}>
+              <label>{p.name}<input aria-label={'Step value '+p.id} disabled={values[p.id] === null}
+                value={values[p.id] ?? ''} onChange={e => setValues({...values,[p.id]:e.target.value})} /></label>
+              {!p.required && <label><input type="checkbox" checked={values[p.id] === null} onChange={e => setValues(prev => {
+                const updated = {...prev}; if (e.target.checked) updated[p.id] = null; else delete updated[p.id];return updated;
+              })} />Set {p.name} to null</label>}</div>)}</div></>}
+        <Button disabled={entries.length >= 24 || (edge ? !link || !source || !target : !action || (kind !== 'create' && !record.id))} onClick={add}>Add step</Button>
+        <ol>{entries.map((entry,index) => <li key={index}>{entry.label}{index === entries.length-1 && <Button size="small" onClick={() => setEntries(entries.slice(0,-1))}>Remove last step</Button>}</li>)}</ol>
+        <Button type="primary" disabled={!entries.length || !name.trim()} onClick={() => perform()}>Commit transaction</Button>
+      </fieldset>
+      {error && <p role="alert">{error} <Button size="small" disabled={pending} onClick={() => {setError('');setVersion(v => v+1);}}>Refresh options</Button></p>}{status && <p role="status">{status}</p>}
+    </section>
+    <section className="flow-tool-section" aria-label="My transactions">
+      <h4>My transactions</h4>
+      {historyLoading && <p role="status">Loading transactions…</p>}
+      {!historyLoading && !history.length && !error && <p>No transactions on this page.</p>}
+      <ul>{history.map(item => <li key={item.id}>{item.name} · {item.stepCount} steps · {new Date(item.createdAt).toLocaleString()} {' '}
+        {item.undoneAt ? <span>Undone</span> : <Button size="small" disabled={pending || historyLoading} onClick={() => perform(item)}>Undo transaction</Button>}
+        <Button size="small" aria-pressed={deliveryId === item.id} onClick={() => selectDelivery(deliveryId === item.id ? '' : item.id)}>Writeback</Button>
+        {deliveryId === item.id && <OntologyWriteback key={item.id} project={project} transaction={item.id}/>}</li>)}</ul>
+      {(offset > 0 || hasMore) && <div><Button disabled={!offset || historyLoading || pending} onClick={() => {setHistoryLoading(true);setOffset(offset-25);}}>Previous transactions</Button>
+        <Button disabled={!hasMore || historyLoading || pending || offset + 25 > 100_000} onClick={() => {setHistoryLoading(true);setOffset(offset+25);}}>Next transactions</Button></div>}
+    </section>
   </section>;
 }

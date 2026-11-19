@@ -14,7 +14,8 @@ import type { EtlObjectCatalog, EtlObjectPreview, EtlObjectType, EtlObjectVisibi
 import { layerColors } from '../../theme/tokens';
 import { inferSiteKind, TemplateGlyph } from '../AICollect/WorkspaceDock';
 import SemanticObjectWizard from './SemanticObjectWizard';
-import PublishedOntology from './PublishedOntology';
+import PublishedOntology, { type PublishedCatalogPage } from './PublishedOntology';
+import OntologyCatalogSkeleton from './OntologyCatalogSkeleton';
 import { listOntologyProjects } from '../../services/ontology';
 import PostgresGlyph from './PostgresGlyph';
 import './ontology-explorer.css';
@@ -147,6 +148,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const inspectorClosing = inspectorOpen && !selectedId;
   const inspectorAllProperties = selectedId ? allProperties : inspectedObject.allProperties;
   const [catalogState, setCatalogState] = useState<{ key: string; scope: string; userId: string; group: Group; data: EtlObjectCatalog }>({ key: '', scope: '', userId: '', group: 'all', data: emptyCatalog });
+  const [publishedPage, setPublishedPage] = useState<PublishedCatalogPage>();
   const [menuFacetState, setMenuFacetState] = useState<{ key: string; userId: string; counts: EtlObjectCatalog['groupSchemaCounts'] }>({ key: '', userId: '', counts: {} });
   const [favoriteSchemaCounts, setFavoriteSchemaCounts] = useState<Record<string, number>>({});
   const [favoriteSchemaKey, setFavoriteSchemaKey] = useState('');
@@ -518,15 +520,16 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
               <SearchOutlined /><input ref={searchRef} data-testid="ontology-search" aria-label={searchLabel} placeholder={searchLabel + '…'}
                 value={catalogSearch} maxLength={publishedCatalog ? 200 : undefined} onChange={event => changeCatalogSearch(event.target.value)}
                 onKeyDown={event => {
-                  if (!publishedCatalog && event.key === 'ArrowDown' && renderedObjects.length) {
-                    event.preventDefault(); cardRefs.current[renderedObjects[0].id]?.focus();
+                  if (event.key === 'ArrowDown') {
+                    const first = publishedCatalog ? rootRef.current?.querySelector<HTMLButtonElement>('[data-published-type-link]') : cardRefs.current[renderedObjects[0]?.id];
+                    if (first) { event.preventDefault(); first.focus(); }
                   }
                 }} />
               {catalogSearch && <button type="button" aria-label={publishedCatalog ? 'Clear published search' : 'Clear search'}
                 onClick={() => { changeCatalogSearch(''); searchRef.current?.focus(); }}><CloseOutlined /></button>}
             </div>
+            <div className="flow-ontology__view-switch" role="group" aria-label="Catalog view"><button type="button" aria-label="Grid view" aria-pressed={view === 'grid'} className={view === 'grid' ? 'is-active' : ''} onClick={() => updateQuery({ view: null })}><AppstoreOutlined /><span>Grid</span></button><button type="button" aria-label="List view" aria-pressed={view === 'list'} className={view === 'list' ? 'is-active' : ''} onClick={() => updateQuery({ view: 'list' })}><BarsOutlined /><span>List</span></button></div>
             {!publishedCatalog && <>
-              <div className="flow-ontology__view-switch" aria-label="Catalog view"><button type="button" aria-label="Grid view" aria-pressed={view === 'grid'} className={view === 'grid' ? 'is-active' : ''} onClick={() => updateQuery({ view: null })}><AppstoreOutlined /><span>Grid</span></button><button type="button" aria-label="List view" aria-pressed={view === 'list'} className={view === 'list' ? 'is-active' : ''} onClick={() => updateQuery({ view: 'list' })}><BarsOutlined /><span>List</span></button></div>
               {canManage && <Checkbox className="flow-ontology__show-hidden" checked={includeHidden} onChange={(event) => setShowHidden(event.target.checked)}>Show hidden object types</Checkbox>}
               <span className="flow-ontology__summary" aria-busy={loading} aria-label={confirmedTotal === null ? 'Object type count not loaded' : `${number(confirmedTotal)} object types${loading ? ', updating' : error ? ', last loaded count' : ''}`}><span className="flow-ontology__summary-value">{confirmedTotal === null ? '…' : number(confirmedTotal)}</span><span>object types</span></span>
             </>}
@@ -535,7 +538,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
         </div>
       </header>
       <div className="flow-ontology__body">
-        {publishedCatalog ? <PublishedOntology key={publishedId} selection={publishedId} onSelect={selectPublished} onClearSearch={() => changeCatalogSearch('')} /> : <>
+        {publishedCatalog ? <PublishedOntology key={publishedId} selection={publishedId} view={view} catalogPage={publishedPage?.identity === getSessionState().identity ? publishedPage : undefined} onCatalogPage={setPublishedPage} onSelect={selectPublished} onClearSearch={() => changeCatalogSearch('')} /> : <>
         <aside className="flow-ontology__sidebar" aria-label="Object type groups"><nav aria-busy={loading}>
           {groups.map((item) => {
             const expanded = expandedGroup === item.key;
@@ -566,7 +569,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
           {error && <div className="flow-ontology__notice" role="alert"><span>{error}</span><button type="button" onClick={() => setVersion((value) => value + 1)}>Retry</button></div>}
           {favoriteSummaryError && <div className="flow-ontology__notice" role="alert"><span>{favoriteSummaryError}</span><button type="button" onClick={() => setVersion((value) => value + 1)}>Retry</button></div>}
           {favoriteError && <div className="flow-ontology__notice" role="alert"><span>{favoriteError}</span><button type="button" aria-label="Retry favorites" onClick={() => setVersion((value) => value + 1)}>Retry</button></div>}
-          {error && !presentedItems.length ? <div className="flow-ontology__empty"><DatabaseOutlined /><strong>Catalog unavailable</strong><span>Retry to load object types.</span></div> : loading && !hasPresentedCatalog ? <div className="flow-ontology__empty" role="status"><ReloadOutlined spin /><span>Loading object types</span></div> : !presentedItems.length ? <div className="flow-ontology__empty"><DatabaseOutlined /><strong>{presentedGroup === 'favorites' ? 'No favorite object types' : 'No object types found'}</strong><span>{presentedGroup === 'favorites' ? 'Star an object type to keep it here.' : 'Try a different resource group, schema, or search.'}</span></div> : <div className={`flow-ontology__collections is-${view}`} data-testid="ontology-assets">
+          {error && !presentedItems.length ? <div className="flow-ontology__empty"><DatabaseOutlined /><strong>Catalog unavailable</strong><span>Retry to load object types.</span></div> : loading && !hasPresentedCatalog ? <OntologyCatalogSkeleton view={view} label="Loading object types" /> : !presentedItems.length ? <div className="flow-ontology__empty"><DatabaseOutlined /><strong>{presentedGroup === 'favorites' ? 'No favorite object types' : 'No object types found'}</strong><span>{presentedGroup === 'favorites' ? 'Star an object type to keep it here.' : 'Try a different resource group, schema, or search.'}</span></div> : <div className={`flow-ontology__collections is-${view}`} data-testid="ontology-assets">
             {sections.map((section) => <section key={section.key} className="flow-ontology__collection"><header className="flow-ontology__collection-heading"><h2>{section.label}</h2></header>{section.schemas.map(({ schema, items }) => <section key={schema} className="flow-ontology__schema-section" data-schema-group={schema}><h3 className="flow-ontology__schema-heading"><PostgresGlyph className="flow-ontology__database-glyph" /><span className="flow-ontology__schema-tag"><DatabaseOutlined /><span title={schema}>{schema}</span></span></h3><div className={`flow-ontology__assets is-${view}`}>
               {items.map((object) => <article key={object.id} data-testid="ontology-object-card" data-object-id={object.id} data-schema={object.schema} className={`flow-ontology__asset${selectedId === object.id ? ' is-selected' : ''}`} style={accentStyle(object.dataType)}>
                 <button ref={(element) => { cardRefs.current[object.id] = element; }} type="button" className="flow-ontology__asset-main" aria-label={`Preview ${object.id}`} aria-pressed={selectedId === object.id} onKeyDown={(event) => moveCardFocus(event, renderedObjects.findIndex((item) => item.id === object.id))} onClick={() => selectObject(object)}>
