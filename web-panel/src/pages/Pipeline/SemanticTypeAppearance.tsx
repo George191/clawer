@@ -52,7 +52,7 @@ export default function SemanticTypeAppearance({ definition, drafts, onChange }:
     <label className="flow-create-field"><span>API ID</span>
       <Input aria-label="API ID" value={definition.id} maxLength={63}
         onChange={event => onChange({ id: event.target.value })} placeholder="airport" />
-      <small>Project-unique type identifier used in generated code. Start with a lowercase letter, then use lowercase letters, digits, hyphens or underscores.</small>
+      <small>Unique within the project. Used in the Published catalog and SDK filename. Start with a lowercase letter, then use lowercase letters, digits, hyphens or underscores.</small>
     </label>
     <div className="flow-create-field"><span>Icon color</span>
       <div className="flow-type-color">
