@@ -70,7 +70,7 @@
 }
 .flow-explorer-selection__control:not(:disabled):hover { background: var(--ontology-selected); }
 .flow-explorer-selection__control:disabled { color: var(--ontology-muted); cursor: default; }
-.flow-explorer-selection :focus-visible { outline: 2px solid var(--ontology-primary); outline-offset: -2px; }
+.flow-explorer-selection :focus-visible { outline: 2px solid var(--ui-focus-ring); outline-offset: -2px; }
 .flow-explorer-selection__table-title { display: flex; align-items: center; gap: 7px; overflow: hidden; }
 .flow-explorer-selection__table-title > :is(a, span:last-child) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .flow-explorer-selection a { color: var(--ontology-link); text-decoration: none; }

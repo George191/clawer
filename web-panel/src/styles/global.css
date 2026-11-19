@@ -6,6 +6,32 @@
 /* ── Google Fonts: Inter ── */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
 
+:root {
+  --ui-action-bg: #197f78;
+  --ui-action-hover: #16827a;
+  --ui-action-active: #126962;
+  --ui-action-text: #fff;
+  --ui-link-on-dark: #78d3c9;
+  --ui-focus-on-dark: #53b9ae;
+  --ui-action-link: var(--ui-link-on-dark);
+  --ui-focus-ring: var(--ui-focus-on-dark);
+  --ui-focus-shadow: 0 0 0 2px color-mix(in srgb, var(--ui-focus-ring) 24%, transparent);
+  accent-color: var(--ui-action-bg);
+}
+
+html[data-theme='light'] {
+  --ui-action-bg: #0e766f;
+  --ui-action-hover: #0d6a64;
+  --ui-action-active: #0a5d56;
+  --ui-action-link: #0d6a64;
+  --ui-focus-ring: #0e766f;
+}
+
+:where(button, a[href], input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--ui-focus-ring);
+  outline-offset: 2px;
+}
+
 /* ============================================
  *   Reset & Base
  * ============================================ */
@@ -68,12 +94,12 @@ html:root *::-webkit-scrollbar {
   box-shadow: none !important;
 }
 
-.ui-btn-default,
-.ui-btn-default:hover {
+.ui-btn-default:not(.ui-btn-danger),
+.ui-btn-default:not(.ui-btn-danger):hover {
   border-color: rgba(255, 255, 255, 0.14) !important;
 }
 
-.ui-btn-default:hover {
+.ui-btn-default:not(.ui-btn-danger):hover {
   background: #1d202b !important;
   color: #e4e7eb !important;
 }
@@ -83,7 +109,7 @@ html:root *::-webkit-scrollbar {
   border-color: transparent !important;
 }
 
-.ui-btn-text:not(.ui-btn-dangerous):hover {
+.ui-btn-text:not(.ui-btn-danger):hover {
   background: #1d202b !important;
   color: #e4e7eb !important;
 }
@@ -112,9 +138,9 @@ html:root *::-webkit-scrollbar {
   background: transparent !important;
   box-shadow: none !important;
 }
-.ui-btn-text.project-domain-switch:not(.ui-btn-dangerous):hover,
-.ui-btn-text.project-domain-switch:not(.ui-btn-dangerous):focus,
-.ui-btn-text.project-domain-switch:not(.ui-btn-dangerous):active {
+.ui-btn-text.project-domain-switch:not(.ui-btn-danger):hover,
+.ui-btn-text.project-domain-switch:not(.ui-btn-danger):focus,
+.ui-btn-text.project-domain-switch:not(.ui-btn-danger):active {
   background: transparent !important;
   color: inherit !important;
   box-shadow: none !important;
@@ -877,36 +903,21 @@ html:root *::-webkit-scrollbar {
   transition: opacity 0.2s ease;
 }
 
-/* ============================================
- *   Primary Button Override
- * ============================================ */
-
-.ui-btn-primary,
-.ui-btn-primary:hover {
-  border-color: transparent !important;
-  background: #018bff !important;
-  box-shadow: none !important;
-  transition: all 0.25s ease;
-}
-.ui-btn-primary:hover {
-  background: #006fc9 !important;
-}
-
-html[data-theme='light'] .ui-btn-default,
-html[data-theme='light'] .ui-btn-default:hover,
-.light-mode .ui-btn-default,
-.light-mode .ui-btn-default:hover {
+html[data-theme='light'] .ui-btn-default:not(.ui-btn-danger),
+html[data-theme='light'] .ui-btn-default:not(.ui-btn-danger):hover,
+.light-mode .ui-btn-default:not(.ui-btn-danger),
+.light-mode .ui-btn-default:not(.ui-btn-danger):hover {
   border-color: #d7dce3 !important;
 }
 
-html[data-theme='light'] .ui-btn-default:hover,
-.light-mode .ui-btn-default:hover {
+html[data-theme='light'] .ui-btn-default:not(.ui-btn-danger):hover,
+.light-mode .ui-btn-default:not(.ui-btn-danger):hover {
   background: #eef1f5 !important;
   color: #172033 !important;
 }
 
-html[data-theme='light'] .ui-btn-text:not(.ui-btn-dangerous):hover,
-.light-mode .ui-btn-text:not(.ui-btn-dangerous):hover {
+html[data-theme='light'] .ui-btn-text:not(.ui-btn-danger):hover,
+.light-mode .ui-btn-text:not(.ui-btn-danger):hover {
   background: #eef1f5 !important;
   color: #172033 !important;
 }

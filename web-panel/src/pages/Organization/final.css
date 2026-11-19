@@ -15,8 +15,10 @@
 .access-toolbar{display:grid;grid-template-columns:150px 150px minmax(220px,1fr) auto auto;gap:8px;min-height:auto;padding:12px 14px;background:#1a1d27}
 .access-toolbar .ui-input-affix-wrapper{width:100%;max-width:none}
 .access-page .ui-select-selector,.access-page .ui-select:hover .ui-select-selector,.access-page .ui-select-focused .ui-select-selector,.access-page .ui-input-affix-wrapper,.access-page .ui-input-affix-wrapper:hover,.access-page .ui-input-affix-wrapper-focused,.access-page .ui-btn,.access-page .ui-btn:hover,.access-page .ui-btn:focus-visible{border:0!important;box-shadow:none!important}
-.access-page .ui-select-selector,.access-page .ui-input-affix-wrapper,.access-page .ui-btn-default,.access-page .ui-btn-primary{background:#343947!important;color:#e4e7eb!important}
-.access-page .ui-select:hover .ui-select-selector,.access-page .ui-input-affix-wrapper:hover,.access-page .ui-btn-default:hover,.access-page .ui-btn-primary:hover{background:#292e3b!important;color:#e4e7eb!important}
+.access-page :is(.ui-input-affix-wrapper,.ui-select):focus-within{outline:2px solid var(--ui-focus-ring);outline-offset:1px}
+
+.access-page .ui-select-selector,.access-page .ui-input-affix-wrapper,.access-page .ui-btn-default{background:#343947!important;color:#e4e7eb!important}
+.access-page .ui-select:hover .ui-select-selector,.access-page .ui-input-affix-wrapper:hover,.access-page .ui-btn-default:hover{background:#292e3b!important;color:#e4e7eb!important}
 .access-table-card,.access-page>.ui-card{overflow:hidden}
 .access-page .ui-table,.access-page .ui-table-container,.access-page .ui-table-cell{border-color:rgba(148,163,184,.08)!important}
 .access-page .ui-table-thead>tr>th{background:#1a1d27}
@@ -27,8 +29,8 @@
 .access-permission-toolbar{border:0;background:#1a1d27}
 html[data-theme='light'] .access-page{color:#172033}
 html[data-theme='light'] .access-toolbar,html[data-theme='light'] .access-permission-toolbar,html[data-theme='light'] .access-stats .ui-card,html[data-theme='light'] .access-page .ui-table-thead>tr>th{background:#fff}
-html[data-theme='light'] .access-page .ui-select-selector,html[data-theme='light'] .access-page .ui-input-affix-wrapper,html[data-theme='light'] .access-page .ui-btn-default,html[data-theme='light'] .access-page .ui-btn-primary{background:#edf0f4!important;color:#172033!important}
-html[data-theme='light'] .access-page .ui-select:hover .ui-select-selector,html[data-theme='light'] .access-page .ui-input-affix-wrapper:hover,html[data-theme='light'] .access-page .ui-btn-default:hover,html[data-theme='light'] .access-page .ui-btn-primary:hover{background:#dfe3e9!important;color:#172033!important}
+html[data-theme='light'] .access-page .ui-select-selector,html[data-theme='light'] .access-page .ui-input-affix-wrapper,html[data-theme='light'] .access-page .ui-btn-default{background:#edf0f4!important;color:#172033!important}
+html[data-theme='light'] .access-page .ui-select:hover .ui-select-selector,html[data-theme='light'] .access-page .ui-input-affix-wrapper:hover,html[data-theme='light'] .access-page .ui-btn-default:hover{background:#dfe3e9!important;color:#172033!important}
 html[data-theme='light'] .access-page .ui-card{background:#fff!important}
 html[data-theme='light'] .access-role-card,html[data-theme='light'] .access-project-card,html[data-theme='light'] .access-add-card{background:#f1f3f6!important;box-shadow:0 3px 10px rgba(23,32,51,.08)!important}
 html[data-theme='light'] .access-role-card:hover,html[data-theme='light'] .access-project-card:hover,html[data-theme='light'] .access-add-card:hover{background:#e7e9ee!important}
@@ -177,7 +179,7 @@ html[data-theme='light'] .access-export-menu .ui-dropdown-menu-item:hover{backgr
 .access-role-card .ui-avatar{width:30px;height:30px;font-size:9px;line-height:30px}
 .access-role-card h4{margin:0!important;font-size:17px!important;line-height:22px}
 .access-role-footer{margin-top:7px}
-.access-role-footer .ui-btn-link{height:auto!important;padding:0!important;background:transparent!important;color:#8ab4ff!important;font-size:12px}
+.access-role-footer .ui-btn-link{height:auto!important;padding:0!important;background:transparent!important;color:var(--ui-action-link)!important;font-size:12px}
 .access-role-footer .ui-btn-text{width:28px;height:28px;padding:0;background:transparent!important;color:#9299a6!important}
 .access-add-role .ui-card-body{display:grid!important;grid-template-columns:1fr 1.1fr;align-items:center!important;gap:10px!important;padding:10px 16px!important;text-align:left!important}
 .access-add-role .access-add-illustration{width:46px;height:46px;justify-self:center;border-radius:12px;font-size:18px}

@@ -14,7 +14,7 @@
   outline: 1px solid var(--ontology-text); outline-offset: 1px;
 }
 .flow-color-palette button:focus-visible, .flow-color-palette input:focus-visible {
-  outline: 2px solid var(--ontology-muted); outline-offset: 1px;
+  outline: 2px solid var(--ui-focus-ring); outline-offset: 1px;
 }
 .flow-color-none { background: linear-gradient(to bottom right, transparent 47%, var(--ontology-muted) 49%, var(--ontology-muted) 51%, transparent 53%); }
 .flow-color-custom { display: grid; align-items: center; grid-template-columns: auto minmax(0,1fr) auto; gap: 6px; }

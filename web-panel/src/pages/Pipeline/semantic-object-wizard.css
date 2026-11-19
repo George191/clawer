@@ -20,7 +20,7 @@
 }
 .flow-semantic-wizard.flow-create-modal .ui-select:focus-within > .ui-select-selector,
 .flow-semantic-wizard.flow-create-modal .ui-select-open > .ui-select-selector {
-  border-color: var(--ontology-primary); box-shadow: none;
+  border-color: var(--ui-focus-ring); box-shadow: none;
 }
 .flow-semantic-wizard .flow-create-layout { grid-template-columns: clamp(148px, 16%, 185px) minmax(0, 1fr); }
 .flow-semantic-wizard .flow-create-steps { padding: 0; }
@@ -33,7 +33,7 @@
 }
 .flow-semantic-wizard .flow-create-steps button::after { content: ""; position: absolute; inset: 0; }
 .flow-semantic-wizard .flow-create-steps > li:has(button:enabled:hover) { background: var(--ontology-elevated); }
-.flow-semantic-wizard .flow-create-steps > li:has(button:focus-visible) { outline: 2px solid var(--ontology-primary); outline-offset: -2px; }
+.flow-semantic-wizard .flow-create-steps > li:has(button:focus-visible) { outline: 2px solid var(--ui-focus-ring); outline-offset: -2px; }
 .flow-semantic-wizard .flow-create-kicker { margin: 14px var(--wizard-inset) 0; font: 500 11px/16px var(--ontology-font); letter-spacing: .035em; }
 .flow-semantic-wizard .flow-create-section { padding-inline: var(--wizard-inset); }
 .flow-semantic-wizard .flow-create-heading h3 { font-size: 16px; line-height: 22px; }
@@ -61,7 +61,7 @@
 .flow-semantic-wizard .flow-create-source-option > .ui-icon:last-child { visibility: hidden; font-size: 16px; }
 .flow-semantic-wizard .flow-create-source-option:has(:checked) > .ui-icon { visibility: visible; color: var(--ontology-link); }
 .flow-semantic-wizard .flow-create-source-option:has(:disabled) { opacity: .55; cursor: default; }
-.flow-semantic-wizard .flow-create-source-option:has(:focus-visible) { outline: 2px solid var(--ontology-primary); outline-offset: 2px; }
+.flow-semantic-wizard .flow-create-source-option:has(:focus-visible) { outline: 2px solid var(--ui-focus-ring); outline-offset: 2px; }
 .flow-semantic-wizard .flow-create-property-heading { flex-wrap: wrap; }
 .flow-semantic-wizard .flow-semantic-config { min-inline-size: 0; }
 .flow-semantic-wizard .ui-modal-footer { padding: 10px 16px; }

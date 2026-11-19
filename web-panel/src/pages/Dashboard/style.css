@@ -194,17 +194,14 @@
 
 .dashboard-summary-actions .ui-btn {
   height: 34px;
-  border-color: var(--dashboard-border);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--dashboard-muted);
   box-shadow: none;
 }
 
-.dashboard-summary-actions .ui-btn-primary {
-  border-color: rgba(138, 180, 255, 0.25);
-  background: rgba(138, 180, 255, 0.16);
-  color: #e4edff;
+.dashboard-summary-actions .ui-btn:not(.ui-btn-primary) {
+  border-color: var(--dashboard-border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--dashboard-muted);
 }
 
 .dashboard-attention {

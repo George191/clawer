@@ -44,6 +44,8 @@ const CollectConsole: React.FC = () => {
     <ErrorBoundary>
       <style>{`
         .collect-console {
+          --ui-focus-ring: var(--ui-focus-on-dark);
+          --ui-action-link: var(--ui-link-on-dark);
           height: calc(100vh - 100px);
           max-height: calc(100vh - 100px);
           overflow: hidden;
@@ -167,7 +169,7 @@ const CollectConsole: React.FC = () => {
           margin-right: 4px;
         }
         /* Ant overrides */
-        .collect-console .ui-btn,
+        .collect-console .ui-btn:where(:not(.ui-btn-primary)),
         .collect-console .ui-input-affix-wrapper {
           background: transparent;
           border-color: ${aiAura.border};
@@ -180,14 +182,6 @@ const CollectConsole: React.FC = () => {
         }
         .collect-console .ui-input::placeholder {
           color: ${aiAura.subtle};
-        }
-        .collect-console .ui-btn-primary {
-          background: ${aiAura.accent};
-          border-color: ${aiAura.accent};
-          color: ${aiAura.bg};
-        }
-        .collect-console .ui-btn-primary:hover {
-          opacity: 0.88;
         }
         .collect-console .ui-tag {
           background: transparent;
