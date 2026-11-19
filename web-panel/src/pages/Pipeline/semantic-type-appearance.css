@@ -1,14 +1,27 @@
-.flow-type-color { display: flex; gap: 6px; align-items: center; }
-.flow-type-color label {
-  display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
-  padding: 3px 8px; min-height: 30px; border: 1px solid var(--ontology-border); border-radius: 3px;
+.flow-color-custom button {
+  display: inline-flex; align-items: center; gap: 7px; width: fit-content; min-height: 30px; padding: 3px 9px;
+  background: var(--ontology-bg); color: var(--ontology-text); border: 1px solid var(--ontology-border);
+  border-radius: 3px; font: inherit; cursor: pointer;
 }
-.flow-type-color input[type="color"] {
-  width: 20px; height: 20px; min-height: 0; padding: 0;
-  border: 0; background: transparent; cursor: pointer;
+.flow-color-palette { display: grid; gap: 8px; box-sizing: border-box; width: min(100%, 276px); }
+.flow-color-caption { color: var(--ontology-muted); font-size: 12px; }
+.flow-color-swatches { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 5px; }
+.flow-color-swatches button {
+  display: grid; place-items: center; height: 24px; min-width: 0; padding: 0;
+  border: 1px solid var(--ontology-border-hover); border-radius: 2px; cursor: pointer;
 }
-.flow-type-color input::-webkit-color-swatch-wrapper { padding: 0; }
-.flow-type-color input::-webkit-color-swatch { border: 1px solid var(--ontology-border); border-radius: 3px; }
+.flow-color-swatches button:hover, .flow-color-swatches button[aria-pressed="true"] {
+  outline: 1px solid var(--ontology-text); outline-offset: 1px;
+}
+.flow-color-palette button:focus-visible, .flow-color-palette input:focus-visible {
+  outline: 2px solid var(--ontology-primary); outline-offset: 1px;
+}
+.flow-color-none { background: linear-gradient(to bottom right, transparent 47%, var(--ontology-muted) 49%, var(--ontology-muted) 51%, transparent 53%); }
+.flow-color-custom { display: grid; align-items: center; grid-template-columns: auto minmax(0,1fr) auto; gap: 6px; }
+.flow-color-custom label { color: var(--ontology-muted); }
+.flow-color-custom input { min-width: 0; width: 100%; height: 28px; box-sizing: border-box; padding: 2px 6px; border: 1px solid var(--ontology-border); border-radius: 2px; background: var(--ontology-surface); color: var(--ontology-text); font: 12px/1.4 monospace; }
+.flow-color-custom button { min-height: 28px; }
+.flow-color-palette [role="alert"] { color: var(--ui-error, #ec9da7); }
 .flow-metadata-identity {
   grid-column: 1 / -1; display: grid; grid-template-columns: auto repeat(2, minmax(0, 1fr));
   gap: 14px; align-items: start;

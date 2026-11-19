@@ -92,15 +92,31 @@ class PublishedWorkflow(unittest.IsolatedAsyncioTestCase):
                     "actions": [{"kind": kind, "fields": fields, "submitters": [editor]} for kind, fields in
                                 [("create", ["id", "note"]), ("modify", ["note"]), ("delete", [])]],
                 }
-                draft = await client.post(BASE + "/drafts", headers=manager, json=definition)
-                self.assertEqual(draft.status_code, 201, draft.text)
-                path = BASE + "/drafts/" + draft.json()["id"]
-                version = {"revision": draft.json()["revision"]}
-                validation = await client.post(path + "/validate", headers=manager, json=version)
-                self.assertEqual(validation.json()["errors"], [])
-                published = await client.post(path + "/publish", headers=manager, json=version)
-                self.assertEqual(published.status_code, 200, published.text)
-                objects = BASE + "/object-types/" + draft.json()["id"]
+                for suffix, appearance in [
+                    ("-default", {}),
+                    ("-transparent", {"color": "", "iconColor": "#11a8cd"}),
+                    ("", {"color": "#e5e510", "iconColor": "#cd3131"}),
+                ]:
+                    with self.subTest(appearance=suffix or "two-colors"):
+                        body = {**definition, "id": definition["id"] + suffix, "icon": "rocket", **appearance}
+                        expected = {"icon": "rocket", "color": appearance.get("color", "#ffffff"),
+                                    "iconColor": appearance.get("iconColor", "#000000")}
+                        draft = await client.post(BASE + "/drafts", headers=manager, json=body)
+                        self.assertEqual(draft.status_code, 201, draft.text)
+                        draft_id = draft.json()["id"]
+                        path = BASE + "/drafts/" + draft_id
+                        saved = await client.get(path, headers=manager)
+                        self.assertEqual(saved.status_code, 200, saved.text)
+                        version = {"revision": saved.json()["revision"]}
+                        validation = await client.post(path + "/validate", headers=manager, json=version)
+                        self.assertEqual(validation.json()["errors"], [])
+                        published = await client.post(path + "/publish", headers=manager, json=version)
+                        self.assertEqual(published.status_code, 200, published.text)
+                        objects = BASE + "/object-types/" + draft_id
+                        details = await client.get(objects, headers=member)
+                        self.assertEqual(details.status_code, 200, details.text)
+                        for returned in (saved.json()["definition"], published.json()["objectType"], details.json()["definition"]):
+                            self.assertEqual({key: returned[key] for key in expected}, expected)
                 payload = {"values": {"id": "order-1", "note": "restricted"}}
                 denied = await client.post(objects + "/actions/create", headers=member, json=payload)
                 self.assertEqual(denied.status_code, 403)

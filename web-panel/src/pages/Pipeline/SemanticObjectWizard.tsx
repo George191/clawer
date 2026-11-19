@@ -11,10 +11,9 @@ import {
   type SemanticDefinition, type SemanticProperty, type SemanticAction, type SemanticSource, type Principal, type PublishedOntologyType,
 } from '../../services/ontology';
 import SemanticPropertiesWorkbench from './SemanticPropertiesWorkbench';
+import OntologyIconPicker from './OntologyIconPicker';
 import SemanticTypeAppearance from './SemanticTypeAppearance';
-import SemanticTypeGlyph from './SemanticTypeGlyph';
 import { explorerPropertyType } from '../../services/explorerProperties';
-import { ontologyTypeIcons } from './ontologyTypeIcons';
 import OntologyRecordPolicyEditor from './OntologyRecordPolicyEditor';
 import './ontology-create.css';
 import './semantic-object-wizard.css';
@@ -28,7 +27,7 @@ const principalKey = (p: Principal) => p.kind + ':' + p.id;
 const opt = (values: readonly string[]) => values.map(value => ({ value, label: value }));
 const path = (schema: string, table: string) => [schema, table].filter(Boolean).join('.');
 const emptyDefinition = (schema = '', allowedSource = true): SemanticDefinition => ({
-  id: '', name: '', pluralName: '', description: '', icon: '', color: '', groups: [], projectId: '',
+  id: '', name: '', pluralName: '', description: '', icon: '', color: '#ffffff', iconColor: '#000000', groups: [], projectId: '',
   source: allowedSource ? { mode: 'existing', schema, table: '' } : { mode: 'none' }, properties: [], primaryKey: [], titleKey: '', actions: [],
   security: { mode: allowedSource ? 'inherit' : 'explicit', objectReaders: [], fieldReaders: {} },
 });
@@ -340,19 +339,9 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
         </section>}
         {stage === 'wizard' && currentStep === 'Metadata' && <section className="flow-create-section">
           <Heading title="Object type metadata" detail="Business display names are separate from the stable API ID." />
-          <div className="flow-create-grid flow-type-metadata">
+          <div className="flow-create-grid">
             <div className="flow-metadata-identity">
-              <div className="flow-create-field"><span>Icon</span>
-                <Select aria-label="Object type icon" className="flow-ontology__select flow-object-icon-select"
-                  popupClassName="flow-ontology__select-popup flow-object-icon-popup" popupMatchSelectWidth={216}
-                  value={definition.icon} onChange={icon => set({ icon })}
-                  options={['', ...Object.keys(ontologyTypeIcons)].map(icon => ({
-                    value: icon, label: <span title={icon || 'Automatic'} className="flow-object-icon-choice">
-                      <SemanticTypeGlyph definition={{ ...definition, icon }} />
-                      <span className="flow-published-sr-only">{icon || 'Automatic'}</span>
-                    </span>,
-                  }))} />
-              </div>
+              <div className="flow-create-field"><span>Icon</span><OntologyIconPicker definition={definition} onChange={set} /></div>
               <label className="flow-create-field"><span>Display name</span><Input maxLength={120} value={definition.name} onChange={event => set({ name: event.target.value })} placeholder="Airport" /></label>
               <label className="flow-create-field"><span>Plural display name</span><Input aria-label="Plural display name" maxLength={120} value={definition.pluralName} onChange={event => set({ pluralName: event.target.value })} placeholder="Airports" /><small>Collection title in Published. For Airport, use Airports.</small></label>
             </div>
