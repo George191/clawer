@@ -265,9 +265,11 @@ function SelectRoot<T = any>(props: SelectProps<T>) {
       for (let element: HTMLElement | null = wrapper.current; element; element = element.parentElement) layer = Math.max(layer, (Number(getComputedStyle(element).zIndex) || 0) + 1);
       setPosition({ position: 'fixed', zIndex: layer, left: Math.max(8, Math.min(rect.left, innerWidth - width - 8)), top: upward ? Math.max(8, rect.top - height - 4) : rect.bottom + 4, width, maxHeight: height });
     };
+    const resize = multiple ? new ResizeObserver(place) : undefined;
+    resize?.observe(wrapper.current);
     place(); window.addEventListener('resize', place); window.addEventListener('scroll', place, true);
-    return () => { window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true); };
-  }, [isOpen, listHeight, popupMatchSelectWidth]);
+    return () => { resize?.disconnect(); window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true); };
+  }, [isOpen, listHeight, multiple, popupMatchSelectWidth]);
   useEffect(() => { if (!isOpen) return; const outside = (event: PointerEvent) => { if (!wrapper.current?.contains(event.target as Node) && !popup.current?.contains(event.target as Node)) changeOpen(false); }; document.addEventListener('pointerdown', outside); return () => document.removeEventListener('pointerdown', outside); }, [isOpen]);
   useEffect(() => { setActive(0); }, [query]);
   const keyboard = (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -298,7 +300,15 @@ function SelectRoot<T = any>(props: SelectProps<T>) {
   };
   return <div {...rest} id={searchable ? undefined : rest.id} aria-label={searchable ? undefined : props['aria-label']} ref={wrapper} tabIndex={searchable ? -1 : disabled ? -1 : 0} role={searchable ? undefined : 'combobox'} aria-haspopup="listbox" aria-expanded={isOpen} aria-controls={isOpen ? listId : undefined} aria-activedescendant={isOpen ? `${listId}-${active}` : undefined} aria-disabled={disabled} className={cx('ui-select', multiple ? 'ui-select-multiple' : 'ui-select-single', isOpen && 'ui-select-open', disabled && 'ui-select-disabled', size && `ui-select-${size}`, className)} style={style} onKeyDown={keyboard} onClick={event => { event.stopPropagation(); onClick?.(event); if (!isOpen) changeOpen(true); else if (!searchable) changeOpen(false); input.current?.focus(); }}>
     <div className="ui-select-selector"><span className="ui-select-selection-wrap">
-      {multiple ? selected.slice(0, typeof maxTagCount === 'number' ? maxTagCount : selected.length).map(item => <span className="ui-select-selection-item" key={String(item)}><span className="ui-select-selection-item-content">{allOptions.find(option => option.value === item)?.label ?? String(item)}</span><button type="button" className="ui-select-selection-item-remove" aria-label={`Remove ${text(allOptions.find(option => option.value === item)?.label ?? String(item))}`} disabled={disabled} onClick={event => { event.stopPropagation(); publish(selected.filter(value => value !== item)); }}>×</button></span>) : !query && selected.length ? <span className="ui-select-selection-item">{allOptions.find(option => option.value === selected[0])?.label ?? String(selected[0])}</span> : null}
+      {multiple ? selected.slice(0, typeof maxTagCount === 'number' ? maxTagCount : selected.length).map(item => {
+        const label = allOptions.find(option => option.value === item)?.label ?? String(item);
+        const name = text(label);
+        return <span className="ui-select-selection-item" key={String(item)}>
+          <span className="ui-select-selection-item-content" title={name}>{label}</span>
+          <button type="button" className="ui-select-selection-item-remove" aria-label={`Remove ${name}`} disabled={disabled}
+            onClick={event => { event.stopPropagation(); publish(selected.filter(value => value !== item)); }}>×</button>
+        </span>;
+      }) : !query && selected.length ? <span className="ui-select-selection-item">{allOptions.find(option => option.value === selected[0])?.label ?? String(selected[0])}</span> : null}
       {!selected.length && !query && <span className="ui-select-selection-placeholder">{placeholder}</span>}
       {searchable && <span className="ui-select-selection-search"><input {...(rest.id ? { id: rest.id } : {})} ref={input} role="combobox" aria-label={props['aria-label'] || (text(placeholder) || undefined)} aria-labelledby={props['aria-labelledby']} aria-invalid={props['aria-invalid']} aria-describedby={props['aria-describedby']} aria-required={props['aria-required']} aria-expanded={isOpen} aria-controls={isOpen ? listId : undefined} aria-activedescendant={isOpen ? `${listId}-${active}` : undefined} aria-autocomplete="list" autoComplete="off" value={query} disabled={disabled} className="ui-select-selection-search-input" onFocus={() => changeOpen(true)} onChange={event => { setQuery(event.target.value); onSearch?.(event.target.value); changeOpen(true); }} /></span>}
     </span></div>{allowClear && selected.length > 0 && !disabled ? <button type="button" className="ui-select-clear" aria-label="Clear selection" onClick={event => { event.stopPropagation(); publish([]); }}>×</button> : <span className="ui-select-arrow" aria-hidden="true">{loading ? '◌' : suffixIcon || <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="m3 4.5 3 3 3-3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>}</span>}
