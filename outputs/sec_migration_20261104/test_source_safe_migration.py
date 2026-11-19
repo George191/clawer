@@ -283,7 +283,9 @@ class SafeMigrationTests(unittest.IsolatedAsyncioTestCase):
             state = await self.apply(connection, [self.document(number) for number in range(2)])
         self.assertEqual(state["processed"], 2)
         self.assertEqual(connection.rows, before)
-        self.assertFalse(any("UPDATE " in sql for sql, _ in connection.calls))
+        self.assertFalse(any("SET raw_data=" in sql or "SET data_source=" in sql
+                             for sql, _ in connection.calls))
+        self.assertTrue(any("FOR UPDATE" in sql for sql, _ in connection.calls))
         verify.assert_awaited_once()
         receipt = migration.pg.read(next((self.root / "transactions").glob("*.committed.json")))
         self.assertEqual(receipt["after_sha256"], {
