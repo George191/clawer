@@ -1,16 +1,14 @@
-.flow-icon-trigger,
 .flow-icon-options button,
 .flow-appearance-tabs button {
   display: inline-flex; align-items: center; color: var(--ontology-text);
   border: 1px solid transparent; border-radius: 3px; background: transparent;
   font: inherit; cursor: pointer;
 }
-.flow-icon-trigger {
-  align-self: start; justify-content: center; gap: 5px; min-width: 51px; min-height: 30px; padding: 2px 5px;
-  border-color: var(--ontology-border); background: var(--ontology-bg);
+.flow-type-icon-button {
+  display: inline-grid; align-self: start; width: fit-content; padding: 0;
+  border: 0; border-radius: 3px; background: transparent; cursor: pointer;
 }
-.flow-icon-trigger > .ui-icon { font-size: 10px; color: var(--ontology-muted); }
-.flow-icon-trigger .flow-semantic-type-glyph { width: 21px; height: 21px; font-size: 16px; }
+.flow-type-icon-button:disabled { cursor: default; }
 .flow-appearance-dialog { max-width: calc(100vw - 24px); }
 .flow-appearance-dialog .ui-modal-content { display: flex; flex-direction: column; max-height: calc(100dvh - 32px); }
 .flow-appearance-dialog .ui-modal-header, .flow-appearance-dialog .ui-modal-footer { flex: none; padding: 8px 12px; }
@@ -47,7 +45,6 @@
 }
 .flow-icon-options .flow-semantic-type-glyph { width: 22px; height: 22px; font-size: 16px; }
 .flow-icon-option-name { min-width: 0; text-align: left; font-size: 12px; line-height: 14px; overflow-wrap: anywhere; }
-.flow-icon-trigger:hover { background: var(--ontology-elevated); }
 .flow-icon-options .flow-icon-check {
   position: absolute; bottom: 0; left: 18px; font-size: 9px; pointer-events: none; color: var(--ontology-text);
 }

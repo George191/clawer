@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { Button, Modal } from '@/components/ui';
-import { CheckOutlined, DownOutlined, RightOutlined, SearchOutlined } from '@/components/ui/icons';
+import { CheckOutlined, RightOutlined, SearchOutlined } from '@/components/ui/icons';
 import type { SemanticDefinition } from '../../services/ontology';
 import OntologyIconColorPicker from './OntologyIconColorPicker';
 import { ontologyIconChoices } from './ontologyTypeIcons';
@@ -59,9 +59,9 @@ export default function OntologyIconPicker({ definition, disabled, onChange }: P
   };
 
   return <>
-    <button type="button" className="flow-icon-trigger" aria-label="Object type icon" aria-haspopup="dialog"
+    <button type="button" className="flow-type-icon-button" aria-label="Object type icon" aria-haspopup="dialog"
       aria-expanded={open} title={selected} onClick={show} disabled={disabled}>
-      <SemanticTypeGlyph definition={definition} /><DownOutlined />
+      <SemanticTypeGlyph definition={definition} />
     </button>
     {open && <Modal open centered title="Icon appearance" width={480} zIndex={1100}
       className="flow-surface-modal flow-create-modal flow-appearance-dialog" onCancel={() => setOpen(false)}
