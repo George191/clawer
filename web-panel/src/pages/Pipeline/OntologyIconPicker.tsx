@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { Button, Modal } from '@/components/ui';
-import { DownOutlined, RightOutlined, SearchOutlined } from '@/components/ui/icons';
+import { CheckOutlined, DownOutlined, RightOutlined, SearchOutlined } from '@/components/ui/icons';
 import type { SemanticDefinition } from '../../services/ontology';
 import OntologyIconColorPicker from './OntologyIconColorPicker';
 import { ontologyIconChoices } from './ontologyTypeIcons';
@@ -92,6 +92,7 @@ export default function OntologyIconPicker({ definition, disabled, onChange }: P
               aria-selected={value === definition.icon} tabIndex={index === focusIndex ? 0 : -1} onFocus={() => setFocusedIcon(value)}
               onClick={() => onChange({ icon: value })}>
               <SemanticTypeGlyph definition={{ ...definition, icon: value, color: '#ffffff', iconColor: '#000000' }} />
+              {value === definition.icon && <CheckOutlined className="flow-icon-check" />}
             </button>)}
           </div>
           {matches.length ? <nav className="flow-icon-pagination" aria-label="Icon pages">

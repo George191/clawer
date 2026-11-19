@@ -34,19 +34,27 @@
 }
 .flow-appearance-dialog .flow-icon-search input {
   display: block; box-sizing: border-box; width: 100%; height: 30px; padding: 3px 8px 3px 29px;
-  appearance: none; border: 1px solid var(--ontology-border-hover); border-radius: 3px;
-  color: var(--ontology-text); background: var(--ontology-bg); font: inherit;
+  appearance: none; border: 0; color: var(--ontology-text); background: transparent; font: inherit;
 }
-.flow-appearance-dialog .flow-icon-search input:focus { border-color: var(--ontology-muted); outline: none; box-shadow: none; }
+.flow-appearance-dialog .flow-icon-search input:focus { outline: none; box-shadow: none; }
+.flow-icon-search:focus-within > .ui-icon { color: var(--ontology-text); }
 .flow-icon-options {
   display: grid; grid-template-columns: repeat(8, minmax(0,1fr)); align-content: start;
   gap: 2px; min-height: 112px;
 }
-.flow-icon-options button { justify-content: center; min-width: 0; height: 36px; padding: 2px; border: 0; }
+.flow-icon-options button {
+  position: relative; justify-content: center; min-width: 0; height: 36px; padding: 2px; border: 0;
+  -webkit-tap-highlight-color: transparent;
+}
 .flow-icon-options .flow-semantic-type-glyph { width: 28px; height: 28px; font-size: 19px; }
-.flow-icon-options button:hover, .flow-icon-trigger:hover { background: var(--ontology-elevated); }
-.flow-icon-options button[aria-selected="true"] { background: color-mix(in srgb, var(--ontology-text) 22%, transparent); }
-.flow-appearance-dialog .flow-icon-options button:focus-visible { outline: 1px dotted var(--ontology-muted); outline-offset: -1px; }
+.flow-icon-trigger:hover { background: var(--ontology-elevated); }
+.flow-icon-options .flow-icon-check {
+  position: absolute; bottom: 1px; right: 0; font-size: 10px; pointer-events: none; color: var(--ontology-text);
+}
+.flow-appearance-dialog .flow-icon-options button:focus-visible { outline: none; }
+.flow-icon-options button:focus-visible::after {
+  content: ''; position: absolute; bottom: 0; width: 12px; height: 2px; background: currentColor;
+}
 .flow-icon-pagination { display: flex; align-items: center; gap: 5px; padding-top: 6px; border-top: 1px solid var(--ontology-border); }
 .flow-icon-pagination span[role="status"] { margin-right: auto; color: var(--ontology-muted); }
 .flow-icon-pagination .ui-btn { width: 28px; padding: 0; }
