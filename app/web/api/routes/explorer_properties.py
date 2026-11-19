@@ -109,6 +109,7 @@ async def warehouse_asset(layer, table, user):
                     text(
                         """
             SELECT COALESCE(NULLIF(obj_description(c.oid,'pg_class'),''),o.description,'') AS description,
+                   COALESCE(o.data_type,'') AS data_type,
                    p.name, p.comment
             FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
             LEFT JOIN public.ontology_objects o ON o.schema_name=n.nspname AND o.table_name=c.relname
@@ -128,7 +129,7 @@ async def warehouse_asset(layer, table, user):
         raise HTTPException(404, "Object type not found")
     comments = {r["name"]: r["comment"] for r in found}
     fields = {c["name"]: {**c, "comment": c["comment"] or comments.get(c["name"]) or ""} for c in columns}
-    return schema, found[0]["description"], fields
+    return schema, found[0]["description"], found[0]["data_type"], fields
 
 
 async def source(session, user, schema, table, requested):
@@ -190,7 +191,7 @@ DISPLAY = ("description", "visibility", "summary", "group", "status", "formatter
 
 
 async def resolve(session, user, layer, table, requested):
-    schema, description, fields = await warehouse_asset(layer, table, user)
+    schema, description, data_type, fields = await warehouse_asset(layer, table, user)
     bound = await source(session, user, schema, table, requested)
     source_id = str(bound[0].id) if bound else None
     key = (schema, table, source_id or "physical")
@@ -250,6 +251,7 @@ async def resolve(session, user, layer, table, requested):
     response = {
         "schema": schema,
         "table": table,
+        "dataType": data_type,
         "sourceDefinitionId": source_id,
         "primaryKey": pk,
         **header,

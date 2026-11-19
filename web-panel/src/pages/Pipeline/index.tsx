@@ -1027,13 +1027,31 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
         </section>
     );
 
+    const resolvingExplorerAsset = isSchemas && requestedTable !== '' && !requestError && (
+        !catalogLoaded || schemas.length > 0 && (!selectedSchemaAvailable || tablesLoadedSchema !== selectedSchema
+            || !selectedTableAvailable && serverTables.some(item => requestedTable === null || item.name === requestedTable))
+    );
+    useEffect(() => {
+        if (!isSchemas || !catalogOpen) return;
+        const outside = (event: PointerEvent) => {
+            if (event.target instanceof Element && !event.target.closest('.flow-explorer-catalog,.wb-catalog-toggle,.wb-new-exploration'))
+                setCatalogOpen(false);
+        };
+        const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') setCatalogOpen(false); };
+        document.addEventListener('pointerdown', outside, true);
+        document.addEventListener('keydown', escape);
+        return () => {
+            document.removeEventListener('pointerdown', outside, true);
+            document.removeEventListener('keydown', escape);
+        };
+    }, [isSchemas, catalogOpen]);
     const mapping = explorerPresentation?.presentation;
     const workbenchLocked = !!editingRowKey || !!deleteSnapshot || mutationLoading || apisDirty || mappingDirty;
-    return <div className={`flow-layers flow-layers--tagged${isSchemas ? ' flow-schema-workbench explorer-object-workspace' : ''}${isSchemas && selectedTableAvailable ? ' has-asset' : ''}${catalogOpen ? ' is-catalog-open' : ''}${workbenchMode === 'explore' && resourceView === 'preview' ? ' is-exploring' : ''}`}>
+    return <div className={`flow-layers flow-layers--tagged${isSchemas ? ' flow-schema-workbench explorer-object-workspace' : ''}${isSchemas && (selectedTableAvailable || resolvingExplorerAsset) ? ' has-asset' : ''}${catalogOpen ? ' is-catalog-open' : ''}${workbenchMode === 'explore' && resourceView === 'preview' ? ' is-exploring' : ''}`}>
         <div  className="flow-layer-layout">
             {isSchemas ? <ExplorerCatalog schemas={schemas} tables={tablesLoadedSchema === selectedSchema ? serverTables : []}
                 selectedSchema={selectedSchema} selectedTable={table.name} catalogLoaded={catalogLoaded} tablesLoading={tablesLoading}
-                requestError={requestError} onCreateTable={canCreateTable ? openTableWizard : undefined} onRefresh={refreshWorkspace} onSchema={selectSchema} onTable={selectTable} /> :
+                requestError={requestError} overlayOpen={catalogOpen} onCreateTable={canCreateTable ? openTableWizard : undefined} onRefresh={refreshWorkspace} onSchema={selectSchema} onTable={selectTable} /> :
             <aside className="flow-layer-tree flow-ontology-schema-sidebar">
                 <div className="flow-tree-label flow-tree-label--actions"><span>Schemas</span><button type="button" aria-label="Refresh schemas" title="Refresh schemas" onClick={refreshWorkspace}><ReloadOutlined /></button></div>
                 <Input className="flow-ontology-schema-search" aria-label="Search schemas" placeholder="Search schemas" prefix={<SearchOutlined />} value={schemaSearch} onChange={(event) => setSchemaSearch(event.target.value)} allowClear />
@@ -1047,7 +1065,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                 {(loading || tablesLoading) && <Spin size="small" />}
                 {requestError && <div role="alert" style={{ padding: 12, color: '#ff7875' }}>{requestError} <Button size="small" onClick={() => { setRefreshVersion((value) => value + 1); refreshCatalog().catch((error) => setRequestError(errorText(error))); }}>Retry</Button></div>}
                 <nav className="flow-asset-breadcrumb" aria-label="Breadcrumb">{isSchemas ? <span>Explorer</span> : <><button type="button" onClick={() => navigate('/ontology')}>Ontology Foundry</button><RightOutlined /><span>Transformations</span></>}{selectedSchema && <><RightOutlined /><strong>{selectedSchema}</strong></>}{isSchemas && table.name && <><RightOutlined /><strong aria-current="page" title={table.name}>{table.name}</strong></>}</nav>
-                {(!isSchemas || !table.name) && <div className="flow-layer-overview" style={{ '--schema-color': selectedSchema ? schemaColor(selectedSchema) : undefined } as React.CSSProperties}>
+                {(!isSchemas || !table.name && !resolvingExplorerAsset) && <div className="flow-layer-overview" style={{ '--schema-color': selectedSchema ? schemaColor(selectedSchema) : undefined } as React.CSSProperties}>
                     {isSchemas ? <span className="flow-schema-asset-icon" aria-hidden="true"><DatabaseOutlined /></span> : <div className="flow-layer-glyph"><PostgresIcon className="flow-layer-glyph-svg" /></div>}
                     <h3>{schemaAliases[selectedSchema] || selectedSchema || 'No schema selected'}<em>{selectedSchema}{schemaNode?.database ? ` · ${schemaNode.database}` : ''}</em></h3>
                     <div  className="flow-layer-overview-stats">
@@ -1089,11 +1107,11 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                     {tables.map((item)  =>  {  const  active  =  table.name  ===  item.name;  return  <button  type="button"  role="tab"  aria-selected={active}  className={active  ?  'is-active'  :  ''}  key={item.name}  title={item.name} onKeyDown={(event) => { if (event.key === 'Delete') { event.preventDefault(); closeTable(item.name); } }} onClick={() => selectTable(item)}><span  className="flow-tab-favicon"><TemplateGlyph  kind={inferSiteKind(item.dataType || '', item.name)}  source={item.name}  /></span><span  className="flow-tab-label">{item.name}</span><span  className="flow-tab-close"  title={`Close ${item.name} (Delete)`} onClick={(event) => { event.stopPropagation(); closeTable(item.name); }}>&times;</span></button>;  })}
                 </div>
                 </div>}
-                {!selectedTableAvailable ? <div className="flow-workspace-empty" role="status"><DatabaseOutlined /><h3>{tablesLoading || !catalogLoaded && !requestError ? 'Loading schema resources…' : selectedSchema ? serverTables.length ? 'No table selected' : 'No tables in this schema' : 'No schema selected'}</h3><p>{schemaNode?.status === 'stopped' ? 'This schema is not available in the connected database.' : serverTables.length ? 'Select a table from the catalog.' : 'Select a schema to explore its tables and data.'}</p></div> : <div className="flow-inspector">
+                {!selectedTableAvailable ? <div className="flow-workspace-empty" role="status"><DatabaseOutlined /><h3>{resolvingExplorerAsset || tablesLoading || !catalogLoaded && !requestError ? 'Loading schema resources…' : selectedSchema ? serverTables.length ? 'No table selected' : 'No tables in this schema' : 'No schema selected'}</h3>{!resolvingExplorerAsset && <p>{schemaNode?.status === 'stopped' ? 'This schema is not available in the connected database.' : serverTables.length ? 'Select a table from the catalog.' : 'Select a schema to explore its tables and data.'}</p>}</div> : <div className="flow-inspector">
                     {isSchemas && <fieldset className="wb-shell" disabled={workbenchLocked}>
                         <ExplorerWorkbenchHeader key={JSON.stringify([previewIdentity, selectedSchema, table.name])} schema={selectedSchema} table={table.name}
-                            label={mapping?.displayName || table.name} titleProperty={mapping?.titleProperty} primaryKey={mapping?.primaryKey} color={mapping?.color}
-                            glyph={<ExplorerTypeIcon compact presentation={mapping} />}
+                            label={mapping?.displayName || table.name} titleProperty={mapping?.titleProperty} primaryKey={mapping?.primaryKey}
+                            glyph={<ExplorerTypeIcon compact dataType={mapping?.dataType ?? table.dataType} table={table.name} />}
                             fields={data?.columns || filterFields} names={Object.fromEntries((mapping?.properties || []).flatMap(p => p.sourceColumn ? [[p.sourceColumn, p.name]] : []))}
                             rows={dataRows.map((row,i) => ({...row,...primaryKey(row,i)}))} selected={workbenchRows} query={{ ...appliedQuery, partition }} resource={resourceView} admin={canManage}
                             layoutControl={showPreview && <LayoutToolbar controls={resultLayout} admin={canManage} types={data?.columnTypes} />}
@@ -1103,7 +1121,8 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                                 setSortConditions(q.sorts.slice(1)); setPartition(q.partition || undefined);
                                 setAppliedQuery({filters:q.filters,sorts:q.sorts,search:q.search || ''}); setPageNumber(1);
                             }} addFilter={addColumnFilter} toggleCatalog={() => setCatalogOpen(value => !value)}
-                            catalogOpen={catalogOpen}
+                            catalogOpen={catalogOpen} closeCatalog={() => setCatalogOpen(false)}
+                            openCatalog={() => { setFilterOpen(false); setPartitionOpen(false); setCatalogOpen(true); }}
                             mode={workbenchMode} setMode={setWorkbenchMode} clearSelection={() => { setWorkbenchRows([]); setSelectionEpoch(n => n + 1); }}
                             filterButton={showPreview && <button aria-expanded={filterOpen} onClick={() => activateTool('filter')}>Filter &amp; sort{filterCount + sortCount ? ` (${filterCount + sortCount})` : ''}</button>}
                             partitionsButton={showPreview && partitions.length > 0 && <button aria-expanded={partitionOpen} onClick={() => activateTool('partition')}>{partition || 'Partitions'}</button>}
@@ -1224,7 +1243,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                             {showPreview && partitionOpen &&  <div  className="flow-partition-tags">{partitions.map((item)  =>  <Tag.CheckableTag  key={item.name}  checked={partition  ===  item.name}  onChange={() => { if (editingRowKey) { message.warning('Save or cancel the current row edit first'); return; } setPartition(partition === item.name ? undefined : item.name); setPageNumber(1); }}>{item.name.replace('p2026_',  '')}</Tag.CheckableTag>)}</div>}
                             {showPreview && !previewError && (isSchemas ?
                                 <ExplorerSelection onSelectedRowsChange={setWorkbenchRows} key={JSON.stringify([selectionEpoch, policyKey, pageNumber, pageSize, partition, appliedQuery])}
-                                    schema={selectedSchema} table={table.name} rows={dataRows} columns={data?.columns ?? emptyPreviewColumns}
+                                    schema={selectedSchema} table={table.name} dataType={mapping?.dataType ?? table.dataType} rows={dataRows} columns={data?.columns ?? emptyPreviewColumns}
                                     columnTypes={data?.columnTypes} metadata={explorerPresentation}
                                     dataColumns={dataColumns} rowKey={rowKey} rowIdentity={primaryKey} rowVersion={rowVersion}
                                     presentations={Object.fromEntries(resultLayout.columns.map(column => [column.field, column.presentation ?? 'value']))}

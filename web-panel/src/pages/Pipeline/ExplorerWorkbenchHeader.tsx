@@ -19,7 +19,6 @@ type Props = {
     label: string;
     titleProperty?: string | null;
     primaryKey?: string[];
-    color?: string;
     glyph?: ReactNode;
     fields: string[];
     names?: Record<string, string>;
@@ -33,6 +32,8 @@ type Props = {
     apply: (q: WorkbenchQuery) => void;
     addFilter: (field: string) => void;
     toggleCatalog: () => void;
+    openCatalog: () => void;
+    closeCatalog: () => void;
     catalogOpen: boolean;
     mode: 'explore' | 'results';
     setMode: (mode: 'explore' | 'results') => void;
@@ -136,6 +137,8 @@ export default function ExplorerWorkbenchHeader(p: Props) {
     const [saveKind, setSaveKind] = useState<SavedKind>('exploration');
     const opening = useRef<AbortController>();
     const root = useRef<HTMLElement>(null);
+    const propertySearch = useRef<HTMLLabelElement>(null);
+    const popup = useRef<HTMLElement>(null);
     const location = useLocation();
     const navigate = useNavigate();
     const applyRef = useRef(p);
@@ -174,8 +177,13 @@ export default function ExplorerWorkbenchHeader(p: Props) {
                 setError(fail(e));
         }
     }
-    useEffect(() => { if (preservedSavedId)
-        void openId(preservedSavedId); }, [path, preservedSavedId]);
+    useEffect(() => {
+        if (preservedSavedId) {
+            applyRef.current.closeCatalog();
+            void openId(preservedSavedId);
+        }
+        return () => opening.current?.abort();
+    }, [path, preservedSavedId]);
     useEffect(() => {
         if (menu !== 'lists' && menu !== 'explorations')
             return;
@@ -189,13 +197,18 @@ export default function ExplorerWorkbenchHeader(p: Props) {
     useEffect(() => {
         if (!menu)
             return;
-        const outside = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node))
-            show(''); };
+        const outside = (event: PointerEvent) => {
+            const target = event.target as Node;
+            const within = menu === 'search' || menu === 'property'
+                ? propertySearch.current?.contains(target) || popup.current?.contains(target)
+                : root.current?.contains(target);
+            if (!within) show('');
+        };
         const key = (e: KeyboardEvent) => { if (e.key === 'Escape')
             show(''); };
-        document.addEventListener('pointerdown', outside);
+        document.addEventListener('pointerdown', outside, true);
         document.addEventListener('keydown', key);
-        return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', key); };
+        return () => { document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', key); };
     }, [menu]);
     function beginSave(k: SavedKind) {
         setSaveKind(k);
@@ -248,19 +261,31 @@ export default function ExplorerWorkbenchHeader(p: Props) {
         }
     }
     function selectMode(mode: 'results' | 'explore') { p.selectResource('preview'); p.setMode(mode); show(''); }
+    function startExploration() {
+        opening.current?.abort();
+        setSaved(undefined); setSearch(''); choose(''); setChart(''); setError(''); setNotice(''); setShareLink('');
+        const params = new URLSearchParams(location.search);
+        params.delete('saved'); params.delete('view');
+        if (params.toString() !== new URLSearchParams(location.search).toString())
+            navigate(location.pathname + (params.size ? '?' + params.toString() : ''));
+        p.apply({ filters: [], sorts: [], search: '' });
+        p.clearSelection();
+        p.setMode('results');
+        show('');
+        p.openCatalog();
+    }
     const field = chart && p.fields.includes(chart) ? chart : p.fields[0] ?? '';
     const find = p.fields.filter(f => [f, p.names?.[f]].join(' ').toLowerCase().includes(search.toLowerCase())).slice(0, 30);
     const changeField = (f: string) => { choose(f); setSearch(p.names?.[f] || f); show('property'); };
     return <header className="wb-header" ref={root}>
-        <div className="wb-line wb-top"><strong className="wb-current"><i style={{ background: p.color }}>{p.glyph ?? <TableOutlined />}</i>{saved?.name || p.label}</strong>
-            <button onClick={() => { setSaved(undefined); if (preservedSavedId)
-        navigate(link().pathname + link().search, { replace: true }); p.apply({ filters: [], sorts: [], search: '' }); p.clearSelection(); setChart(''); selectMode('results'); setNotice(''); }}>⊕ New exploration</button>
+        <div className="wb-line wb-top"><strong className="wb-current"><i>{p.glyph ?? <TableOutlined />}</i>{saved?.name || p.label}</strong>
+            <button type="button" className="wb-new-exploration" onClick={startExploration}>⊕ New exploration</button>
             <div className="wb-spacer"/><button onClick={() => openMenu('explorations')}>Explorations <DownOutlined /></button>
             <button onClick={() => openMenu('lists')}>Lists <DownOutlined /></button>
     </div>
         <div className="wb-line wb-query"><button className="wb-catalog-toggle" onClick={p.toggleCatalog} aria-label="Browse object types" aria-expanded={p.catalogOpen}><SearchOutlined /></button>
-            <span className="wb-type"><i style={{ background: p.color }}>{p.glyph ?? <TableOutlined />}</i><strong>{p.label}</strong></span>
-            <label className="wb-property-search"><SearchOutlined /><input aria-label="Search properties to add a chart or filter" placeholder="Search properties to add a chart or filter…" value={search} onFocus={() => show('search')} onChange={e => { setSearch(e.target.value); show('search'); }} onKeyDown={e => { if (e.key === 'Enter' && find[0])
+            <span className="wb-type"><i>{p.glyph ?? <TableOutlined />}</i><strong>{p.label}</strong></span>
+            <label className="wb-property-search" ref={propertySearch} onClick={() => show('search')}><SearchOutlined /><input aria-label="Search properties to add a chart or filter" placeholder="Search properties to add a chart or filter…" value={search} onFocus={() => show('search')} onChange={e => { setSearch(e.target.value); show('search'); }} onKeyDown={e => { if (e.key === 'Enter' && find[0])
         changeField(find[0]); }}/></label>
             <button onClick={() => openMenu('share')}>Share</button><button className="wb-primary" onClick={() => beginSave('exploration')}>Save</button></div>
         <div className="wb-line wb-tools">
@@ -272,7 +297,7 @@ export default function ExplorerWorkbenchHeader(p: Props) {
             <div className="wb-right"><button onClick={() => openMenu('asset')}>{p.resource === 'preview' ? 'Open in' : ({ schema: 'Schema', stream: 'Stream', evidence: 'Evidence', api: 'Published APIs' } as const)[p.resource]} <DownOutlined /></button>
                 <button onClick={() => openMenu('export')}>Export <DownOutlined /></button></div></div>
         {error && <p className="wb-feedback" role="alert">{error}</p>}{notice && <p className="wb-feedback" role="status">{notice}</p>}
-        {menu && <section className={'wb-popup wb-popup--' + menu} aria-label="Explorer tools">
+        {menu && <section className={'wb-popup wb-popup--' + menu} ref={popup} aria-label="Explorer tools">
             {menu === 'search' && <>{find.map(f => <button key={f} onClick={() => changeField(f)}>{p.names?.[f] || f}</button>)}{!find.length && <p>No matching properties</p>}</>}
             {menu === 'property' && <><strong>{p.names?.[choice] || choice}</strong>
                 <button onClick={() => { setChart(choice); setSearch(''); selectMode('explore'); }}>Add chart</button>

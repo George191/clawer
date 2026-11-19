@@ -1,7 +1,8 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { ProfileOutlined, TableOutlined } from '@/components/ui/icons';
-import SemanticTypeGlyph from './SemanticTypeGlyph';
+import { ProfileOutlined } from '@/components/ui/icons';
+import { inferSiteKind, TemplateGlyph } from '../AICollect/WorkspaceDock';
 import { fetchExplorerProperties, type ExplorerPropertyMapping } from '../../services/explorerProperties';
+import { accentStyle } from '../../theme/tokens';
 
 export type ExplorerOverviewPresentation = ExplorerPropertyMapping;
 export type ExplorerPresentationRead = { presentation?: ExplorerOverviewPresentation; error?: true };
@@ -63,17 +64,11 @@ export function useExplorerPresentation(schema: string, table: string, revision:
   return read?.key === key ? read : undefined;
 }
 
-export function ExplorerTypeIcon({ presentation, compact }: { presentation?: ExplorerOverviewPresentation; compact?: boolean }) {
-  const name = presentation?.icon || '';
+export function ExplorerTypeIcon({ dataType, table, compact }: { dataType?: string; table: string; compact?: boolean }) {
   const className = `flow-explorer-selection__icon${compact ? ' is-compact' : ''}`;
-  if (!presentation?.sourceDefinitionId && !name && !presentation?.color) {
-    return <span aria-hidden="true" className={className}><TableOutlined /></span>;
-  }
-  const icon = name === 'flight' || name === 'airplane' ? 'plane' : name;
-  return <SemanticTypeGlyph className={className}
-    definition={{ id: '', name: presentation?.displayName || '', source: { mode: 'existing', table: presentation?.table },
-      icon: icon || (presentation?.sourceDefinitionId ? '' : 'table'), color: presentation?.color ?? '#ffffff',
-      iconColor: presentation?.iconColor }} />;
+  return <span aria-hidden="true" className={className} style={accentStyle(dataType || '')}>
+    <TemplateGlyph kind={inferSiteKind(dataType || '', table)} source={table} />
+  </span>;
 }
 
 export function explorerFields(row: ExplorerPreviewRow, columns: readonly string[], presentation?: ExplorerOverviewPresentation,

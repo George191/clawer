@@ -4,7 +4,7 @@
 .explorer-object-workspace.has-asset .flow-inspector > :is(.flow-schema-view-tabs,.flow-table-header,.flow-table-desc),
 .explorer-object-workspace.has-asset:not(.is-catalog-open) .flow-explorer-catalog { display: none; }
 .flow-console--ontology .explorer-object-workspace.has-asset.is-catalog-open .flow-explorer-catalog {
-  position: absolute; inset: 45px auto auto 0; z-index: 22; width: min(300px,91vw); height: min(70vh,650px);
+  position: absolute; inset: 90px auto auto 0; z-index: 22; width: min(300px,91vw); height: min(70vh,650px);
   border: 1px solid var(--ontology-control-border); box-shadow: 0 6px 20px var(--ontology-border);
 }
 .explorer-object-workspace.is-catalog-open .flow-explorer-catalog .flow-catalog-content { display:flex; }
@@ -54,6 +54,7 @@
 .wb-bar span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .wb-bar i { height:12px; background:var(--ontology-primary); border-radius:2px; }
 @media (max-width:850px) {
+  .flow-console--ontology .explorer-object-workspace.has-asset.is-catalog-open .flow-explorer-catalog { inset-block-start: 112px; }
   .wb-line { flex-wrap:wrap; gap:3px; padding:3px 6px; }
   .wb-current { margin-left:-6px; padding-inline:6px; }
   .wb-top { font-size:12px; }

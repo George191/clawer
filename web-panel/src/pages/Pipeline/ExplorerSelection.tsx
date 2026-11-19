@@ -101,6 +101,7 @@ function Comparison({ columns, choices }: { columns: readonly string[]; choices:
 type Props = {
   schema: string;
   table: string;
+  dataType?: string;
   rows: RecordRow[];
   columns: readonly string[];
   columnTypes?: Record<string, string>;
@@ -127,7 +128,7 @@ type Selection = { rows: RecordRow[]; picked: number[]; active: number; anchor: 
 type View = 'overview' | 'properties' | 'links' | 'json' | 'compare' | `group:${string}`;
 
 export default function ExplorerSelection({
-  schema, table, rows, columns, columnTypes = noTypes, presentations, metadata, dataColumns, rowKey, rowIdentity, rowVersion, loading, locked, footer,
+  schema, table, dataType, rows, columns, columnTypes = noTypes, presentations, metadata, dataColumns, rowKey, rowIdentity, rowVersion, loading, locked, footer,
   renderTitleLink, renderFullDetails, renderRelationships, rowActions, renderMutation, renderJson, onRefresh, onSelectedRowsChange,
 }: Props) {
   const panelId = useId();
@@ -258,7 +259,7 @@ export default function ExplorerSelection({
   const titleCell = (_value: unknown, record: RecordRow, index: number) => {
     const row = describeRow(record, index);
     return <span className="flow-explorer-selection__table-title" title={row.title}>
-      <ExplorerTypeIcon presentation={presentation} compact />
+      <ExplorerTypeIcon dataType={dataType} table={table} compact />
       {!metadata ? <span>Loading title…</span> : Object.keys(row.identity).length > 0 && renderTitleLink ? renderTitleLink(row) : <span>{row.title}</span>}
     </span>;
   };
@@ -321,7 +322,7 @@ export default function ExplorerSelection({
               title={row.title} disabled={disabled} onClick={() => {
                 setSelection(current => current && { ...current, active: index });
                 setView('overview');
-              }}><ExplorerTypeIcon presentation={presentation} compact /><span>{row.title}</span></button>;
+              }}><ExplorerTypeIcon dataType={dataType} table={table} compact /><span>{row.title}</span></button>;
           })}
         </div>
         {picked.length > shownCount && <p>Showing the first {shownCount} of {picked.length} selected objects.</p>}
@@ -331,7 +332,7 @@ export default function ExplorerSelection({
           ? <Comparison columns={columns} choices={displayed.map(index => describeRow(rows[index], index))} />
           : <>
             <div className="flow-explorer-selection__object">
-              <ExplorerTypeIcon presentation={presentation} />
+              <ExplorerTypeIcon dataType={dataType} table={table} />
               <div className="flow-explorer-selection__identity"><span>{typeName}</span><h4>{metadata ? active.title : 'Loading title…'}</h4>
                 {!!Object.keys(active.identity).length && <small>{Object.entries(active.identity).map(([field, value]) => field + ': ' + format(value)).join(' · ')}</small>}
               </div>

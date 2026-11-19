@@ -113,13 +113,15 @@
   width: 52px;
   height: 52px;
   border-radius: 6px;
-  color: var(--type-icon-color, var(--ontology-link));
-  background: var(--type-icon-bg, var(--ontology-bg));
+  color: #fff;
+  background: var(--asset-color, var(--ontology-primary));
   border: 1px solid var(--ontology-control-border);
   box-sizing: border-box;
   font-size: 23px;
   line-height: 1;
 }
+.flow-explorer-selection__icon > .workspace-glyph { color: inherit !important; }
+.flow-explorer-selection__icon svg { stroke-width: 1.5; }
 .flow-explorer-selection__icon.is-compact { width: 24px; height: 24px; border-radius: 4px; font-size: 15px; }
 .flow-explorer-selection__view {
   display: flex;
