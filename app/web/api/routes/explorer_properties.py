@@ -217,6 +217,7 @@ async def resolve(session, user, layer, table, requested):
             "description": definition.description,
             "icon": definition.icon,
             "color": definition.color,
+            "iconColor": definition.iconColor,
             "groups": saved.get("groups", []),
         }
     else:

@@ -1,18 +1,17 @@
-import {
-  AppstoreOutlined, DatabaseOutlined, FileTextOutlined, GlobalOutlined,
-  PushpinOutlined, RadarChartOutlined, RocketOutlined, SafetyCertificateOutlined,
-  ScheduleOutlined, TableOutlined, TeamOutlined, ToolOutlined, UserOutlined,
-} from '@/components/ui/icons';
+import { uiIconLibrary } from '@/components/ui/icons';
 
-export const ontologyTypeIcons = {
-  box: AppstoreOutlined, database: DatabaseOutlined, table: TableOutlined,
-  globe: GlobalOutlined, 'map-pin': PushpinOutlined, radar: RadarChartOutlined,
-  rocket: RocketOutlined, users: TeamOutlined, person: UserOutlined,
-  document: FileTextOutlined, calendar: ScheduleOutlined, tool: ToolOutlined,
-  security: SafetyCertificateOutlined,
-} as const;
+// These are persisted ontology identifiers for glyphs whose library keys differ.
+const ontologyNames: Partial<Record<keyof typeof uiIconLibrary, string>> = {
+  appstore: 'box', global: 'globe', pin: 'map-pin', team: 'users', user: 'person',
+  file: 'document', safety: 'security',
+};
+const typeIcons = new Map(Object.entries(uiIconLibrary).map(([key, icon]) =>
+  [ontologyNames[key as keyof typeof uiIconLibrary] ?? key, icon] as const));
+
+export const ontologyIconChoices = Array.from(typeIcons.keys(), value => ({
+  value, label: value === 'api' ? 'API' : value[0].toUpperCase() + value.slice(1).replace(/-/g, ' '),
+})).sort((a, b) => a.label.localeCompare(b.label, 'en'));
 
 export function ontologyTypeIcon(name: string) {
-  return Object.prototype.hasOwnProperty.call(ontologyTypeIcons, name)
-    ? ontologyTypeIcons[name as keyof typeof ontologyTypeIcons] : undefined;
+  return typeIcons.get(name);
 }

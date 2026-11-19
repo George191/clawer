@@ -2,6 +2,7 @@ import { Button, Checkbox, Input, Select } from '@/components/ui';
 import type { OntologyPrincipal, Principal, SemanticAction, SemanticDefinition, SemanticProperty } from '../../services/ontology';
 import OntologyRecordPolicyEditor from './OntologyRecordPolicyEditor';
 import OntologyFunctionEditor from './OntologyFunctionEditor';
+import OntologyIconPicker from './OntologyIconPicker';
 
 const propertyTypes = ['string', 'integer', 'number', 'boolean', 'date', 'datetime', 'json'];
 const actionKinds = ['create', 'modify', 'delete'] as const;
@@ -58,8 +59,7 @@ export default function OntologyRevisionsEditor({ initial, definition, principal
     <div className="flow-create-grid">
       <label className="flow-create-field"><span>Display name</span><Input maxLength={120} value={definition.name} disabled={disabled} onChange={event => change({ name: event.target.value })} /></label>
       <label className="flow-create-field"><span>Plural display name</span><Input maxLength={120} value={definition.pluralName} disabled={disabled} onChange={event => change({ pluralName: event.target.value })} /></label>
-      <label className="flow-create-field"><span>Icon</span><Input maxLength={63} value={definition.icon} disabled={disabled} onChange={event => change({ icon: event.target.value })} /></label>
-      <label className="flow-create-field"><span>Color</span><Input maxLength={20} value={definition.color} disabled={disabled} onChange={event => change({ color: event.target.value })} /></label>
+      <div className="flow-create-field"><span>Icon</span><OntologyIconPicker definition={definition} disabled={disabled} onChange={change} /></div>
     </div>
     <label className="flow-create-field"><span>Description</span><Input.TextArea maxLength={4000} rows={3} value={definition.description} disabled={disabled} onChange={event => change({ description: event.target.value })} /></label>
     <label className="flow-create-field"><span>Groups</span><Select aria-label="Groups" mode="tags" options={definition.groups.map(value => ({ value, label: value }))} value={definition.groups} disabled={disabled} onChange={(groups: string[]) => change({ groups })} /></label>

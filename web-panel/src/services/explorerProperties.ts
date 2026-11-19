@@ -40,6 +40,7 @@ export interface ExplorerPropertyMapping {
   description: string;
   icon: string;
   color: string;
+  iconColor?: string;
   primaryKey: string[];
   groups: string[];
   properties: ExplorerMappedProperty[];
