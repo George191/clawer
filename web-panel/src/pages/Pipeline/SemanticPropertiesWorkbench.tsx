@@ -1,3 +1,4 @@
+import PropertyTypeIcon from './PropertyTypeIcon';
 import { useEffect, useState } from 'react';
 import { Button, Checkbox, Input, Select } from '@/components/ui';
 import { CloseOutlined, DeleteOutlined, PlusOutlined, SearchOutlined, TableOutlined } from '@/components/ui/icons';
@@ -8,7 +9,6 @@ import type { EtlObjectPreview, ExplorerPreviewResult } from '../../services/typ
 import './semantic-properties-workbench.css';
 
 const semanticPropertyTypes = ['string', 'integer', 'number', 'boolean', 'date', 'datetime', 'json'];
-const typeIcon: Record<string, string> = { string: '”', integer: '123', number: '1.0', boolean: '✓', date: 'D', datetime: 'DT', json: '{}' };
 const label = (property: SemanticProperty) => property.name || property.id || 'Untitled property';
 const display = (value: unknown) => value == null ? '—' : typeof value === 'object' ? JSON.stringify(value) : String(value);
 const selectStyle = { className: 'flow-ontology__select', popupClassName: 'flow-ontology__select-popup' };
@@ -118,7 +118,7 @@ export default function SemanticPropertiesWorkbench({ definition, preview, busy,
           {mode === 'properties' ? <table aria-label="Properties">
             <thead><tr><th>Property name</th><th>Base type</th><th>Required</th>{sourceBacked && <th>Column</th>}</tr></thead>
             <tbody>{propertyRows.map(({ item, index }) => <tr key={index} className={selected === index ? 'is-selected' : undefined} onClick={() => select(index)}>
-              <td><button type="button" title={label(item)} aria-pressed={selected === index} className="flow-foundry-property-select"><span className="flow-foundry-property-type-icon" aria-hidden="true">{typeIcon[item.type]}</span><span className="flow-property-name">{label(item)}</span>{markers(item)}</button></td>
+              <td><button type="button" title={label(item)} aria-pressed={selected === index} className="flow-foundry-property-select"><PropertyTypeIcon type={item.type} /><span className="flow-property-name">{label(item)}</span>{markers(item)}</button></td>
               <td>{item.type}</td><td>{item.required ? 'Required' : 'Optional'}</td>
               {sourceBacked && <td><code>{item.sourceColumn || 'Unmapped'}</code></td>}
             </tr>)}{!propertyRows.length && <tr><td colSpan={sourceBacked ? 4 : 3} className="flow-foundry-property-empty">{properties.length ? 'No matching properties.' : 'Create a property to get started.'}</td></tr>}</tbody>
@@ -139,19 +139,22 @@ export default function SemanticPropertiesWorkbench({ definition, preview, busy,
         </section>
       </div>
       {property ? <aside className="flow-foundry-property-inspector" aria-label="Property inspector">
-        <header><span className="flow-foundry-property-type-icon" aria-hidden="true">{typeIcon[property.type]}</span><strong title={activeName}>{activeName}</strong>{markers(property)}<button type="button" aria-label="Close property inspector" onClick={() => select(undefined)}><CloseOutlined /></button></header>
+        <header><PropertyTypeIcon type={property.type} /><strong title={activeName}>{activeName}</strong>{markers(property)}
+          <button type="button" title="Remove property" aria-label="Remove property" onClick={() => { onRemove(picked); select(properties.length > 1 ? Math.min(picked, properties.length - 2) : undefined); }}><DeleteOutlined /></button>
+          <button type="button" aria-label="Close property inspector" onClick={() => select(undefined)}><CloseOutlined /></button></header>
         <div className="flow-foundry-property-fields">
           <h4>General</h4>
           <label className="flow-create-field"><span>Name</span><Input aria-label="Property name" value={property.name} onChange={event => onChange(picked, { name: event.target.value })} /></label>
           <label className="flow-create-field"><span>API name</span><Input aria-label="Property ID" value={property.id} onChange={event => onChange(picked, { id: event.target.value })} /></label>
           <label className="flow-create-field"><span>Base type</span><Select {...selectStyle} aria-label="Property type" value={property.type} options={semanticPropertyTypes.map(value => ({ value, label: value[0].toUpperCase() + value.slice(1) }))} onChange={(type: string) => onChange(picked, { type })} /></label>
           {sourceBacked && <label className="flow-create-field"><span>Source column</span><Select {...selectStyle} aria-label="Source column" allowClear showSearch value={property.sourceColumn || undefined} placeholder="Select a column" options={sourceColumns.filter(column => column.name === property.sourceColumn || !mapped.has(column.name)).map(column => ({ value: column.name, label: column.name }))} onChange={(sourceColumn?: string) => onChange(picked, { sourceColumn })} /></label>}
+        </div>
+        <div className="flow-foundry-property-fields flow-property-configuration">
           <h4>Configuration</h4>
           <Checkbox checked={property.required} disabled={primary} onChange={event => onChange(picked, { required: event.target.checked })}>Required</Checkbox>
           <Checkbox checked={primary} disabled={!eligiblePrimary && !primary} onChange={event => onPrimary(property.id, event.target.checked)}>Primary key</Checkbox>
           <Checkbox checked={isTitle} disabled={!eligibleTitle && !isTitle} onChange={event => onTitle(event.target.checked ? property.id : '')}>Title key</Checkbox>
           {titleKey && !isTitle && <small>Current title: {properties.find(item => item.id === titleKey)?.name || titleKey}</small>}
-          <Button className="flow-foundry-property-remove" size="small" icon={<DeleteOutlined />} onClick={() => { onRemove(picked); select(properties.length > 1 ? Math.min(picked, properties.length - 2) : undefined); }}>Remove property</Button>
         </div>
       </aside> : <div className="flow-property-inspector-idle">Select a property to edit its settings.</div>}
     </div>

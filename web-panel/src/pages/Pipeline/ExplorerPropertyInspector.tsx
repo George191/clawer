@@ -1,3 +1,4 @@
+import PropertyTypeIcon from './PropertyTypeIcon';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { DeleteOutlined } from '@/components/ui/icons';
@@ -11,7 +12,6 @@ import { INDEX_PREVIEW_SCHEMA, INDEX_PREVIEW_TABLE } from './SandboxIndexPreview
 const tabs = ['General','Display','Interaction','Details','Advanced'] as const;
 export const businessTypes = ['string','integer','number','boolean','date','datetime','json'] as const;
 export const readable = (value: string) => ({dateTime:'Date and time',timeSeries:'Time series',geoJson:'Geographic shape',default:'No formatting'}[value] || value.charAt(0).toUpperCase()+value.slice(1));
-export const typeGlyph = (type: string) => ({integer:'123',number:'#',string:'❞',boolean:'✓',date:'D',datetime:'DT',json:'{}'}[type] || 'T');
 export function propertyFormatters(type: Property['type']): Property['formatter'][] {
     if (type==='integer' || type==='number') return ['default','number','percent'];
     if (type==='date' || type==='datetime') return ['default','date','dateTime'];
@@ -43,7 +43,7 @@ export default function ExplorerPropertyInspector({mapping,property:p,columns,ed
             {values.map(v => <option key={v} value={v}>{readable(v)}</option>)}
         </select></label>;
     return <aside className="flow-foundry-property-inspector physical-property-inspector" aria-label="Property editor">
-        <header><span className="physical-property-glyph">{typeGlyph(p.type)}</span><strong>{p.name || p.id}</strong>
+        <header><PropertyTypeIcon type={p.type} /><strong>{p.name || p.id}</strong>
             <PropertyBadges property={p} title={mapping.titleProperty}/>
             {editable && !bound && <button type="button" aria-label={`Delete property ${p.name}`} disabled={title}
                 title={title ? 'Clear the title designation first' : 'Delete property'} onClick={() => setRemoving(true)}><DeleteOutlined /></button>}

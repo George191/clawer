@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Response
+from sqlalchemy import String, func
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
@@ -230,6 +231,20 @@ async def publish_draft(draft_id: UUID, payload: Revision, session: SessionDep, 
             raise HTTPException(409, "This project already has that object type id") from exc
         raise
     return view
+
+
+@router.get("/type-groups")
+async def type_groups(session: SessionDep, user: CurrentUser, q: str = Query("", max_length=120)):
+    """Suggest classification labels from published types visible to the caller."""
+    labels = func.jsonb_array_elements_text(
+        OntologyDefinitionRow.published_definition["groups"], type_=String
+    ).label("name")
+    visible = published_catalog_statement(user).order_by(None).with_only_columns(labels).subquery()
+    names = select(visible.c.name).distinct()
+    if q.strip():
+        names = names.where(visible.c.name.icontains(q.strip(), autoescape=True))
+    result = await session.scalars(names.order_by(visible.c.name).limit(50))
+    return {"items": list(result)}
 
 
 @router.get("/object-types")

@@ -227,7 +227,7 @@ export default function PublishedOntology({ selection, onSelect }: Props) {
           </>}
           {object && records && <div className="flow-published-results">
             <div className="flow-published-results-toolbar">
-              <h3><BarsOutlined /> {deleted ? 'Deleted objects' : 'Results'}</h3>
+              <h3><BarsOutlined /> {deleted ? 'Deleted objects' : object.definition.pluralName}</h3>
               {object.definition.source.mode === 'none' && <Button size="small" onClick={() => {setOffset(0);setDeleted(!deleted);}}>{deleted ? 'Show active objects' : 'Show deleted objects'}</Button>}
               {selectedRecord && <Button size="small" icon={<CloseOutlined />} onClick={closePreview}>1 selected</Button>}
               <div className="flow-published-results-toolbar-end">
