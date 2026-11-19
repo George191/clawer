@@ -20,6 +20,18 @@
   padding: 14px; border: 1px solid var(--ontology-border); border-top: 0;
   font: 400 12px/17px var(--ontology-font);
 }
+.flow-semantic-wizard .flow-create-step:has(.flow-security-panel),
+.flow-semantic-wizard .flow-create-step > div:has(.flow-security-panel),
+.flow-semantic-wizard .flow-create-section:has(> .flow-security-panel) {
+  display: flex; flex-direction: column;
+}
+.flow-semantic-wizard .flow-create-step > div:has(.flow-security-panel),
+.flow-semantic-wizard .flow-create-section:has(> .flow-security-panel) {
+  flex: 1; min-height: 0;
+}
+.flow-semantic-wizard .flow-security-panel {
+  min-height: min(100px, 24dvh); overflow: auto; overscroll-behavior: contain;
+}
 .flow-semantic-wizard .flow-create-section:has(> .flow-security-nav) .flow-create-heading h3 { font-size: 14px; line-height: 20px; }
 .flow-semantic-wizard .flow-security-panel :is(.flow-create-field, .ui-input, .ui-btn, .ui-select, select) { font-size: 12px; }
 .flow-security-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); margin: 0; gap: 6px 18px; }
@@ -56,9 +68,20 @@
 .flow-clearance-form label { display: grid; min-width: 0; gap: 4px; }
 .flow-clearance-form .ui-select { width: 100%; min-width: 0; }
 .flow-clearance-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-.flow-clearance-form .ui-select-selection-item { min-width: 0; max-width: calc(100% - 24px); box-sizing: border-box; }
-.flow-clearance-form .ui-select-selection-item-content { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.flow-clearance-form .ui-select-selection-item-remove { flex: none; }
+:is(.flow-semantic-wizard, .flow-clearance-form) .ui-select-multiple .ui-select-selection-wrap {
+  column-gap: 0; max-height: min(7.5rem, 24dvh); overflow-y: auto;
+}
+:is(.flow-semantic-wizard, .flow-clearance-form) .ui-select-multiple .ui-select-selection-item {
+  flex: none; min-width: 0; max-width: calc(100% - 4px); margin-inline-end: 4px; box-sizing: border-box;
+}
+:is(.flow-semantic-wizard, .flow-clearance-form) .ui-select-selection-item-content {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+:is(.flow-semantic-wizard, .flow-clearance-form) .ui-select-selection-item-remove { flex: none; }
+/* Keep the empty caret in the final tag's trailing gap, even on an exact-fit row. */
+:is(.flow-semantic-wizard, .flow-clearance-form) .ui-select-selection-item + .ui-select-selection-search:has(input[value=""]) {
+  flex: 1 1 2px; min-width: 2px; margin-inline-start: -2px;
+}
 @media (max-width: 580px) {
   .flow-security-nav { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
   .flow-clearance-identity { grid-template-columns: minmax(0, 1fr); }
