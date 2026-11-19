@@ -54,12 +54,5 @@ export default function SemanticTypeAppearance({ definition, drafts, onChange }:
         onChange={event => onChange({ id: event.target.value })} placeholder="airport" />
       <small>Unique within the project. Used in the Published catalog and SDK filename. Start with a lowercase letter, then use lowercase letters, digits, hyphens or underscores.</small>
     </label>
-    <div className="flow-create-field"><span>Icon color</span>
-      <div className="flow-type-color">
-        <label title="Choose a color"><input type="color" aria-label="Icon color" value={/^#[0-9a-f]{6}$/i.test(definition.color) ? definition.color : '#3b82f6'}
-          onChange={event => onChange({ color: event.target.value })} /><span>{definition.color || 'Automatic'}</span></label>
-        {definition.color && <Button size="small" onClick={() => onChange({ color: '' })}>Reset color</Button>}
-      </div>
-    </div>
   </>;
 }

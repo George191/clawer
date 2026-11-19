@@ -121,7 +121,6 @@
   line-height: 1;
 }
 .flow-explorer-selection__icon.is-compact { width: 24px; height: 24px; border-radius: 4px; font-size: 15px; }
-.flow-explorer-selection__plane { font-family: "Segoe UI Symbol", sans-serif; }
 .flow-explorer-selection__view {
   display: flex;
   align-items: center;
