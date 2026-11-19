@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Button, Checkbox, Input, Modal, Select, Table } from '@/components/ui';
-import { CheckOutlined, ReloadOutlined } from '@/components/ui/icons';
+import { AppstoreOutlined, CheckOutlined, ReloadOutlined, TableOutlined } from '@/components/ui/icons';
 import { fetchEtlObjectPreview, fetchLayerTables } from '../../services/api';
 import { getSessionState } from '../../services/session';
 import type { EtlObjectPreview, LayerNode, LayerTable } from '../../services/types';
@@ -13,6 +13,7 @@ import {
 import SemanticPropertiesWorkbench from './SemanticPropertiesWorkbench';
 import OntologyRecordPolicyEditor from './OntologyRecordPolicyEditor';
 import './ontology-create.css';
+import './semantic-object-wizard.css';
 
 const steps = ['Datasource', 'Metadata', 'Properties', 'Actions', 'Save location', 'Security'] as const;
 const idPattern = /^[a-z][a-z0-9_-]{0,62}$/;
@@ -219,7 +220,7 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
   }
   const next = () => {
     const msg = stepError(step);
-    if (msg) { setError(msg); return; }
+    if (msg) { setError(msg); panel.current?.scrollTo({ top: 0 }); return; }
     if (step === 0 && !definition.properties.length && existing) mapSource();
     setError(''); setStep(value => value + 1);
   };
@@ -281,7 +282,7 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
       <Button size="small" disabled={busy || !projectName.trim()} onClick={nameProject}>Save project name</Button>
     </div>}
   </div>;
-  return <Modal open centered className="flow-surface-modal flow-create-modal flow-create-object" title={stage === 'wizard' ? 'Create a new object type' : 'Review object type changes'} width={1160} onCancel={() => guards(onCancel)} maskClosable={!busy} closable={!busy} keyboard={!busy} footer={<>
+  return <Modal open centered className="flow-surface-modal flow-create-modal flow-create-object flow-semantic-wizard" title={stage === 'wizard' ? 'Create a new object type' : 'Review object type changes'} width={1160} onCancel={() => guards(onCancel)} maskClosable={!busy} closable={!busy} keyboard={!busy} footer={<>
     <Button disabled={busy} onClick={() => guards(onCancel)}>Close</Button>
     {stage === 'wizard' ? <>
       {step > 0 && <Button disabled={busy} onClick={() => { setStep(value => value - 1); setError(''); }}>Back</Button>}
@@ -295,7 +296,12 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
   </>}>
     <div className="flow-create-layout">
       <ol className="flow-create-steps" aria-label={stage === 'wizard' ? 'Create object type steps' : 'Review progress'}>
-        {(stage === 'wizard' ? steps : ['Review changes'] as const).map((label, index) => <li key={label} className={stage === 'review' || index === step ? 'is-current' : index < step ? 'is-complete' : ''} aria-current={stage === 'review' || index === step ? 'step' : undefined}><span aria-hidden="true">{stage === 'wizard' && index < step ? <CheckOutlined /> : index + 1}</span><span>{label}</span></li>)}
+        {(stage === 'wizard' ? steps : ['Review changes'] as const).map((label, index) => <li key={label} className={stage === 'review' || index === step ? 'is-current' : index < step ? 'is-complete' : ''} aria-current={stage === 'review' || index === step ? 'step' : undefined}>
+          <span aria-hidden="true">{stage === 'wizard' && index < step ? <CheckOutlined /> : index + 1}</span>
+          {stage === 'wizard' && index < step
+            ? <button type="button" disabled={busy} aria-label={`Return to ${label}`} onClick={() => { setStep(index); setError(''); }}>{label}</button>
+            : <span>{label}</span>}
+        </li>)}
       </ol>
       <div className="flow-create-step" role="region" aria-label={stage === 'wizard' ? steps[step] + ' step' : 'Publish review'} ref={panel}>
         {error && <div className="flow-create-error" role="alert">{error}</div>}
@@ -304,14 +310,20 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
         <div ref={stageContent}>
         {stage === 'wizard' && step === 0 && <section className="flow-create-section">
           <Heading title="Choose a datasource" detail="An object type describes one kind of business record, such as an airport. Define its properties and access rules here, then publish the definition to a project so its readers can find it in Published." />
-          <fieldset className="flow-create-source"><legend>Datasource option</legend>
-            <label className="flow-create-source-option"><input type="radio" name="semantic-source" checked={existing} disabled={busy || !allowedSource} onChange={() => sourceChange({ mode: 'existing', schema: warehouseSchemas.has(initialSchema || '') ? initialSchema : '', table: '' })} /><span><strong>Existing PostgreSQL table</strong><small>Each source row is a read-only object. Choose which columns appear as properties.</small></span></label>
-            <label className="flow-create-source-option"><input type="radio" name="semantic-source" checked={!existing} disabled={busy} onChange={() => sourceChange({ mode: 'none' })} /><span><strong>No backing datasource</strong><small>Start with an empty set of records. Enable a Create action if users should add objects after publication.</small></span></label>
+          <fieldset className="flow-create-source"><legend>Datasource</legend>
+            <label className="flow-create-source-option">
+              <input type="radio" name="semantic-source" checked={!existing} disabled={busy} onChange={() => sourceChange({ mode: 'none' })} />
+              <AppstoreOutlined aria-hidden="true" /><span><strong>No backing datasource</strong><small>Start with an empty set of records. Enable a Create action if users should add objects after publication.</small></span><CheckOutlined aria-hidden="true" />
+            </label>
+            <label className="flow-create-source-option">
+              <input type="radio" name="semantic-source" checked={existing} disabled={busy || !allowedSource} onChange={() => sourceChange({ mode: 'existing', schema: warehouseSchemas.has(initialSchema || '') ? initialSchema : '', table: '' })} />
+              <TableOutlined aria-hidden="true" /><span><strong>Existing PostgreSQL table</strong><small>Each source row is a read-only object. Choose which columns appear as properties.</small></span><CheckOutlined aria-hidden="true" />
+            </label>
           </fieldset>
           {!allowedSource && <p className="flow-create-help">A platform administrator is required to bind a warehouse table.</p>}
           {existing && <div className="flow-create-grid">
             <label className="flow-create-field"><span>Schema</span><Select {...selectStyle} aria-label="Object type schema" value={definition.source.schema || undefined} options={schemaOptions} disabled={busy} placeholder="Select a schema" onChange={(schema: string) => sourceChange({ mode: 'existing', schema, table: '' })} /></label>
-            <label className="flow-create-field"><span>Source table</span><Select {...selectStyle} aria-label="Source table" showSearch value={definition.source.table || undefined} disabled={busy || tables.loading || !definition.source.schema} options={opt((tables.key === definition.source.schema ? tables.data : [])?.map(item => item.name) || [])} placeholder="Select a table" onChange={(table: string) => sourceChange({ ...definition.source, table })} /></label>
+            <label className="flow-create-field"><span>Source table</span><Select {...selectStyle} aria-label="Source table" showSearch value={definition.source.table || undefined} disabled={busy || tables.loading || !definition.source.schema || tables.key !== definition.source.schema} options={opt((tables.key === definition.source.schema ? tables.data : [])?.map(item => item.name) || [])} placeholder="Select a table" onChange={(table: string) => sourceChange({ ...definition.source, table })} /></label>
           </div>}
           {(tables.error || sourcePreview.error) && <p className="flow-create-error" role="alert">{tables.error || sourcePreview.error}<Button size="small" icon={<ReloadOutlined />} onClick={retries}>Retry</Button></p>}
           {(tables.loading || sourcePreview.loading) && <p role="status" className="flow-create-help">Reading source metadata…</p>}

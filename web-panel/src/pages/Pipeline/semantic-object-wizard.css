@@ -1,0 +1,63 @@
+.flow-semantic-wizard { --wizard-inset: clamp(16px, 2vw, 28px); font: 400 14px/1.45 var(--ontology-font); }
+.flow-semantic-wizard .ui-modal-title { font: 600 17px/24px var(--ontology-font); }
+.flow-semantic-wizard .ui-modal-header { padding: 13px 18px; }
+.flow-semantic-wizard .ui-modal-close { top: 11px; }
+.flow-semantic-wizard .ui-modal-body { font: inherit; }
+.flow-semantic-wizard .flow-create-layout { grid-template-columns: clamp(165px, 22%, 255px) minmax(0, 1fr); }
+.flow-semantic-wizard .flow-create-steps { padding: 0; }
+.flow-semantic-wizard .flow-create-steps > li {
+  min-height: 54px; gap: 12px; padding: 8px 18px; border-bottom: 1px solid var(--ontology-border); font-size: 14px;
+}
+.flow-semantic-wizard .flow-create-steps > li > span:first-child { width: 28px; height: 28px; font-size: 13px; }
+.flow-semantic-wizard .flow-create-steps button {
+  border: 0; padding: 0; background: transparent; color: var(--ontology-text); font: inherit; text-align: left; cursor: pointer;
+}
+.flow-semantic-wizard .flow-create-steps button::after { content: ""; position: absolute; inset: 0; }
+.flow-semantic-wizard .flow-create-steps > li:has(button:enabled:hover) { background: var(--ontology-elevated); }
+.flow-semantic-wizard .flow-create-steps > li:has(button:focus-visible) { outline: 2px solid var(--ontology-primary); outline-offset: -2px; }
+.flow-semantic-wizard .flow-create-kicker { margin: 22px var(--wizard-inset) 0; font: 600 12px/18px var(--ontology-font); letter-spacing: .035em; }
+.flow-semantic-wizard .flow-create-section { padding-inline: var(--wizard-inset); }
+.flow-semantic-wizard .flow-create-heading h3 { font-size: 20px; line-height: 27px; }
+.flow-semantic-wizard .flow-create-heading p { max-width: 78ch; }
+.flow-semantic-wizard :is(.flow-create-help, .flow-create-heading p, .flow-create-source-option small, .flow-create-field > small) { font: 400 13px/19px var(--ontology-font); }
+.flow-semantic-wizard :is(.flow-create-field, .ui-checkbox-wrapper, .ui-select, .ui-input, .ui-btn, .flow-create-source legend) { font-size: 14px; }
+.flow-semantic-wizard .flow-create-field > span:first-child { font-weight: 500; }
+.flow-semantic-wizard :is(.ui-select, .ui-input, select) { min-width: 0; max-width: 100%; }
+.flow-semantic-wizard :is(.ui-input:not(textarea), .ui-btn, .ui-select-selector, select) { min-height: 32px; }
+.flow-semantic-wizard .ui-input-affix-wrapper .ui-input { background: transparent; border: 0; min-height: 28px; }
+.flow-semantic-wizard .flow-foundry-property-tools { justify-content: space-between; }
+.flow-semantic-wizard .flow-foundry-property-tools .ui-input-affix-wrapper { width: min(210px, 50%); }
+.flow-semantic-wizard select {
+  width: 100%; padding: 4px 8px; border: 1px solid var(--ontology-border); border-radius: 3px;
+  background: var(--ontology-bg); color: var(--ontology-text); font: inherit;
+}
+.flow-semantic-wizard .flow-create-source { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; min-width: 0; }
+.flow-semantic-wizard .flow-create-source-option {
+  position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr) 16px;
+  align-items: center; gap: 10px; padding: 14px; min-height: 84px;
+}
+.flow-semantic-wizard .flow-create-source-option > input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: inherit; }
+.flow-semantic-wizard .flow-create-source-option strong { margin-bottom: 3px; font-weight: 600; }
+.flow-semantic-wizard .flow-create-source-option > .ui-icon { color: var(--ontology-muted); font-size: 20px; }
+.flow-semantic-wizard .flow-create-source-option > .ui-icon:last-child { visibility: hidden; font-size: 16px; }
+.flow-semantic-wizard .flow-create-source-option:has(:checked) > .ui-icon { visibility: visible; color: var(--ontology-link); }
+.flow-semantic-wizard .flow-create-source-option:has(:disabled) { opacity: .55; cursor: default; }
+.flow-semantic-wizard .flow-create-source-option:has(:focus-visible) { outline: 2px solid var(--ontology-primary); outline-offset: 2px; }
+.flow-semantic-wizard .flow-create-property-heading { flex-wrap: wrap; }
+.flow-semantic-wizard .flow-semantic-config { min-inline-size: 0; }
+.flow-semantic-wizard .ui-modal-footer { padding: 10px 16px; }
+@media (max-width: 760px) {
+  .flow-semantic-wizard .flow-create-source { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 580px) {
+  .flow-semantic-wizard { max-width: calc(100vw - 16px); }
+  .flow-semantic-wizard .ui-modal-content { height: calc(100dvh - 24px); }
+  .flow-semantic-wizard .flow-create-layout { grid-template-columns: minmax(0, 1fr); }
+  .flow-semantic-wizard .flow-create-steps { justify-content: space-between; }
+  .flow-semantic-wizard .flow-create-steps > li { min-height: 42px; gap: 5px; padding: 4px; border-bottom: 0; }
+  .flow-semantic-wizard .flow-create-steps > li:not(.is-current) > span:last-child { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .flow-semantic-wizard .flow-create-steps > li.is-complete > button { position: absolute; inset: 0; width: 100%; height: 100%; font-size: 0; }
+  .flow-semantic-wizard .flow-create-kicker { margin-top: 14px; }
+  .flow-semantic-wizard .flow-create-source-option { min-height: 68px; }
+  .flow-semantic-wizard .ui-modal-footer { padding: 8px; gap: 5px; }
+}

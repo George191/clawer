@@ -237,7 +237,16 @@ function SelectRoot<T = any>(props: SelectProps<T>) {
   const selected: any[] = multiple ? Array.isArray(current) ? current.map(raw) : [] : current === undefined || current === null ? [] : [raw(current)];
   const allOptions: SelectOption[] = [...options, ...selected.filter(item => !options.some(option => option.value === item)).map(item => ({ value: item, label: String(item) }))];
   const filtered = allOptions.filter(option => !query || filterOption === false || (typeof filterOption === 'function' ? filterOption(query, option) : text(option[optionFilterProp] ?? option.label ?? option.value).toLowerCase().includes(query.toLowerCase())));
-  const changeOpen = (next: boolean) => { if (disabled) return; setExpanded(next); onOpenChange?.(next); onDropdownVisibleChange?.(next); if (!next) { setQuery(''); onSearch?.(''); } };
+  const selectedOptionIndex = () => filtered.findIndex(option => !option.disabled && selected.includes(option.value));
+  const changeOpen = (next: boolean) => {
+    if (disabled) return;
+    if (next && !isOpen) {
+      const index = selectedOptionIndex();
+      setActive(index >= 0 ? index : filtered.findIndex(option => !option.disabled));
+    }
+    setExpanded(next); onOpenChange?.(next); onDropdownVisibleChange?.(next);
+    if (!next) { setQuery(''); onSearch?.(''); }
+  };
   const publish = (items: any[]) => {
     const details = items.map(item => allOptions.find(option => option.value === item) || { value: item, label: String(item) });
     const outgoing = labelInValue ? details.map(option => ({ value: option.value, label: option.label })) : items;
@@ -265,8 +274,26 @@ function SelectRoot<T = any>(props: SelectProps<T>) {
     onKeyDown?.(event); if (event.defaultPrevented || disabled) return;
     if (event.key === 'Escape' && isOpen) { event.preventDefault(); event.stopPropagation(); changeOpen(false); if (!searchable) wrapper.current?.focus(); }
     if (event.key === 'Tab') changeOpen(false);
-    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); if (!isOpen) changeOpen(true); let next = active; for (let count = 0; count < filtered.length; count++) { next = (next + (event.key === 'ArrowDown' ? 1 : -1) + filtered.length) % filtered.length; if (!filtered[next].disabled) break; } setActive(next); requestAnimationFrame(() => document.getElementById(`${listId}-${next}`)?.scrollIntoView({ block: 'nearest' })); }
-    if (event.key === 'Enter') { event.preventDefault(); if (!isOpen) { changeOpen(true); return; } if (mode === 'tags' && query.trim() && !filtered.some(option => option.value === query.trim())) { choose({ value: query.trim(), label: query.trim() }); } else if (filtered[active]) choose(filtered[active]); }
+    if ((event.target as HTMLElement).closest('button')) return;
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      const direction = event.key === 'ArrowDown' ? 1 : -1;
+      let next = active;
+      if (!isOpen) {
+        changeOpen(true);
+        const index = selectedOptionIndex();
+        next = direction > 0 ? -1 : filtered.length;
+        if (index >= 0) next = index - direction;
+      }
+      for (let count = 0; count < filtered.length; count++) {
+        next = (next + direction + filtered.length) % filtered.length;
+        if (filtered[next].disabled) continue;
+        setActive(next);
+        requestAnimationFrame(() => document.getElementById(`${listId}-${next}`)?.scrollIntoView({ block: 'nearest' }));
+        break;
+      }
+    }
+    if (event.key === 'Enter' || (event.key === ' ' && !searchable)) { event.preventDefault(); if (!isOpen) { changeOpen(true); return; } if (mode === 'tags' && query.trim() && !filtered.some(option => option.value === query.trim())) { choose({ value: query.trim(), label: query.trim() }); } else if (filtered[active]) choose(filtered[active]); }
     if (event.key === 'Backspace' && multiple && !query && selected.length) publish(selected.slice(0, -1));
   };
   return <div {...rest} id={searchable ? undefined : rest.id} aria-label={searchable ? undefined : props['aria-label']} ref={wrapper} tabIndex={searchable ? -1 : disabled ? -1 : 0} role={searchable ? undefined : 'combobox'} aria-haspopup="listbox" aria-expanded={isOpen} aria-controls={isOpen ? listId : undefined} aria-activedescendant={isOpen ? `${listId}-${active}` : undefined} aria-disabled={disabled} className={cx('ui-select', multiple ? 'ui-select-multiple' : 'ui-select-single', isOpen && 'ui-select-open', disabled && 'ui-select-disabled', size && `ui-select-${size}`, className)} style={style} onKeyDown={keyboard} onClick={event => { event.stopPropagation(); onClick?.(event); if (!isOpen) changeOpen(true); else if (!searchable) changeOpen(false); input.current?.focus(); }}>
