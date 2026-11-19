@@ -94,6 +94,9 @@ def read_migration(kind):
   base=Path('/app/output/sec_migration_20261104');root=base/('facts-migration-20261116' if kind=='facts' else 'patent-source-safe-20261116')
   plan_kind='facts_full' if kind=='facts' else 'patent'
   owner=json.loads((base/'source-safe-current-owners.json').read_bytes())[kind]
+  root_name=Path(owner['root']).name
+  need(root_name.startswith('facts-migration-20261116') if kind=='facts' else root_name=='patent-source-safe-20261116')
+  root=base/root_name
   need(owner['root']=='/data/clawer/output/sec_migration_20261104/'+root.name
     and owner['workers']==6 and owner['page_size']==3000
     and owner['mongo_cdc_replay'] is False and fingerprint(owner['source_sha256'])
@@ -125,6 +128,17 @@ def read_migration(kind):
     and summary['stage'] in ('running','complete','failed','paused','canary_complete','pg_alias_tail','mongo_coverage_complete'))
   states=[read_committed_worker(root,plan,n,p) for n,p in enumerate(plan['parts'])]
   count=sum(s['processed'] for s in states);done=sum(s['done'] for s in states)
+  if plan.get('continuation'):
+   lineage=plan['continuation'];parent=Path(lineage['parent_root']);parent_plan=lineage['parent_plan']
+   need(kind=='facts' and parent==base/'facts-migration-20261116' and (parent/'STOP').is_file()
+     and json.loads((parent/'plan.json').read_bytes())==parent_plan
+     and parent_plan['kind']=='facts_full' and not parent_plan.get('continuation')
+     and hashlib.sha256(encoded({k:v for k,v in parent_plan.items() if k!='plan_sha256'})).hexdigest()==parent_plan['plan_sha256'])
+   previous=[read_committed_worker(parent,parent_plan,n,p) for n,p in enumerate(parent_plan['parts'])]
+   offset=sum(s['processed'] for s in previous)
+   need(previous==lineage['checkpoints'] and offset==lineage['processed_offset']
+     and all(not s.get('pending') and not s.get('last_error') for s in previous))
+   count+=offset
   need(type(summary['processed']) is int and 0<=summary['processed']<=count)
   if summary['stage']=='complete':need(done==6)
   tail=None

@@ -78,6 +78,8 @@ def validate_plan(plan):
             require(part.get("upper_inclusive") and type(part.get("actual_count")) is int
                     and part["actual_count"] == part.get("processed") and part["actual_count"] > 0,
                     "invalid bounded facts range")
+        elif plan.get("continuation"):
+            pass  # Frozen committed prefixes intentionally leave gaps between remaining ranges.
         elif number < WORKERS - 1:
             require(not part.get("upper_inclusive") and part["upper"] == parts[number + 1]["lower"],
                     "migration ranges have a gap")
@@ -89,6 +91,57 @@ def validate_plan(plan):
     elif plan["kind"] == "facts_full":
         require(plan.get("manifest_path") is None and plan.get("manifest_sha256") is None,
                 "full facts migration cannot reuse the bounded cleanup manifest")
+    if plan.get("continuation"):
+        validate_continuation(plan)
+
+
+def interval(part):
+    return (int(part["lower"], 16), int(part["upper"], 16) if part.get("upper")
+            else int(part["upper_inclusive"], 16) + 1)
+
+
+def merged_ranges(ranges):
+    result = []
+    for lower, upper in sorted(ranges):
+        require(lower < upper and (not result or result[-1][1] <= lower), "remaining ranges overlap")
+        if result and result[-1][1] == lower:
+            result[-1] = (result[-1][0], upper)
+        else:
+            result.append((lower, upper))
+    return result
+
+
+def validate_continuation(plan):
+    lineage = plan["continuation"]
+    parent, states = lineage["parent_plan"], lineage["checkpoints"]
+    require(plan["kind"] == parent["kind"] == "facts_full" and not parent.get("continuation"),
+            "continuation requires an original full facts plan")
+    validate_plan(parent)
+    require(all(plan[k] == parent[k] for k in ("collection", "data_type", "aliases", "mongo_uuid"))
+            and len(states) == WORKERS, "continuation identity changed")
+    remaining = []
+    for n, (state, part) in enumerate(zip(states, parent["parts"])):
+        validate_checkpoint(state, parent, n, None)
+        require(not state.get("pending") and not state.get("last_error"), "parent checkpoint is unresolved")
+        if not state["done"]:
+            lower, upper = interval(part)
+            lower = int(state["cursor"], 16) + 1 if state["cursor"] else lower
+            if lower < upper:
+                remaining.append((lower, upper))
+    require(lineage["processed_offset"] == sum(s["processed"] for s in states)
+            and merged_ranges(interval(p) for p in plan["parts"]) == merged_ranges(remaining),
+            "continuation must cover exactly the uncommitted parent ranges")
+
+
+def validate_parent_files(plan):
+    if not plan.get("continuation"):
+        return
+    lineage = plan["continuation"]
+    parent = Path(lineage["parent_root"])
+    require((parent / "STOP").is_file() and pg.read(parent / "plan.json") == lineage["parent_plan"],
+            "parent must remain frozen")
+    require(all(pg.read(parent / f"worker-{i}.json") == state
+                for i, state in enumerate(lineage["checkpoints"])), "parent checkpoints changed")
 
 
 def validate_checkpoint(state, plan, worker, expected):
@@ -394,6 +447,7 @@ def validate_namespace(client, plan):
 async def worker_run(root, worker, canary=False):
     plan = pg.read(root / "plan.json")
     validate_plan(plan)
+    validate_parent_files(plan)
     layout = runtime_layout(root, plan)
     part = plan["parts"][worker]
     expected = manifest_records(plan, worker)
@@ -615,6 +669,7 @@ def main():
     require((root / "plan.json").is_file(), "prepare an immutable plan before running")
     plan = pg.read(root / "plan.json")
     validate_plan(plan)
+    validate_parent_files(plan)
     runtime_layout(root, plan)
     if args.worker is not None:
         require(0 <= args.worker < WORKERS, "worker must be 0 through 5")
