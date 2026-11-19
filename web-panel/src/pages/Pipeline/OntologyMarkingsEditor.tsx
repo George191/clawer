@@ -7,6 +7,7 @@ type Marking = { id: string; name: string; readers?: Principal[]; revision?: num
 type Result = Page<Marking> & { canManage: boolean };
 type Change = { revision: number; actorId: string; createdAt: string; readers: Principal[] };
 const key = (p: Principal) => p.kind + ':' + p.id;
+const selectStyle = { className: 'flow-ontology__select', popupClassName: 'flow-ontology__select-popup' };
 
 export default function OntologyMarkingsEditor({ project, value, onChange, principals }: {
   project: string; value: string[]; onChange: (ids: string[]) => void; principals: OntologyPrincipal[];
@@ -47,7 +48,7 @@ export default function OntologyMarkingsEditor({ project, value, onChange, princ
   return <section aria-label="Security markings" className="flow-semantic-config">
     <h4>Security markings</h4>
     <label className="flow-create-field"><span>Required project markings</span>
-      <Select mode="multiple" aria-label="Required project markings" value={value} placeholder={choices.length ? "Select markings" : "No project markings available"}
+      <Select {...selectStyle} mode="multiple" aria-label="Required project markings" value={value} placeholder={choices.length ? "Select markings" : "No project markings available"}
         options={choices.map(item => ({value:item.id,label:item.name}))}
         onChange={(ids: string[]) => onChange(ids)} /></label>
     <p className="flow-create-help">Readers need every selected clearance to access this type and its records.</p>
@@ -56,21 +57,26 @@ export default function OntologyMarkingsEditor({ project, value, onChange, princ
       setResult({ ...page, items: [...result.items, ...page.items] });
     })}>Load more markings</Button>}
     {result.canManage && <details><summary>Manage project clearances</summary>
-      <fieldset disabled={busy} className="flow-semantic-config">
-        <label>Project marking<select aria-label="Project marking" value={editing?.id ?? ''} onChange={e => selectMark(choices.find(item => item.id === e.target.value))}>
-          <option value="">New marking</option>{choices.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-        {!editing && <label>Marking name<Input value={name} onChange={e => setName(e.target.value)} /></label>}
-        <label>Clearance holders<Select aria-label="Clearance holders" mode="multiple" value={readers.map(key)}
-          options={[...options].map(([v,p]) => ({value:v,label:p.name + ' (' + p.kind + ')'}))}
+      <fieldset disabled={busy} className="flow-semantic-config flow-clearance-form">
+        <div className="flow-clearance-identity">
+          <label>Project marking<select aria-label="Project marking" value={editing?.id ?? ''} onChange={e => selectMark(choices.find(item => item.id === e.target.value))}>
+            <option value="">New marking</option>{choices.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+          {!editing && <label>Marking name<Input value={name} onChange={e => setName(e.target.value)} /></label>}
+        </div>
+        <label>Clearance holders<Select {...selectStyle} aria-label="Clearance holders" mode="multiple" disabled={busy} value={readers.map(key)} placeholder="Select project members or groups"
+          options={[...options].map(([v,p]) => {
+            const label = p.name + ' (' + p.kind + ')';
+            return { value: v, label: <span title={label}>{label}</span> };
+          })}
           onChange={(ids: string[]) => setReaders(ids.map(id => {const p=options.get(id)!;return {kind:p.kind,id:p.id};}))} /></label>
         <p className="flow-create-help">Grant changes take effect immediately across this project for types using this marking.</p>
-        <Button disabled={!editing && !name.trim()} onClick={() => run(async () => {
+        <div className="flow-clearance-actions"><Button disabled={!editing && !name.trim()} onClick={() => run(async () => {
           const saved = editing
             ? await graphRequest<Marking>('put', path + '/' + editing.id, {data:{revision:editing.revision,readers}})
             : await graphRequest<Marking>('post', path, {data:{name:name.trim(),readers}});
           selectMark(saved); refresh(v => v + 1);
         })}>{editing ? 'Save clearances' : 'Create marking'}</Button>
-        {editing && <Button onClick={() => audit(0)}>View clearance history</Button>}
+        {editing && <Button onClick={() => audit(0)}>View clearance history</Button>}</div>
         {!!history.length && <ol aria-label="Clearance history">{history.map(change => <li key={change.revision}>
           Revision {change.revision} · {new Date(change.createdAt).toLocaleString()} · {principals.find(p => p.kind === 'user' && p.id === change.actorId)?.name ?? 'Name unavailable'} · {change.readers.map(p => options.get(key(p))?.name ?? 'Name unavailable').join(', ') || 'No holders'}
         </li>)}</ol>}{moreHistory && <Button onClick={() => audit(history.length)}>Load older clearance changes</Button>}

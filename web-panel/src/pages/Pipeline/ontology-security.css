@@ -10,15 +10,18 @@
   border-bottom: 2px solid transparent;
   background: transparent;
   color: var(--ontology-muted);
-  font: inherit;
+  font: 500 12px/16px var(--ontology-font);
   cursor: pointer;
 }
 .flow-security-nav button[aria-selected="true"] { color: var(--ontology-link); border-bottom-color: currentColor; }
 .flow-security-nav button:hover { color: var(--ontology-text); }
 .flow-security-panel {
-  display: grid; align-content: start; gap: 12px; min-width: 0;
-  padding: 16px; border: 1px solid var(--ontology-border); border-top: 0;
+  display: grid; align-content: start; gap: 10px; min-width: 0;
+  padding: 14px; border: 1px solid var(--ontology-border); border-top: 0;
+  font: 400 12px/17px var(--ontology-font);
 }
+.flow-semantic-wizard .flow-create-section:has(> .flow-security-nav) .flow-create-heading h3 { font-size: 14px; line-height: 20px; }
+.flow-semantic-wizard .flow-security-panel :is(.flow-create-field, .ui-input, .ui-btn, .ui-select, select) { font-size: 12px; }
 .flow-security-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); margin: 0; gap: 6px 18px; }
 .flow-security-facts dt, .flow-security-results li > :last-child { color: var(--ontology-muted); }
 .flow-security-facts dd { margin: 0; overflow-wrap: anywhere; }
@@ -27,8 +30,8 @@
 .flow-security-results li { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; border-top: 1px solid var(--ontology-border); }
 .flow-security-panel .flow-create-notice { min-width: 0; overflow-wrap: anywhere; }
 .flow-security-panel .flow-create-property-heading { align-items: center; justify-content: space-between; }
-.flow-security-panel fieldset.flow-semantic-config { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); align-items: end; gap: 10px; }
-.flow-security-panel h4 { margin: 0; font-size: 15px; }
+.flow-security-panel fieldset.flow-semantic-config:not(.flow-clearance-form) { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); align-items: end; gap: 10px; }
+.flow-security-panel h4 { margin: 0; font-size: 13px; line-height: 18px; }
 .flow-security-panel .flow-create-help { margin: 0; }
 .flow-security-panel .flow-create-field { width: 100%; max-width: 540px; }
 .flow-security-panel .flow-semantic-config { min-width: 0; margin: 0; }
@@ -45,6 +48,18 @@
 .flow-security-panel details[open] > fieldset { margin-top: 10px; }
 .flow-security-panel fieldset > label { display: grid; gap: 4px; }
 .flow-security-panel fieldset > .ui-btn { justify-self: start; }
+.flow-clearance-form {
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px;
+  width: 100%; max-width: 560px; min-inline-size: 0; box-sizing: border-box;
+}
+.flow-clearance-identity { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.flow-clearance-form label { display: grid; min-width: 0; gap: 4px; }
+.flow-clearance-form .ui-select { width: 100%; min-width: 0; }
+.flow-clearance-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.flow-clearance-form .ui-select-selection-item { min-width: 0; max-width: calc(100% - 24px); box-sizing: border-box; }
+.flow-clearance-form .ui-select-selection-item-content { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flow-clearance-form .ui-select-selection-item-remove { flex: none; }
 @media (max-width: 580px) {
   .flow-security-nav { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+  .flow-clearance-identity { grid-template-columns: minmax(0, 1fr); }
 }
