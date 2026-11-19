@@ -58,7 +58,7 @@ export default function OntologyIconPicker({ definition, disabled, onChange }: P
       aria-expanded={open} title={selected} onClick={show} disabled={disabled}>
       <SemanticTypeGlyph definition={definition} /><DownOutlined />
     </button>
-    {open && <Modal open centered title="Icon appearance" width={560} zIndex={1100}
+    {open && <Modal open centered title="Icon appearance" width={360} zIndex={1100}
       className="flow-surface-modal flow-create-modal flow-appearance-dialog" onCancel={() => setOpen(false)}
       footer={<Button type="primary" onClick={() => setOpen(false)}>Done</Button>}>
       <div className="flow-appearance-preview">
