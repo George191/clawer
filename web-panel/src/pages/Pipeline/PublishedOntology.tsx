@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Button, Checkbox, Input, Modal, Table } from '@/components/ui';
-import { ArrowLeftOutlined, BarsOutlined, CloseOutlined, DatabaseOutlined, ReloadOutlined, SearchOutlined } from '@/components/ui/icons';
+import { Button, Checkbox, Input, Modal } from '@/components/ui';
+import { AppstoreOutlined, ArrowLeftOutlined, BarsOutlined, CloseOutlined, DatabaseOutlined, ReloadOutlined, SearchOutlined } from '@/components/ui/icons';
 import { getSessionState } from '../../services/session';
 import {
   fetchPublishedOntologyType, listPublishedOntologyTypes, listOntologyRecords, listOntologyRecordHistory, ontologyError as describe, submitOntologyAction, undoOntologyEdit,
@@ -74,7 +74,7 @@ export default function PublishedOntology({ selection, onSelect }: Props) {
   const keyword = search.trim();
   const requestedOffset = Number(params.get('publishedOffset'));
   const catalogOffset = Number.isInteger(requestedOffset) && requestedOffset >= 0 && requestedOffset <= maxOffset ? requestedOffset : 0;
-  const [catalogPage, setCatalogPage] = useState<PublishedOntologyPage>();
+  const [catalogPage, setCatalogPage] = useState<PublishedOntologyPage & { offset: number; keyword: string }>();
   const [object, setObject] = useState<PublishedOntologyType>();
   const [deleted, setDeleted] = useState(false);
   const [records, setRecords] = useState<OntologyRecordPage>();
@@ -112,10 +112,14 @@ export default function PublishedOntology({ selection, onSelect }: Props) {
     let alive = true;
     setLoading(true); setError(''); setObject(undefined); setRecords(undefined); setSelectedRow(undefined); setPreviewTab('overview');
     if (!selection) {
-      setCatalogPage(undefined);
       const timer = window.setTimeout(() => {
         listPublishedOntologyTypes(pageSize, catalogOffset, keyword)
-          .then(data => { if (alive && current()) setCatalogPage(data); }, failure => { if (alive && current()) setError(describe(failure, 'Unable to load published object types.')); })
+          .then(data => { if (alive && current()) setCatalogPage({ ...data, offset: catalogOffset, keyword }); }, failure => {
+            if (alive && current()) {
+              setCatalogPage(undefined);
+              setError(describe(failure, 'Unable to load published object types.'));
+            }
+          })
           .finally(() => { if (alive && current()) setLoading(false); });
       }, keyword ? 250 : 0);
       return () => { alive = false; window.clearTimeout(timer); };
@@ -190,27 +194,35 @@ export default function PublishedOntology({ selection, onSelect }: Props) {
   useEffect(() => {setTool('');setDeleted(false);setFunctionResult('');}, [selection]);
   const returnToTypes = () => { if (!actionLocked.current) { setOffset(0); setSelectedRow(undefined); onSelect(''); } };
   return <>
-    <main className={`flow-ontology__published flow-foundry-workbench${selection ? ' flow-ontology__published--results' : ''}`} data-testid="published-ontology" aria-label={selection ? 'Published object results' : 'Published object types'} aria-busy={loading}>
+    <main className={`flow-ontology__published flow-foundry-workbench ${selection ? 'flow-ontology__published--results' : 'flow-published-catalog'}`} data-testid="published-ontology" aria-label={selection ? 'Published object results' : 'Published object types'} aria-busy={loading}>
       <header className="flow-ontology__published-header">
         {selection ? <div className="flow-published-results-context">
           <Button size="small" icon={<ArrowLeftOutlined />} onClick={returnToTypes}>Back to published types</Button>
           {object && <div className="flow-published-type-title"><SemanticTypeGlyph definition={object.definition} /><h2>{object.definition.name}</h2><code>{object.definition.id}</code></div>}
-        </div> : <><h2>Published object types</h2><p>Browse published definitions and access the records and actions available to your account.</p></>}
+        </div> : <><h2>Published object types</h2><div className="flow-published-catalog-search" role="search"><Input prefix={<SearchOutlined />} aria-label="Search published types" placeholder="Search published types" value={search} maxLength={200} onChange={event => changeCatalogSearch(event.target.value)} allowClear /></div></>}
       </header>
         <section className="flow-create-section">
-          {!selection && <div className="flow-ontology__published-search"><Input size="small" prefix={<SearchOutlined />} aria-label="Search published types" placeholder="Search published types" value={search} maxLength={200} onChange={event => changeCatalogSearch(event.target.value)} allowClear /></div>}
           {error && <p className="flow-create-error" role="alert">{error}<Button size="small" icon={<ReloadOutlined />} onClick={reload}>Retry</Button></p>}
-          {loading && <p role="status">{selection ? 'Loading published object type and records…' : 'Loading published object types…'}</p>}
-          {!selection && !loading && catalogPage && <>
-            <Table<PublishedOntologyType> className="flow-create-table flow-create-review-table" size="small" rowKey="id" pagination={false} dataSource={catalogPage.items} locale={{ emptyText: catalogOffset ? 'No published object types on this page.' : keyword ? 'No published object types match your search.' : 'No published object types are available to this account.' }} columns={[
-            { title: 'Object type', render: (_, item) => <Button type="link" onClick={() => onSelect(item.id)}><SemanticTypeGlyph definition={item.definition} />{item.definition.name}</Button> },
-            { title: 'API ID', render: (_, item) => item.definition.id },
-            { title: 'Datasource', render: (_, item) => item.definition.source.mode === 'existing' ? item.definition.source.schema + '.' + item.definition.source.table : 'No backing table' },
-            { title: 'Revision', dataIndex: 'revision' },
-            ]} />
-            {(catalogOffset > 0 || catalogPage.hasMore) && <footer className="flow-published-results-pagination" aria-label="Published object types pagination">
-              <span>{catalogPage.items.length ? `${catalogOffset + 1}–${catalogOffset + catalogPage.items.length} shown` : '0 shown'}</span>
-              <div><Button size="small" disabled={!catalogOffset} onClick={() => changeCatalogOffset(Math.max(0, catalogOffset - pageSize))}>Previous page</Button><Button size="small" disabled={!catalogPage.hasMore || catalogOffset + pageSize > maxOffset} onClick={() => changeCatalogOffset(catalogOffset + pageSize)}>Next page</Button></div>
+          {loading && (selection || !catalogPage) && <p role="status">{selection ? 'Loading published object type and records…' : 'Loading published object types…'}</p>}
+          {!selection && catalogPage && <>
+            {catalogPage.items.length ? <div className="flow-published-catalog-scroll" role="region" aria-label="Published types table" tabIndex={0}>
+              <table className="flow-published-catalog-table">
+                <thead><tr><th scope="col">Object type</th><th scope="col">API ID</th><th scope="col">Datasource</th><th scope="col">Revision</th></tr></thead>
+                <tbody>{catalogPage.items.map(({id, definition, revision}) => <tr key={id} onClick={() => onSelect(id)}>
+                  <th scope="row"><div className="flow-published-catalog-identity"><SemanticTypeGlyph definition={definition} /><div><button type="button" onClick={event => { event.stopPropagation(); onSelect(id); }} title={definition.name}>{definition.name}</button>{definition.description && <small title={definition.description}>{definition.description}</small>}</div></div></th>
+                  <td><code title={definition.id}>{definition.id}</code></td>
+                  <td>{definition.source.mode === 'existing' ? <code title={`${definition.source.schema}.${definition.source.table}`}>{definition.source.schema}.{definition.source.table}</code> : 'Object-managed records'}</td>
+                  <td>{revision}</td>
+                </tr>)}</tbody>
+              </table>
+            </div> : <div className="flow-published-catalog-empty">
+              {catalogPage.keyword ? <SearchOutlined /> : <AppstoreOutlined />}
+              <h3>{catalogPage.offset ? 'No published object types on this page.' : catalogPage.keyword ? 'No published object types match your search.' : 'No published object types are available to this account.'}</h3>
+              {catalogPage.keyword ? <Button size="small" onClick={() => changeCatalogSearch('')}>Clear search</Button> : !catalogPage.offset && <p>Object types appear here after publication when your project grants you access.</p>}
+            </div>}
+            {(catalogPage.offset > 0 || catalogPage.hasMore) && <footer className="flow-published-results-pagination" aria-label="Published object types pagination">
+              <span>{catalogPage.items.length ? `${catalogPage.offset + 1}–${catalogPage.offset + catalogPage.items.length} shown` : '0 shown'}</span>
+              <div><Button size="small" disabled={loading || !catalogPage.offset} onClick={() => changeCatalogOffset(Math.max(0, catalogPage.offset - pageSize))}>Previous page</Button><Button size="small" disabled={loading || !catalogPage.hasMore || catalogPage.offset + pageSize > maxOffset} onClick={() => changeCatalogOffset(catalogPage.offset + pageSize)}>Next page</Button></div>
             </footer>}
           </>}
           {object && records && <div className="flow-published-results">
@@ -258,7 +270,7 @@ export default function PublishedOntology({ selection, onSelect }: Props) {
                 </div>
                 <footer className="flow-published-results-pagination">
                   <span>{records.items.length ? `${offset + 1}–${offset + records.items.length} shown` : '0 shown'}</span>
-                  {(offset > 0 || records.hasMore) && <div><Button size="small" disabled={!offset || loading} onClick={() => setOffset(value => Math.max(0, value - pageSize))}>Previous page</Button><Button size="small" disabled={!records.hasMore || loading} onClick={() => setOffset(value => value + pageSize)}>Next page</Button></div>}
+                  {(offset > 0 || records.hasMore) && <div><Button size="small" disabled={!offset || loading} onClick={() => setOffset(value => Math.max(0, value - pageSize))}>Previous page</Button><Button size="small" disabled={!records.hasMore || offset + pageSize > maxOffset || loading} onClick={() => setOffset(value => value + pageSize)}>Next page</Button></div>}
                 </footer>
               </div>
               {selectedRecord && <aside className="flow-published-selection" aria-label="Selection Preview">

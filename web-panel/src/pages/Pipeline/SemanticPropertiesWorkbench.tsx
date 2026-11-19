@@ -103,15 +103,14 @@ export default function SemanticPropertiesWorkbench({ definition, preview, busy,
     <div className={`flow-foundry-property-workspace${property ? ' has-inspector' : ''}`}>
       <div className="flow-foundry-property-main">
         <header className="flow-foundry-property-header">
-          <div><h3 tabIndex={-1}>Properties</h3>{sourceBacked && <span>{mapped.size} of {sourceColumns.length} columns mapped</span>}</div>
-          <nav aria-label="Property views">
+          <div><h3 tabIndex={-1}>Properties</h3><span>{sourceBacked ? `${mapped.size} of ${sourceColumns.length} columns mapped` : `${properties.length} ${properties.length === 1 ? 'property' : 'properties'}`}</span></div>
+          {sourceBacked && <nav aria-label="Property views">
             <button type="button" aria-pressed={mode === 'properties'} onClick={() => switchMode('properties')}>Properties ({properties.length})</button>
-            {sourceBacked && <button type="button" aria-pressed={mode === 'mapping'} onClick={() => switchMode('mapping')}>Column mapping</button>}
-          </nav>
+            <button type="button" aria-pressed={mode === 'mapping'} onClick={() => switchMode('mapping')}>Column mapping</button>
+          </nav>}
         </header>
         <section className="flow-foundry-property-list" aria-label={mode === 'properties' ? 'Properties list' : 'Source column mapping list'}>
           <div className="flow-foundry-property-tools">
-            <strong>{mode === 'properties' ? 'Properties' : 'Column mapping'} <span>{mode === 'properties' ? properties.length : sourceColumns.length}</span></strong>
             <Input aria-label={mode === 'properties' ? 'Search properties' : 'Search source columns'} value={search} onChange={event => setSearch(event.target.value)} prefix={<SearchOutlined />} placeholder="Search" allowClear />
             <Button size="small" icon={<PlusOutlined />} onClick={add}>Create property</Button>
           </div>
