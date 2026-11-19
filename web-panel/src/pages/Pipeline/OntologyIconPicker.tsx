@@ -63,7 +63,7 @@ export default function OntologyIconPicker({ definition, disabled, onChange }: P
       footer={<Button type="primary" onClick={() => setOpen(false)}>Done</Button>}>
       <div className="flow-appearance-preview">
         <SemanticTypeGlyph definition={definition} size="preview" />
-        <div><strong>{selected}</strong><small>Icon {definition.iconColor ?? '#000000'} · {definition.color === '' ? 'No background' : 'Background ' + (definition.color ?? '#ffffff')}</small></div>
+        <small>Icon {definition.iconColor ?? '#000000'} · {definition.color === '' ? 'No background' : 'Background ' + (definition.color ?? '#ffffff')}</small>
       </div>
       <div className="flow-appearance-tabs" role="tablist" aria-label="Icon appearance settings">
         {tabs.map((name, index) => <button type="button" role="tab" key={name} id={id + '-tab-' + index}
@@ -88,10 +88,10 @@ export default function OntologyIconPicker({ definition, disabled, onChange }: P
               }} />
           </label>
           <div ref={list} className="flow-icon-options" role="listbox" aria-label="Object type icons" onKeyDown={navigate}>
-            {visible.map(({ value, label }, index) => <button type="button" key={value} role="option" title={label}
+            {visible.map(({ value, label }, index) => <button type="button" key={value} role="option" aria-label={label} title={label}
               aria-selected={value === definition.icon} tabIndex={index === focusIndex ? 0 : -1} onFocus={() => setFocusedIcon(value)}
               onClick={() => onChange({ icon: value })}>
-              <SemanticTypeGlyph definition={{ ...definition, icon: value, color: '#ffffff', iconColor: '#000000' }} /><span>{label}</span>
+              <SemanticTypeGlyph definition={{ ...definition, icon: value, color: '#ffffff', iconColor: '#000000' }} />
             </button>)}
           </div>
           {matches.length ? <nav className="flow-icon-pagination" aria-label="Icon pages">
