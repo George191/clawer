@@ -201,24 +201,29 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const favoriteSummaryKey = JSON.stringify([currentUserId, favoriteIds, includeHidden]);
   const favoriteSummaryReady = favoriteReady && !!favoriteSchemaKey && JSON.parse(favoriteSchemaKey)[0] === currentUserId;
   const catalogFavoritesReady = group !== 'favorites' || favoriteReady;
-  const catalogScope = JSON.stringify([source, keyword, group, catalogFavoritesReady, currentUserId]);
+  const catalogScope = JSON.stringify([currentUserId, keyword]);
   const catalogKey = JSON.stringify([source, keyword, group, favoriteQuery, catalogFavoritesReady, includeHidden, currentUserId]);
   const catalog = catalogState.key === catalogKey ? catalogState.data : emptyCatalog;
   const error = catalogError.key === catalogKey ? catalogError.message : '';
   const loading = catalogLoading || (catalogState.key !== catalogKey && !error);
   const confirmedTotal = catalogState.key && catalogState.userId === currentUserId ? catalogState.data.total : null;
+  const hasPresentedCatalog = catalogState.scope === catalogScope;
+  const presentedGroup = hasPresentedCatalog ? catalogState.group : group;
   const presentedItems = useMemo(() => {
     if (catalogState.key === catalogKey) return catalogState.data.items;
-    if (catalogState.scope !== catalogScope) return [];
-    return catalogState.data.items.filter((object) => group !== 'favorites' || favorites.includes(object.id));
-  }, [catalogState, catalogKey, catalogScope, includeHidden, group, favoriteIds]);
+    if (!hasPresentedCatalog) return [];
+    if (catalogState.group === 'favorites' && group === 'favorites') {
+      return catalogState.data.items.filter((object) => favorites.includes(object.id));
+    }
+    return catalogState.data.items;
+  }, [catalogState, catalogKey, hasPresentedCatalog, group, favoriteIds]);
   useCatalogMotion(rootRef, `${catalogScope}:${view}`, presentedItems);
 
   useEffect(() => { activeRef.current = true; return () => { activeRef.current = false; }; }, []);
 
   useEffect(() => {
     rootRef.current?.querySelector<HTMLElement>('.flow-ontology__body')?.scrollTo({ top: 0 });
-  }, [group, source, keyword, view, publishedCatalog, publishedId]);
+  }, [keyword, view, publishedCatalog, publishedId]);
 
   useEffect(() => {
     let active = true;
@@ -461,12 +466,12 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   }, [inspectorOpen]);
 
   const sections = useMemo(() => {
-    const resourceGroups = group === 'all' ? groups.filter((item) => item.key !== 'all' && item.key !== 'favorites') : groups.filter((item) => item.key === group);
+    const resourceGroups = presentedGroup === 'all' ? groups.filter((item) => item.key !== 'all' && item.key !== 'favorites') : groups.filter((item) => item.key === presentedGroup);
     return resourceGroups.map((item) => {
-      const items = group === 'all' ? presentedItems.filter((object) => object.resourceGroup === item.key) : presentedItems;
+      const items = presentedGroup === 'all' ? presentedItems.filter((object) => object.resourceGroup === item.key) : presentedItems;
       return { ...item, schemas: [...new Set(items.map((object) => object.schema))].sort().map((schema) => ({ schema, items: items.filter((object) => object.schema === schema).sort((left, right) => Number(right.visibility === 'prominent') - Number(left.visibility === 'prominent')) })) };
     }).filter((section) => section.schemas.length);
-  }, [presentedItems, group]);
+  }, [presentedItems, presentedGroup]);
   const renderedObjects = sections.flatMap((section) => section.schemas.flatMap((schema) => schema.items));
   const favoriteFacetsReady = favoriteReady && (!favoriteIds || (group !== 'favorites' || !keyword.trim()
     ? favoriteSummaryReady : catalogState.group === 'favorites' && catalogState.userId === currentUserId && !!catalogState.key));
@@ -484,7 +489,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     return counts;
   }, [menuGroupSchemaCounts, source, menuFacetsReady]);
   const facetGroupCounts = Object.fromEntries(Object.entries(menuGroupSchemaCounts).map(([key, schemas]) => [key, Object.values(schemas).reduce((sum, count) => sum + count, 0)]));
-  useCatalogMotion(rootRef, `${currentUserId}:${group}`, JSON.stringify([expandedGroup, menuGroupSchemaCounts, displayedFavoriteSchemaCounts]), 'schemas');
+  useCatalogMotion(rootRef, currentUserId, JSON.stringify([expandedGroup, menuGroupSchemaCounts, displayedFavoriteSchemaCounts]), 'schemas');
   const moveCardFocus = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
     if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
     event.preventDefault();
@@ -555,7 +560,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
           {error && <div className="flow-ontology__notice" role="alert"><span>{error}</span><button type="button" onClick={() => setVersion((value) => value + 1)}>Retry</button></div>}
           {favoriteSummaryError && <div className="flow-ontology__notice" role="alert"><span>{favoriteSummaryError}</span><button type="button" onClick={() => setVersion((value) => value + 1)}>Retry</button></div>}
           {favoriteError && <div className="flow-ontology__notice" role="alert"><span>{favoriteError}</span><button type="button" aria-label="Retry favorites" onClick={() => setVersion((value) => value + 1)}>Retry</button></div>}
-          {error && !presentedItems.length ? <div className="flow-ontology__empty"><DatabaseOutlined /><strong>Catalog unavailable</strong><span>Retry to load object types.</span></div> : loading && !presentedItems.length ? <div className="flow-ontology__empty" role="status"><ReloadOutlined spin /><span>Loading object types</span></div> : !presentedItems.length ? <div className="flow-ontology__empty"><DatabaseOutlined /><strong>{group === 'favorites' ? 'No favorite object types' : 'No object types found'}</strong><span>{group === 'favorites' ? 'Star an object type to keep it here.' : 'Try a different resource group, schema, or search.'}</span></div> : <div className={`flow-ontology__collections is-${view}`} data-testid="ontology-assets">
+          {error && !presentedItems.length ? <div className="flow-ontology__empty"><DatabaseOutlined /><strong>Catalog unavailable</strong><span>Retry to load object types.</span></div> : loading && !hasPresentedCatalog ? <div className="flow-ontology__empty" role="status"><ReloadOutlined spin /><span>Loading object types</span></div> : !presentedItems.length ? <div className="flow-ontology__empty"><DatabaseOutlined /><strong>{presentedGroup === 'favorites' ? 'No favorite object types' : 'No object types found'}</strong><span>{presentedGroup === 'favorites' ? 'Star an object type to keep it here.' : 'Try a different resource group, schema, or search.'}</span></div> : <div className={`flow-ontology__collections is-${view}`} data-testid="ontology-assets">
             {sections.map((section) => <section key={section.key} className="flow-ontology__collection"><header className="flow-ontology__collection-heading"><h2>{section.label}</h2></header>{section.schemas.map(({ schema, items }) => <section key={schema} className="flow-ontology__schema-section" data-schema-group={schema}><h3 className="flow-ontology__schema-heading"><PostgresGlyph className="flow-ontology__database-glyph" /><span className="flow-ontology__schema-tag"><DatabaseOutlined /><span title={schema}>{schema}</span></span></h3><div className={`flow-ontology__assets is-${view}`}>
               {items.map((object) => <article key={object.id} data-testid="ontology-object-card" data-object-id={object.id} data-schema={object.schema} className={`flow-ontology__asset${selectedId === object.id ? ' is-selected' : ''}`} style={accentStyle(object.dataType)}>
                 <button ref={(element) => { cardRefs.current[object.id] = element; }} type="button" className="flow-ontology__asset-main" aria-label={`Preview ${object.id}`} aria-pressed={selectedId === object.id} onKeyDown={(event) => moveCardFocus(event, renderedObjects.findIndex((item) => item.id === object.id))} onClick={() => selectObject(object)}>
