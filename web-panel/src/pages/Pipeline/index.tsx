@@ -146,6 +146,9 @@ const explorerPath = '/ontology/explorer';
 function ExplorerTabs() {
     const location = useLocation();
     const navigate = useNavigate();
+    const catalogReturn = useRef('/ontology');
+    const requestedReturn = new URLSearchParams(location.search).get('returnTo');
+    if (requestedReturn === '/ontology' || requestedReturn?.startsWith('/ontology?')) catalogReturn.current = requestedReturn;
     const activeId = new URLSearchParams(location.search).get('exploration') || primaryTab;
     const activeTab = { id: activeId, search: location.search };
     const [tabs, setTabs] = useState<ExplorerTab[]>([activeTab]);
@@ -191,6 +194,8 @@ function ExplorerTabs() {
     }, [navigate]);
     return <div className="flow-exploration-workspace">
         <nav className="flow-exploration-tabs" aria-label="Explorations">
+            <Button className="flow-exploration-back" size="small" icon={<ArrowLeftOutlined />} disabled={lockedTabs.size > 0}
+                onClick={() => navigate(catalogReturn.current)}>Back to object types</Button>
             {visibleTabs.map((tab, i) => {
                 const table = new URLSearchParams(tab.search).get('table');
                 const label = table || 'Exploration ' + (i + 1);
@@ -216,8 +221,6 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
     const isSchemas = !!matchPath('/ontology/explorer', pathname);
     const workspacePath = isSchemas ? '/ontology/explorer' : '/ontology/transforms';
     const requestedView = new URLSearchParams(search).get('view');
-    const returnTo = new URLSearchParams(search).get('returnTo');
-    const catalogReturn = returnTo === '/ontology' || returnTo?.startsWith('/ontology?') ? returnTo : undefined;
     const routerNavigate = useNavigate();
     const tabId = explorerTab?.id;
     const navigateTab = explorerTab?.navigate;
@@ -1181,7 +1184,6 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
                                 setAppliedQuery({filters:q.filters,sorts:q.sorts,search:q.search || ''}); setPageNumber(1);
                             }} addFilter={addColumnFilter} toggleCatalog={() => setCatalogOpen(value => !value)}
                             catalogOpen={catalogOpen} closeCatalog={() => setCatalogOpen(false)} search={search}
-                            backButton={catalogReturn && <Button size="small" icon={<ArrowLeftOutlined />} disabled={workbenchLocked} onClick={() => navigate(catalogReturn)}>Back to object types</Button>}
                             mode={workbenchMode} setMode={setWorkbenchMode} clearSelection={() => { setWorkbenchRows([]); setSelectionEpoch(n => n + 1); }}
                             filterButton={showPreview && <button aria-expanded={filterOpen} onClick={() => activateTool('filter')}>Filter &amp; sort{filterCount + sortCount ? ` (${filterCount + sortCount})` : ''}</button>}
                         />
