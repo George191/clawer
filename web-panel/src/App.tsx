@@ -82,7 +82,7 @@ const App: React.FC = () => {
   const mergedToken = { ...themeTokens, ...currentToken } as any;
 
   message.config({
-    top: 84,
+    top: 64,
     duration: 2.2,
     maxCount: 3,
     rtl: false,

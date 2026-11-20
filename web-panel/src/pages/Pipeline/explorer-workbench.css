@@ -49,6 +49,7 @@
 .wb-selection-tools > span { padding-inline:3px; white-space:nowrap; }
 .wb-selection-tools > button { min-height:22px; padding:2px 5px; font-size:11px; }
 .wb-feedback { padding:5px 12px; margin:0; }
+.explorer-toast .ui-message-notice-content { min-width:min(360px,calc(100vw - 32px)); border-radius:3px; border-inline-start:3px solid var(--ui-action-bg); background:var(--ui-elevated); box-shadow:0 3px 12px #0005; }
 .wb-popup { position:absolute; top:100%; right:12px; width:min(310px,96%); padding:8px; display:grid; gap:4px; z-index:20; box-sizing:border-box; max-height:min(52vh,450px); overflow-y:auto; background:var(--ontology-panel); color:var(--ontology-text); border:1px solid var(--ontology-control-border); border-radius:4px; box-shadow:0 5px 20px var(--ontology-border); }
 .wb-popup--search,.wb-popup--property { left:min(18%,230px); right:auto; top:51px; }
 .wb-popup button { justify-content:flex-start; text-align:left; }

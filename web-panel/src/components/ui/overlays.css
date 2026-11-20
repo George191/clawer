@@ -55,6 +55,8 @@
 .ui-message-rtl{direction:rtl}
 .ui-message-notice{max-width:min(640px,100%);pointer-events:auto}
 .ui-message-notice-content{display:flex;align-items:center;gap:9px;padding:10px 14px;border-radius:7px;background:var(--ui-panel,#252a31);border:1px solid var(--ui-border,#404854);box-shadow:0 6px 24px #0004;color:var(--ui-text,#e9edf3);font-size:13px;line-height:1.5;overflow-wrap:anywhere}
+.ui-message-close{display:inline-flex;flex:none;align-items:center;justify-content:center;width:22px;height:22px;margin-inline-start:auto;padding:0;border:0;border-radius:2px;background:transparent;color:var(--ui-muted);font:inherit;font-size:18px;line-height:1;cursor:pointer}
+.ui-message-close:hover{background:var(--ui-bg);color:var(--ui-text)}
 .ui-message-icon{display:inline-flex;justify-content:center;align-items:center;min-width:16px;font-weight:600;color:var(--ui-primary,#2d72d2)}
 .ui-message-success .ui-message-icon{color:#48c9a2}.ui-message-error .ui-message-icon{color:#f87171}.ui-message-warning .ui-message-icon{color:#f3ba4b}
 .ui-overlay-spinner{display:inline-block;width:13px;height:13px;min-width:13px;box-sizing:border-box;border:1.5px solid currentColor;border-right-color:transparent;border-radius:50%;animation:ui-overlay-spin .75s linear infinite}

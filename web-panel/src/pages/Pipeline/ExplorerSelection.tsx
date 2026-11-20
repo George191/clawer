@@ -101,7 +101,7 @@ function Comparison({ columns, choices, presentations }: { columns: readonly str
       {objectPicker('Second object', right, left, setRight)}
       <Checkbox checked={differencesOnly} onChange={event => setDifferencesOnly(event.target.checked)}>Differences only</Checkbox>
     </div>
-    {fields.length ? <table><thead><tr><th scope="col">Property</th><th scope="col">{left.title}</th><th scope="col">{right.title}</th></tr></thead>
+    {fields.length ? <div className="flow-explorer-selection__comparison-body"><table><thead><tr><th scope="col">Property</th><th scope="col">{left.title}</th><th scope="col">{right.title}</th></tr></thead>
       <tbody>{fields.map(field => {
         const leftValue = propertyValue(left, field), rightValue = propertyValue(right, field);
         const different = !sameValue(leftValue, rightValue);
@@ -109,7 +109,7 @@ function Comparison({ columns, choices, presentations }: { columns: readonly str
           <th scope="row"><PropertyLabel type={left.columnTypes[field] || right.columnTypes[field] || 'string'}>{field}</PropertyLabel>{different && <small>Different</small>}</th>
           <td><ExplorerFieldValue row={left} field={explorerFields(left, [field], undefined, presentations)[0]} /></td><td><ExplorerFieldValue row={right} field={explorerFields(right, [field], undefined, presentations)[0]} /></td>
         </tr>;
-      })}</tbody></table> : <p role="status">No differing properties.</p>}
+      })}</tbody></table></div> : <p role="status">No differing properties.</p>}
   </section>;
 }
 

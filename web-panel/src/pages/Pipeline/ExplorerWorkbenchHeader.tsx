@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { AppstoreOutlined, ArrowLeftOutlined, BarChartOutlined, DownOutlined, SearchOutlined, TableOutlined } from '@/components/ui/icons';
+import { message } from '@/components/ui';
 import { fetchExplorerRowByKey } from '../../services/api';
 import { projectHref } from '../../services/projectDomains';
 import { createSaved, listSaved, openSaved, removeSaved, savedPath, sharing, type Exploration, type ListKey, type SavedDetail, type SavedKind, type SavedMeta, type WorkbenchQuery } from '../../services/explorerSaved';
@@ -129,7 +130,7 @@ export default function ExplorerWorkbenchHeader(p: Props) {
     const path = savedPath(p.schema, p.table);
     const [menu, show] = useState(''), [search, setSearch] = useState(''), [choice, choose] = useState('');
     const [chart, setChart] = useState(''), [name, setName] = useState(''), [error, setError] = useState('');
-    const [busy, setBusy] = useState(false), [notice, setNotice] = useState('');
+    const [busy, setBusy] = useState(false);
     const [saved, setSaved] = useState<SavedDetail>(), [shareLink, setShareLink] = useState('');
     const [page, setPage] = useState(0), [items, setItems] = useState<{
         items: SavedMeta[];
@@ -148,11 +149,11 @@ export default function ExplorerWorkbenchHeader(p: Props) {
     useEffect(() => () => {
         opening.current?.abort();
     }, []);
-    function openMenu(m: string) { show(v => v === m ? '' : m); setError(''); setNotice(''); setPage(0); setShareLink(''); }
-    function display(detail: SavedDetail) {
+    function openMenu(m: string) { show(v => v === m ? '' : m); setError(''); setPage(0); setShareLink(''); }
+    function display(detail: SavedDetail, revealList: boolean) {
         setSaved(detail);
         if (detail.kind === 'list') {
-            show('objects');
+            show(revealList ? 'objects' : '');
             return;
         }
         const view = detail.content;
@@ -162,14 +163,14 @@ export default function ExplorerWorkbenchHeader(p: Props) {
         applyRef.current.setMode(view.view);
         show('');
     }
-    async function openId(id: string) {
+    async function openId(id: string, revealList = true) {
         opening.current?.abort();
         const c = new AbortController();
         opening.current = c;
         try {
             const detail = await openSaved(path, id, c.signal);
             if (!c.signal.aborted)
-                display(detail);
+                display(detail, revealList);
         }
         catch (e) {
             if (!c.signal.aborted)
@@ -179,7 +180,7 @@ export default function ExplorerWorkbenchHeader(p: Props) {
     useEffect(() => {
         if (preservedSavedId) {
             applyRef.current.closeCatalog();
-            void openId(preservedSavedId);
+            void openId(preservedSavedId, false);
         }
         return () => opening.current?.abort();
     }, [path, preservedSavedId]);
@@ -214,7 +215,6 @@ export default function ExplorerWorkbenchHeader(p: Props) {
         setSaveKind(k);
         setName('');
         setError('');
-        setNotice('');
         show('save');
     }
     function snapshot(): Exploration {
@@ -230,7 +230,7 @@ export default function ExplorerWorkbenchHeader(p: Props) {
             const item = await createSaved(path, saveKind, name.trim(), content);
             setSaved({ ...item, content: content as SavedDetail['content'], owned: true });
             show('');
-            setNotice('Saved ' + item.name);
+            message.success({ content: `${saveKind === 'list' ? 'List' : 'Exploration'} saved: ${item.name}`, className: 'explorer-toast', duration: 5, closable: true });
         }
         catch (e) {
             setError(fail(e));
@@ -275,6 +275,7 @@ export default function ExplorerWorkbenchHeader(p: Props) {
             <button data-wb-menu="share" onClick={() => openMenu('share')}>Share</button><button data-wb-menu="save" className="wb-primary" onClick={() => menu === 'save' ? show('') : beginSave('exploration')}>Save</button></>}</div>
         {p.available && <><div className="wb-line wb-tools">
             <div className="wb-left">{p.layoutControl}{p.filterButton}
+                {saved?.kind === 'list' && <button data-wb-menu="objects" title={saved.name} aria-label={'View saved list ' + saved.name} onClick={() => openMenu('objects')}>View list ({saved.content.keys?.length ?? 0})</button>}
                 {!!p.selected.length && <div className="wb-selection-tools" role="toolbar" aria-label="Selected object tools">
                     <span>{p.selected.length} selected</span>
                     <button disabled={p.selected.some(row => !Object.keys(row.identity).length)} onClick={() => beginSave('list')}>Save list</button>
@@ -285,7 +286,7 @@ export default function ExplorerWorkbenchHeader(p: Props) {
             <button aria-pressed={p.resource === 'preview' && p.mode === 'results'} onClick={() => selectMode('results')}><AppstoreOutlined /> Results</button></div>
             <div className="wb-right"><button data-wb-menu="asset" onClick={() => openMenu('asset')}>{p.resource === 'preview' ? 'Open in' : ({ schema: 'Schema', stream: 'Stream', evidence: 'Evidence', api: 'Published APIs' } as const)[p.resource]} <DownOutlined /></button>
                 <button data-wb-menu="export" onClick={() => openMenu('export')}>Export <DownOutlined /></button></div></div>
-        {error && <p className="wb-feedback" role="alert">{error}</p>}{notice && <p className="wb-feedback" role="status">{notice}</p>}
+        {error && <p className="wb-feedback" role="alert">{error}</p>}
         {menu && <section className={'wb-popup wb-popup--' + menu} ref={popup} aria-label="Explorer tools">
             {menu === 'search' && <>{find.map(f => <button key={f} onClick={() => changeField(f)}>{p.names?.[f] || f}</button>)}{!find.length && <p>No matching properties</p>}</>}
             {menu === 'property' && <><strong>{p.names?.[choice] || choice}</strong>
@@ -312,11 +313,12 @@ export default function ExplorerWorkbenchHeader(p: Props) {
                     setError(fail(e));
                 } }}>×</button></div>)}
                 {(page > 0 || items?.hasMore) && <div><button disabled={!page} onClick={() => setPage(v => v - 1)}>Previous</button><button disabled={!items?.hasMore} onClick={() => setPage(v => v + 1)}>Next</button></div>}</>}
-            {menu === 'objects' && saved?.kind === 'list' && <><strong>{saved.name}</strong><RelatedList schema={p.schema} table={p.table} keys={saved.content.keys ?? []} titleProperty={p.titleProperty} primaryKey={p.primaryKey}/></>}
+            {menu === 'objects' && saved?.kind === 'list' && <><strong>List: {saved.name}</strong><p>Saved object references. Open an object to see its current details.</p><RelatedList schema={p.schema} table={p.table} keys={saved.content.keys ?? []} titleProperty={p.titleProperty} primaryKey={p.primaryKey}/></>}
             {menu === 'save' && <form onSubmit={e => { e.preventDefault(); void save(); }}><label>{saveKind === 'list' ? 'List name' : 'Exploration name'}<input autoFocus required maxLength={100} value={name} onChange={e => setName(e.target.value)}/></label>
                 <button className="wb-primary" disabled={busy || !name.trim()}>Save {saveKind}</button></form>}
-            {menu === 'share' && <><strong>Share {saved?.name || 'exploration'}</strong>
+            {menu === 'share' && <><strong>{saved ? `Share ${saved.kind}: ${saved.name}` : 'Share exploration'}</strong>
                 {!saved ? <button onClick={() => beginSave('exploration')}>Save exploration first</button> : <>
+                    <p>{saved.kind === 'list' ? 'Shares saved object references. Object values are read when opened.' : 'Shares filters, sorting, search, partition, chart and result mode. Column layouts and data snapshots are not included.'}</p>
                     <p>People with the link must sign in and have access to this object type.</p>
                     <button disabled={busy || (!saved.owned && !saved.shared)} onClick={share}>{saved.shared ? 'Show share link' : 'Enable link sharing'}</button>
                     {saved.owned && saved.shared && <button onClick={async () => { try {

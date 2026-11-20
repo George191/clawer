@@ -198,9 +198,13 @@
 .flow-explorer-selection__fields dd { min-width:0; margin: 0; }
 .flow-explorer-selection__property-value { white-space: pre-wrap; overflow-wrap: anywhere; }
 .flow-explorer-selection__empty-value { color: var(--ontology-muted); font-style: italic; }
+.flow-explorer-selection__comparison { display:flex; flex-direction:column; }
+.flow-explorer-selection__comparison-controls { flex:none; }
+.flow-explorer-selection__comparison-body { flex:1; min-height:0; overflow:auto; }
 .flow-explorer-selection__comparison table { width: 100%; border-collapse: collapse; table-layout: fixed; }
 .flow-explorer-selection__comparison :is(th, td) { border: 1px solid var(--ontology-control-border); padding: 5px 7px; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
 .flow-explorer-selection__comparison th { font-size: 12px; background: var(--ontology-panel); }
+.flow-explorer-selection__comparison thead th { position:sticky; top:0; z-index:1; }
 .flow-explorer-selection__comparison .is-different td { background:var(--explorer-selection-bg); }
 .flow-explorer-selection__comparison .is-different small { color:var(--ontology-muted); }
 .flow-explorer-selection pre { max-width: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -281,4 +285,5 @@
 .flow-explorer-selection__properties { display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden; }
 .flow-explorer-selection__properties > .flow-explorer-selection__filters { flex:none; }
 .flow-explorer-selection__properties > .flow-explorer-selection__fields { flex:1; min-height:0; overflow:auto; }
-.flow-explorer-selection__content > :is(.flow-explorer-overview,.explorer-row-links,.flow-explorer-selection__comparison,.flow-explorer-row-mutation) { flex:1; min-height:0; overflow:auto; }
+.flow-explorer-selection__content > :is(.flow-explorer-overview,.explorer-row-links,.flow-explorer-row-mutation) { flex:1; min-height:0; overflow:auto; }
+.flow-explorer-selection__content > .flow-explorer-selection__comparison { flex:1; min-height:0; overflow:hidden; }

@@ -228,7 +228,7 @@ export function Popconfirm({ children, title, description, onConfirm, onCancel, 
 }
 
 export type MessageType = 'success' | 'error' | 'warning' | 'info' | 'loading';
-export interface MessageConfig extends AnyProps { content?: React.ReactNode; key?: React.Key; type?: MessageType; duration?: number; onClose?: () => void; }
+export interface MessageConfig extends AnyProps { content?: React.ReactNode; key?: React.Key; type?: MessageType; duration?: number; closable?: boolean; onClose?: () => void; }
 type Notice = MessageConfig & { key: React.Key; finish: () => void; timer?: ReturnType<typeof setTimeout> };
 export interface MessageResult extends Promise<void> { (): void; }
 let noticeRoot: Root | null = null; let noticeHost: HTMLDivElement | null = null; let sequence = 0;
@@ -236,7 +236,7 @@ let messageSettings: AnyProps = { top:24,duration:3,maxCount:5 }; const notices 
 const symbols: Record<MessageType,string> = {success:'✓',error:'×',warning:'!',info:'i',loading:''};
 function renderNotices() {
   if (!noticeHost) { noticeHost=document.createElement('div'); noticeHost.dataset.uiMessages=''; (messageSettings.getContainer?.() || document.body).appendChild(noticeHost); noticeRoot=createRoot(noticeHost); }
-  noticeRoot!.render(<div className={cx('ui-message',messageSettings.rtl && 'ui-message-rtl')} style={{top:messageSettings.top}}>{[...notices.values()].map(notice => <div key={notice.key} className={cx('ui-message-notice',notice.className)} style={notice.style}><div className={cx('ui-message-notice-content',`ui-message-${notice.type || 'info'}`)} role={notice.type==='error' || notice.type==='warning'?'alert':'status'} aria-live={notice.type==='error'?'assertive':'polite'} onClick={notice.onClick}><span aria-hidden="true" className={cx('ui-message-icon',notice.type==='loading' && 'ui-overlay-spinner')}>{notice.icon ?? symbols[notice.type || 'info']}</span><span>{notice.content}</span></div></div>)}</div>);
+  noticeRoot!.render(<div className={cx('ui-message',messageSettings.rtl && 'ui-message-rtl')} style={{top:messageSettings.top}}>{[...notices.values()].map(notice => <div key={notice.key} className={cx('ui-message-notice',notice.className)} style={notice.style}><div className={cx('ui-message-notice-content',`ui-message-${notice.type || 'info'}`)} role={notice.type==='error' || notice.type==='warning'?'alert':'status'} aria-live={notice.type==='error'?'assertive':'polite'} onClick={notice.onClick}><span aria-hidden="true" className={cx('ui-message-icon',notice.type==='loading' && 'ui-overlay-spinner')}>{notice.icon ?? symbols[notice.type || 'info']}</span><span>{notice.content}</span>{notice.closable && <button type="button" className="ui-message-close" aria-label="Dismiss notification" onClick={event=>{event.stopPropagation();removeNotice(notice.key);}}>×</button>}</div></div>)}</div>);
 }
 function removeNotice(key: React.Key) { const notice=notices.get(key); if (!notice) return; clearTimeout(notice.timer); notices.delete(key); notice.finish(); notice.onClose?.(); renderNotices(); }
 function openMessage(config: MessageConfig): MessageResult {

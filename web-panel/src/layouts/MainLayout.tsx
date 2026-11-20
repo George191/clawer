@@ -301,7 +301,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const palette = {
     appBg: isDark ? '#171A22' : '#F6F8FB',
     surface: isDark ? '#22262F' : '#FFFFFF',
-    header: isDark ? '#252932' : '#FFFFFF',
+    header: isDark ? '#111820' : '#E2E8F0',
     sidebar: isDark ? '#20242C' : '#FFFFFF',
     border: isDark ? 'rgba(255, 255, 255, 0.08)' : '#E2E8F0',
     borderSoft: isDark ? 'rgba(255, 255, 255, 0.05)' : '#EEF2F7',
