@@ -168,8 +168,10 @@ async def work(folder, number, mode):
             checkpoint = db.execute('SELECT last_key,done FROM checkpoints WHERE prefix=?', (prefix,)).fetchone()
             if checkpoint and checkpoint[1]:
                 continue
-            iterator = client.list_objects(settings.minio_bucket, prefix=prefix, recursive=True,
-                                           include_user_meta=True, start_after=checkpoint[0] if checkpoint else None)
+            # The public iterator fixes metadata pages at 1,000; bound each request to our batch.
+            iterator = client._list_objects(settings.minio_bucket, prefix=prefix, delimiter='', encoding_type='url',
+                                            include_user_meta=True, max_keys=BATCH,
+                                            start_after=checkpoint[0] if checkpoint else None)
             while batch := list(islice(iterator, BATCH)):
                 for obj in batch:
                     if (obj.metadata or {}).get('content-type', '').lower().startswith(('text/html', 'application/xhtml+xml')):
