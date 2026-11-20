@@ -7,7 +7,6 @@ import json
 import multiprocessing
 import os
 from pathlib import Path
-import sqlite3
 import sys
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -74,6 +73,8 @@ async def work(folder, number, mode):
                     raise RuntimeError('Replacement is not verified in Mongo, RDS and ODS')
                 db.execute('INSERT OR REPLACE INTO items VALUES (?,?,?,?,?)', (key, pending[0], 'repaired', '', attempts))
                 db.commit()
+                if mode == 'apply':
+                    await clean(key)
                 return
             items = downloader._plan_download(doc, template, 'twitter', 'tweet')[0] if doc else []
             matching = [item for item in items if get_nested_value(doc, item.asset_key) == key]
@@ -115,40 +116,46 @@ async def work(folder, number, mode):
             error = f'{type(exc).__name__}: {exc}'[:1000]
         db.execute('INSERT OR REPLACE INTO items VALUES (?,?,?,?,?)', (key, new, status, error, attempts))
         db.commit()
+        if status == 'repaired' and mode == 'apply':
+            await clean(key)
+
+    async def clean(key):
+        try:
+            prefix, record_id = '/'.join(key.split('/')[:2]), key.split('/')[2]
+            db.execute('UPDATE objects SET phase="source_updated" WHERE old=?', (key,))
+            db.commit()
+            if not await verify_group(db, client, mongo[settings.db_name], registered, prefix, record_id):
+                raise RuntimeError('References changed; old object retained')
+            try:
+                info = client.stat_object(settings.minio_bucket, key)
+            except Exception as exc:
+                if getattr(exc, 'code', None) != 'NoSuchKey':
+                    raise
+                info = None
+            if info is not None:
+                if not (info.content_type or '').lower().startswith(('text/html', 'application/xhtml+xml')):
+                    raise RuntimeError('Old object is no longer HTML; retained for review')
+                client.remove_object(settings.minio_bucket, key)
+            try:
+                client.stat_object(settings.minio_bucket, key)
+            except Exception as exc:
+                if getattr(exc, 'code', None) != 'NoSuchKey':
+                    raise
+            else:
+                raise RuntimeError('Old object still exists after deletion')
+            db.execute('UPDATE items SET status="deleted",error="" WHERE old=?', (key,))
+        except Exception as exc:
+            db.execute('UPDATE items SET status="cleanup_failed",error=? WHERE old=?', (str(exc)[:1000], key))
+        db.commit()
 
     def counts():
         return dict(db.execute('SELECT status,count(*) FROM items GROUP BY status'))
 
     try:
+        if mode in ('apply', 'clean'):
+            for (key,) in db.execute('SELECT old FROM items WHERE status IN ("repaired","cleanup_failed")').fetchall():
+                await clean(key)
         if mode == 'clean':
-            for key, new in db.execute('SELECT old,new FROM items WHERE status IN ("repaired","cleanup_failed")').fetchall():
-                try:
-                    prefix, record_id = '/'.join(key.split('/')[:2]), key.split('/')[2]
-                    db.execute('UPDATE objects SET phase="source_updated" WHERE old=?', (key,))
-                    db.commit()
-                    if not await verify_group(db, client, mongo[settings.db_name], registered, prefix, record_id):
-                        raise RuntimeError('References changed; old object retained')
-                    try:
-                        info = client.stat_object(settings.minio_bucket, key)
-                    except Exception as exc:
-                        if getattr(exc, 'code', None) != 'NoSuchKey':
-                            raise
-                        info = None
-                    if info is not None:
-                        if not (info.content_type or '').lower().startswith(('text/html', 'application/xhtml+xml')):
-                            raise RuntimeError('Old object is no longer HTML; retained for review')
-                        client.remove_object(settings.minio_bucket, key)
-                    try:
-                        client.stat_object(settings.minio_bucket, key)
-                    except Exception as exc:
-                        if getattr(exc, 'code', None) != 'NoSuchKey':
-                            raise
-                    else:
-                        raise RuntimeError('Old object still exists after deletion')
-                    db.execute('UPDATE items SET status="deleted",error="" WHERE old=?', (key,))
-                except Exception as exc:
-                    db.execute('UPDATE items SET status="cleanup_failed",error=? WHERE old=?', (str(exc)[:1000], key))
-                db.commit()
             report(folder / f'worker-{number}.json', {'worker': number, 'pid': os.getpid(), 'counts': counts(),
                                                     'complete': not counts().get('cleanup_failed') and not counts().get('failed')})
             return
@@ -173,7 +180,8 @@ async def work(folder, number, mode):
             db.execute('INSERT OR REPLACE INTO checkpoints VALUES (?,?,1)', (prefix, checkpoint[0] if checkpoint else ''))
             db.commit()
         report(folder / f'worker-{number}.json', {'worker': number, 'pid': os.getpid(), 'counts': counts(),
-                                                'traversal_complete': True, 'complete': not counts().get('failed')})
+                                                'traversal_complete': True,
+                                                'complete': not counts().get('failed') and not counts().get('cleanup_failed')})
     finally:
         await downloader.stop()
         await metadata.close()
