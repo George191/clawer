@@ -13,13 +13,13 @@ import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import filetype
 import urllib3
 from minio import Minio
-from minio.commonconfig import CopySource
 from minio.error import S3Error
 from pymongo import MongoClient
 from sqlalchemy import text
@@ -148,47 +148,56 @@ def inventory(path):
 
 def copy_object(client, old, prefix, record_id):
     info = client.stat_object(settings.minio_bucket, old)
-    parts = old.split('/')
-    digest = parts[-2] if len(parts) == 6 and HEX.fullmatch(parts[-2]) and HEX.fullmatch(parts[-3]) else None
-    response = client.get_object(settings.minio_bucket, old, length=32768 if digest else 0)
-    first, calculated = b'', hashlib.sha256()
-    try:
-        for chunk in response.stream(1024 * 1024):
-            if len(first) < 32768:
-                first += chunk[:32768 - len(first)]
-            if digest is None:
-                calculated.update(chunk)
-    finally:
-        response.close();response.release_conn()
-    digest = digest or calculated.hexdigest()
-    detected = filetype.guess(first)
-    extension = '.' + detected.extension if detected else Path(old).suffix
-    new = f'{prefix}/{record_id}/{digest}{extension}'
-    if new == old:
-        return new
-    try:
-        client.copy_object(settings.minio_bucket, new, CopySource(settings.minio_bucket, old))
-    except urllib3.exceptions.TimeoutError as error:
-        # Copy completion can precede a lost response. Verify bytes before resuming.
+    first, calculated, size = b'', hashlib.sha256(), 0
+    with TemporaryDirectory(prefix='spider-key-migration-') as directory:
+        payload = Path(directory) / 'payload'
+        response = client.get_object(settings.minio_bucket, old)
         try:
-            client.stat_object(settings.minio_bucket, new)
-        except S3Error as missing:
-            if missing.code in {'NoSuchKey', 'NoSuchObject'}:
-                raise error from missing
-            raise
-        print(json.dumps({'copy_response_timeout': old, 'checking_destination': new}), flush=True)
-    after = client.stat_object(settings.minio_bucket, new)
-    if after.size != info.size or after.etag != info.etag:
-        response = client.get_object(settings.minio_bucket, new)
-        checked = hashlib.sha256()
-        try:
-            for chunk in response.stream(1024 * 1024):
-                checked.update(chunk)
+            with payload.open('wb') as stream:
+                for chunk in response.stream(1024 * 1024):
+                    stream.write(chunk)
+                    size += len(chunk)
+                    calculated.update(chunk)
+                    if len(first) < 32768:
+                        first += chunk[:32768 - len(first)]
         finally:
             response.close();response.release_conn()
-        if after.size != info.size or checked.hexdigest() != digest:
-            raise ValueError('Published object verification failed: ' + new)
-    return new
+        if size != info.size:
+            raise ValueError('Source object size verification failed: ' + old)
+        digest = calculated.hexdigest()
+        parts = old.split('/')
+        if (len(parts) == 6 and HEX.fullmatch(parts[-2]) and HEX.fullmatch(parts[-3])
+                and digest != parts[-2]):
+            raise ValueError('Source object hash verification failed: ' + old)
+        detected = filetype.guess(first)
+        extension = '.' + detected.extension if detected else Path(old).suffix
+        new = f'{prefix}/{record_id}/{digest}{extension}'
+        if new == old:
+            return new
+        try:
+            client.fput_object(settings.minio_bucket, new, str(payload),
+                               content_type=detected.mime if detected else info.content_type)
+        except urllib3.exceptions.TimeoutError as error:
+            # Upload completion can precede a lost response; verify the destination.
+            try:
+                client.stat_object(settings.minio_bucket, new)
+            except S3Error as missing:
+                if missing.code in {'NoSuchKey', 'NoSuchObject'}:
+                    raise error from missing
+                raise
+            print(json.dumps({'upload_response_timeout': old, 'checking_destination': new}), flush=True)
+        after = client.stat_object(settings.minio_bucket, new)
+        if after.size != info.size or after.etag != info.etag:
+            response = client.get_object(settings.minio_bucket, new)
+            checked = hashlib.sha256()
+            try:
+                for chunk in response.stream(1024 * 1024):
+                    checked.update(chunk)
+            finally:
+                response.close();response.release_conn()
+            if after.size != info.size or checked.hexdigest() != digest:
+                raise ValueError('Published object verification failed: ' + new)
+        return new
 
 
 def source_documents(mongo, registered, prefix, record_id):

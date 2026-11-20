@@ -33,20 +33,20 @@ def test_copy_flattens_duplicate_extension_and_checks_published_bytes():
     payload = b'video fixture'
     digest = hashlib.sha256(payload).hexdigest()
     client = Mock()
-    client.stat_object.return_value = SimpleNamespace(size=len(payload), etag='same-content')
+    client.stat_object.return_value = SimpleNamespace(size=len(payload), etag='same-content', content_type='application/octet-stream')
     response = client.get_object.return_value
     response.stream.return_value = [payload]
     old = 'tweet/twitter/' + 'a' * 32 + '/' + 'b' * 64 + '/movie.mp4.mp4'
     new = migration.copy_object(client, old, 'tweet/twitter', 'a' * 32)
     assert new == 'tweet/twitter/' + 'a' * 32 + '/' + digest + '.mp4'
-    assert client.copy_object.call_args.args[1] == new
+    assert client.fput_object.call_args.args[1] == new
     response.close.assert_called_once()
     response.release_conn.assert_called_once()
 
 
 def test_copy_fails_if_destination_content_differs():
     client = Mock()
-    client.stat_object.side_effect = [SimpleNamespace(size=3, etag='old'), SimpleNamespace(size=3, etag='new')]
+    client.stat_object.side_effect = [SimpleNamespace(size=3, etag='old', content_type='application/octet-stream'), SimpleNamespace(size=3, etag='new', content_type='application/octet-stream')]
     client.get_object.return_value.stream.side_effect = [[b'old'], [b'bad']]
     import pytest
     with pytest.raises(ValueError, match='verification failed'):
@@ -56,23 +56,59 @@ def test_copy_fails_if_destination_content_differs():
 def test_copy_timeout_accepts_only_a_verified_destination():
     payload = b'video fixture'
     client = Mock()
-    client.stat_object.return_value = SimpleNamespace(size=len(payload), etag='same-content')
+    client.stat_object.return_value = SimpleNamespace(size=len(payload), etag='same-content', content_type='application/octet-stream')
     client.get_object.return_value.stream.return_value = [payload]
-    client.copy_object.side_effect = migration.urllib3.exceptions.ReadTimeoutError(None, '/copy', 'lost response')
+    client.fput_object.side_effect = migration.urllib3.exceptions.ReadTimeoutError(None, '/copy', 'lost response')
     new = migration.copy_object(client, 'tweet/twitter/' + 'a' * 32 + '/video.mp4.mp4', 'tweet/twitter', 'a' * 32)
     assert new.endswith('/' + hashlib.sha256(payload).hexdigest() + '.mp4')
-    client.copy_object.assert_called_once()
+    client.fput_object.assert_called_once()
+    client.copy_object.assert_not_called()
 
 
 def test_copy_timeout_without_destination_remains_an_explicit_failure():
     client = Mock()
     failure = migration.urllib3.exceptions.ReadTimeoutError(None, '/copy', 'lost response')
     missing = migration.S3Error(None, 'NoSuchKey', 'missing', None, None, None)
-    client.stat_object.side_effect = [SimpleNamespace(size=3, etag='old'), missing]
+    client.stat_object.side_effect = [SimpleNamespace(size=3, etag='old', content_type='application/octet-stream'), missing]
     client.get_object.return_value.stream.return_value = [b'old']
-    client.copy_object.side_effect = failure
+    client.fput_object.side_effect = failure
     with pytest.raises(migration.urllib3.exceptions.ReadTimeoutError):
         migration.copy_object(client, 'tweet/twitter/' + 'a' * 32 + '/video.mp4', 'tweet/twitter', 'a' * 32)
+
+
+def test_migration_uploads_exact_source_bytes_and_removes_transfer_buffer():
+    from pathlib import Path
+    payload = b'complete source bytes'
+    client = Mock()
+    client.stat_object.return_value = SimpleNamespace(size=len(payload), etag='same', content_type='video/mp4')
+    client.get_object.return_value.stream.return_value = [payload[:5], payload[5:]]
+    paths = []
+    def upload(bucket, key, path, **kwargs):
+        paths.append(Path(path))
+        assert paths[-1].read_bytes() == payload
+    client.fput_object.side_effect = upload
+    migration.copy_object(client, 'tweet/twitter/' + 'a' * 32 + '/video.mp4.mp4', 'tweet/twitter', 'a' * 32)
+    assert paths and not paths[0].exists()
+    client.copy_object.assert_not_called()
+
+
+def test_incomplete_source_is_rejected_before_upload():
+    client = Mock()
+    client.stat_object.return_value = SimpleNamespace(size=10, etag='source')
+    client.get_object.return_value.stream.return_value = [b'short']
+    with pytest.raises(ValueError, match='Source object size verification failed'):
+        migration.copy_object(client, 'tweet/twitter/' + 'a' * 32 + '/video.mp4', 'tweet/twitter', 'a' * 32)
+    client.fput_object.assert_not_called()
+
+
+def test_changed_source_content_is_not_relabelled_as_a_successful_migration():
+    client = Mock()
+    client.stat_object.return_value = SimpleNamespace(size=4, etag='source')
+    client.get_object.return_value.stream.return_value = [b'file']
+    old = 'tweet/twitter/' + 'a' * 32 + '/' + 'b' * 64 + '/' + 'c' * 64 + '/video.mp4'
+    with pytest.raises(ValueError, match='Source object hash verification failed'):
+        migration.copy_object(client, old, 'tweet/twitter', 'a' * 32)
+    client.fput_object.assert_not_called()
 
 
 def test_resume_after_mongo_commit_still_requires_downstream_verification(tmp_path):
