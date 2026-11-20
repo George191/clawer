@@ -101,7 +101,7 @@ export function ExplorerValue({ value, text, identity = {}, field }: {
     <a href={file.href} target="_blank" rel="noopener noreferrer" title={file.name} onClick={event => {
       if (field && Object.keys(identity).length) { event.preventDefault(); void openFile(false, Boolean(kind)); }
     }}>{file.name}</a>
-    <svg className="explorer-s3-icon" role="img" aria-label="S3" viewBox="0 0 24 24"><path d="M4 5h16l-2 15H6L4 5Z" fill="currentColor" opacity=".2"/><ellipse cx="12" cy="5" rx="8" ry="3" fill="none" stroke="currentColor"/><path d="m4 5 2 15c4 2 8 2 12 0l2-15" fill="none" stroke="currentColor"/><text x="6" y="16" fontSize="8" fill="currentColor">S3</text></svg>
+    <img className="explorer-minio-icon" src="/minio-logo.svg" alt="MinIO" title="MinIO" />
     {kind && <button type="button" aria-label={'Preview ' + file.name} title="Preview file" disabled={busy || !field || !Object.keys(identity).length} onClick={() => void openFile(false, true)}><EyeOutlined /></button>}
     <button type="button" aria-label={'Download ' + file.name} title={Object.keys(identity).length ? 'Download file' : 'A primary key is required to download this file'} disabled={busy || !field || !Object.keys(identity).length} onClick={() => void openFile(true)}><DownloadOutlined /></button>{error && <span role="alert">{error}</span>}
     {preview && <Modal open centered width={960} title={file.name} footer={null} onCancel={() => setPreview(undefined)} className="flow-surface-modal explorer-file-preview">

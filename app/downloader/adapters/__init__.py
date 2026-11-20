@@ -2,11 +2,10 @@
 from typing import Any
 
 from . import news, sec_edgar, twitter
-from .base import DownloadHandler, ResponseValidator
+from .base import DownloadHandler
 from .base import DownloadItem as DownloadItem
 
 _HANDLERS: dict[tuple[str | None, str], DownloadHandler] = {}
-_RESPONSE_VALIDATORS: dict[str, ResponseValidator] = {"sec_edgar": sec_edgar.validate_response}
 _COLLECTION_ROUTES = {**sec_edgar.COLLECTION_ROUTES, **twitter.COLLECTION_ROUTES}
 
 
@@ -45,8 +44,3 @@ def get_download_adapter(
         template_name = resolved_template if template_name is None else template_name
         data_type = resolved_type if data_type is None else data_type
     return _HANDLERS.get((template_name, data_type)) or _HANDLERS.get((None, data_type))
-
-
-def get_download_response_validator(template_name: str) -> ResponseValidator | None:
-    template_name, _ = _COLLECTION_ROUTES.get(template_name, (template_name, ""))
-    return _RESPONSE_VALIDATORS.get(template_name)

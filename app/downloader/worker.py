@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+from mimetypes import guess_type
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -17,9 +18,9 @@ from app.base.http import DownloadCleanupError, DownloadError, is_download_file_
 from app.config.settings import settings
 from app.downloader.adapters import (
     DownloadItem,
-    get_download_response_validator,
     resolve_download_record,
 )
+from app.downloader.adapters.base import validate_response
 from app.downloader.http_client import HttpClient
 from app.engine.template_loader import TemplateLoader
 from app.logger import get_logger
@@ -498,11 +499,12 @@ class DownloadWorker:
                 response = await self._http.download_to_file(
                     item.url, Path(directory) / "payload", use_proxy=use_proxy,
                 )
-                validator = get_download_response_validator(template_name)
-                if validator is not None:
-                    validator(item, response)
+                validate_response(item, response)
                 if item.attachment and (response.content_type or "").startswith("text/html"):
                     raise DownloadError(item.url, response.status_code, "attachment is HTML")
+                expected_type = guess_type(item.filename)[0] or ""
+                if expected_type.startswith(("image/", "video/", "audio/")) and (response.content_type or "").lower().startswith(("text/html", "application/xhtml+xml")):
+                    raise DownloadError(item.url, response.status_code, "media download returned HTML")
             except DownloadCleanupError:
                 raise
             except Exception as exc:
