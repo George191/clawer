@@ -25,6 +25,8 @@ def normalize_twitter_media(tweet: dict[str, Any]) -> list[dict[str, Any]]:
             "source_url": safe_str(media.get("url")),
             "url": safe_local_asset_path(downloaded_tweet["media"][index].get("url"))
             if ("media", str(index), "url") in asset_paths else None,
+            "thumbnail": safe_local_asset_path(downloaded_tweet["media"][index].get("thumbnail_url"))
+            if ("media", str(index), "thumbnail_url") in asset_paths else None,
             "width": media.get("width"),
             "height": media.get("height"),
             "duration_ms": media.get("duration"),

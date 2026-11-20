@@ -224,6 +224,7 @@ _CATALOG_FIELDS: dict[str, dict[str, str]] = {
         "media_type": "TEXT NOT NULL",
         "source_url": "TEXT",
         "url": "TEXT",
+        "thumbnail": "TEXT",
         "width": "INTEGER",
         "height": "INTEGER",
         "duration_ms": "BIGINT",
