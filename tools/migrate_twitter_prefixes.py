@@ -96,53 +96,57 @@ def worker(path, shard, db_gate):
                 raise RuntimeError('Concurrent source update during Twitter metadata repair')
             print(json.dumps({'worker': shard, 'source_repaired': doc['_meta']['record_id']}), flush=True)
 
-    for route in registered:
-        if route['template_name'] != 'twitter':
-            continue
-        query = {'$or': [
-            {'_meta.data_type': {'$ne': route['data_type']}},
-            {'_meta.template': {'$ne': route['collection_name']}},
-            {'media.contentType': {'$exists': True}},
-            {'media_extra.contentType': {'$exists': True}},
-            {'referenced_tweets.tweet.media.contentType': {'$exists': True}},
-        ]}
-        cursor = mongo[route['collection_name']].find(query, {'_meta.record_id': 1}).sort(
-            '_meta.record_id', 1).hint([('_meta.record_id', 1)]).batch_size(migration.BATCH).max_time_ms(120000)
-        for doc in cursor:
-            record_id = doc['_meta']['record_id']
-            if int(record_id, 16) % migration.WORKERS == shard:
-                repair((f"{route['data_type']}/{route['template_name']}", record_id))
-
     inventory = migration.journal(path)
-    pending = []
-    for route in registered:
-        if route['template_name'] != 'twitter':
-            continue
-        # Download failures can still own valid files; inventory all source assets.
-        for doc in mongo[route['collection_name']].find({'assets': {'$exists': True}},
-                {'assets': 1, '_meta.record_id': 1}).batch_size(migration.BATCH):
-            record_id = doc['_meta']['record_id']
-            if int(record_id, 16) % migration.WORKERS != shard:
+    preflight_key = f'twitter-contract-assets:{shard}'
+    if not inventory.execute('SELECT 1 FROM progress WHERE prefix=? AND done=1', (preflight_key,)).fetchone():
+        for route in registered:
+            if route['template_name'] != 'twitter':
                 continue
-            for _, value in migration.strings(doc['assets']):
-                if not value:
+            query = {'$or': [
+                {'_meta.data_type': {'$ne': route['data_type']}},
+                {'_meta.template': {'$ne': route['collection_name']}},
+                {'media.contentType': {'$exists': True}},
+                {'media_extra.contentType': {'$exists': True}},
+                {'referenced_tweets.tweet.media.contentType': {'$exists': True}},
+            ]}
+            cursor = mongo[route['collection_name']].find(query, {'_meta.record_id': 1}).sort(
+                '_meta.record_id', 1).hint([('_meta.record_id', 1)]).batch_size(migration.BATCH).max_time_ms(120000)
+            for doc in cursor:
+                record_id = doc['_meta']['record_id']
+                if int(record_id, 16) % migration.WORKERS == shard:
+                    repair((f"{route['data_type']}/{route['template_name']}", record_id))
+
+        pending = []
+        for route in registered:
+            if route['template_name'] != 'twitter':
+                continue
+            # Download failures can still own valid files; inventory all source assets.
+            for doc in mongo[route['collection_name']].find({'assets': {'$exists': True}},
+                    {'assets': 1, '_meta.record_id': 1}).batch_size(migration.BATCH):
+                record_id = doc['_meta']['record_id']
+                if int(record_id, 16) % migration.WORKERS != shard:
                     continue
-                if value.startswith(('http://', 'https://', 's3://', 'minio://')):
-                    continue
-                parts = value.split('/')
-                if len(parts) < 4 or parts[2] != record_id:
-                    raise ValueError('Invalid Twitter resource ownership: ' + value)
-                prefix = '/'.join(parts[:2])
-                canonical = (len(parts) == 4 and migration.HEX.fullmatch(Path(parts[-1]).stem)
-                             and prefix == f"{route['data_type']}/{route['template_name']}")
-                pending.append((value, prefix, record_id, shard, value if canonical else None,
-                                'canonical' if canonical else 'planned'))
-                if len(pending) == migration.BATCH:
-                    inventory.executemany('INSERT OR IGNORE INTO objects(old,prefix,record_id,shard,new,phase) VALUES(?,?,?,?,?,?)', pending)
-                    inventory.commit()
-                    pending.clear()
-    if pending:
-        inventory.executemany('INSERT OR IGNORE INTO objects(old,prefix,record_id,shard,new,phase) VALUES(?,?,?,?,?,?)', pending)
+                for _, value in migration.strings(doc['assets']):
+                    if not value:
+                        continue
+                    if value.startswith(('http://', 'https://', 's3://', 'minio://')):
+                        continue
+                    parts = value.split('/')
+                    if len(parts) < 4 or parts[2] != record_id:
+                        raise ValueError('Invalid Twitter resource ownership: ' + value)
+                    prefix = '/'.join(parts[:2])
+                    canonical = (len(parts) == 4 and migration.HEX.fullmatch(Path(parts[-1]).stem)
+                                 and prefix == f"{route['data_type']}/{route['template_name']}")
+                    pending.append((value, prefix, record_id, shard, value if canonical else None,
+                                    'canonical' if canonical else 'planned'))
+                    if len(pending) == migration.BATCH:
+                        inventory.executemany('INSERT OR IGNORE INTO objects(old,prefix,record_id,shard,new,phase) VALUES(?,?,?,?,?,?)', pending)
+                        inventory.commit()
+                        pending.clear()
+        if pending:
+            inventory.executemany('INSERT OR IGNORE INTO objects(old,prefix,record_id,shard,new,phase) VALUES(?,?,?,?,?,?)', pending)
+            inventory.commit()
+        inventory.execute('INSERT OR REPLACE INTO progress VALUES(?,?,1)', (preflight_key, ''))
         inventory.commit()
     inventory.close()
 
