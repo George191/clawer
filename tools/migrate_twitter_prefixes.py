@@ -119,7 +119,10 @@ def worker(path, shard, db_gate):
             pg = await migration.connect_pg()
         try:
             while True:
-                pending = db.execute(f'SELECT DISTINCT prefix,record_id FROM objects WHERE {SCOPE} AND shard=? AND phase="source_updated" LIMIT 100', (shard,)).fetchall()
+                pending = db.execute(f'''SELECT DISTINCT prefix,record_id FROM objects
+                    WHERE {SCOPE} AND shard=? AND phase="source_updated"
+                    ORDER BY CASE WHEN prefix IN ('social_media/twitter','twitter/twitter') THEN 0 ELSE 1 END,
+                             prefix,record_id LIMIT 100''', (shard,)).fetchall()
                 for group in pending:
                     repair(group)
                     for attempt in range(3):
