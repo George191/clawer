@@ -86,6 +86,23 @@ def worker(path, shard, db_gate):
                 raise RuntimeError('Concurrent source update during Twitter metadata repair')
             print(json.dumps({'worker': shard, 'source_repaired': doc['_meta']['record_id']}), flush=True)
 
+    for route in registered:
+        if route['template_name'] != 'twitter':
+            continue
+        query = {'$or': [
+            {'_meta.data_type': {'$ne': route['data_type']}},
+            {'_meta.template': {'$ne': route['collection_name']}},
+            {'media.contentType': {'$exists': True}},
+            {'media_extra.contentType': {'$exists': True}},
+            {'referenced_tweets.tweet.media.contentType': {'$exists': True}},
+        ]}
+        cursor = mongo[route['collection_name']].find(query, {'_meta.record_id': 1}).sort(
+            '_meta.record_id', 1).hint([('_meta.record_id', 1)]).batch_size(migration.BATCH).max_time_ms(120000)
+        for doc in cursor:
+            record_id = doc['_meta']['record_id']
+            if int(record_id, 16) % migration.WORKERS == shard:
+                repair((f"{route['data_type']}/{route['template_name']}", record_id))
+
     async def run():
         db = migration.journal(path)
         with db_gate:
