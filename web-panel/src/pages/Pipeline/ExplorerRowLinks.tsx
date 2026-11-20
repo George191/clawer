@@ -87,16 +87,18 @@ function LinkPage({ schema, table, primaryKey, initialPage }: Props) {
     const selected = page.relations.find(item => item.id === page.selected);
     if (!selected) return null;
     return <section className="explorer-row-links" aria-label="Related records" aria-busy={loading}>
-        <header className="explorer-links-heading"><LinkOutlined /><label>Relationship
+        <header className="explorer-links-heading"><LinkOutlined /><label><span>Relationships</span>
             <select aria-label="Relationship" value={selected.id} disabled={loading} onChange={event => { setOffset(0); setRelation(event.target.value); }}>
                 {page.relations.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
             </select></label>
         </header>
         <div className="explorer-links-mapping">
-            <div><span className="explorer-links-direction">{selected.direction === 'outgoing' ? 'Outgoing' : 'Incoming'}</span>
+            <div><span className="explorer-links-badge">{selected.direction === 'outgoing' ? 'Outgoing' : 'Incoming'}</span>
                 <strong>{selected.schema}.{selected.table}</strong></div>
-            <p>{selected.kind === 'foreign_key' ? 'Foreign key' : 'Field mapping'}</p>
-            <div className="explorer-links-fields">{selected.fields.map((field, index) => <span key={field}><code>{field}</code><span aria-hidden="true">→</span><code>{selected.targetFields[index]}</code></span>)}</div>
+            <div className="explorer-links-field-mapping">
+                <span className="explorer-links-badge">{selected.kind === 'foreign_key' ? 'Foreign key' : 'Field mapping'}</span>
+                <div className="explorer-links-fields">{selected.fields.map((field, index) => <span key={field}><code>{field}</code><span aria-hidden="true">→</span><code>{selected.targetFields[index]}</code></span>)}</div>
+            </div>
         </div>
         {page.reason || !page.identities.length ? <div className="explorer-links-empty" role="status"><LinkOutlined /><strong>No matching records</strong><p>{page.reason || 'No objects match this relationship for the selected record.'}</p></div> :
             <ul>{page.identities.map(identity => <li key={JSON.stringify(identity)}>

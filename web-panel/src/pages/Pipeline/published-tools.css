@@ -11,6 +11,8 @@
   min-height: 0; overflow: auto; overscroll-behavior: contain; overflow-wrap: anywhere;
   font-size: 13px; line-height: 1.45;
 }
+.flow-published-dialog .ui-checkbox-input:checked + .ui-checkbox-inner,
+.flow-ontology-tool-content .ui-checkbox-input:checked + .ui-checkbox-inner { background: var(--ontology-muted); border-color: var(--ontology-muted); }
 .flow-tool-section, .flow-ontology-tool-content .flow-ontology-revisions {
   display: grid;
   align-content: start;
@@ -41,6 +43,7 @@
   flex: 1 1 126px; max-width: 240px; min-width: 0;
 }
 .flow-tool-section label:has(> input[type="checkbox"]) { display: flex; align-items: center; gap: 5px; }
+.flow-tool-section input[type="checkbox"] { accent-color: var(--ontology-muted); }
 .flow-tool-section :is(select, input:not([type="checkbox"])) {
   box-sizing: border-box; width: 100%; max-width: 100%; min-width: 0; height: 30px; padding: 3px 8px;
   border: 1px solid var(--ontology-control-border); border-radius: 3px;
@@ -70,7 +73,7 @@
 .flow-ontology-revisions nav.flow-ontology-revision-actions {
   align-items: center; padding-block-end: 8px; border-bottom: 1px solid var(--ontology-control-border);
 }
-.flow-ontology-revisions nav button[aria-pressed="true"] { color: var(--ontology-link); background: var(--ontology-hover); }
+.flow-ontology-revisions nav button[aria-pressed="true"] { color: var(--ontology-text); background: color-mix(in srgb, var(--ontology-text) 9%, var(--ontology-panel)); }
 .flow-ontology-revision-table { font-size: 12px; }
 .flow-ontology-revision-table thead { background: var(--ontology-toolbar); color: var(--ontology-muted); }
 @container (min-width: 860px) {

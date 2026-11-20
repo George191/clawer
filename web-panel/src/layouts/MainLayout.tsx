@@ -517,7 +517,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   };
 
   const renderProjectPanel = () => (
-    <div style={{ ...overlayShellStyle, width: 224, padding: '4px 0', borderRadius: 14 }}>
+    <div style={{ width: 224, padding: '4px 0' }}>
       {projectOrder.map((key) => {
         const project = projectConfigs[key];
         const isActive = key === activeProjectKey;

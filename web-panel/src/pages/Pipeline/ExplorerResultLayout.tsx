@@ -38,7 +38,6 @@ export function useResultLayout(identity: string, schema: string, table: string,
   const [state, setState] = useState<{ id: string; slots: Layouts; draft: ResultLayout | null }>();
   const [revision, reload] = useState(0);
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
   const [saving, setSaving] = useState(false);
   const pending = useRef('');
   const [open, setOpen] = useState(false);
@@ -48,7 +47,6 @@ export function useResultLayout(identity: string, schema: string, table: string,
     const initialSorts = JSON.stringify(sortsRef.current);
     setState(undefined);
     setError('');
-    setNotice('');
     setSaving(false);
     setOpen(false);
     setSearch('');
@@ -71,7 +69,6 @@ export function useResultLayout(identity: string, schema: string, table: string,
   function change(patch: Partial<ResultLayout>) {
     if (!current || saving) return;
     setState({ ...current, draft: { ...layout, ...patch } });
-    setNotice('');
   }
   function column(field: string, props: Partial<ResultColumn>) {
     change({ columns: columns.map(c => c.field === field ? { ...c, ...props } : c) });
@@ -89,7 +86,6 @@ export function useResultLayout(identity: string, schema: string, table: string,
     pending.current = id;
     setSaving(true);
     setError('');
-    setNotice('');
     try {
       const result = await writeLayout(path, scope, { layout: reset ? null : layout, version: current.slots[scope].version });
       if (active.current !== id || epoch.current !== operation) return;
@@ -98,15 +94,15 @@ export function useResultLayout(identity: string, schema: string, table: string,
         reload(v => v + 1);
       } else {
         setState({ id, draft: layout, slots: { ...current.slots, [scope]: result } });
-        setNotice(scope === 'personal' ? 'Personal layout saved.' : 'Table default saved.');
       }
+      setOpen(false);
     } catch (e) {
       if (active.current === id && epoch.current === operation) setError(errorMessage(e));
     } finally {
       if (active.current === id && epoch.current === operation) { pending.current = ''; setSaving(false); }
     }
   }
-  return { columns, layout, ready: !!current, saving, error, notice, open, search, setSearch, setOpen,
+  return { columns, layout, ready: !!current, saving, error, open, search, setSearch, setOpen,
     change, column, move, save, reload: () => reload(v => v + 1) };
 }
 type Controls = ReturnType<typeof useResultLayout>;
@@ -176,7 +172,6 @@ export function LayoutToolbar({ controls: c, admin, types }: { controls: Control
         {!columns.length && <p>No matching columns.</p>}
         <Checkbox checked={c.layout.wrap} disabled={c.saving} onChange={e => c.change({ wrap: e.target.checked })}>Wrap text in cells</Checkbox>
         {error}
-        {c.notice && <p role="status">{c.notice}</p>}
         <div className="result-layout-actions">
           <Button size="small" disabled={c.saving} onClick={() => c.save('personal', true)}>Restore table default</Button>
           {admin && <Button size="small" disabled={c.saving} onClick={() => c.save('default')}>Save as table default</Button>}

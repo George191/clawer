@@ -169,6 +169,10 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const userIdRef = useRef(currentUserId);
   userIdRef.current = currentUserId;
   const [preview, setPreview] = useState<{ id: string; data?: EtlObjectPreview; loading: boolean; error: string }>({ id: '', loading: false, error: '' });
+  const linkedPreview = useRef<{ id: string; data: EtlObjectPreview }>();
+  const previewEpoch = useRef(0);
+  const [linkedLoading, setLinkedLoading] = useState('');
+  const [linkedError, setLinkedError] = useState('');
   const [previewVersion, setPreviewVersion] = useState(0);
   const [visibilityDraft, setVisibilityDraft] = useState<EtlObjectVisibility>('normal');
   const [visibilitySaving, setVisibilitySaving] = useState('');
@@ -351,9 +355,16 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     return () => window.clearTimeout(timer);
   }, [selectedId, selectedSchema, selectedTable, allProperties, inspectorId]);
   useEffect(() => {
+    previewEpoch.current += 1;
+    setLinkedLoading(''); setLinkedError('');
+    const prepared = linkedPreview.current;
+    linkedPreview.current = undefined;
     if (publishedCatalog) return;
     if (!inspectorId) { setPreview({ id: '', loading: false, error: '' }); return; }
     if (inspectorClosing) return;
+    if (prepared?.id === inspectorId) {
+      setPreview({ id: inspectorId, data: prepared.data, loading: false, error: '' }); return;
+    }
     let active = true;
     setPreview({ id: inspectorId, loading: true, error: '' });
     fetchEtlObjectPreview(inspectorSchema, inspectorTable, includeHidden).then((data) => {
@@ -420,6 +431,25 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   );
   const selectPublished = (id = '') => updateQuery({ catalog: 'published', objectType: id || null, schema: null, table: null, tab: null });
   const selectObject = (object: { schema: string; table: string }) => updateQuery({ schema: object.schema, table: object.table, tab: null });
+  const selectLinkedObject = async (object: { id: string; schema: string; table: string }) => {
+    if (preview.loading || visibilitySaving || preview.id !== inspectorId || inspectorClosing || object.id === inspectorId) return;
+    const operation = ++previewEpoch.current;
+    const origin = inspectorId;
+    const current = () => activeRef.current && previewEpoch.current === operation && selectionRef.current === origin
+      && getSessionState().identity === sessionIdentity;
+    setLinkedLoading(object.id); setLinkedError('');
+    try {
+      const data = await fetchEtlObjectPreview(object.schema, object.table, includeHidden);
+      if (!current()) return;
+      linkedPreview.current = { id: object.id, data };
+      setPreview({ id: object.id, data, loading: false, error: '' });
+      selectObject(object);
+    } catch {
+      if (current()) setLinkedError('Unable to load the linked object type. Select it again to retry.');
+    } finally {
+      if (current()) setLinkedLoading('');
+    }
+  };
   const closeInspector = () => {
     updateQuery({ schema: null, table: null, tab: null }, true);
   };
@@ -587,7 +617,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
         {preview.loading || preview.id !== inspectorId ? <div className="flow-ontology__empty is-compact" role="status"><ReloadOutlined spin /><span>Loading object type</span></div> : preview.error ? <div className="flow-ontology__notice" role="alert"><span>{preview.error}</span><button type="button" onClick={() => setPreviewVersion((value) => value + 1)}>Retry</button>{canManage && !includeHidden && <button type="button" onClick={() => setShowHidden(true)}>Show hidden object types</button>}</div> : data && <>
           <section className="flow-ontology__preview-section"><h3>Description</h3><p className="flow-ontology__muted">{data.description || 'No description provided.'}</p></section>
           <section className="flow-ontology__preview-section"><div className="flow-ontology__visibility"><h3>Visibility</h3><span className={`flow-ontology__visibility-badge is-${data.visibility}`} title={visibilityDescriptions[data.visibility]}><EyeOutlined />{visibilityLabels[data.visibility]}</span></div>
-            {canManage && <div className="flow-ontology__visibility-editor"><Select className="flow-ontology__select" popupClassName="flow-ontology__select-popup" aria-label="Object type visibility" value={visibilityDraft} disabled={!!visibilitySaving || inspectorClosing} onChange={(value: EtlObjectVisibility) => { setVisibilityDraft(value); setVisibilityError(''); setVisibilityNotice(''); }} options={(Object.keys(visibilityLabels) as EtlObjectVisibility[]).map((value) => ({ value, label: visibilityLabels[value] }))} /><button type="button" className="flow-ontology__button" aria-label="Save visibility" disabled={!!visibilitySaving || visibilityDraft === data.visibility || inspectorClosing} aria-busy={visibilitySaving === inspectorId} onClick={() => void saveVisibility()}>{visibilitySaving === inspectorId ? <><ReloadOutlined spin />Saving…</> : 'Save'}</button></div>}
+            {canManage && <div className="flow-ontology__visibility-editor"><Select className="flow-ontology__select" popupClassName="flow-ontology__select-popup" aria-label="Object type visibility" value={visibilityDraft} disabled={!!visibilitySaving || !!linkedLoading || inspectorClosing} onChange={(value: EtlObjectVisibility) => { setVisibilityDraft(value); setVisibilityError(''); setVisibilityNotice(''); }} options={(Object.keys(visibilityLabels) as EtlObjectVisibility[]).map((value) => ({ value, label: visibilityLabels[value] }))} /><button type="button" className="flow-ontology__button" aria-label="Save visibility" disabled={!!visibilitySaving || !!linkedLoading || visibilityDraft === data.visibility || inspectorClosing} aria-busy={visibilitySaving === inspectorId} onClick={() => void saveVisibility()}>{visibilitySaving === inspectorId ? <><ReloadOutlined spin />Saving…</> : 'Save'}</button></div>}
             <p className="flow-ontology__visibility-help">{visibilityDescriptions[canManage ? visibilityDraft : data.visibility]} {canManage && visibilityDraft !== data.visibility ? 'Changes take effect after saving. ' : ''}Access permissions are managed separately.</p>
             {visibilityError && <p className="flow-ontology__visibility-feedback is-error" role="alert">{visibilityError}</p>}
             {visibilityNotice && <p className="flow-ontology__visibility-feedback" role="status">{visibilityNotice}</p>}
@@ -596,10 +626,12 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
             <div id="ontology-properties" className="flow-ontology__property-list" role="region" aria-label="Properties" tabIndex={inspectorAllProperties && data.properties.length > 6 ? 0 : undefined}>{visibleProperties.map((property) => <div className="flow-ontology__property-row" key={property.name} title={`${property.type}${property.nullable ? ' · Nullable' : ' · Required'}${property.comment ? ` · ${property.comment}` : ''}`}><PropertyTypeIcon type={explorerPropertyType(property.type)} /><span className="flow-ontology__property-name">{property.displayName}</span>{data.titleProperty === property.name && <span className="flow-ontology__property-badge is-title">Title</span>}{property.primaryKey && <span className="flow-ontology__property-badge is-primary">Primary key</span>}</div>)}</div>
             {!data.properties.length && <p className="flow-ontology__muted">No properties defined.</p>}
           </section>
-          <section className="flow-ontology__preview-section"><header><h3>Linked object types <small>({number(data.linkedObjectTypes.length)})</small></h3></header><div className="flow-ontology__linked-list">{data.linkedObjectTypes.map((linked) => <Tooltip key={linked.id} placement={mobilePreview ? 'top' : 'left'} overlayClassName="flow-ontology__relation-tooltip" title={`${linked.id} · ${linked.direction} · ${visibilityLabels[linked.visibility]}\n${linked.relationships.map((relation) => `${relation.sourceKind === 'logical' ? 'Logical relationship' : 'Foreign key'}: ${relation.sourceSchema}.${relation.sourceTable} (${relation.columns.join(', ')}) → ${relation.targetSchema}.${relation.targetTable} (${relation.referencedColumns.join(', ')})${relation.cardinality ? ` · ${relation.cardinality.replace(/_/g, ' ')}` : ''}${relation.description ? ` · ${relation.description}` : ''}`).join('\n')}`}><button type="button" className="flow-ontology__linked-row" style={accentStyle(linked.dataType)} onClick={() => selectObject(linked)}><span className="flow-ontology__linked-icon"><TemplateGlyph kind={inferSiteKind(linked.dataType, linked.table)} source={linked.table} /></span><span>{linked.displayName}</span></button></Tooltip>)}</div>{!data.linkedObjectTypes.length && <p className="flow-ontology__muted">No relationships defined.</p>}</section>
+          <section className="flow-ontology__preview-section"><header><h3>Linked object types <small>({number(data.linkedObjectTypes.length)})</small></h3></header><div className="flow-ontology__linked-list">{data.linkedObjectTypes.map((linked) => <Tooltip key={linked.id} placement={mobilePreview ? 'top' : 'left'} overlayClassName="flow-ontology__relation-tooltip" title={`${linked.id} · ${linked.direction} · ${visibilityLabels[linked.visibility]}\n${linked.relationships.map((relation) => `${relation.sourceKind === 'logical' ? 'Logical relationship' : 'Foreign key'}: ${relation.sourceSchema}.${relation.sourceTable} (${relation.columns.join(', ')}) → ${relation.targetSchema}.${relation.targetTable} (${relation.referencedColumns.join(', ')})${relation.cardinality ? ` · ${relation.cardinality.replace(/_/g, ' ')}` : ''}${relation.description ? ` · ${relation.description}` : ''}`).join('\n')}`}><button type="button" className="flow-ontology__linked-row" style={accentStyle(linked.dataType)} aria-busy={linkedLoading === linked.id} disabled={!!visibilitySaving || linkedLoading === linked.id} onClick={() => void selectLinkedObject(linked)}><span className="flow-ontology__linked-icon">{linkedLoading === linked.id ? <ReloadOutlined spin /> : <TemplateGlyph kind={inferSiteKind(linked.dataType, linked.table)} source={linked.table} />}</span><span>{linked.displayName}</span></button></Tooltip>)}</div>{!data.linkedObjectTypes.length && <p className="flow-ontology__muted">No relationships defined.</p>}
+            {linkedError && <p className="flow-ontology__visibility-feedback is-error" role="alert">{linkedError}</p>}
+          </section>
         </>}
       </div>
-      <footer className="flow-ontology__inspector-footer"><button type="button" className="flow-ontology__button flow-ontology__button--primary" disabled={!data || preview.loading} onClick={openWorkspace}>Start exploring <ArrowRightOutlined /></button></footer>
+      <footer className="flow-ontology__inspector-footer"><button type="button" className="flow-ontology__button flow-ontology__button--primary" disabled={!data || preview.loading || !!linkedLoading} onClick={openWorkspace}>Start exploring <ArrowRightOutlined /></button></footer>
     </aside></Drawer>
     {createOpen && (canManage || semanticProjectAccess) && <SemanticObjectWizard allowedSource={canManage} schemas={creationSchemas} initialSchema={createSchema} onCancel={() => setCreateOpen(false)} onPublished={(object) => { setCreateOpen(false); selectPublished(object.id); }} />}
   </div>;

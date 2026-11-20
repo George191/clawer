@@ -51,7 +51,8 @@ def object_key(value):
 
 
 def storage_client():
-    endpoint = urlsplit(storage_configuration()['baseUrl'])
+    endpoint = settings.minio_endpoint
+    endpoint = urlsplit(endpoint if '://' in endpoint else ('https://' if settings.minio_secure else 'http://') + endpoint)
     return Minio(endpoint.netloc, access_key=settings.minio_access_key,
                  secret_key=settings.minio_secret_key, secure=endpoint.scheme == 'https',
                  http_client=urllib3.PoolManager(timeout=5, retries=False))
@@ -59,7 +60,12 @@ def storage_client():
 
 def signed_link(key, *, download=False, client=None):
     client = client or storage_client()
-    url = client.presigned_get_object(settings.minio_bucket, key,
+    endpoint = urlsplit(storage_configuration()['baseUrl'])
+    # Discover the bucket region internally; the public host is only used to sign URLs.
+    signer = Minio(endpoint.netloc, access_key=settings.minio_access_key,
+                   secret_key=settings.minio_secret_key, secure=endpoint.scheme == 'https',
+                   region=client._get_region(settings.minio_bucket))
+    url = signer.presigned_get_object(settings.minio_bucket, key,
         expires=timedelta(minutes=5 if download else 60), response_headers={
             'response-content-type': guess_type(key)[0] or 'application/octet-stream',
             'response-content-disposition': ("attachment" if download else "inline") + "; filename*=UTF-8''" + quote(key.rsplit('/', 1)[-1], safe='')})

@@ -1,13 +1,17 @@
 .explorer-row-links { min-width:0; color:var(--ontology-text); font-size:11px; }
 .explorer-links-heading { display:flex; align-items:center; gap:9px; margin-bottom:12px; }
 .explorer-links-heading > .ui-icon { flex:none; color:var(--ontology-muted); font-size:16px; }
-.explorer-links-heading label { display:grid; flex:1; min-width:0; gap:5px; color:var(--ontology-muted); }
+.explorer-links-heading label { display:flex; align-items:center; flex:1; min-width:0; gap:9px; color:var(--ontology-muted); }
+.explorer-links-heading label > span { flex:none; }
+.explorer-links-heading select { flex:1; }
 .explorer-row-links select { width:100%; min-width:0; min-height:30px; padding:4px 8px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-panel); color:var(--ontology-text); font:inherit; }
 .explorer-links-mapping { display:grid; gap:7px; padding:10px; margin-bottom:12px; border:1px solid var(--ontology-control-border); border-radius:4px; background:var(--ontology-panel); }
 .explorer-links-mapping > div:first-child { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
 .explorer-links-mapping strong { overflow-wrap:anywhere; font-size:12px; font-weight:500; }
-.explorer-links-direction { padding:2px 5px; border-radius:2px; background:var(--ontology-hover); color:var(--ontology-muted); }
-.explorer-links-mapping p, .explorer-links-empty p { margin:0; color:var(--ontology-muted); }
+.explorer-links-badge { display:inline-block; padding:2px 5px; border-radius:2px; background:var(--ontology-hover); color:var(--ontology-muted); }
+.explorer-links-empty p { margin:0; color:var(--ontology-muted); }
+.explorer-links-field-mapping { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+.explorer-links-field-mapping > .explorer-links-badge { flex:none; }
 .explorer-links-fields { display:flex; flex-wrap:wrap; gap:6px; }
 .explorer-links-fields > span { display:inline-flex; align-items:center; flex-wrap:wrap; gap:6px; }
 .explorer-links-fields code { padding:2px 4px; background:var(--ontology-bg); border-radius:2px; overflow-wrap:anywhere; }

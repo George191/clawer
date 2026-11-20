@@ -17,6 +17,7 @@ from app.web.api.routes.task_socket import router as task_socket_router
 from app.web.core.config import settings
 from app.web.core.exceptions import register_exception_handlers
 from app.web.core.middleware import register_middleware
+from app.web.frontend import FrontendFiles
 from fastapi_pagination import add_pagination as register_pagination
 
 
@@ -67,4 +68,4 @@ app.add_api_route(
     name="legacy_health",
 )
 
-app.mount("/", StaticFiles(directory="static", html=True), name="frontend")
+app.mount("/", FrontendFiles(directory="static", html=True, api_prefix=settings.API_V1_STR), name="frontend")

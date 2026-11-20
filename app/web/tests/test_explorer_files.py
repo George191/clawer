@@ -1,8 +1,11 @@
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlsplit
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import urllib3
 from fastapi import HTTPException
+from minio import Minio
 
 from app.web.services import explorer_files as files
 
@@ -34,6 +37,34 @@ def test_rejects_foreign_or_invalid_objects(value):
     with pytest.raises(HTTPException) as error:
         files.object_key(value)
     assert error.value.status_code == 422
+
+
+@pytest.mark.parametrize('public_endpoint,scheme', [
+    ('files.example:9000', 'http'), ('https://files.example', 'https'),
+])
+def test_presigning_discovers_region_internally_and_signs_public_host(public_endpoint, scheme):
+    requests = []
+
+    class InternalStorage(urllib3.PoolManager):
+        def urlopen(self, method, url, **kwargs):
+            requests.append((method, url))
+            assert urlsplit(url).netloc == 'minio.internal:9000', 'Public endpoint is unreachable from the backend'
+            return urllib3.response.HTTPResponse(status=200, body=(
+                b'<LocationConstraint xmlns="http://s3.amazonaws.com/doc/2006-03-01/">eu-central-1</LocationConstraint>'
+            ))
+
+    http = InternalStorage()
+
+    def storage_client(endpoint, **kwargs):
+        return Minio(endpoint, **{**kwargs, 'http_client': http})
+
+    with patch.object(files.settings, 'minio_public_endpoint', public_endpoint), \
+         patch.object(files, 'Minio', side_effect=storage_client):
+        url = urlsplit(files.signed_link('docs/report.pdf'))
+    assert requests == [('GET', 'http://minio.internal:9000/internal?location=')]
+    assert url.scheme == scheme and url.netloc == urlsplit('//' + public_endpoint if '://' not in public_endpoint else public_endpoint).netloc
+    assert url.path == '/internal/docs/report.pdf'
+    assert '/eu-central-1/s3/aws4_request' in parse_qs(url.query)['X-Amz-Credential'][0]
 
 
 @pytest.mark.asyncio
