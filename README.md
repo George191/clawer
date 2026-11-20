@@ -209,9 +209,24 @@ SPIDER_HTTPS_PORT=443
 docker compose up -d --force-recreate web tls-init nginx
 ```
 
-内网 DNS 需将这两个域名解析到当前 Docker 主机，并让访问设备使用该 DNS。
-Compose 不会修改路由器或组织 DNS；迁移到另一台主机时应更新对应 DNS 记录。
-容器之间仍通过 Compose 服务名通信。
+内网 DNS 需将这两个域名解析到当前 Docker 主机。可以在已有 DNS 中配置记录，
+也可以启动项目自带的 Docker DNS：
+
+```bash
+python3 tools/deploy_dns.py
+```
+
+该命令从部署配置读取域名，在 macOS/Linux 上探测默认网络接口的 LAN IPv4，
+将本次地址注入 CoreDNS 并只重建 DNS 容器。IP 不写入源码；多网卡部署可在 `.env`
+显式设置 `SPIDER_DNS_TARGET_IPV4`。普通域名查询转发到 `SPIDER_DNS_UPSTREAM`。
+DNS 同时在探测地址上提供 UDP/TCP 53；Nginx 的 80/443 端口也必须能从局域网访问。
+更换宿主机或 LAN IP 后重新运行此命令即可更新记录和监听地址。
+
+在路由器 DHCP 中将 DNS 服务器设置为这台 Docker 主机的 LAN IP，设备续租后即可
+统一解析，无需逐台修改 hosts。应给服务器保留 DHCP 地址；路由器配置不由 Compose
+自动修改。macOS 本机也可使用 `/etc/resolver/<项目域名>` 指向 Docker DNS，
+只将这两个域名的查询交给它；这不修改 hosts。客户端仍需使用该 DNS，Docker 的容器
+内部 DNS 不会自动接管局域网设备的查询。容器之间继续通过 Compose 服务名通信。
 
 `tls-init` 首次启动自动生成局域网 CA，并签发同时包含两个域名的证书。
 后续部署复用 CA 和有效证书，域名改变或证书距到期不足 30 天时自动重新签发。

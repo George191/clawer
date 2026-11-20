@@ -1,0 +1,11 @@
+.:53 {
+    errors
+    hosts /dev/null {
+        {$SPIDER_DNS_TARGET_IPV4} {$FRONTEND_DOMAIN} {$BACKEND_DOMAIN}
+        ttl 60
+        no_reverse
+        fallthrough
+    }
+    forward . {$SPIDER_DNS_UPSTREAM}
+    loop
+}

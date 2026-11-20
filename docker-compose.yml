@@ -202,6 +202,24 @@ services:
     networks:
       - asiral-helio
 
+  dns:
+    image: coredns/coredns:1.15.0
+    profiles: [dns]
+    restart: unless-stopped
+    command: ["-conf", "/etc/coredns/Corefile"]
+    environment:
+      FRONTEND_DOMAIN: ${FRONTEND_DOMAIN:?FRONTEND_DOMAIN must be set in .env}
+      BACKEND_DOMAIN: ${BACKEND_DOMAIN:?BACKEND_DOMAIN must be set in .env}
+      SPIDER_DNS_TARGET_IPV4: ${SPIDER_DNS_TARGET_IPV4:-}
+      SPIDER_DNS_UPSTREAM: ${SPIDER_DNS_UPSTREAM:-223.5.5.5}
+    ports:
+      - "${SPIDER_DNS_TARGET_IPV4:-127.0.0.1}:53:53/udp"
+      - "${SPIDER_DNS_TARGET_IPV4:-127.0.0.1}:53:53/tcp"
+    volumes:
+      - ./docker/Corefile:/etc/coredns/Corefile:ro
+    networks:
+      - asiral-helio
+
   tls-init:
     build:
       context: .
