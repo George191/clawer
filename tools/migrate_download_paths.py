@@ -20,6 +20,7 @@ import filetype
 import urllib3
 from minio import Minio
 from minio.commonconfig import CopySource
+from minio.error import S3Error
 from pymongo import MongoClient
 from sqlalchemy import text
 
@@ -44,10 +45,10 @@ def journal(path):
     return db
 
 
-def storage():
+def storage(read_timeout=120):
     address = settings.minio_public_endpoint or settings.minio_endpoint
     url = urlsplit(address if '://' in address else ('https://' if settings.minio_secure else 'http://') + address)
-    return Minio(url.netloc, access_key=settings.minio_access_key, secret_key=settings.minio_secret_key, secure=url.scheme == 'https', http_client=urllib3.PoolManager(timeout=urllib3.Timeout(connect=10, read=120), retries=False))
+    return Minio(url.netloc, access_key=settings.minio_access_key, secret_key=settings.minio_secret_key, secure=url.scheme == 'https', http_client=urllib3.PoolManager(timeout=urllib3.Timeout(connect=10, read=read_timeout), retries=False))
 
 
 def strings(value, path=()):
@@ -165,7 +166,17 @@ def copy_object(client, old, prefix, record_id):
     new = f'{prefix}/{record_id}/{digest}{extension}'
     if new == old:
         return new
-    client.copy_object(settings.minio_bucket, new, CopySource(settings.minio_bucket, old))
+    try:
+        client.copy_object(settings.minio_bucket, new, CopySource(settings.minio_bucket, old))
+    except urllib3.exceptions.TimeoutError as error:
+        # Copy completion can precede a lost response. Verify bytes before resuming.
+        try:
+            client.stat_object(settings.minio_bucket, new)
+        except S3Error as missing:
+            if missing.code in {'NoSuchKey', 'NoSuchObject'}:
+                raise error from missing
+            raise
+        print(json.dumps({'copy_response_timeout': old, 'checking_destination': new}), flush=True)
     after = client.stat_object(settings.minio_bucket, new)
     if after.size != info.size or after.etag != info.etag:
         response = client.get_object(settings.minio_bucket, new)

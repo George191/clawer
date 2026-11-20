@@ -53,6 +53,28 @@ def test_copy_fails_if_destination_content_differs():
         migration.copy_object(client, 'news/source/' + 'a' * 32 + '/file.pdf', 'news/source', 'a' * 32)
 
 
+def test_copy_timeout_accepts_only_a_verified_destination():
+    payload = b'video fixture'
+    client = Mock()
+    client.stat_object.return_value = SimpleNamespace(size=len(payload), etag='same-content')
+    client.get_object.return_value.stream.return_value = [payload]
+    client.copy_object.side_effect = migration.urllib3.exceptions.ReadTimeoutError(None, '/copy', 'lost response')
+    new = migration.copy_object(client, 'tweet/twitter/' + 'a' * 32 + '/video.mp4.mp4', 'tweet/twitter', 'a' * 32)
+    assert new.endswith('/' + hashlib.sha256(payload).hexdigest() + '.mp4')
+    client.copy_object.assert_called_once()
+
+
+def test_copy_timeout_without_destination_remains_an_explicit_failure():
+    client = Mock()
+    failure = migration.urllib3.exceptions.ReadTimeoutError(None, '/copy', 'lost response')
+    missing = migration.S3Error(None, 'NoSuchKey', 'missing', None, None, None)
+    client.stat_object.side_effect = [SimpleNamespace(size=3, etag='old'), missing]
+    client.get_object.return_value.stream.return_value = [b'old']
+    client.copy_object.side_effect = failure
+    with pytest.raises(migration.urllib3.exceptions.ReadTimeoutError):
+        migration.copy_object(client, 'tweet/twitter/' + 'a' * 32 + '/video.mp4', 'tweet/twitter', 'a' * 32)
+
+
 def test_resume_after_mongo_commit_still_requires_downstream_verification(tmp_path):
     db = migration.journal(tmp_path / 'migration.sqlite')
     record_id = 'a' * 32

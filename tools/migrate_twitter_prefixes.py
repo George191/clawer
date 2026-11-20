@@ -7,6 +7,7 @@ import json
 import multiprocessing
 from pathlib import Path
 import sys
+import time
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -41,7 +42,7 @@ def media_alias_updates(record):
 
 
 def worker(path, shard, db_gate):
-    client = migration.storage()
+    client = migration.storage(read_timeout=300)
     mongo_client = MongoClient(migration.settings.db_url, serverSelectionTimeoutMS=15000)
     mongo = mongo_client[migration.settings.db_name]
     with db_gate:
@@ -52,7 +53,16 @@ def worker(path, shard, db_gate):
     def apply(group):
         db = migration.journal(path)
         try:
-            migration.apply_group(db, client, mongo, registered, *group)
+            for attempt in range(3):
+                try:
+                    migration.apply_group(db, client, mongo, registered, *group)
+                    break
+                except migration.urllib3.exceptions.TimeoutError:
+                    print(json.dumps({'worker': shard, 'record': group[1], 'copy_timeout': True,
+                                      'attempt': attempt + 1}), flush=True)
+                    if attempt == 2:
+                        raise
+                    time.sleep(10)
         finally:
             db.close()
 
@@ -119,8 +129,8 @@ def worker(path, shard, db_gate):
                                 if not await migration.verify_group(db, client, mongo, registered, *group):
                                     raise RuntimeError('Twitter references did not verify: ' + '/'.join(group))
                             break
-                        except TimeoutError:
-                            print(json.dumps({'worker': shard, 'record': group[1], 'commit_timeout': True,
+                        except (TimeoutError, migration.urllib3.exceptions.TimeoutError):
+                            print(json.dumps({'worker': shard, 'record': group[1], 'verification_timeout': True,
                                               'attempt': attempt + 1}), flush=True)
                             if attempt == 2:
                                 raise
