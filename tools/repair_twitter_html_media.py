@@ -18,8 +18,7 @@ from app.config.settings import settings
 from app.downloader.worker import DownloadWorker
 from app.engine.template_loader import TemplateLoader
 from app.utils.path import get_nested_value
-from tools.migrate_download_paths import journal, repair_references, routes, storage, verify_group
-from app.storage.postgres_client import get_pg_client
+from tools.migrate_download_paths import connect_pg, journal, repair_references, routes, storage, verify_group
 
 WORKERS = 6
 BATCH = 200
@@ -49,8 +48,7 @@ async def work(folder, number, mode):
     downloader._minio._client = client
     template = (await TemplateLoader().load_released('twitter', validate_params=False, load_adapter=False)).template
     registered = await routes()
-    pg = get_pg_client()
-    await pg.connect(max_retries=1)
+    pg = await connect_pg()
 
     async def process(key):
         previous = db.execute('SELECT status,attempts,new FROM items WHERE old=?', (key,)).fetchone()
