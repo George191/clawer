@@ -386,7 +386,7 @@
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 10px; align-items: start;
   min-width: 0; padding: 8px 0; border-bottom: 1px solid var(--ontology-control-border); overflow-wrap: anywhere;
 }
-.flow-explorer-row-field > :is(dt,span:first-child) { color: var(--ontology-muted); }
+.flow-explorer-row-field > :is(dt,span:first-child):not(.flow-property-label) { color: var(--ontology-muted); }
 .flow-explorer-row-field > dd { margin: 0; white-space: pre-wrap; }
 .flow-explorer-row-field .ui-input-group-wrapper { min-width: 0; }
 .flow-explorer-row-error { color: var(--ui-danger, #e5686b); }

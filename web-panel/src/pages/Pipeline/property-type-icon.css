@@ -1,2 +1,6 @@
 .flow-ontology__property-icon { display: inline-flex; flex: 0 0 16px; align-items: center; justify-content: center; width: 16px; height: 16px; margin-right: 1px; border: 1px solid var(--ontology-border-hover); border-radius: 2px; background: color-mix(in srgb, var(--ontology-text) 12%, var(--ontology-elevated)); color: color-mix(in srgb, var(--ontology-text) 75%, var(--ontology-muted)); font-size: 8px; font-weight: 400; line-height: 12px; }
 .flow-ontology__property-icon > svg { display: block; width: 11px; height: 11px; }
+
+.flow-property-label { display:inline-flex; align-items:flex-start; gap:6px; min-width:0; color:var(--ontology-text); font-size:12px; font-weight:500; line-height:18px; overflow-wrap:anywhere; }
+.flow-property-label .flow-ontology__property-icon { margin:1px 0 0; background:transparent; border:0; color:var(--ontology-muted); }
+.flow-property-label > span:last-child { min-width:0; }

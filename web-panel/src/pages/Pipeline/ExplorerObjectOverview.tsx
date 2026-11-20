@@ -1,3 +1,4 @@
+import { PropertyLabel } from './PropertyTypeIcon';
 import { ExplorerValue } from './ExplorerValue';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { ProfileOutlined } from '@/components/ui/icons';
@@ -132,14 +133,14 @@ export function ExplorerObjectOverview({ row, columns = Object.keys(row.record),
   const heading = group ?? `Key ${typeName} Information`;
   return <div className="flow-explorer-overview">
     {!!summary.length && <dl className="flow-explorer-overview__summary" aria-label="Summary properties">
-      {summary.map(field => <div key={field.key}><dt>{field.label}</dt><dd>
+      {summary.map(field => <div key={field.key}><dt><PropertyLabel type={field.type}>{field.label}</PropertyLabel></dt><dd>
         <ExplorerPropertyValue value={explorerFieldValue(row, field)} format={field.format} identity={row.identity} field={field.field} />
       </dd></div>)}
     </dl>}
     {(details.length > 0 || group !== undefined) && <section className="flow-explorer-overview__information" aria-label={heading}>
       <h5><ProfileOutlined />{heading}</h5>
       {details.length > 0 ? <dl>{details.map(field => <div key={field.key}>
-        <dt title={field.description || undefined}>{field.label}</dt><dd><ExplorerFieldValue row={row} field={field} /></dd>
+        <dt title={field.description || undefined}><PropertyLabel type={field.type}>{field.label}</PropertyLabel></dt><dd><ExplorerFieldValue row={row} field={field} /></dd>
       </div>)}</dl> : <p>No visible properties in this group.</p>}
     </section>}
   </div>;

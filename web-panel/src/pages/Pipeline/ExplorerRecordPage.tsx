@@ -1,3 +1,5 @@
+import ExplorerFieldEditor from './ExplorerFieldEditor';
+import { PropertyLabel } from './PropertyTypeIcon';
 import { ExplorerValueProvider } from './ExplorerValue';
 import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -44,7 +46,7 @@ function RecordPage({ schema, table, identity }: { schema: string; table: string
     const [layoutError, setLayoutError] = useState('');
     const [error, setError] = useState('');
     const [revision, reload] = useState(0);
-    const [mode, setMode] = useState<'overview'|'properties'|'links'|'json'|`group:${string}`>('overview');
+    const [mode, setMode] = useState<'overview'|'properties'|'links'|`group:${string}`>('overview');
     const [draft, setDraft] = useState<RowDraft>();
     const [confirmDelete, setConfirmDelete] = useState(false);
     const [busy, setBusy] = useState(false);
@@ -123,7 +125,7 @@ function RecordPage({ schema, table, identity }: { schema: string; table: string
         </div><div className="record-operations">
             <Button onClick={showLink} disabled={!result}>Share link</Button>
             <Button icon={<ReloadOutlined />} disabled={busy || (!!draft && !stale)} onClick={()=>{setNotice('');reload(n=>n+1);}}>Refresh</Button>
-            <ExplorerRecordActions items={actions} disabled={locked || stale} />
+            <ExplorerRecordActions items={actions} row={row || undefined} disabled={locked || stale} />
         </div></header>
         {share && <label className="record-share">Object link<input readOnly value={window.location.href} onFocus={e=>e.currentTarget.select()} autoFocus /></label>}
         {notice && <p role="status">{notice}</p>}
@@ -134,7 +136,7 @@ function RecordPage({ schema, table, identity }: { schema: string; table: string
         {!result && !error && <p role="status">Loading object…</p>}
         {result && row && <>
             <dl className="record-identity">{Object.entries(result.identity).map(([name,value])=>
-                <div key={name}><dt>{name}</dt><dd>{String(value)}</dd></div>)}</dl>
+                <div key={name}><dt><PropertyLabel type={result.columnTypes[name] || 'string'}>{name}</PropertyLabel></dt><dd>{String(value)}</dd></div>)}</dl>
             {confirmDelete && <section className="record-confirm" aria-label="Confirm row deletion">
                 <strong>Delete {title}?</strong><span>This removes the row from {schema}.{table}.</span>
                 <Button disabled={busy} onClick={()=>setConfirmDelete(false)}>Cancel deletion</Button>
@@ -146,17 +148,14 @@ function RecordPage({ schema, table, identity }: { schema: string; table: string
                 {groups.map(name => <button type="button" key={name} disabled={locked} aria-pressed={mode === 'group:' + name}
                     onClick={() => setMode(`group:${name}`)}>{name}</button>)}
                 <button type="button" aria-pressed={mode==='links'} disabled={locked} onClick={()=>setMode('links')}>Links</button>
-                <button type="button" aria-pressed={mode==='json'} disabled={locked} onClick={()=>setMode('json')}>JSON</button>
             </div>
             {draft ? <form className="record-edit" onSubmit={e=>{e.preventDefault();void mutate(false);}}>
-                {editFields.map(name=><fieldset key={name} disabled={busy || stale}><legend>{name} <small>{result.columnTypes[name]}</small></legend>
-                    <textarea aria-label={'Edit '+name} rows={1} disabled={draft[name]===null} value={draft[name]??''}
-                        onChange={e=>setDraft({...draft,[name]:e.target.value})} />
-                    <label><input type="checkbox" checked={draft[name]===null} onChange={e=>setDraft({...draft,[name]:e.target.checked?null:''})}/> Null</label>
-                </fieldset>)}<div className="record-operations"><Button disabled={busy} onClick={()=>setDraft(undefined)}>Cancel edit</Button>
+                {editFields.map(name=><div key={name} className="record-edit-field"><PropertyLabel type={result.columnTypes[name]}>{name}</PropertyLabel>
+                    <ExplorerFieldEditor name={name} type={result.columnTypes[name]} disabled={busy || stale} value={draft[name]}
+                        onChange={value=>setDraft({...draft,[name]:value})} />
+                </div>)}<div className="record-operations"><Button disabled={busy} onClick={()=>setDraft(undefined)}>Cancel edit</Button>
                     <Button type="primary" htmlType="submit" disabled={busy || stale}>Save changes</Button></div>
             </form> : mode==='links' ? <ExplorerRowLinks schema={schema} table={table} primaryKey={result.identity}/> :
-                mode==='json' ? <pre className="record-json">{JSON.stringify(result.row,null,2)}</pre> :
                 !metadata ? <p role="status">Loading object presentation…</p> :
                 metadata.error ? <p>Properties are unavailable until the object presentation loads.</p> :
                 mode==='properties' ? <ExplorerProperties presentation={presentation} presentations={presentations} row={row}/> :

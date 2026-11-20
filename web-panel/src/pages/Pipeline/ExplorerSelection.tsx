@@ -1,9 +1,10 @@
+import { PropertyLabel } from './PropertyTypeIcon';
 import { ExplorerValueProvider } from './ExplorerValue';
 import { useEffect, useId, useRef, useState } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
-import { Button, Checkbox, Dropdown, Input, Table } from '@/components/ui';
+import { Button, Checkbox, Dropdown, Input, Table, message } from '@/components/ui';
 import type { ColumnsType, MenuItem, TableProps } from '@/components/ui';
-import { BarsOutlined, DownOutlined, LinkOutlined, ReloadOutlined, SearchOutlined } from '@/components/ui/icons';
+import { BarsOutlined, CopyOutlined, DownOutlined, LinkOutlined, ReloadOutlined, SearchOutlined } from '@/components/ui/icons';
 import {
   ExplorerFieldValue, ExplorerObjectOverview, ExplorerPropertyValue as PropertyValue, ExplorerTypeIcon,
   explorerFields, explorerFieldValue, explorerRowTitle, propertyValue,
@@ -18,8 +19,23 @@ const previewLimit = 20;
 const noTypes: Record<string, string> = {};
 const format = (value: unknown) => typeof value === 'object' ? JSON.stringify(value) : String(value);
 
-export function ExplorerRecordActions({ items, disabled }: { items: MenuItem[]; disabled?: boolean }) {
-  return items.length ? <Dropdown trigger={['click']} placement="bottomRight" menu={{ items }}
+export function ExplorerRecordActions({ items, disabled, row }: { items: MenuItem[]; disabled?: boolean; row?: ExplorerPreviewRow }) {
+  const actions = row ? [...items, { key: 'copy-json', label: 'Copy as JSON', icon: <CopyOutlined />, onClick: async () => {
+    const text = JSON.stringify({ ...row.record, ...row.identity }, null, 2);
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
+      else {
+        const focused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        const field = document.createElement('textarea');
+        field.value = text; field.style.cssText = 'position:fixed;left:-9999px;top:0';
+        document.body.appendChild(field); field.select();
+        try { if (!document.execCommand('copy')) throw new Error('Clipboard unavailable'); }
+        finally { field.remove(); focused?.focus(); }
+      }
+      message.success('JSON copied');
+    } catch { message.error('Unable to copy JSON. Check clipboard permissions.'); }
+  } }] : items;
+  return actions.length ? <Dropdown trigger={['click']} placement="bottomRight" menu={{ items: actions }}
     getPopupContainer={(anchor: HTMLElement) => anchor.closest('.explorer-object-workspace') ?? document.body}>
     <Button size="small" disabled={disabled}>Actions <DownOutlined /></Button>
   </Dropdown> : null;
@@ -46,16 +62,16 @@ export function ExplorerProperties({ row, columns = Object.keys(row.record), pre
     <div className="flow-explorer-selection__filters">
       <Input size="small" prefix={<SearchOutlined />} aria-label="Search properties" placeholder="Search properties"
         allowClear value={query} onChange={event => setQuery(event.target.value)} />
-      <label><span>Type</span><select aria-label="Property type" value={type} onChange={event => setType(event.target.value)}>
+      <label><select aria-label="Property type" value={type} onChange={event => setType(event.target.value)}>
         <option value="">All types</option>
         {types.map(item => <option key={item}>{item}</option>)}
       </select></label>
-      <label><span>Values</span><select aria-label="Property values" value={valueFilter} onChange={event => setValueFilter(event.target.value)}>
+      <label><select aria-label="Property values" value={valueFilter} onChange={event => setValueFilter(event.target.value)}>
         <option value="">All values</option><option value="present">With value</option><option value="empty">Empty</option>
       </select></label>
     </div>
     {visible.length ? <dl className="flow-explorer-selection__fields">{visible.map(field => <div key={field.key}>
-      <dt title={field.description || undefined}><span>{field.label}</span><small>{field.type}</small></dt>
+      <dt title={field.description || undefined}><PropertyLabel type={field.type}>{field.label}</PropertyLabel></dt>
       <dd><ExplorerFieldValue row={row} field={field} /></dd>
     </div>)}</dl> : <p role="status">{fields.length ? 'No properties match these filters.' : 'This row has no visible properties.'}</p>}
   </section>;
@@ -92,7 +108,7 @@ function Comparison({ columns, choices }: { columns: readonly string[]; choices:
         const leftValue = propertyValue(left, field), rightValue = propertyValue(right, field);
         const different = !sameValue(leftValue, rightValue);
         return <tr key={field} className={different ? 'is-different' : undefined}>
-          <th scope="row">{field}{different && <small>Different</small>}</th>
+          <th scope="row"><PropertyLabel type={left.columnTypes[field] || right.columnTypes[field] || 'string'}>{field}</PropertyLabel>{different && <small>Different</small>}</th>
           <td><PropertyValue value={leftValue} identity={left.identity} field={field} /></td><td><PropertyValue value={rightValue} identity={right.identity} field={field} /></td>
         </tr>;
       })}</tbody></table> : <p role="status">No differing properties.</p>}
@@ -120,17 +136,16 @@ type Props = {
   renderRelationships?: (row: ExplorerPreviewRow) => ReactNode;
   rowActions?: (row: ExplorerPreviewRow) => MenuItem[];
   renderMutation?: (row: ExplorerPreviewRow) => ReactNode;
-  renderJson?: (row: ExplorerPreviewRow) => ReactNode;
   onRefresh?: () => void;
   onSelectedRowsChange?: (rows: ExplorerPreviewRow[]) => void;
 };
 
 type Selection = { rows: RecordRow[]; picked: number[]; active: number; anchor: number; collapsed: boolean };
-type View = 'overview' | 'properties' | 'links' | 'json' | 'compare' | `group:${string}`;
+type View = 'overview' | 'properties' | 'links' | 'compare' | `group:${string}`;
 
 export default function ExplorerSelection({
   schema, table, dataType, rows, columns, columnTypes = noTypes, presentations, metadata, dataColumns, rowKey, rowIdentity, rowVersion, loading, locked, footer,
-  renderTitleLink, renderFullDetails, renderRelationships, rowActions, renderMutation, renderJson, onRefresh, onSelectedRowsChange,
+  renderTitleLink, renderFullDetails, renderRelationships, rowActions, renderMutation, onRefresh, onSelectedRowsChange,
 }: Props) {
   const panelId = useId();
   const results = useRef<HTMLDivElement>(null);
@@ -341,7 +356,7 @@ export default function ExplorerSelection({
                 {onRefresh && <Button size="small" type="text" icon={<ReloadOutlined />} aria-label="Refresh selected records" title="Refresh selected records"
                   disabled={disabled} onClick={refresh} />}
                 {!!Object.keys(active.identity).length && renderFullDetails?.(active)}
-                <ExplorerRecordActions items={actions} disabled={disabled} />
+                <ExplorerRecordActions items={actions} row={active} disabled={disabled} />
               </div>
             </div>
             {renderMutation?.(active) ?? <>
@@ -352,11 +367,9 @@ export default function ExplorerSelection({
                   {groups.map(name => <button type="button" key={name} aria-pressed={displayView === 'group:' + name}
                     onClick={() => setView(`group:${name}`)}>{name}</button>)}
                   {hasLinks && <button type="button" aria-pressed={displayView === 'links'} onClick={() => setView('links')}><LinkOutlined /> Links</button>}
-                  <button type="button" aria-pressed={displayView === 'json'} onClick={() => setView('json')}>JSON preview</button>
                 </nav>
               </div>
               {displayView === 'links' ? renderRelationships?.(active)
-                : displayView === 'json' ? <section aria-label="Row JSON">{renderJson?.(active) ?? <pre>{JSON.stringify(active.record, null, 2)}</pre>}</section>
                 : !metadata ? <p role="status">Loading object presentation…</p>
                 : metadata.error ? <p>Properties are unavailable until the object presentation loads.</p>
                 : displayView === 'properties'
