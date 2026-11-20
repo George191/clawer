@@ -4202,8 +4202,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           min-height: 0;
           padding: 10px 12px 12px;
           overflow: auto;
-          scrollbar-width: thin;
-          scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
           overscroll-behavior: contain;
           display: flex;
           flex-direction: column;
@@ -4882,15 +4880,12 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           max-width: 100%;
           overflow-x: auto;
           overflow-y: hidden;
-          scrollbar-width: none;
           font-size: 10px;
           line-height: 1;
           font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
           white-space: nowrap;
         }
-        .workspace-dock-diff-stats::-webkit-scrollbar {
-          display: none;
-        }
+
         .workspace-dock-diff-stats span {
           display: inline-flex;
           align-items: center;
@@ -5003,8 +4998,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           width: 100%;
           background: transparent;
           overflow: auto;
-          scrollbar-width: thin;
-          scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
           overscroll-behavior: contain;
         }
         .workspace-dock-log-row {
@@ -5273,7 +5266,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         .automation-task-panel .workspace-dock-task-table .ui-table-body {
           flex: 1;
           min-height: 0;
-          scrollbar-gutter: stable;
         }
         .automation-task-panel .workspace-dock-task-table .workspace-dock-card {
           height: 118px;

@@ -30,7 +30,7 @@
 .flow-foundry-property-tools strong { margin-right: auto; white-space: nowrap; font-size: 13px; }
 .flow-foundry-property-tools strong span { margin-left: 3px; padding: 1px 5px; border-radius: 2px; background: var(--ontology-elevated); font-weight: 500; }
 .flow-foundry-property-tools .ui-input-affix-wrapper, .flow-foundry-property-tools > .ui-input { width: min(126px,100%); }
-.flow-foundry-property-table-wrap { max-height: 350px; overflow: auto; scrollbar-gutter: stable; }
+.flow-foundry-property-table-wrap { max-height: 350px; overflow: auto;  }
 .flow-foundry-property-table-wrap table { width: 100%; border-collapse: separate; border-spacing: 0; text-align: left; font-size: 13px; }
 .flow-foundry-property-table-wrap th, .flow-foundry-property-table-wrap td { border-top: 1px solid var(--ontology-border); padding: 7px 10px; }
 .flow-foundry-property-table-wrap thead th { position: sticky; top: 0; z-index: 1; background: var(--ontology-bg); color: var(--ontology-muted); font-weight: 500; font-size: var(--foundry-small-size,12px); white-space: nowrap; }
@@ -115,7 +115,7 @@
 .flow-semantic-properties .flow-foundry-property-list :is(td,th) { height: 29px; padding: 2px 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .flow-semantic-properties .flow-foundry-property-select { width: 100%; flex-wrap: nowrap; }
 .flow-semantic-properties :is(.flow-property-name, .flow-foundry-property-inspector header strong, .flow-foundry-property-link) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.flow-semantic-properties :is(.flow-foundry-property-inspector, .flow-property-inspector-idle) { min-height: 0; border-left: 1px solid var(--ontology-border); overflow: auto; scrollbar-gutter: stable; }
+.flow-semantic-properties :is(.flow-foundry-property-inspector, .flow-property-inspector-idle) { min-height: 0; border-left: 1px solid var(--ontology-border); overflow: auto;  }
 .flow-property-inspector-idle { padding: 16px; color: var(--ontology-muted); font-size: 13px; }
 .flow-semantic-properties .flow-foundry-property-inspector header { position: sticky; top: 0; z-index: 1; min-height: 36px; padding: 4px 10px; flex-wrap: nowrap; background: var(--ontology-panel); }
 .flow-semantic-properties .flow-foundry-property-list tbody tr.is-selected td { background: var(--ontology-selected); }

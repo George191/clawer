@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import NativeDot, { DOT_ACTIVITIES, type DotActivity } from './components/NativeDot';
 import './helio-studio.css';
+import './styles/scrollbars.css';
 
 const activities = Object.keys(DOT_ACTIVITIES) as DotActivity[];
 

@@ -196,13 +196,8 @@ const Templates: React.FC = () => {
             display: flex;
             flex-direction: column;
           }
-          .template-library,
-          .template-library * {
-            scrollbar-width: none;
-          }
-          .template-library *::-webkit-scrollbar {
-            display: none;
-          }
+
+
           .template-header {
             flex-shrink: 0;
             padding: 18px 22px 16px;

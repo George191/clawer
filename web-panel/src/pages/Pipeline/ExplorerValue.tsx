@@ -1,9 +1,11 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Modal } from '@/components/ui';
+import { Modal, theme } from '@/components/ui';
 import { DownloadOutlined, EyeOutlined } from '@/components/ui/icons';
 import { fetchExplorerHtml, fetchExplorerFile, fetchExplorerStorage, type ExplorerStorage } from '../../services/api';
 import { JsonTreeValue } from './ExplorerJsonValue';
 import './explorer-value.css';
+import scrollbarStyles from '../../styles/scrollbars.css?raw';
+import { useThemeStore } from '../../stores/settings';
 
 const Storage = createContext<{ schema: string; table: string; config?: ExplorerStorage }>({ schema: '', table: '' });
 export function ExplorerValueProvider({ schema, table, children }: { schema: string; table: string; children: ReactNode }) {
@@ -40,6 +42,8 @@ function fileUrl(value: string, config?: ExplorerStorage) {
 
 function HtmlPreview({ value, identity, field }: { value: string; identity: Record<string, unknown>; field?: string | null }) {
   const { schema, table } = useContext(Storage);
+  const { token } = theme.useToken();
+  const dark = useThemeStore(state => state.mode === 'dark');
   const [html, setHtml] = useState<string>(), [error, setError] = useState(false);
   const key = JSON.stringify(identity);
   useEffect(() => {
@@ -53,9 +57,9 @@ function HtmlPreview({ value, identity, field }: { value: string; identity: Reco
   }, [schema, table, key, field, value]);
   if (error) return <div className="explorer-html explorer-html--status" role="alert">HTML preview failed. Reload to retry.</div>;
   if (html === undefined) return <div className="explorer-html explorer-html--status" role="status">Loading HTML preview…</div>;
-  const dark = document.documentElement.dataset.theme !== 'light';
+  const scrollbarTheme = `:root{--ui-muted:${token.colorTextSecondary};--ui-panel:${token.colorBgContainer};color-scheme:${dark ? 'dark' : 'light'}}`;
   const style = `body{margin:16px;font:13px/1.65 system-ui;overflow-wrap:anywhere;color:${dark ? '#d8dee9' : '#263244'};background:${dark ? '#242936' : '#fff'}}img,video{display:block;max-width:100%;height:auto;margin:12px auto}audio{width:100%}a{color:${dark ? '#80bfff' : '#176bb5'}}table{border-collapse:collapse;max-width:100%}td,th{border:1px solid #687080;padding:6px}pre{white-space:pre-wrap}blockquote{margin:12px 0;padding-left:16px;border-left:3px solid #687080}`;
-  const doc = '<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; style-src &#39;unsafe-inline&#39;; img-src https: http: data:; media-src https: http:; base-uri &#39;none&#39;; form-action &#39;none&#39;"><style>' + style + '</style>' + html;
+  const doc = '<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; style-src &#39;unsafe-inline&#39;; img-src https: http: data:; media-src https: http:; base-uri &#39;none&#39;; form-action &#39;none&#39;"><style>' + style + scrollbarTheme + scrollbarStyles + '</style>' + html;
   return <iframe className="explorer-html" title="HTML content" sandbox="allow-popups allow-popups-to-escape-sandbox allow-downloads" referrerPolicy="no-referrer" srcDoc={doc} />;
 }
 

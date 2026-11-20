@@ -226,7 +226,7 @@
 .flow-console--ontology .flow-schema-workbench .flow-table-desc { margin: 0 0 10px; }
 .flow-schema-view-tabs {
   display: flex; flex: none; align-items: center; gap: 16px; overflow: auto hidden;
-  border-bottom: 1px solid var(--ontology-border); scrollbar-width: thin;
+  border-bottom: 1px solid var(--ontology-border);
 }
 .flow-schema-view-tabs > button {
   display: inline-flex; flex: none; align-items: center; gap: 6px; min-height: 37px;

@@ -10,7 +10,7 @@
   border: 1px solid var(--ontology-control-border); border-top: 0; background: var(--ontology-panel);
 }
 .flow-published-catalog > .flow-create-section > :is([role="status"], [role="alert"]) { margin: 16px; }
-.flow-published-catalog-scroll { flex: 1; overflow: auto; scrollbar-gutter: stable; }
+.flow-published-catalog-scroll { flex: 1; overflow: auto;  }
 .flow-published-catalog-cards { padding: 12px; background: var(--ontology-bg); font: 400 13px/18px var(--ontology-font); }
 .flow-published-catalog .flow-catalog-skeleton { padding: 12px; background: var(--ontology-bg); }
 .flow-published-catalog-cards .flow-ontology__asset-description { padding-inline-end: 0; }

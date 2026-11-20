@@ -404,7 +404,7 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
     const  previousSortConditionCount  =  useRef(sortConditions.length);
     useLayoutEffect(()  =>  {  if  (sortConditions.length  >  previousSortConditionCount.current)  sortConditionsRef.current?.scrollTo({ left: sortConditionsRef.current.scrollWidth, behavior: 'smooth' });  previousSortConditionCount.current = sortConditions.length;  },  [sortConditions.length]);
     useEffect(()  =>  {
-        // Wheel over the tab strip scrolls horizontally; the scrollbar stays hidden.
+        // Wheel over the tab strip scrolls horizontally.
         const  node  =  tableTabsRef.current;
         if  (!node)  return;
         const  onWheel  =  (event:  WheelEvent)  =>  {

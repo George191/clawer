@@ -37,7 +37,7 @@
 .flow-icon-search:focus-within > .ui-icon { color: var(--ontology-text); }
 .flow-icon-options {
   display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); align-content: start;
-  gap: 2px; height: 214px; overflow-y: auto; scrollbar-gutter: stable;
+  gap: 2px; height: 214px; overflow-y: auto;
 }
 .flow-icon-options button {
   position: relative; justify-content: flex-start; gap: 5px; min-width: 0; height: 34px; padding: 2px; border: 0;
