@@ -17,6 +17,7 @@ from pymongo import MongoClient
 from app.config.settings import settings
 from app.downloader.worker import DownloadWorker
 from app.engine.template_loader import TemplateLoader
+from app.storage.minio_client import get_business_metadata_minio_client
 from app.utils.path import get_nested_value
 from tools.migrate_download_paths import connect_pg, journal, repair_references, routes, storage, verify_group
 
@@ -46,9 +47,11 @@ async def work(folder, number, mode):
     downloader = DownloadWorker(template_name='twitter', data_type='tweet')
     # Use the verified published storage endpoint for this standalone repair.
     downloader._minio._client = client
-    template = (await TemplateLoader().load_released('twitter', validate_params=False, load_adapter=False)).template
+    metadata = get_business_metadata_minio_client()
+    metadata._client = client
     registered = await routes()
     pg = await connect_pg()
+    template = (await TemplateLoader().load_released('twitter', validate_params=False, load_adapter=False)).template
 
     async def process(key):
         previous = db.execute('SELECT status,attempts,new FROM items WHERE old=?', (key,)).fetchone()
@@ -173,6 +176,7 @@ async def work(folder, number, mode):
                                                 'traversal_complete': True, 'complete': not counts().get('failed')})
     finally:
         await downloader.stop()
+        await metadata.close()
         await pg.close()
         mongo.close()
         db.close()
