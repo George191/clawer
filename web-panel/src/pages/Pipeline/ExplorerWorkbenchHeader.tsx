@@ -195,9 +195,10 @@ export default function ExplorerWorkbenchHeader(p: Props) {
             return;
         const outside = (event: PointerEvent) => {
             const target = event.target as Node;
-            const within = menu === 'search' || menu === 'property'
-                ? propertySearch.current?.contains(target) || popup.current?.contains(target)
-                : root.current?.contains(target);
+            const trigger = target instanceof Element ? target.closest('[data-wb-menu]') : null;
+            const within = popup.current?.contains(target)
+                || ((menu === 'search' || menu === 'property') && propertySearch.current?.contains(target))
+                || (trigger && root.current?.contains(trigger) && trigger.getAttribute('data-wb-menu') === menu);
             if (!within) show('');
         };
         const key = (e: KeyboardEvent) => { if (e.key === 'Escape')
@@ -265,9 +266,9 @@ export default function ExplorerWorkbenchHeader(p: Props) {
             <span className="wb-type"><button type="button" className="wb-catalog-toggle wb-type-icon" onClick={p.toggleCatalog} aria-label="Browse object types" title="Browse object types" aria-expanded={p.catalogOpen}><i>{p.glyph ?? <TableOutlined />}</i></button><strong>{p.label}</strong></span>
             <label className="wb-property-search" ref={propertySearch} onClick={() => show('search')}><SearchOutlined /><input aria-label="Search properties to add a chart or filter" placeholder="Search properties to add a chart or filter…" value={search} onFocus={() => show('search')} onChange={e => { setSearch(e.target.value); show('search'); }} onKeyDown={e => { if (e.key === 'Enter' && find[0])
         changeField(find[0]); }}/></label>
-            <button onClick={() => openMenu('explorations')}>Explorations <DownOutlined /></button>
-            <button onClick={() => openMenu('lists')}>Lists <DownOutlined /></button>
-            <button onClick={() => openMenu('share')}>Share</button><button className="wb-primary" onClick={() => beginSave('exploration')}>Save</button></div>
+            <button data-wb-menu="explorations" onClick={() => openMenu('explorations')}>Explorations <DownOutlined /></button>
+            <button data-wb-menu="lists" onClick={() => openMenu('lists')}>Lists <DownOutlined /></button>
+            <button data-wb-menu="share" onClick={() => openMenu('share')}>Share</button><button data-wb-menu="save" className="wb-primary" onClick={() => menu === 'save' ? show('') : beginSave('exploration')}>Save</button></div>
         <div className="wb-line wb-tools">
             <div className="wb-left">{p.layoutControl}
                 {!!p.selected.length && <div className="wb-selection-tools" role="toolbar" aria-label="Selected object tools">
@@ -278,8 +279,8 @@ export default function ExplorerWorkbenchHeader(p: Props) {
                 {p.filterButton}</div>
             <div className="wb-views"><button aria-pressed={p.resource === 'preview' && p.mode === 'explore'} onClick={() => selectMode('explore')}><BarChartOutlined /> Explore</button>
             <button aria-pressed={p.resource === 'preview' && p.mode === 'results'} onClick={() => selectMode('results')}><AppstoreOutlined /> Results</button></div>
-            <div className="wb-right"><button onClick={() => openMenu('asset')}>{p.resource === 'preview' ? 'Open in' : ({ schema: 'Schema', stream: 'Stream', evidence: 'Evidence', api: 'Published APIs' } as const)[p.resource]} <DownOutlined /></button>
-                <button onClick={() => openMenu('export')}>Export <DownOutlined /></button></div></div>
+            <div className="wb-right"><button data-wb-menu="asset" onClick={() => openMenu('asset')}>{p.resource === 'preview' ? 'Open in' : ({ schema: 'Schema', stream: 'Stream', evidence: 'Evidence', api: 'Published APIs' } as const)[p.resource]} <DownOutlined /></button>
+                <button data-wb-menu="export" onClick={() => openMenu('export')}>Export <DownOutlined /></button></div></div>
         {error && <p className="wb-feedback" role="alert">{error}</p>}{notice && <p className="wb-feedback" role="status">{notice}</p>}
         {menu && <section className={'wb-popup wb-popup--' + menu} ref={popup} aria-label="Explorer tools">
             {menu === 'search' && <>{find.map(f => <button key={f} onClick={() => changeField(f)}>{p.names?.[f] || f}</button>)}{!find.length && <p>No matching properties</p>}</>}

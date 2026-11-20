@@ -193,9 +193,10 @@ function ExplorerTabs() {
         else setTabs(old => old.map(tab => tab.id === id ? { ...tab, search: target.search } : tab));
     }, [navigate]);
     return <div className="flow-exploration-workspace">
-        <nav className="flow-exploration-tabs" aria-label="Explorations">
-            <Button className="flow-exploration-back" size="small" icon={<ArrowLeftOutlined />} disabled={lockedTabs.size > 0}
-                onClick={() => navigate(catalogReturn.current)}>Back to object types</Button>
+        <div className="flow-exploration-bar">
+            <div className="flow-exploration-return"><Button className="flow-exploration-back" size="small" icon={<ArrowLeftOutlined />} disabled={lockedTabs.size > 0}
+                onClick={() => navigate(catalogReturn.current)}>Back to object types</Button></div>
+            <nav className="flow-exploration-tabs" aria-label="Explorations">
             {visibleTabs.map((tab, i) => {
                 const table = new URLSearchParams(tab.search).get('table');
                 const label = table || 'Exploration ' + (i + 1);
@@ -207,7 +208,8 @@ function ExplorerTabs() {
                 </div>;
             })}
             <button type="button" className="wb-new-exploration" onClick={add}><PlusOutlined /> New exploration</button>
-        </nav>
+            </nav>
+        </div>
         {visibleTabs.map(tab => <div className="flow-exploration-pane" key={tab.id} hidden={tab.id !== activeId}>
             <DataLayersWorkspace explorerTab={{ ...tab, active: tab.id === activeId, navigate: address, onLockChange }} />
         </div>)}
