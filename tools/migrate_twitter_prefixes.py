@@ -125,6 +125,8 @@ def worker(path, shard, db_gate):
             if int(record_id, 16) % migration.WORKERS != shard:
                 continue
             for _, value in migration.strings(doc['assets']):
+                if not value:
+                    continue
                 if value.startswith(('http://', 'https://', 's3://', 'minio://')):
                     continue
                 parts = value.split('/')
