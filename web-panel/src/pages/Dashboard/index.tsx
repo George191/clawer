@@ -4,7 +4,7 @@ import { Alert as AlertBanner, App, Button, Select, Skeleton } from '@/component
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import workspacePalette from '@/pages/AICollect/palette';
-import { DASHBOARD_WS_URL } from '@/services/api';
+import { getDashboardWsUrl } from '@/services/api';
 import type { Alert, DashboardMetrics, PipelineNodeData } from '@/services/types';
 import { useDashboardStore } from '@/stores/dashboard';
 import './style.css';
@@ -172,7 +172,7 @@ const Dashboard: React.FC = () => {
     }
   }, [applySnapshot]);
 
-  const { connected, send } = useWebSocket(DASHBOARD_WS_URL, {
+  const { connected, send } = useWebSocket(getDashboardWsUrl, {
     onMessage: handleMessage,
     onOpen: () => {
       setHasConnected(true);

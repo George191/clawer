@@ -1,5 +1,4 @@
 import client from './api';
-import { apiUrl } from './endpoints';
 import type { OntologyPrincipal, SemanticDefinition } from './ontology';
 
 export type RevisionWorkspace = {
@@ -19,14 +18,15 @@ export type ProposalDetails = RevisionProposal & { definition: SemanticDefinitio
 export type RevisionRole = { id: string; name: string; manager: boolean; canEdit: boolean; canReview: boolean };
 export type RevisionPage<T> = { items: T[]; hasMore: boolean };
 
-const base = (id: string) => apiUrl('/api/ontology/v1/object-types/' + encodeURIComponent(id));
+const base = (id: string) => '/api/ontology/v1/object-types/' + encodeURIComponent(id);
+const config = { baseURL: '/' };
 const data = <T,>(body: T | { code: number; data: T }): T =>
   body && typeof body === 'object' && 'code' in body && 'data' in body ? body.data : body as T;
 function get<T>(id: string, path: string, signal?: AbortSignal, params?: Record<string, string | number>) {
-  return client.get<T>(base(id) + path, { signal, params }).then(response => data(response.data));
+  return client.get<T>(base(id) + path, { ...config, signal, params }).then(response => data(response.data));
 }
 function post<T>(id: string, path: string, payload: unknown) {
-  return client.post<T>(base(id) + path, payload).then(response => data(response.data));
+  return client.post<T>(base(id) + path, payload, config).then(response => data(response.data));
 }
 const proposal = (id: string) => '/revision-proposals/' + encodeURIComponent(id);
 
@@ -52,6 +52,6 @@ export const readRevisionRoles = (id: string, limit: number, offset: number, sig
   get<RevisionPage<RevisionRole>>(id, '/revision-roles', signal, { limit, offset });
 export const setRevisionRoles = (id: string, member: RevisionRole) =>
   client.put<void>(base(id) + '/revision-roles/' + encodeURIComponent(member.id),
-    { canEdit: member.canEdit, canReview: member.canReview });
+    { canEdit: member.canEdit, canReview: member.canReview }, config);
 export const readRevisionPrincipals = (id: string, q: string, signal: AbortSignal) =>
   get<{ items: OntologyPrincipal[] }>(id, '/revision-principals', signal, { q }).then(result => result.items);

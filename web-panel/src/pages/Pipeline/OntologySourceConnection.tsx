@@ -47,7 +47,7 @@ export default function OntologySourceConnection({ value, warehouseName, disable
             </span> }))} />
         </div>
       </div>
-      <a href={projectHref('ontology', external ? '/ontology/connections?sourceId=' + encodeURIComponent(selected.id) : '/ontology/connections')}
+      <a href={projectHref(external ? '/ontology/connections?sourceId=' + encodeURIComponent(selected.id) : '/ontology/connections')}
         target="_blank" rel="noreferrer">Data Connections ↗</a>
       <Button size="small" type="text" icon={<ReloadOutlined />} aria-label="Refresh connections" title="Refresh connections"
         disabled={disabled || status === 'loading'} onClick={() => setRevision(n => n + 1)} />

@@ -15,7 +15,7 @@ import {
   automationCreateWorkflow, automationDeleteWorkflow,
   automationUpdateWorkflow,
 } from '@/services/api';
-import { AI_ANALYZE_WS_URL } from '@/services/aiApi';
+import { getAiAnalyzeWsUrl } from '@/services/aiApi';
 import {
   automationCreateSchedule, automationDeleteSchedule,
   automationReloadSchedules, automationToggleSchedule, automationUpdateSchedule, automationUpdateWorkspaceSchedule,
@@ -119,7 +119,7 @@ const AutomationCenter: React.FC = () => {
     setSearchParams(next, { replace: true });
   }, [domain, requestedDomain, searchParams, setSearchParams]);
 
-  const { connected, send } = useWebSocket(AI_ANALYZE_WS_URL, {
+  const { connected, send } = useWebSocket(getAiAnalyzeWsUrl, {
     onMessage: (raw) => {
       const event = JSON.parse(raw);
       if (event.type === 'task_stream_status') {

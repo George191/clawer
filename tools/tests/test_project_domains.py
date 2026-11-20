@@ -34,10 +34,13 @@ class ProjectDomainsTest(unittest.TestCase):
             certificate_hash = hashlib.sha256(certificate.read_bytes()).hexdigest()
             run(command, env=env)
             self.assertEqual(certificate_hash, hashlib.sha256(certificate.read_bytes()).hexdigest())
+            domains = [f"app.{SUFFIXES['FRONTEND_DOMAIN_SUFFIX']}"] + [
+                f"{project}.{SUFFIXES['BACKEND_DOMAIN_SUFFIX']}" for project in PROJECTS
+            ]
+            for domain in domains:
+                run(["openssl", "verify", "-purpose", "sslserver", "-verify_hostname", domain,
+                     "-CAfile", str(ca), str(certificate)])
             for suffix in SUFFIXES.values():
-                for project in PROJECTS:
-                    run(["openssl", "verify", "-purpose", "sslserver", "-verify_hostname", f"{project}.{suffix}",
-                         "-CAfile", str(ca), str(certificate)])
                 for invalid in (suffix, f"nested.crawler.{suffix}"):
                     result = run(["openssl", "verify", "-verify_hostname", invalid, "-CAfile", str(ca),
                                   str(certificate)], check=False)
@@ -58,7 +61,7 @@ class ProjectDomainsTest(unittest.TestCase):
             self.assertIn("DNS:*.astral-helio.api", sans)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
-    def test_runtime_config_routes_each_project_to_its_backend(self):
+    def test_runtime_config_contains_project_independent_deployment_settings(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "runtime-config.js"
             script = (ROOT / "docker/nginx-runtime.envsh").read_text().replace(
@@ -66,18 +69,17 @@ class ProjectDomainsTest(unittest.TestCase):
             )
             for port in ("443", "8443"):
                 run(["sh", "-c", script], env={**os.environ, **SUFFIXES, "SPIDER_HTTPS_PORT": port})
-                for project in PROJECTS:
-                    result = run([
-                        "node", "-e",
-                        'const window = {location: {hostname: process.argv[1]}}; '
-                        'require("vm").runInNewContext(require("fs").readFileSync(0, "utf8"), {window}); '
-                        'console.log(JSON.stringify(window.__APP_CONFIG__));',
-                        f"{project}.astral-helio.internal",
-                    ], input=output.read_text())
-                    config = json.loads(result.stdout)
-                    port_suffix = "" if port == "443" else f":{port}"
-                    self.assertEqual(config["apiOrigin"], f"https://{project}.astral-helio.api{port_suffix}")
-                    self.assertEqual(config["frontendDomainSuffix"], "astral-helio.internal")
+                result = run([
+                    "node", "-e",
+                    'const window = {}; '
+                    'require("vm").runInNewContext(require("fs").readFileSync(0, "utf8"), {window}); '
+                    'console.log(JSON.stringify(window.__APP_CONFIG__));',
+                ], input=output.read_text())
+                self.assertEqual(json.loads(result.stdout), {
+                    "backendDomainSuffix": "astral-helio.api",
+                    "httpsPort": port,
+                    "frontendDomainSuffix": "astral-helio.internal",
+                })
 
     def test_suffix_injection_and_invalid_dns_labels_are_rejected(self):
         for suffix in ("valid.internal\ninvalid", "bad-.internal", "example.internal;return 200;"):

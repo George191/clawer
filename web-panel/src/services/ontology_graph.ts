@@ -1,5 +1,4 @@
 import client from './api';
-import { apiUrl } from './endpoints';
 import type { OntologyRecord } from './ontology';
 
 export type Page<T> = { items: T[]; hasMore: boolean };
@@ -32,7 +31,7 @@ export async function graphRequest<T>(
   options: { data?: unknown; params?: Record<string, unknown>; signal?: AbortSignal } = {},
 ) {
   const response = await client.request<T | { code: number; data: T }>({
-    baseURL: apiUrl('/api/ontology/v1'),
+    baseURL: '/api/ontology/v1',
     method,
     url,
     ...options,

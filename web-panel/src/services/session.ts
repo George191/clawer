@@ -2,18 +2,6 @@ export const SESSION_CHANGED_EVENT = 'auth-session-changed';
 export const IDLE_LOCK_MS = 30 * 60 * 1000;
 export const SESSION_KEY = 'auth_session';
 type StoredSession = { access_token: string; refresh_token?: string; last_activity: number; locked: boolean };
-const SESSION_COOKIE = '__Secure-helio_session';
-const configuredSuffix = window.__APP_CONFIG__?.frontendDomainSuffix;
-if (typeof configuredSuffix !== 'string') {
-  throw new Error('Missing runtime configuration: frontendDomainSuffix is required.');
-}
-const frontendDomainSuffix = configuredSuffix.toLowerCase();
-if (frontendDomainSuffix && (window.location.protocol !== 'https:' ||
-    !/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(frontendDomainSuffix) ||
-    window.location.hostname !== frontendDomainSuffix && !window.location.hostname.endsWith('.' + frontendDomainSuffix))) {
-  throw new Error('Invalid runtime configuration: frontendDomainSuffix must match this HTTPS host.');
-}
-const cookieAttributes = `Path=/; Domain=${frontendDomainSuffix}; Secure; SameSite=Strict`;
 
 type Claims = { sub: string; exp: number; iat: number; session_exp: number; type: 'access' | 'refresh' };
 
@@ -31,28 +19,8 @@ function claims(token: string | null, type: Claims['type']): Claims | null {
 }
 
 function storedSession(): StoredSession | null {
-  const value = frontendDomainSuffix
-    ? document.cookie.split(';').map(value => value.trim()).find(value => value.startsWith(SESSION_COOKIE + '='))?.slice(SESSION_COOKIE.length + 1)
-    : localStorage.getItem(SESSION_KEY);
-  try {
-    return JSON.parse(value ? frontendDomainSuffix ? decodeURIComponent(value) : value : 'null') as StoredSession | null;
-  }
-  catch {
-    if (frontendDomainSuffix) throw new Error('The browser could not read the shared authentication session.');
-    return null;
-  }
-}
-
-function writeSession(stored: StoredSession) {
-  const value = JSON.stringify(stored);
-  if (frontendDomainSuffix) {
-    const token = stored.refresh_token ? claims(stored.refresh_token, 'refresh') : claims(stored.access_token, 'access');
-    if (!token) throw new Error('Cannot save an invalid authentication session.');
-    document.cookie = `${SESSION_COOKIE}=${encodeURIComponent(value)}; ${cookieAttributes}; Expires=${new Date(Math.min(token.exp, token.session_exp) * 1000).toUTCString()}`;
-    if (JSON.stringify(storedSession()) !== value) throw new Error('The browser could not save the shared authentication session.');
-  } else {
-    localStorage.setItem(SESSION_KEY, value);
-  }
+  try { return JSON.parse(localStorage.getItem(SESSION_KEY) || 'null') as StoredSession | null; }
+  catch { return null; }
 }
 export const getAccessToken = () => storedSession()?.access_token || null;
 export const getRefreshToken = () => storedSession()?.refresh_token || null;
@@ -76,12 +44,7 @@ export function getSessionState() {
 const changed = () => window.dispatchEvent(new Event(SESSION_CHANGED_EVENT));
 
 export function clearSession() {
-  if (frontendDomainSuffix) {
-    document.cookie = `${SESSION_COOKIE}=; ${cookieAttributes}; Max-Age=0`;
-    if (storedSession()) throw new Error('The browser could not clear the shared authentication session.');
-  } else {
-    [SESSION_KEY, 'access_token', 'refresh_token', 'auth_last_activity', 'auth_locked'].forEach((key) => localStorage.removeItem(key));
-  }
+  [SESSION_KEY, 'access_token', 'refresh_token', 'auth_last_activity', 'auth_locked'].forEach((key) => localStorage.removeItem(key));
   changed();
 }
 
@@ -91,8 +54,8 @@ export function saveSession(accessToken: string, refreshToken?: string) {
   if (!access || access.exp * 1000 <= Date.now() || refreshToken && (!refresh || refresh.sub !== access.sub || refresh.session_exp !== access.session_exp || refresh.exp * 1000 <= Date.now())) {
     throw new Error('The sign-in service returned an invalid session. Please sign in again.');
   }
-  writeSession({ access_token: accessToken, refresh_token: refreshToken, last_activity: Date.now(), locked: false });
-  if (!frontendDomainSuffix) ['access_token', 'refresh_token', 'auth_last_activity', 'auth_locked'].forEach((key) => localStorage.removeItem(key));
+  localStorage.setItem(SESSION_KEY, JSON.stringify({ access_token: accessToken, refresh_token: refreshToken, last_activity: Date.now(), locked: false }));
+  ['access_token', 'refresh_token', 'auth_last_activity', 'auth_locked'].forEach((key) => localStorage.removeItem(key));
   changed();
 }
 
@@ -100,7 +63,7 @@ export function updateAccessToken(token: string, expectedRefresh: string) {
   const next = claims(token, 'access');
   const refresh = claims(expectedRefresh, 'refresh');
   if (getRefreshToken() !== expectedRefresh || !getSessionState().authenticated || !next || !refresh || next.sub !== refresh.sub || next.session_exp !== refresh.session_exp || next.exp * 1000 <= Date.now()) return false;
-  writeSession({ ...storedSession()!, access_token: token });
+  localStorage.setItem(SESSION_KEY, JSON.stringify({ ...storedSession(), access_token: token }));
   changed();
   return true;
 }
@@ -108,7 +71,7 @@ export function updateAccessToken(token: string, expectedRefresh: string) {
 export function lockSession(notify = true) {
   const stored = storedSession();
   if (stored && !stored.locked) {
-    writeSession({ ...stored, locked: true });
+    localStorage.setItem(SESSION_KEY, JSON.stringify({ ...stored, locked: true }));
     if (notify) changed();
   }
 }
@@ -120,13 +83,13 @@ export function recordActivity() {
   const stored = storedSession();
   const previous = stored?.last_activity || 0;
   if (Date.now() - previous < 1000) return;
-  writeSession({ ...stored!, last_activity: Date.now() });
+  localStorage.setItem(SESSION_KEY, JSON.stringify({ ...stored, last_activity: Date.now() }));
   changed();
 }
 
 export function unlockSession(token: string, expectedRefresh: string) {
   if (!updateAccessToken(token, expectedRefresh)) return false;
-  writeSession({ ...storedSession()!, last_activity: Date.now(), locked: false });
+  localStorage.setItem(SESSION_KEY, JSON.stringify({ ...storedSession(), last_activity: Date.now(), locked: false }));
   changed();
   return true;
 }

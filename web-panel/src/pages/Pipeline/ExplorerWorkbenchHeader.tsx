@@ -140,7 +140,7 @@ export default function ExplorerWorkbenchHeader(p: Props) {
     const popup = useRef<HTMLElement>(null);
     const applyRef = useRef(p);
     applyRef.current = p;
-    const link = () => new URL(projectHref('ontology', '/ontology/explorer?' + new URLSearchParams({ schema: p.schema, table: p.table })));
+    const link = () => new URL(projectHref('/ontology/explorer?' + new URLSearchParams({ schema: p.schema, table: p.table })));
     const kind = menu === 'lists' ? 'list' : 'exploration';
     const preservedSavedId = new URLSearchParams(p.search).get('saved');
     useEffect(() => () => {

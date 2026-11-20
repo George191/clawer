@@ -47,7 +47,7 @@ import {
   fetchWorkspaceTaskRun,
   fetchWorkspaceTasks,
   fetchWorkspaceTemplates,
-  AI_ANALYZE_WS_URL,
+  getAiAnalyzeWsUrl,
   runWorkspaceTaskAction,
   uploadWorkspaceBatchInput,
   updateWorkspaceTemplate,
@@ -1596,7 +1596,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   }, [applyWorkspaceTask, applyWorkspaceTasks]);
 
   const { connected: taskSocketConnected, send: sendTaskSocketMessage } = useWebSocket(
-    AI_ANALYZE_WS_URL,
+    getAiAnalyzeWsUrl,
     { onMessage: handleTaskSocketMessage },
   );
   const taskRealtimeConnected = taskSocketConnected && taskStreamAvailable;

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { fetchCurrentUserContext } from '../services/api';
 import { getAccessToken, getSessionState, tokenExpiresAt } from '../services/session';
+import { PROJECT_CHANGED_EVENT } from '../services/projectDomains';
 
 interface UseWebSocketOptions {
   onMessage: (data: string) => void;
@@ -15,8 +16,9 @@ interface UseWebSocketOptions {
  * @param url                  WebSocket URL
  * @param options.onMessage    收到消息回调
  */
-export function useWebSocket(url: string, options: UseWebSocketOptions) {
+export function useWebSocket(url: string | (() => string), options: UseWebSocketOptions) {
   const { onMessage, onOpen, onClose, onError, reconnectInterval = 3000 } = options;
+  const [connectionUrl, setConnectionUrl] = useState(() => typeof url === 'function' ? url() : url);
   const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
   const initialConnectTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -26,6 +28,13 @@ export function useWebSocket(url: string, options: UseWebSocketOptions) {
 
   const savedCallbacks = useRef({ onMessage, onOpen, onClose, onError });
   savedCallbacks.current = { onMessage, onOpen, onClose, onError };
+
+  useEffect(() => {
+    const updateUrl = () => setConnectionUrl(typeof url === 'function' ? url() : url);
+    window.addEventListener(PROJECT_CHANGED_EVENT, updateUrl);
+    updateUrl();
+    return () => window.removeEventListener(PROJECT_CHANGED_EVENT, updateUrl);
+  }, [url]);
 
   const connect = useCallback(async () => {
     if (
@@ -45,7 +54,7 @@ export function useWebSocket(url: string, options: UseWebSocketOptions) {
     if (!shouldReconnect.current || attempt !== connectionAttempt.current || !getSessionState().authenticated || getSessionState().locked) return;
     const token = getAccessToken();
     if (!token) return;
-    const ws = new WebSocket(url, ['bearer', token]);
+    const ws = new WebSocket(connectionUrl, ['bearer', token]);
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -69,10 +78,11 @@ export function useWebSocket(url: string, options: UseWebSocketOptions) {
     ws.onerror = (e) => {
       savedCallbacks.current.onError?.(e);
     };
-  }, [url, reconnectInterval]);
+  }, [connectionUrl, reconnectInterval]);
 
   useEffect(() => {
     shouldReconnect.current = true;
+    setConnected(false);
     initialConnectTimer.current = setTimeout(connect, 0);
     return () => {
       shouldReconnect.current = false;

@@ -51,7 +51,7 @@ import SearchEngineIcon, { searchEngineLabels } from '@/components/SearchEngineI
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { formatWorkspaceScheduleLabel } from '@/services/taskSchedule';
 import {
-  AI_ANALYZE_WS_URL,
+  getAiAnalyzeWsUrl,
   type BrowserAnalysisEvent,
   type DryRunResponse,
   type FieldDef,
@@ -2239,7 +2239,7 @@ const AICollect: React.FC = () => {
   }, [appendAnalysisFeed, clearAdapterTypingTimer, message, pumpAdapterCharacters, pushLiveLog, upsertAnalysisStep]);
 
   const { connected: analyzeSocketConnected, send: sendAnalyzeSocketMessage } = useWebSocket(
-    AI_ANALYZE_WS_URL,
+    getAiAnalyzeWsUrl,
     {
       onMessage: handleAnalyzeSocketMessage,
       onClose: () => {

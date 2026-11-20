@@ -119,7 +119,7 @@ export function unwrap<T>(body: unknown): T {
 }
 
 // ── Axios 实例 ──
-const BASE_URL = apiUrl('/api/v1');
+const BASE_URL = '/api/v1';
 
 const client = axios.create({
   baseURL: BASE_URL,
@@ -127,7 +127,7 @@ const client = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
-let refreshPromise: Promise<string> | null = null;
+const refreshPromises = new Map<string, Promise<string>>();
 let redirectingToLogin = false;
 
 function isAuthenticationError(error: AxiosError): boolean {
@@ -154,8 +154,13 @@ client.interceptors.request.use(
     const session = getSessionState();
     if (!session.authenticated) { requireLogin(); return Promise.reject(new axios.CanceledError('Session expired')); }
     if (session.locked) { lockSession(); return Promise.reject(new axios.CanceledError('Session locked')); }
-    const auth = config as InternalAxiosRequestConfig & { _sessionIdentity?: string; _loadingCounted?: boolean };
+    const auth = config as InternalAxiosRequestConfig & { _sessionIdentity?: string; _loadingCounted?: boolean; _refreshUrl?: string };
     if (auth._sessionIdentity && auth._sessionIdentity !== session.identity) return Promise.reject(new axios.CanceledError('Session changed'));
+    if (!auth._refreshUrl) {
+      config.baseURL = apiUrl(config.baseURL || BASE_URL);
+      // Keep retries and token refresh on the project that issued this request.
+      auth._refreshUrl = apiUrl(`${BASE_URL}/login/refresh-token`);
+    }
     auth._sessionIdentity = session.identity;
     setLoading(true);
     auth._loadingCounted = true;
@@ -175,7 +180,7 @@ client.interceptors.response.use(
     return response;
   },
   async (error: AxiosError) => {
-    const config = error.config as (InternalAxiosRequestConfig & { _authRetried?: boolean; _loadingCounted?: boolean; _sessionIdentity?: string; _noAutomaticAuthReplay?: boolean }) | undefined;
+    const config = error.config as (InternalAxiosRequestConfig & { _authRetried?: boolean; _loadingCounted?: boolean; _sessionIdentity?: string; _noAutomaticAuthReplay?: boolean; _refreshUrl?: string }) | undefined;
     if (config?._loadingCounted) { setLoading(false); config._loadingCounted = false; }
     if (axios.isCancel(error)) return Promise.reject(error);
     if (config?._noAutomaticAuthReplay) return Promise.reject(error);
@@ -192,8 +197,10 @@ client.interceptors.response.use(
         const refreshToken = getRefreshToken();
         if (refreshToken) {
           try {
+            const refreshUrl = config._refreshUrl!;
+            let refreshPromise = refreshPromises.get(refreshUrl);
             if (!refreshPromise) {
-              refreshPromise = axios.post(`${BASE_URL}/login/refresh-token`, null, {
+              refreshPromise = axios.post(refreshUrl, null, {
                 params: { refresh_token: refreshToken }, timeout: 15000,
               }).then((response) => {
                 const token = unwrap<{ access_token?: string }>(response.data).access_token;
@@ -201,7 +208,8 @@ client.interceptors.response.use(
                 // Do not restore a session that was signed out during the refresh.
                 if (!updateAccessToken(token, refreshToken)) throw new Error('Session changed');
                 return token;
-              }).finally(() => { refreshPromise = null; });
+              }).finally(() => { refreshPromises.delete(refreshUrl); });
+              refreshPromises.set(refreshUrl, refreshPromise);
             }
             await refreshPromise;
             return client(config);
@@ -237,7 +245,7 @@ export const fetchDashboardMetrics = (): Promise<DashboardMetrics> =>
 export const fetchDashboardAlerts = (): Promise<Alert[]> =>
   client.get('/dashboard/alerts').then((r) => unwrap<Alert[]>(r.data));
 
-export const DASHBOARD_WS_URL = wsUrl('/ws');
+export const getDashboardWsUrl = () => wsUrl('/ws');
 
 // ============================================================
 //  ETL Layers
@@ -1199,7 +1207,7 @@ export const fetchMonitorStats = (): Promise<MonitorStats> =>
 // ============================================================
 //  Monitoring WebSocket
 // ============================================================
-export const MONITOR_WS_URL = wsUrl('/api/monitor/ws');
+export const getMonitorWsUrl = () => wsUrl('/api/monitor/ws');
 
 // ============================================================
 //  AI Collect

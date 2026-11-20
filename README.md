@@ -191,10 +191,12 @@ docker compose run --rm --no-deps web python -m app.web.initial_data
 docker compose up -d
 ```
 
-服务器部署会同时构建前端和后端。Nginx 使用 `<项目名>.<后缀>` 形式的 HTTPS 域名，
-HTTP 请求自动跳转到 HTTPS。切换项目会同时改变浏览器和 API 域名的第一段，项目入口使用 `/`，不再重复项目路径。
-本体库示例：`https://ontology.astral-helio.internal/?schema=ts_ods&table=local_demo_companies`，
-对象探索页为 `/explorer`，数据连接页为 `/connections`；共享管理页面保持原路径。
+服务器部署会同时构建前端和后端。前端固定使用 `app.astral-helio.internal`，
+后端使用 `<项目名>.astral-helio.api`，HTTP 请求自动跳转到 HTTPS。
+项目通过站内路径切换，例如本体库 `/ontology`、采集平台 `/scout`、驾驶舱 `/atlas`、
+知识图谱 `/graph`、知识库 `/rag`；切换由 SPA 路由完成，不重新加载整页。
+本体库示例：`https://app.astral-helio.internal/ontology?schema=ts_ods&table=local_demo_companies`，
+对象探索页为 `/ontology/explorer`，数据连接页为 `/ontology/connections`；共享管理页面保持原路径。
 在 `.env` 中仅配置后缀，不包含项目名、协议、路径或端口：
 
 ```dotenv
@@ -204,7 +206,8 @@ SPIDER_HTTP_PORT=80
 SPIDER_HTTPS_PORT=443
 ```
 
-前端 API 地址由 Nginx 启动时提供的 `/runtime-config.js` 注入；后端
+后端域名后缀、HTTPS 端口和前端域名后缀由 Nginx 启动时提供的 `/runtime-config.js` 注入，
+前端按当前项目生成 API 地址；后端
 `FRONTEND_HOST` 和 CORS 来源由 Compose 从上述配置生成。域名和端口不写入镜像，
 修改入口配置后重新创建 `web`、`tls-init`、`nginx` 即可，无需重建前端：
 
@@ -213,12 +216,13 @@ docker compose up -d --force-recreate web tls-init nginx
 ```
 
 项目名为 `crawler`、`ontology`、`atlas`、`graph`、`rag`；`vault` 对应尚未开放的项目。
-例如从本体库切到 Scout，前端变为 `crawler.astral-helio.internal`，API 和 WSS
-变为 `crawler.astral-helio.api`。前端项目域通过 Secure、SameSite=Strict 的后缀域
-Cookie 共享登录、锁屏及绝对过期时间；API 仍使用 Bearer 认证。首次升级需重新登录一次。
-后缀下的所有前端项目均属于同一会话信任范围，不应部署不受信任的应用。
+例如从本体库切到 Scout，浏览器地址从 `app.astral-helio.internal/ontology` 变为
+`app.astral-helio.internal/scout`，API 和 WSS 从 `ontology.astral-helio.api`
+切到 `crawler.astral-helio.api`。所有项目位于同一前端 origin，通过 localStorage 使用同一登录会话，
+沿用 8 小时绝对过期和 30 分钟闲置锁屏规则；API 仍使用 Bearer 认证。
+首次使用新的 `app` 入口需登录一次，旧项目域 Cookie 不读取或迁移。
 
-内网 DNS 需将 `*.astral-helio.internal`、`*.astral-helio.api` 解析到当前 Docker 主机。
+内网 DNS 需将 `app.astral-helio.internal`、`*.astral-helio.api` 解析到当前 Docker 主机。
 可以在已有 DNS 中配置通配记录，
 也可以启动项目自带的 Docker DNS：
 
@@ -263,13 +267,14 @@ docker compose exec nginx nginx -t
 ```
 
 通过 `https://ontology.<BACKEND_DOMAIN_SUFFIX>:<SPIDER_HTTPS_PORT>/api/health` 检查后端健康，
-通过 `https://ontology.<FRONTEND_DOMAIN_SUFFIX>:<SPIDER_HTTPS_PORT>` 访问本体库；443 端口可省略。
+通过 `https://app.<FRONTEND_DOMAIN_SUFFIX>:<SPIDER_HTTPS_PORT>/ontology` 访问本体库；443 端口可省略。
 前端域名不代理 API 或 WebSocket，相关请求使用后端域名。公共 v1 API 使用 `/v1/...`，
 Compose 将后端 `API_V1_STR` 设为 `/v1`，Nginx 同路径转发，接口文档同步使用该前缀；
 旧的外部 `/api/v1/...` 返回 404。开发直连仍使用 `.env` 中的前缀。
 例如 `https://ontology.astral-helio.api/v1/etl/ts_ods/local_demo_media/row-links`。
 非 v1 接口（如 `/api/ontology/v1/...`）和 `/ws/...` 保持各自路径。
-Nginx 仅接受上述六个项目在两个后缀下的域名，拒绝其他业务域名；HTTP 健康检查 `/nginx-health` 保留给容器探针。
+Nginx 前端仅接受 `app.<FRONTEND_DOMAIN_SUFFIX>`，后端仅接受上述六个项目的域名，
+旧的项目专属前端域名和其他业务域名均拒绝访问；HTTP 健康检查 `/nginx-health` 保留给容器探针。
 Celery Beat 独立保持单实例，Crawler Worker 可以横向扩容。
 
 Worker 总任务并发数为

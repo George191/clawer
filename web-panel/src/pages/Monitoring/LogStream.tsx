@@ -6,7 +6,7 @@ import {
   PauseCircleOutlined,
 } from '@/components/ui/icons';
 import { useWebSocket } from '@/hooks/useWebSocket';
-import { MONITOR_WS_URL } from '@/services/api';
+import { getMonitorWsUrl } from '@/services/api';
 import type { LogEntry } from '@/services/types';
 
 const { Text } = Typography;
@@ -44,7 +44,7 @@ const LogStream: React.FC = () => {
     }
   }, []);
 
-  const { connected } = useWebSocket(MONITOR_WS_URL, {
+  const { connected } = useWebSocket(getMonitorWsUrl, {
     onMessage: handleMessage,
     reconnectInterval: 5000,
   });

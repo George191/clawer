@@ -184,14 +184,8 @@ services:
       SPIDER_KAFKA_SSL_CAFILE: ${SPIDER_KAFKA_SSL_CAFILE:-/etc/kafka/kafka.crt}
       SPIDER_CDC_CONNECT_URL: ${SPIDER_CDC_CONNECT_URL:-http://mongo-cdc-connect:8083}
       API_V1_STR: /v1
-      FRONTEND_HOST: https://ontology.${FRONTEND_DOMAIN_SUFFIX:?FRONTEND_DOMAIN_SUFFIX must be set in .env}:${SPIDER_HTTPS_PORT:-443}
-      BACKEND_CORS_ORIGINS: >-
-        https://crawler.${FRONTEND_DOMAIN_SUFFIX}:${SPIDER_HTTPS_PORT:-443},
-        https://vault.${FRONTEND_DOMAIN_SUFFIX}:${SPIDER_HTTPS_PORT:-443},
-        https://ontology.${FRONTEND_DOMAIN_SUFFIX}:${SPIDER_HTTPS_PORT:-443},
-        https://atlas.${FRONTEND_DOMAIN_SUFFIX}:${SPIDER_HTTPS_PORT:-443},
-        https://graph.${FRONTEND_DOMAIN_SUFFIX}:${SPIDER_HTTPS_PORT:-443},
-        https://rag.${FRONTEND_DOMAIN_SUFFIX}:${SPIDER_HTTPS_PORT:-443}
+      FRONTEND_HOST: https://app.${FRONTEND_DOMAIN_SUFFIX:?FRONTEND_DOMAIN_SUFFIX must be set in .env}:${SPIDER_HTTPS_PORT:-443}
+      BACKEND_CORS_ORIGINS: https://app.${FRONTEND_DOMAIN_SUFFIX}:${SPIDER_HTTPS_PORT:-443}
     extra_hosts:
       - "mongo.spider.internal:192.168.1.32"
     volumes:

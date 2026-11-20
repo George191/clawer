@@ -324,7 +324,7 @@ export interface WorkspaceReleasePayload {
 
 // ── API ────────────────────────────────────────────────────────────────────
 
-export const AI_ANALYZE_WS_URL = wsUrl('/ws');
+export const getAiAnalyzeWsUrl = () => wsUrl('/ws');
 
 export const preflightUrl = (url: string): Promise<UrlPreflightResponse> =>
   client.post('/ai/preflight', { url }, { timeout: 0 }).then((r) => r.data);

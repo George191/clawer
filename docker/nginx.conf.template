@@ -49,9 +49,7 @@ http {
     server {
         listen 80;
         server_name
-            crawler.${FRONTEND_DOMAIN_SUFFIX} ontology.${FRONTEND_DOMAIN_SUFFIX}
-            atlas.${FRONTEND_DOMAIN_SUFFIX} graph.${FRONTEND_DOMAIN_SUFFIX}
-            rag.${FRONTEND_DOMAIN_SUFFIX} vault.${FRONTEND_DOMAIN_SUFFIX}
+            app.${FRONTEND_DOMAIN_SUFFIX}
             crawler.${BACKEND_DOMAIN_SUFFIX} ontology.${BACKEND_DOMAIN_SUFFIX}
             atlas.${BACKEND_DOMAIN_SUFFIX} graph.${BACKEND_DOMAIN_SUFFIX}
             rag.${BACKEND_DOMAIN_SUFFIX} vault.${BACKEND_DOMAIN_SUFFIX};
@@ -68,10 +66,7 @@ http {
 
     server {
         listen 443 ssl;
-        server_name
-            crawler.${FRONTEND_DOMAIN_SUFFIX} ontology.${FRONTEND_DOMAIN_SUFFIX}
-            atlas.${FRONTEND_DOMAIN_SUFFIX} graph.${FRONTEND_DOMAIN_SUFFIX}
-            rag.${FRONTEND_DOMAIN_SUFFIX} vault.${FRONTEND_DOMAIN_SUFFIX};
+        server_name app.${FRONTEND_DOMAIN_SUFFIX};
 
         location = /runtime-config.js {
             alias /etc/nginx/runtime-config.js;

@@ -29,5 +29,5 @@ if [ "$SPIDER_HTTPS_PORT" -ne 443 ]; then
 fi
 export HTTPS_REDIRECT_PORT
 
-printf 'window.__APP_CONFIG__ = {"apiOrigin":"https://" + window.location.hostname.split(".")[0] + ".%s%s", "frontendDomainSuffix":"%s"};\n' \
-    "$BACKEND_DOMAIN_SUFFIX" "$HTTPS_REDIRECT_PORT" "$FRONTEND_DOMAIN_SUFFIX" > /etc/nginx/runtime-config.js
+printf 'window.__APP_CONFIG__ = {"backendDomainSuffix":"%s", "httpsPort":"%s", "frontendDomainSuffix":"%s"};\n' \
+    "$BACKEND_DOMAIN_SUFFIX" "$SPIDER_HTTPS_PORT" "$FRONTEND_DOMAIN_SUFFIX" > /etc/nginx/runtime-config.js

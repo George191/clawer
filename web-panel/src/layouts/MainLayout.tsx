@@ -42,7 +42,7 @@ import { Link, matchPath, useLocation, useNavigate } from 'react-router-dom';
 import { useThemeStore } from '@/stores/settings';
 import { fetchCurrentUserContext } from '@/services/api';
 import { clearSession } from '@/services/session';
-import { currentProjectDomain, projectHref, type ProjectDomain } from '@/services/projectDomains';
+import { getCurrentProjectDomain, resolveProjectDomain, setCurrentProjectDomain, type ProjectDomain } from '@/services/projectDomains';
 import type { CurrentUserContext } from '@/services/types';
 
 const { Header, Content } = Layout;
@@ -240,34 +240,6 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
   },
 };
 
-const explicitRouteProject: Record<string, ProjectKey> = {
-  '/': 'ai-collect',
-  '/scout': 'ai-collect',
-  '/source-strategy': 'ai-collect',
-  '/anti-crawl': 'ai-collect',
-  '/field-mapping': 'ai-collect',
-  '/vault/catalog': 'data-lake',
-  '/vault/metadata': 'data-lake',
-  '/vault/quality': 'data-lake',
-  '/vault/lineage': 'data-lake',
-  '/vault/security': 'data-lake',
-  '/vault/market': 'data-lake',
-  '/explorer': 'data-lake',
-  '/data-api': 'data-lake',
-  '/ontology': 'etl-pipeline',
-  '/atlas': 'data-cockpit',
-  '/atlas/metrics': 'data-cockpit',
-  '/atlas/quality': 'data-cockpit',
-  '/graph': 'knowledge-graph',
-  '/graph/entities': 'knowledge-graph',
-  '/graph/quality': 'knowledge-graph',
-  '/graph/lineage': 'knowledge-graph',
-  '/rag': 'knowledge-rag',
-  '/rag/documents': 'knowledge-rag',
-  '/rag/indexes': 'knowledge-rag',
-  '/rag/evaluation': 'knowledge-rag',
-};
-
 const legacyRouteToSidebarKey: Record<string, string> = {
   '/': '/',
   '/instances': '/vault/catalog',
@@ -284,13 +256,8 @@ const legacyRouteToSidebarKey: Record<string, string> = {
   '/learning': '/learning',
 };
 
-const resolveProjectByPath = (pathname: string): ProjectKey | null => {
-  const match = Object.entries(explicitRouteProject)
-    .sort(([a], [b]) => b.length - a.length)
-    .find(([route]) => pathname === route || pathname.startsWith(`${route}/`));
-
-  return match?.[1] ?? null;
-};
+const projectKeyForDomain = (domain: ProjectDomain): ProjectKey =>
+  projectOrder.find(key => projectConfigs[key].domain === domain)!;
 
 interface MainLayoutProps {
   children: React.ReactNode;
@@ -313,21 +280,11 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const navigate = useNavigate();
   const { mode } = useThemeStore();
   const isDark = mode === 'dark';
-  const hostedProject = projectOrder.find((key) => projectConfigs[key].domain === currentProjectDomain);
-  const [currentProject, setCurrentProject] = useState<ProjectKey>(() => hostedProject ?? resolveProjectByPath(location.pathname) ?? 'etl-pipeline');
-  const routedProject = useMemo(() => location.pathname === '/' && hostedProject ? hostedProject : isFlowSurface ? 'etl-pipeline' : resolveProjectByPath(location.pathname), [hostedProject, isFlowSurface, location.pathname]);
+  const [currentProject, setCurrentProject] = useState<ProjectKey>(() => projectKeyForDomain(getCurrentProjectDomain()));
+  const routedDomain = resolveProjectDomain(location.pathname);
+  const routedProject = routedDomain ? projectKeyForDomain(routedDomain) : null;
   const activeProjectKey = routedProject ?? currentProject;
   const activeProject = projectConfigs[activeProjectKey];
-  useEffect(() => {
-    if (location.pathname === '/' && hostedProject) {
-      navigate(projectConfigs[hostedProject].defaultPath, { replace: true });
-      return;
-    }
-    if (routedProject) {
-      const target = projectHref(projectConfigs[routedProject].domain, location.pathname + location.search + location.hash);
-      if (new URL(target).origin !== window.location.origin) window.location.replace(target);
-    }
-  }, [hostedProject, routedProject, location.pathname, location.search, location.hash, navigate]);
   const isAutomationSurface = location.pathname.startsWith('/automation');
   const isPlatformManagementSurface = location.pathname.startsWith('/organization');
   const isSystemSettingsSurface = location.pathname.startsWith('/settings');
@@ -451,14 +408,10 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     const nextProject = key as ProjectKey;
     setCurrentProject(nextProject);
     const targetPath = projectConfigs[nextProject].defaultPath;
-    const target = projectHref(projectConfigs[nextProject].domain, targetPath);
-    if (new URL(target).origin !== window.location.origin) {
-      window.location.assign(target);
-      return;
-    }
     if (location.pathname !== targetPath) {
       navigate(targetPath);
     }
+    setCurrentProjectDomain(projectConfigs[nextProject].domain);
     if (isMobile) {
       setManualCollapsed(true);
     }

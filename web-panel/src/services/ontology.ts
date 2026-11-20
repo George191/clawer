@@ -1,5 +1,4 @@
 import client from './api';
-import { apiUrl } from './endpoints';
 
 export type SemanticSource = { mode: 'existing' | 'none'; schema?: string; table?: string; upstreamConnectionId?: string | null };
 export type SemanticProperty = { id: string; name: string; type: string; sourceColumn?: string; required: boolean };
@@ -23,7 +22,7 @@ export type OntologyValidation = { errors: OntologyIssue[]; warnings: OntologyIs
 export type OntologyProject = { id: string; name: string; teamName: string; tenantId: string; ownerId: string | null; canName: boolean };
 export type OntologyPrincipal = Principal & { name: string; email?: string | null };
 export type PublishedOntologyType = { id: string; revision: number; definition: SemanticDefinition };
-const config = { baseURL: apiUrl('/api/ontology/v1') };
+const config = { baseURL: '/api/ontology/v1' };
 export function newOntologyRequestId() {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
   bytes[6] = (bytes[6] & 15) | 64;
