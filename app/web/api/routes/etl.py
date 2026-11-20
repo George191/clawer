@@ -1922,6 +1922,14 @@ async def explorer_object_storage(current_user: Any = Depends(get_current_user))
     return storage_configuration()
 
 
+@read.post("/{layer}/{table}/record-html")
+async def explorer_record_html(layer: str, table: str, payload: ExplorerFileQuery, response: Response,
+                               current_user: Any = Depends(get_current_user)):
+    from app.web.services.explorer_files import html_preview
+    response.headers["Cache-Control"] = "private, no-store"
+    return await html_preview(layer, table, payload.key, payload.field)
+
+
 @read.post("/{layer}/{table}/record-file")
 async def explorer_record_file(layer: str, table: str, payload: ExplorerFileQuery, response: Response,
                                current_user: Any = Depends(get_current_user)):

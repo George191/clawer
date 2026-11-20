@@ -1,9 +1,11 @@
 .explorer-full-record.flow-console--ontology {
-  display: block;
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-width: 0;
   height: 100%;
-  overflow: auto;
+  min-height: 0;
+  overflow: hidden;
   padding: 22px clamp(16px, 4vw, 68px) 42px;
   color: var(--ontology-text);
   background: var(--ontology-bg);
@@ -19,9 +21,9 @@
 .record-heading h1 { margin: 2px 0 0; font-size: clamp(21px,3vw,34px); line-height: 1.2; overflow-wrap: anywhere; }
 .record-operations, .record-confirm { flex-wrap: wrap; }
 .record-identity { display: flex; gap: 20px; flex-wrap: wrap; padding: 12px 0 18px; margin-block: 0; }
-.record-identity div { min-width: 70px; }
+.record-identity > div { display: flex; align-items: baseline; gap: 8px; min-width: 70px; }
 .record-identity dt { font-size: 12px; }
-.record-identity dd { margin: 3px 0 0; font: 13px ui-monospace, monospace; overflow-wrap: anywhere; }
+.record-identity dd { margin: 0; font: 13px ui-monospace, monospace; overflow-wrap: anywhere; }
 .record-tabs { gap: 16px; flex-wrap: wrap; border-bottom: 1px solid var(--ontology-border); margin-bottom: 18px; }
 .record-tabs button { padding: 10px 2px; border: 0; border-bottom: 2px solid transparent; color: var(--ontology-muted); background: transparent; cursor: pointer; }
 .record-tabs button[aria-pressed="true"] { color:var(--ontology-text); border-color:var(--ontology-muted); }
@@ -30,3 +32,6 @@
 .record-share input { flex:1; min-width:0; background:var(--ontology-panel); border:1px solid var(--ontology-border); color:var(--ontology-text); padding:7px; }
 .record-error, .record-confirm, .record-share { background: var(--ontology-panel); padding: 12px; margin-bottom: 12px; border: 1px solid var(--ontology-border); border-radius: 4px; }
 .record-error { display: flex; gap: 10px; align-items: center; color: var(--ui-error); }
+
+.explorer-full-record > * { flex-shrink: 0; width: 100%; }
+.explorer-full-record > .record-content { flex: 1; min-height: 0; overflow: auto; }

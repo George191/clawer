@@ -118,6 +118,8 @@ async def main():
         await expect(catalog_search).to_be_focused()
         await catalog.locator(".flow-catalog-schema").filter(has_text=schema).click()
         await catalog.get_by_role("button", name=table, exact=True).click()
+        await expect(catalog).to_be_visible()
+        await page.get_by_role("button", name="Browse object types").click()
         await expect(catalog).to_be_hidden()
         tab_url = page.url
         assert parse_qs(urlsplit(tab_url).query)["table"] == [table]

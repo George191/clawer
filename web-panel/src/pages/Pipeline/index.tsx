@@ -1029,8 +1029,8 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
             message.warning('Save or cancel current changes before switching tables'); return;
         }
         if (editingRowKey) { message.warning('Save or cancel the current row edit first'); return; }
-        setCatalogOpen(false);
         if (isSchemas && selected.name === table.name && requestedSchema === selectedSchema && requestedTable === selected.name) return;
+        setTable(selected);
         setClosedTables((current) => { const next = new Set(current); next.delete(selected.name); return next; });
         const params = new URLSearchParams(search); params.delete('create'); params.delete('saved'); params.set('schema', selectedSchema); params.set('table', selected.name);
         navigate(`${workspacePath}?${params.toString()}`, { replace: !isSchemas });

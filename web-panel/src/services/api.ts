@@ -1523,5 +1523,7 @@ export const copySandboxHandoff = (request: SandboxHandoffCopyRequest, signal?: 
 export type ExplorerStorage = { baseUrl: string; origins: string[]; bucket: string };
 export const fetchExplorerStorage = (signal: AbortSignal): Promise<ExplorerStorage> =>
   client.get('/etl/object-storage', { signal }).then(r => unwrap<ExplorerStorage>(r.data));
+export const fetchExplorerHtml = (schema: string, table: string, key: Record<string, unknown>, field: string, signal?: AbortSignal): Promise<{ html: string }> =>
+  client.post(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/record-html`, { key, field }, { signal }).then(r => unwrap<{ html: string }>(r.data));
 export const fetchExplorerFile = (schema: string, table: string, key: Record<string, unknown>, field: string, download = true, signal?: AbortSignal): Promise<{ url: string }> =>
   client.post(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/record-file`, { key, field, download }, { signal }).then(r => unwrap<{ url: string }>(r.data));
