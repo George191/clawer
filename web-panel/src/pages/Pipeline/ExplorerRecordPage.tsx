@@ -149,7 +149,7 @@ function RecordPage({ schema, table, identity }: { schema: string; table: string
                     onClick={() => setMode(`group:${name}`)}>{name}</button>)}
                 <button type="button" aria-pressed={mode==='links'} disabled={locked} onClick={()=>setMode('links')}>Links</button>
             </div>
-            {draft ? <form className="record-edit" onSubmit={e=>{e.preventDefault();void mutate(false);}}>
+            <div className="record-content">{draft ? <form className="record-edit" onSubmit={e=>{e.preventDefault();void mutate(false);}}>
                 {editFields.map(name=><div key={name} className="record-edit-field"><PropertyLabel type={result.columnTypes[name]}>{name}</PropertyLabel>
                     <ExplorerFieldEditor name={name} type={result.columnTypes[name]} disabled={busy || stale} value={draft[name]}
                         onChange={value=>setDraft({...draft,[name]:value})} />
@@ -159,7 +159,7 @@ function RecordPage({ schema, table, identity }: { schema: string; table: string
                 !metadata ? <p role="status">Loading object presentation…</p> :
                 metadata.error ? <p>Properties are unavailable until the object presentation loads.</p> :
                 mode==='properties' ? <ExplorerProperties presentation={presentation} presentations={presentations} row={row}/> :
-                <ExplorerObjectOverview row={row} presentation={presentation} presentations={presentations} typeName={typeName} group={currentGroup}/>}
+                <ExplorerObjectOverview row={row} presentation={presentation} presentations={presentations} typeName={typeName} group={currentGroup}/>}</div>
         </>}
     </article>;
 }

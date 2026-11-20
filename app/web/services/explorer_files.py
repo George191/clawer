@@ -1,5 +1,9 @@
 """Resolve only configured MinIO objects referenced by readable physical records."""
+import json
 from datetime import timedelta
+from html import escape
+
+from lxml import html as lxml_html
 from mimetypes import guess_type
 from urllib.parse import quote, unquote, urlsplit
 
@@ -28,7 +32,9 @@ def object_key(value):
         url = urlsplit(value)
     except ValueError as exc:
         raise HTTPException(422, "This property is not a configured MinIO file") from exc
-    if url.scheme in ('s3', 'minio') and url.netloc == config['bucket']:
+    if value.startswith(('acticle/', 'news/')):
+        key = unquote(value)
+    elif url.scheme in ('s3', 'minio') and url.netloc == config['bucket']:
         key = unquote(url.path.lstrip('/'))
     elif value.startswith('/' + config['bucket'] + '/'):
         key = unquote(value[len(config['bucket']) + 2:])
@@ -43,15 +49,98 @@ def object_key(value):
     return key
 
 
-async def download_link(layer, table, identity, field, *, download=True):
-    record = await row_by_key(layer, table, identity, editable=False)
-    key = object_key(record['row'].get(field))
+def storage_client():
     endpoint = urlsplit(storage_configuration()['baseUrl'])
-    client = Minio(endpoint.netloc, access_key=settings.minio_access_key,
-                   secret_key=settings.minio_secret_key, secure=endpoint.scheme == 'https',
-                   http_client=urllib3.PoolManager(timeout=5, retries=False))
-    url = await run_in_threadpool(client.presigned_get_object, settings.minio_bucket, key,
+    return Minio(endpoint.netloc, access_key=settings.minio_access_key,
+                 secret_key=settings.minio_secret_key, secure=endpoint.scheme == 'https',
+                 http_client=urllib3.PoolManager(timeout=5, retries=False))
+
+
+def signed_link(key, *, download=False, client=None):
+    client = client or storage_client()
+    url = client.presigned_get_object(settings.minio_bucket, key,
         expires=timedelta(minutes=5 if download else 60), response_headers={
             'response-content-type': guess_type(key)[0] or 'application/octet-stream',
             'response-content-disposition': ("attachment" if download else "inline") + "; filename*=UTF-8''" + quote(key.rsplit('/', 1)[-1], safe='')})
-    return {"url": url}
+    return url
+
+
+async def download_link(layer, table, identity, field, *, download=True):
+    record = await row_by_key(layer, table, identity, editable=False)
+    key = object_key(record['row'].get(field))
+    return {"url": await run_in_threadpool(signed_link, key, download=download)}
+
+
+def render_html(record, field):
+    content = record.get(field)
+    if not isinstance(content, str) or not content.strip():
+        raise HTTPException(422, "This property has no HTML content")
+    resources = {}
+    for name, singular in (("images", "img"), ("videos", "video"), ("audios", "audio"), ("attachments", "attachment")):
+        items = record.get(name) or []
+        if isinstance(items, str):
+            items = json.loads(items)
+        if not isinstance(items, list):
+            continue
+        for index, item in enumerate(items):
+            url = item.get('url') if isinstance(item, dict) else item
+            if not isinstance(url, str) or not url:
+                continue
+            resources['{{' + singular + '_' + str(index) + '}}'] = url
+            if isinstance(item, dict) and item.get('placeholder'):
+                resources[item['placeholder']] = url
+    signed = {}
+    client = storage_client()
+
+    def resolve(value):
+        value = resources.get(value, value)
+        if value in signed:
+            return signed[value]
+        # ODS media fields store bucket-relative keys, rather than public URLs.
+        if value.startswith(('acticle/', 'news/')):
+            key = value
+        else:
+            try:
+                key = object_key(value)
+            except HTTPException:
+                return value if value.startswith(('https://', 'http://', 'data:image/')) else None
+        signed[value] = signed_link(key, client=client)
+        return signed[value]
+
+    try:
+        tree = lxml_html.fragment_fromstring(content, create_parent='div')
+    except (ValueError, lxml_html.etree.ParserError) as exc:
+        raise HTTPException(422, "Invalid HTML content") from exc
+    for node in list(tree.iterdescendants()):
+        if not isinstance(node.tag, str):
+            continue
+        if node.tag in ('script', 'style', 'link', 'meta', 'iframe', 'object', 'embed', 'form', 'base'):
+            node.drop_tree()
+            continue
+        lazy = node.get('data-src')
+        if lazy and node.tag in ('img', 'video', 'audio', 'source'):
+            node.set('src', lazy)
+        for attr in list(node.attrib):
+            if attr not in ('src', 'href', 'poster', 'alt', 'title', 'colspan', 'rowspan'):
+                del node.attrib[attr]
+        for attr in ('src', 'href', 'poster'):
+            value = node.get(attr)
+            if value:
+                resolved = resolve(value)
+                if resolved:
+                    node.set(attr, resolved)
+                else:
+                    del node.attrib[attr]
+        if node.tag == 'a':
+            node.set('target', '_blank')
+            node.set('rel', 'noopener noreferrer')
+        if node.tag in ('video', 'audio'):
+            node.set('controls', '')
+            node.set('preload', 'metadata')
+    return {"html": escape(tree.text or '', quote=False) + ''.join(
+        lxml_html.tostring(node, encoding='unicode', method='html') for node in tree)}
+
+
+async def html_preview(layer, table, identity, field):
+    record = await row_by_key(layer, table, identity, editable=False)
+    return await run_in_threadpool(render_html, record['row'], field)
