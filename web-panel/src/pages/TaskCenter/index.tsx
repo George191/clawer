@@ -227,13 +227,8 @@ const TaskCenter: React.FC = () => {
             flex-direction: column;
             border: 1px solid ${aura.borderSoft};
           }
-          .task-board,
-          .task-board * {
-            scrollbar-width: none;
-          }
-          .task-board *::-webkit-scrollbar {
-            display: none;
-          }
+
+
           .task-board-header {
             flex-shrink: 0;
             padding: 14px 18px 0;

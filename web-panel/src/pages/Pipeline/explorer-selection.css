@@ -262,16 +262,7 @@
 @keyframes explorer-query-in { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
 @keyframes explorer-query-out { to { opacity:0; transform:translateY(6px); } }
 @media (prefers-reduced-motion:reduce) { .flow-explorer-query-status, .flow-explorer-query-status.is-leaving { animation:none; } }
-.flow-console--ontology .flow-explorer-selection .flow-data-table .ui-table-content, .flow-console--ontology .flow-explorer-selection__cards { overflow:auto; scrollbar-width:thin !important; scrollbar-color:color-mix(in srgb,var(--ontology-muted) 55%,var(--ontology-panel)) transparent; }
-.flow-explorer-selection :is(.ui-table-content,.flow-explorer-selection__cards)::-webkit-scrollbar { display:block !important; height:4px !important; width:4px !important; }
-.flow-explorer-selection :is(.ui-table-content,.flow-explorer-selection__cards)::-webkit-scrollbar-track,
-.flow-explorer-selection :is(.ui-table-content,.flow-explorer-selection__cards)::-webkit-scrollbar-corner { background:transparent; }
-.flow-explorer-selection :is(.ui-table-content,.flow-explorer-selection__cards)::-webkit-scrollbar-thumb { background:color-mix(in srgb,var(--ontology-muted) 55%,var(--ontology-panel)); border:0; border-radius:2px; }
-.flow-explorer-selection :is(.ui-table-content,.flow-explorer-selection__cards)::-webkit-scrollbar-thumb:hover { background:color-mix(in srgb,var(--ontology-muted) 75%,var(--ontology-panel)); }
-.flow-explorer-selection :is(.ui-table-content,.flow-explorer-selection__cards)::-webkit-scrollbar-button { display:none !important; height:0 !important; width:0 !important; }
-@supports selector(::-webkit-scrollbar) {
-  .flow-console--ontology .flow-explorer-selection .flow-data-table .ui-table-content, .flow-console--ontology .flow-explorer-selection__cards { scrollbar-width:auto !important; scrollbar-color:auto; }
-}
+.flow-console--ontology .flow-explorer-selection .flow-data-table .ui-table-content, .flow-console--ontology .flow-explorer-selection__cards { overflow:auto; }
 
 .flow-console--ontology .flow-explorer-selection__results > .flow-data-table { display:flex; flex:1; flex-direction:column; min-height:0; overflow:hidden; }
 .flow-explorer-selection .flow-data-table :is(.ui-spin-nested-loading,.ui-spin-container,.ui-table,.ui-table-container) { display:flex; flex:1; flex-direction:column; min-height:0; max-width:100%; }

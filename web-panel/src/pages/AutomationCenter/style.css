@@ -275,7 +275,6 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto !important;
-  scrollbar-gutter: stable;
 }
 
 .automation-table-card .ui-table-pagination {

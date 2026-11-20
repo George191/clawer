@@ -5526,15 +5526,6 @@ const AICollect: React.FC = () => {
             color: ${aura.text};
             font-family: "SF Pro Display", "SF Pro Text", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
           }
-          .ai-collect-workbench,
-          .ai-collect-workbench * {
-            scrollbar-width: none;
-          }
-          .ai-collect-workbench *::-webkit-scrollbar {
-            display: none;
-            width: 0;
-            height: 0;
-          }
           .ai-collect-header {
             flex-shrink: 0;
             position: sticky;
@@ -5597,8 +5588,6 @@ const AICollect: React.FC = () => {
           .ai-collect-panel {
             padding: 14px;
             overflow: auto;
-            scrollbar-width: none;
-            -ms-overflow-style: none;
             color: ${aura.text};
           }
           .ai-collect-workbench .ui-typography {
@@ -6991,8 +6980,6 @@ const AICollect: React.FC = () => {
           }
           .ai-session-time-picker-dropdown .ui-picker-time-panel-column {
             overscroll-behavior: contain;
-            scrollbar-width: thin;
-            scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
           }
           .ai-session-time-picker-dropdown .ui-picker-time-panel-column > li.ui-picker-time-panel-cell .ui-picker-time-panel-cell-inner {
             color: rgba(255, 255, 255, 0.68);
@@ -7219,11 +7206,8 @@ const AICollect: React.FC = () => {
             gap: 6px;
             overflow-x: auto;
             overflow-y: hidden;
-            scrollbar-width: none;
           }
-          .ai-session-inspector-tabs::-webkit-scrollbar {
-            display: none;
-          }
+
           .ai-session-inspector-tab {
             flex: 0 0 auto;
             max-width: 220px;
@@ -8393,8 +8377,6 @@ const AICollect: React.FC = () => {
             flex: 1;
             min-height: 0;
             overflow: auto;
-            scrollbar-width: none;
-            -ms-overflow-style: none;
             padding-right: 1px;
           }
           .ai-prompt-landing {
@@ -8603,15 +8585,7 @@ const AICollect: React.FC = () => {
             color: ${aura.subtle};
             text-indent: 5px;
           }
-          .ai-collect-panel::-webkit-scrollbar,
-          .ai-mission-content::-webkit-scrollbar,
-          .ai-code-block::-webkit-scrollbar,
-          .ai-collect-workbench .ui-table-body::-webkit-scrollbar,
-          .ai-collect-workbench .ui-table-content::-webkit-scrollbar {
-            display: none;
-            width: 0;
-            height: 0;
-          }
+
           .ai-panel-head {
             display: flex;
             align-items: center;
@@ -8928,12 +8902,9 @@ const AICollect: React.FC = () => {
             min-height: 0;
             padding: 18px 20px;
             overflow: auto;
-            scrollbar-width: none;
             background: linear-gradient(180deg, rgba(22, 26, 34, 0.08), rgba(22, 26, 34, 0));
           }
-          .ai-stage-content::-webkit-scrollbar {
-            display: none;
-          }
+
           .ai-stage-stack {
             display: flex;
             flex-direction: column;

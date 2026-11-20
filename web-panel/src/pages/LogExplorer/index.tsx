@@ -467,9 +467,9 @@ const LogExplorer: React.FC = () => {
             display: flex;
             flex-direction: column;
           }
-          .log-explorer *::-webkit-scrollbar { width: 6px; height: 6px; }
-          .log-explorer *::-webkit-scrollbar-thumb { background: ${aura.border}; border-radius: 3px; }
-          .log-explorer *::-webkit-scrollbar-track { background: transparent; }
+
+
+
 
           /* ── Header ── */
           .log-header {

@@ -56,13 +56,8 @@ const CollectConsole: React.FC = () => {
           display: flex;
           flex-direction: column;
         }
-        .collect-console,
-        .collect-console * {
-          scrollbar-width: none;
-        }
-        .collect-console *::-webkit-scrollbar {
-          display: none;
-        }
+
+
         /* Header */
         .cc-header {
           flex-shrink: 0;

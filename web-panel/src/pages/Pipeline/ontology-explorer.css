@@ -235,7 +235,7 @@
 .flow-ontology__preview-section > .flow-ontology__visibility-help, .flow-ontology__preview-section > .flow-ontology__visibility-feedback { margin-top: 8px; color: var(--ontology-muted); font-size: 12px; line-height: 18px; }
 .flow-ontology__preview-section > .flow-ontology__visibility-feedback.is-error { color: var(--ui-error, #ef4444); }
 .flow-ontology__property-list, .flow-ontology__linked-list { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
-.flow-ontology__property-list { max-height: 300px; overflow-y: auto; scrollbar-gutter: stable; overscroll-behavior: contain; }
+.flow-ontology__property-list { max-height: 300px; overflow-y: auto;  overscroll-behavior: contain; }
 .flow-ontology__property-row { display: flex; flex: none; align-items: center; gap: 5px; width: 100%; height: 30px; min-height: 30px; padding: 0; border: 0; background: none; color: var(--ontology-text); text-align: left; font-size: 13px; line-height: 18px; }
 .flow-ontology__property-row > span:not(.flow-ontology__property-icon):not(.flow-ontology__property-badge) { overflow: hidden; min-width: 0; text-overflow: ellipsis; white-space: nowrap; }
 .flow-ontology__property-name { padding-block: .4em; text-box: trim-both ex alphabetic; }
