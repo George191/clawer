@@ -107,7 +107,7 @@
 .wb-save-kind button[aria-pressed=true] { border-color:var(--ontology-link); background:var(--ontology-selected); }
 .wb-save-kind button:disabled { opacity:.4; cursor:default; }
 .wb-save-kind strong { font-weight:500; }
-.wb-save-kind span { grid-column:1/-1; color:var(--ontology-muted); font-size:11px; }
+.wb-save-kind button > span:not(.ui-icon) { grid-column:1/-1; color:var(--ontology-muted); font-size:11px; }
 .wb-dialog-field { display:grid; gap:7px; margin-top:14px; font-size:12px; font-weight:500; }
 .wb-dialog-field input { box-sizing:border-box; min-width:0; width:100%; padding:7px 9px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-bg); color:var(--ontology-text); font:inherit; font-weight:400; }
 .wb-dialog-field input:focus { outline:1px solid var(--ui-focus-ring); outline-offset:-1px; }
