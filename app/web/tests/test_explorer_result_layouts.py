@@ -218,7 +218,8 @@ async def test_chromium_result_layouts(layouts):
         rows = modal.locator("li")
         assert (await rows.first.inner_text()).find("source") >= 0
         await rows.filter(has_text="source").drag_to(rows.filter(has_text="id"))
-        await modal.get_by_role("combobox", name="Display history as").select_option("timeSeries")
+        await modal.get_by_role("combobox", name="Display history as").click()
+        await page.get_by_role("option", name="Time series", exact=True).click()
         await modal.get_by_label("Wrap text in cells").check()
         await modal.get_by_role("button", name="Save as table default").click()
         await expect(modal.get_by_role("status")).to_have_text("Table default saved.")
