@@ -46,6 +46,8 @@ def worker(path, shard, db_gate):
     mongo = mongo_client[migration.settings.db_name]
     with db_gate:
         registered = asyncio.run(migration.routes())
+    target_prefixes = tuple(f"{route['data_type']}/{route['template_name']}/"
+                            for route in registered if route['template_name'] == 'twitter')
 
     def apply(group):
         db = migration.journal(path)
@@ -94,7 +96,7 @@ def worker(path, shard, db_gate):
                             raise RuntimeError('Twitter references did not verify: ' + '/'.join(group))
                 rows = db.execute(f'SELECT old,new FROM objects WHERE {SCOPE} AND shard=? AND phase="verified" LIMIT ?', (shard, migration.BATCH)).fetchall()
                 for old, new in rows:
-                    if old == new or not new.startswith('tweet/twitter/'):
+                    if old == new or not new.startswith(target_prefixes):
                         raise ValueError('Invalid Twitter rename: ' + old)
                     client.stat_object(migration.settings.minio_bucket, new)
                     client.remove_object(migration.settings.minio_bucket, old)
