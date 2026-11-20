@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { AppstoreOutlined, BarChartOutlined, DownOutlined, SearchOutlined, TableOutlined } from '@/components/ui/icons';
 import { fetchExplorerRowByKey } from '../../services/api';
+import { projectHref } from '../../services/projectDomains';
 import { createSaved, listSaved, openSaved, removeSaved, savedPath, sharing, type Exploration, type ListKey, type SavedDetail, type SavedKind, type SavedMeta, type WorkbenchQuery } from '../../services/explorerSaved';
 import { explorerRowTitle } from './ExplorerObjectOverview';
 import { ExplorerRecordLink } from './ExplorerRecordLink';
@@ -139,7 +140,7 @@ export default function ExplorerWorkbenchHeader(p: Props) {
     const popup = useRef<HTMLElement>(null);
     const applyRef = useRef(p);
     applyRef.current = p;
-    const link = () => new URL('/ontology/explorer?' + new URLSearchParams({ schema: p.schema, table: p.table }), window.location.origin);
+    const link = () => new URL(projectHref('ontology', '/ontology/explorer?' + new URLSearchParams({ schema: p.schema, table: p.table })));
     const kind = menu === 'lists' ? 'list' : 'exploration';
     const preservedSavedId = new URLSearchParams(p.search).get('saved');
     useEffect(() => () => {

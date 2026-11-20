@@ -14,7 +14,11 @@ if (origin) {
 }
 
 export function apiUrl(path: string): string {
-  return new URL(path, apiOrigin).href;
+  const url = new URL(path, apiOrigin);
+  if (config!.frontendDomainSuffix && url.origin === apiOrigin) {
+    url.pathname = url.pathname.replace(/^\/api\/v1(?=\/|$)/, '/v1');
+  }
+  return url.href;
 }
 
 export function wsUrl(path: string): string {

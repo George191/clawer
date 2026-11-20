@@ -1,1 +1,1 @@
-window.__APP_CONFIG__ = { apiOrigin: '' };
+window.__APP_CONFIG__ = { apiOrigin: '', frontendDomainSuffix: '' };

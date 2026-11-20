@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Button, Select } from '@/components/ui';
 import { ReloadOutlined } from '@/components/ui/icons';
 import { fetchDataSources, type DataConnectorEngine } from '../../services/api';
+import { projectHref } from '../../services/projectDomains';
 import ConnectorMark from './ConnectorMark';
 
 type Choice = { id: string; name: string; engine: DataConnectorEngine };
@@ -46,7 +47,7 @@ export default function OntologySourceConnection({ value, warehouseName, disable
             </span> }))} />
         </div>
       </div>
-      <a href={external ? '/ontology/connections?sourceId=' + encodeURIComponent(selected.id) : '/ontology/connections'}
+      <a href={projectHref('ontology', external ? '/ontology/connections?sourceId=' + encodeURIComponent(selected.id) : '/ontology/connections')}
         target="_blank" rel="noreferrer">Data Connections ↗</a>
       <Button size="small" type="text" icon={<ReloadOutlined />} aria-label="Refresh connections" title="Refresh connections"
         disabled={disabled || status === 'loading'} onClick={() => setRevision(n => n + 1)} />

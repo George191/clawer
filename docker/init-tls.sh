@@ -4,8 +4,8 @@ umask 077
 
 CA_DIR=${CA_DIR:-/ca}
 CERT_DIR=${CERT_DIR:-/certs}
-: "${FRONTEND_DOMAIN:?FRONTEND_DOMAIN must be set}"
-: "${BACKEND_DOMAIN:?BACKEND_DOMAIN must be set}"
+: "${FRONTEND_DOMAIN_SUFFIX:?FRONTEND_DOMAIN_SUFFIX must be set}"
+: "${BACKEND_DOMAIN_SUFFIX:?BACKEND_DOMAIN_SUFFIX must be set}"
 
 fail() {
     printf 'TLS initialization failed: %s\n' "$*" >&2
@@ -24,8 +24,10 @@ validate_domain() {
     ' || fail "Invalid DNS domain: $1"
 }
 
-validate_domain "$FRONTEND_DOMAIN"
-validate_domain "$BACKEND_DOMAIN"
+validate_domain "$FRONTEND_DOMAIN_SUFFIX"
+validate_domain "$BACKEND_DOMAIN_SUFFIX"
+frontend_wildcard="*.$FRONTEND_DOMAIN_SUFFIX"
+backend_wildcard="*.$BACKEND_DOMAIN_SUFFIX"
 mkdir -p "$CA_DIR" "$CERT_DIR"
 chmod 700 "$CA_DIR"
 
@@ -73,7 +75,7 @@ if [ -e "$CERT_DIR/fullchain.pem" ] || [ -e "$CERT_DIR/privkey.pem" ]; then
     cert_sans=$(openssl x509 -in "$CERT_DIR/fullchain.pem" -noout -ext subjectAltName) \
         || fail 'Could not read the existing server certificate SANs.'
     cert_sans=$(printf '%s\n' "$cert_sans" | sed '1d;s/[[:space:]]//g' | tr ',' '\n' | LC_ALL=C sort)
-    expected_sans=$(printf 'DNS:%s\nDNS:%s\n' "$FRONTEND_DOMAIN" "$BACKEND_DOMAIN" | LC_ALL=C sort)
+    expected_sans=$(printf 'DNS:%s\nDNS:%s\n' "$frontend_wildcard" "$backend_wildcard" | LC_ALL=C sort)
     if [ "$cert_sans" != "$expected_sans" ]; then
         renew_reason='deployment domains changed'
     elif ! openssl x509 -in "$CERT_DIR/fullchain.pem" -noout -checkend 2592000 >/dev/null; then
@@ -84,11 +86,11 @@ if [ -e "$CERT_DIR/fullchain.pem" ] || [ -e "$CERT_DIR/privkey.pem" ]; then
 fi
 
 if [ -n "$renew_reason" ]; then
-    printf 'Issuing HTTPS certificate for %s and %s (%s).\n' "$FRONTEND_DOMAIN" "$BACKEND_DOMAIN" "$renew_reason"
+    printf 'Issuing HTTPS certificate for %s and %s (%s).\n' "$frontend_wildcard" "$backend_wildcard" "$renew_reason"
     openssl genrsa -out "$tmp_dir/privkey.pem" 3072
     openssl req -new -sha256 -key "$tmp_dir/privkey.pem" -out "$tmp_dir/server.csr" \
-        -subj "/CN=$FRONTEND_DOMAIN" \
-        -addext "subjectAltName=DNS:$FRONTEND_DOMAIN,DNS:$BACKEND_DOMAIN" \
+        -subj "/CN=$frontend_wildcard" \
+        -addext "subjectAltName=DNS:$frontend_wildcard,DNS:$backend_wildcard" \
         -addext 'basicConstraints=critical,CA:FALSE' \
         -addext 'keyUsage=critical,digitalSignature,keyEncipherment' \
         -addext 'extendedKeyUsage=serverAuth'

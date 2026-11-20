@@ -183,8 +183,15 @@ services:
     environment:
       SPIDER_KAFKA_SSL_CAFILE: ${SPIDER_KAFKA_SSL_CAFILE:-/etc/kafka/kafka.crt}
       SPIDER_CDC_CONNECT_URL: ${SPIDER_CDC_CONNECT_URL:-http://mongo-cdc-connect:8083}
-      FRONTEND_HOST: https://${FRONTEND_DOMAIN:?FRONTEND_DOMAIN must be set in .env}:${SPIDER_HTTPS_PORT:-443}
-      BACKEND_CORS_ORIGINS: https://${FRONTEND_DOMAIN:?FRONTEND_DOMAIN must be set in .env}:${SPIDER_HTTPS_PORT:-443}
+      API_V1_STR: /v1
+      FRONTEND_HOST: https://ontology.${FRONTEND_DOMAIN_SUFFIX:?FRONTEND_DOMAIN_SUFFIX must be set in .env}:${SPIDER_HTTPS_PORT:-443}
+      BACKEND_CORS_ORIGINS: >-
+        https://crawler.${FRONTEND_DOMAIN_SUFFIX}:${SPIDER_HTTPS_PORT:-443},
+        https://vault.${FRONTEND_DOMAIN_SUFFIX}:${SPIDER_HTTPS_PORT:-443},
+        https://ontology.${FRONTEND_DOMAIN_SUFFIX}:${SPIDER_HTTPS_PORT:-443},
+        https://atlas.${FRONTEND_DOMAIN_SUFFIX}:${SPIDER_HTTPS_PORT:-443},
+        https://graph.${FRONTEND_DOMAIN_SUFFIX}:${SPIDER_HTTPS_PORT:-443},
+        https://rag.${FRONTEND_DOMAIN_SUFFIX}:${SPIDER_HTTPS_PORT:-443}
     extra_hosts:
       - "mongo.spider.internal:192.168.1.32"
     volumes:
@@ -208,8 +215,8 @@ services:
     restart: unless-stopped
     command: ["-conf", "/etc/coredns/Corefile"]
     environment:
-      FRONTEND_DOMAIN: ${FRONTEND_DOMAIN:?FRONTEND_DOMAIN must be set in .env}
-      BACKEND_DOMAIN: ${BACKEND_DOMAIN:?BACKEND_DOMAIN must be set in .env}
+      FRONTEND_DOMAIN_SUFFIX: ${FRONTEND_DOMAIN_SUFFIX:?FRONTEND_DOMAIN_SUFFIX must be set in .env}
+      BACKEND_DOMAIN_SUFFIX: ${BACKEND_DOMAIN_SUFFIX:?BACKEND_DOMAIN_SUFFIX must be set in .env}
       SPIDER_DNS_TARGET_IPV4: ${SPIDER_DNS_TARGET_IPV4:-}
       SPIDER_DNS_UPSTREAM: ${SPIDER_DNS_UPSTREAM:-223.5.5.5}
     ports:
@@ -226,8 +233,8 @@ services:
       dockerfile: docker/tls.Dockerfile
     restart: "no"
     environment:
-      FRONTEND_DOMAIN: ${FRONTEND_DOMAIN:?FRONTEND_DOMAIN must be set in .env}
-      BACKEND_DOMAIN: ${BACKEND_DOMAIN:?BACKEND_DOMAIN must be set in .env}
+      FRONTEND_DOMAIN_SUFFIX: ${FRONTEND_DOMAIN_SUFFIX:?FRONTEND_DOMAIN_SUFFIX must be set in .env}
+      BACKEND_DOMAIN_SUFFIX: ${BACKEND_DOMAIN_SUFFIX:?BACKEND_DOMAIN_SUFFIX must be set in .env}
     volumes:
       - ontology-ca:/ca
       - ontology-tls:/certs
@@ -242,11 +249,11 @@ services:
       tls-init:
         condition: service_completed_successfully
     environment:
-      FRONTEND_DOMAIN: ${FRONTEND_DOMAIN:?FRONTEND_DOMAIN must be set in .env}
-      BACKEND_DOMAIN: ${BACKEND_DOMAIN:?BACKEND_DOMAIN must be set in .env}
+      FRONTEND_DOMAIN_SUFFIX: ${FRONTEND_DOMAIN_SUFFIX:?FRONTEND_DOMAIN_SUFFIX must be set in .env}
+      BACKEND_DOMAIN_SUFFIX: ${BACKEND_DOMAIN_SUFFIX:?BACKEND_DOMAIN_SUFFIX must be set in .env}
       SPIDER_HTTPS_PORT: ${SPIDER_HTTPS_PORT:-443}
       NGINX_ENVSUBST_OUTPUT_DIR: /etc/nginx
-      NGINX_ENVSUBST_FILTER: ^(FRONTEND_DOMAIN|BACKEND_DOMAIN|HTTPS_REDIRECT_PORT)$
+      NGINX_ENVSUBST_FILTER: ^(FRONTEND_DOMAIN_SUFFIX|BACKEND_DOMAIN_SUFFIX|HTTPS_REDIRECT_PORT)$
     ports:
       - "${SPIDER_HTTP_PORT:?SPIDER_HTTP_PORT must be set in .env}:80"
       - "${SPIDER_HTTPS_PORT:-443}:443"

@@ -1,7 +1,7 @@
 .:53 {
     errors
     hosts /dev/null {
-        {$SPIDER_DNS_TARGET_IPV4} {$FRONTEND_DOMAIN} {$BACKEND_DOMAIN}
+        {$SPIDER_DNS_TARGET_IPV4} *.{$FRONTEND_DOMAIN_SUFFIX} *.{$BACKEND_DOMAIN_SUFFIX}
         ttl 60
         no_reverse
         fallthrough

@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { BrowserRouter } from 'react-router-dom';
+import ProjectRouter from './ProjectRouter';
 import App from './App';
 import './styles/global.css';
 
@@ -9,8 +9,8 @@ document.documentElement.style.setProperty('--sp-auth-orbit-epoch', String(perfo
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <BrowserRouter>
+    <ProjectRouter>
       <App />
-    </BrowserRouter>
+    </ProjectRouter>
   </React.StrictMode>,
 );

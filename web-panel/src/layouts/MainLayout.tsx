@@ -42,6 +42,7 @@ import { Link, matchPath, useLocation, useNavigate } from 'react-router-dom';
 import { useThemeStore } from '@/stores/settings';
 import { fetchCurrentUserContext } from '@/services/api';
 import { clearSession } from '@/services/session';
+import { currentProjectDomain, projectHref, type ProjectDomain } from '@/services/projectDomains';
 import type { CurrentUserContext } from '@/services/types';
 
 const { Header, Content } = Layout;
@@ -90,6 +91,7 @@ interface SidebarSection {
 
 interface ProjectConfig {
   key: ProjectKey;
+  domain: ProjectDomain;
   label: string;
   shortLabel: string;
   enabled?: boolean;
@@ -104,6 +106,7 @@ const projectOrder: ProjectKey[] = ['ai-collect', 'data-lake', 'etl-pipeline', '
 const projectConfigs: Record<ProjectKey, ProjectConfig> = {
   'ai-collect': {
     key: 'ai-collect',
+    domain: 'crawler',
     label: 'Data Collection',
     shortLabel: 'Scout',
     enabled: true,
@@ -139,6 +142,7 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
   },
   'data-lake': {
     key: 'data-lake',
+    domain: 'vault',
     label: 'Data Lake',
     shortLabel: 'Vault',
     enabled: false,
@@ -176,6 +180,7 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
   },
   'etl-pipeline': {
     key: 'etl-pipeline',
+    domain: 'ontology',
     label: 'Ontology Foundry',
     shortLabel: 'Ontology Foundry',
     enabled: true,
@@ -196,6 +201,7 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
   },
   'data-cockpit': {
     key: 'data-cockpit',
+    domain: 'atlas',
     label: 'Data Cockpit',
     shortLabel: 'Atlas',
     enabled: true,
@@ -212,6 +218,7 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
   },
   'knowledge-graph': {
     key: 'knowledge-graph',
+    domain: 'graph',
     label: 'Knowledge Graph',
     shortLabel: 'Graph',
     enabled: true,
@@ -222,6 +229,7 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
   },
   'knowledge-rag': {
     key: 'knowledge-rag',
+    domain: 'rag',
     label: 'Knowledge RAG',
     shortLabel: 'RAG',
     enabled: true,
@@ -305,10 +313,21 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const navigate = useNavigate();
   const { mode } = useThemeStore();
   const isDark = mode === 'dark';
-  const [currentProject, setCurrentProject] = useState<ProjectKey>(() => resolveProjectByPath(location.pathname) ?? 'etl-pipeline');
-  const routedProject = useMemo(() => isFlowSurface ? 'etl-pipeline' : resolveProjectByPath(location.pathname), [isFlowSurface, location.pathname]);
+  const hostedProject = projectOrder.find((key) => projectConfigs[key].domain === currentProjectDomain);
+  const [currentProject, setCurrentProject] = useState<ProjectKey>(() => hostedProject ?? resolveProjectByPath(location.pathname) ?? 'etl-pipeline');
+  const routedProject = useMemo(() => location.pathname === '/' && hostedProject ? hostedProject : isFlowSurface ? 'etl-pipeline' : resolveProjectByPath(location.pathname), [hostedProject, isFlowSurface, location.pathname]);
   const activeProjectKey = routedProject ?? currentProject;
   const activeProject = projectConfigs[activeProjectKey];
+  useEffect(() => {
+    if (location.pathname === '/' && hostedProject) {
+      navigate(projectConfigs[hostedProject].defaultPath, { replace: true });
+      return;
+    }
+    if (routedProject) {
+      const target = projectHref(projectConfigs[routedProject].domain, location.pathname + location.search + location.hash);
+      if (new URL(target).origin !== window.location.origin) window.location.replace(target);
+    }
+  }, [hostedProject, routedProject, location.pathname, location.search, location.hash, navigate]);
   const isAutomationSurface = location.pathname.startsWith('/automation');
   const isPlatformManagementSurface = location.pathname.startsWith('/organization');
   const isSystemSettingsSurface = location.pathname.startsWith('/settings');
@@ -432,6 +451,11 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     const nextProject = key as ProjectKey;
     setCurrentProject(nextProject);
     const targetPath = projectConfigs[nextProject].defaultPath;
+    const target = projectHref(projectConfigs[nextProject].domain, targetPath);
+    if (new URL(target).origin !== window.location.origin) {
+      window.location.assign(target);
+      return;
+    }
     if (location.pathname !== targetPath) {
       navigate(targetPath);
     }

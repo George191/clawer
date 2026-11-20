@@ -1,12 +1,18 @@
 #!/bin/sh
 
-for deployment_domain in "${FRONTEND_DOMAIN:?FRONTEND_DOMAIN is required}" "${BACKEND_DOMAIN:?BACKEND_DOMAIN is required}"; do
+for deployment_domain in "${FRONTEND_DOMAIN_SUFFIX:?FRONTEND_DOMAIN_SUFFIX is required}" "${BACKEND_DOMAIN_SUFFIX:?BACKEND_DOMAIN_SUFFIX is required}"; do
     case "$deployment_domain" in
         *[!A-Za-z0-9.-]*|.*|*.|*..*|'')
             echo "Invalid deployment domain: $deployment_domain" >&2
             exit 1
             ;;
     esac
+    printf '%s\n' "$deployment_domain" | LC_ALL=C awk -F. '
+        length($0) > 253 || NF < 2 { exit 1 }
+        { for (i = 1; i <= NF; i++) {
+            if (length($i) > 63 || $i !~ /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$/) exit 1
+        } }
+    ' || { echo "Invalid deployment domain: $deployment_domain" >&2; exit 1; }
 done
 
 case "${SPIDER_HTTPS_PORT:?SPIDER_HTTPS_PORT is required}" in
@@ -23,5 +29,5 @@ if [ "$SPIDER_HTTPS_PORT" -ne 443 ]; then
 fi
 export HTTPS_REDIRECT_PORT
 
-printf 'window.__APP_CONFIG__ = {"apiOrigin":"https://%s%s"};\n' \
-    "$BACKEND_DOMAIN" "$HTTPS_REDIRECT_PORT" > /etc/nginx/runtime-config.js
+printf 'window.__APP_CONFIG__ = {"apiOrigin":"https://" + window.location.hostname.split(".")[0] + ".%s%s", "frontendDomainSuffix":"%s"};\n' \
+    "$BACKEND_DOMAIN_SUFFIX" "$HTTPS_REDIRECT_PORT" "$FRONTEND_DOMAIN_SUFFIX" > /etc/nginx/runtime-config.js

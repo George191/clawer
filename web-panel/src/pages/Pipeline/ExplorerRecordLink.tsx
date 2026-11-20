@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react';
+import { projectHref } from '../../services/projectDomains';
 
 export function explorerRecordUrl(schema: string, table: string, identity: Record<string, unknown>) {
     const params = new URLSearchParams({ schema, table, key: JSON.stringify(identity) });
-    return '/ontology/explorer/record?' + params;
+    return projectHref('ontology', '/ontology/explorer/record?' + params);
 }
 
 export function ExplorerRecordLink({ schema, table, identity, children }: {

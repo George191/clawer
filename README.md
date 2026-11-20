@@ -191,12 +191,15 @@ docker compose run --rm --no-deps web python -m app.web.initial_data
 docker compose up -d
 ```
 
-服务器部署会同时构建前端和后端。Nginx 使用两个 HTTPS 域名，HTTP 请求自动跳转
-到 HTTPS。在 `.env` 中配置部署入口，域名只包含主机名，不包含协议、路径或端口：
+服务器部署会同时构建前端和后端。Nginx 使用 `<项目名>.<后缀>` 形式的 HTTPS 域名，
+HTTP 请求自动跳转到 HTTPS。切换项目会同时改变浏览器和 API 域名的第一段，项目入口使用 `/`，不再重复项目路径。
+本体库示例：`https://ontology.asiral-helio.internal/?schema=ts_ods&table=local_demo_companies`，
+对象探索页为 `/explorer`，数据连接页为 `/connections`；共享管理页面保持原路径。
+在 `.env` 中仅配置后缀，不包含项目名、协议、路径或端口：
 
 ```dotenv
-FRONTEND_DOMAIN=ontology.asiral-helio.internal
-BACKEND_DOMAIN=ontology.asiral-helio.api
+FRONTEND_DOMAIN_SUFFIX=asiral-helio.internal
+BACKEND_DOMAIN_SUFFIX=asiral-helio.api
 SPIDER_HTTP_PORT=80
 SPIDER_HTTPS_PORT=443
 ```
@@ -209,7 +212,14 @@ SPIDER_HTTPS_PORT=443
 docker compose up -d --force-recreate web tls-init nginx
 ```
 
-内网 DNS 需将这两个域名解析到当前 Docker 主机。可以在已有 DNS 中配置记录，
+项目名为 `crawler`、`ontology`、`atlas`、`graph`、`rag`；`vault` 对应尚未开放的项目。
+例如从本体库切到 Scout，前端变为 `crawler.asiral-helio.internal`，API 和 WSS
+变为 `crawler.asiral-helio.api`。前端项目域通过 Secure、SameSite=Strict 的后缀域
+Cookie 共享登录、锁屏及绝对过期时间；API 仍使用 Bearer 认证。首次升级需重新登录一次。
+后缀下的所有前端项目均属于同一会话信任范围，不应部署不受信任的应用。
+
+内网 DNS 需将 `*.asiral-helio.internal`、`*.asiral-helio.api` 解析到当前 Docker 主机。
+可以在已有 DNS 中配置通配记录，
 也可以启动项目自带的 Docker DNS：
 
 ```bash
@@ -224,11 +234,11 @@ DNS 同时在探测地址上提供 UDP/TCP 53；Nginx 的 80/443 端口也必须
 
 在路由器 DHCP 中将 DNS 服务器设置为这台 Docker 主机的 LAN IP，设备续租后即可
 统一解析，无需逐台修改 hosts。应给服务器保留 DHCP 地址；路由器配置不由 Compose
-自动修改。macOS 本机也可使用 `/etc/resolver/<项目域名>` 指向 Docker DNS，
-只将这两个域名的查询交给它；这不修改 hosts。客户端仍需使用该 DNS，Docker 的容器
+自动修改。macOS 本机也可使用 `/etc/resolver/asiral-helio.internal` 和
+`/etc/resolver/asiral-helio.api` 指向 Docker DNS，只接管两个后缀的项目域查询；这不修改 hosts。客户端仍需使用该 DNS，Docker 的容器
 内部 DNS 不会自动接管局域网设备的查询。容器之间继续通过 Compose 服务名通信。
 
-`tls-init` 首次启动自动生成局域网 CA，并签发同时包含两个域名的证书。
+`tls-init` 首次启动自动生成局域网 CA，并签发包含两个后缀通配 SAN 的证书。
 后续部署复用 CA 和有效证书，域名改变或证书距到期不足 30 天时自动重新签发。
 CA 私钥仅由初始化容器挂载；Nginx 只读挂载站点证书和公有 CA 证书。
 访问设备需信任该 CA，根证书可以这样导出：
@@ -252,10 +262,14 @@ docker compose ps
 docker compose exec nginx nginx -t
 ```
 
-通过 `https://<BACKEND_DOMAIN>:<SPIDER_HTTPS_PORT>/api/health` 检查后端健康，
-通过 `https://<FRONTEND_DOMAIN>:<SPIDER_HTTPS_PORT>` 访问前端；443 端口可省略。
-前端域名不代理 API 或 WebSocket，相关请求使用后端域名。
-Nginx 拒绝两个配置域名之外的业务请求；HTTP 健康检查 `/nginx-health` 保留给容器探针。
+通过 `https://ontology.<BACKEND_DOMAIN_SUFFIX>:<SPIDER_HTTPS_PORT>/api/health` 检查后端健康，
+通过 `https://ontology.<FRONTEND_DOMAIN_SUFFIX>:<SPIDER_HTTPS_PORT>` 访问本体库；443 端口可省略。
+前端域名不代理 API 或 WebSocket，相关请求使用后端域名。公共 v1 API 使用 `/v1/...`，
+Compose 将后端 `API_V1_STR` 设为 `/v1`，Nginx 同路径转发，接口文档同步使用该前缀；
+旧的外部 `/api/v1/...` 返回 404。开发直连仍使用 `.env` 中的前缀。
+例如 `https://ontology.asiral-helio.api/v1/etl/ts_ods/local_demo_media/row-links`。
+非 v1 接口（如 `/api/ontology/v1/...`）和 `/ws/...` 保持各自路径。
+Nginx 仅接受上述六个项目在两个后缀下的域名，拒绝其他业务域名；HTTP 健康检查 `/nginx-health` 保留给容器探针。
 Celery Beat 独立保持单实例，Crawler Worker 可以横向扩容。
 
 Worker 总任务并发数为
@@ -578,7 +592,7 @@ class MySiteAdapter(BaseSiteAdapter):
 及 `adapter.py` 发布为 `google_search@v1.1`；已有版本不自动覆盖。`v1.1` 修复服务器上
 `curl_cffi` 的 `CONNECT_TO` 原生参数兼容问题，旧任务仍保留原版本。
 
-`POST /api/v1/ai/google-search/tasks` 接受 `query`、`language`（默认 `zh-CN`）、
+`POST /v1/ai/google-search/tasks（Docker 部署）` 接受 `query`、`language`（默认 `zh-CN`）、
 `max_pages` 和 `fetch_details`（默认 `true`），返回普通采集任务。
 创建后通过已有任务操作接口启动，前端自动完成这一步；启动失败可在任务面板重试。
 
