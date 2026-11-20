@@ -47,7 +47,7 @@ def journal(path):
 def storage():
     address = settings.minio_public_endpoint or settings.minio_endpoint
     url = urlsplit(address if '://' in address else ('https://' if settings.minio_secure else 'http://') + address)
-    return Minio(url.netloc, access_key=settings.minio_access_key, secret_key=settings.minio_secret_key, secure=url.scheme == 'https', http_client=urllib3.PoolManager(timeout=15, retries=False))
+    return Minio(url.netloc, access_key=settings.minio_access_key, secret_key=settings.minio_secret_key, secure=url.scheme == 'https', http_client=urllib3.PoolManager(timeout=urllib3.Timeout(connect=10, read=120), retries=False))
 
 
 def strings(value, path=()):
@@ -158,7 +158,7 @@ def apply_group(db, client, mongo, registered, prefix, record_id):
         fields, conditions = {}, {'_id':doc['_id'],'_meta.download_status':{'$ne':'downloading'}}
         for field, value in strings({k:v for k,v in doc.items() if k not in {'_meta','_id'}}):
             changed = value
-            for old,new in replacements.items():
+            for old,new in sorted(replacements.items(), key=lambda pair: len(pair[0]), reverse=True):
                 changed = changed.replace(old,new)
             if changed != value:
                 fields[field] = changed;conditions[field] = value
