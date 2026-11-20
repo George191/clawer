@@ -2,7 +2,7 @@ import { PropertyLabel } from './PropertyTypeIcon';
 import { ExplorerValueProvider } from './ExplorerValue';
 import { useEffect, useId, useRef, useState } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
-import { Button, Checkbox, Dropdown, Input, Table, message } from '@/components/ui';
+import { Button, Checkbox, Dropdown, Input, Select, Table, message } from '@/components/ui';
 import type { ColumnsType, MenuItem, TableProps } from '@/components/ui';
 import { BarsOutlined, CopyOutlined, DownOutlined, LinkOutlined, ReloadOutlined, SearchOutlined } from '@/components/ui/icons';
 import {
@@ -62,13 +62,10 @@ export function ExplorerProperties({ row, columns = Object.keys(row.record), pre
     <div className="flow-explorer-selection__filters">
       <Input size="small" prefix={<SearchOutlined />} aria-label="Search properties" placeholder="Search properties"
         allowClear value={query} onChange={event => setQuery(event.target.value)} />
-      <label><select aria-label="Property type" value={type} onChange={event => setType(event.target.value)}>
-        <option value="">All types</option>
-        {types.map(item => <option key={item}>{item}</option>)}
-      </select></label>
-      <label><select aria-label="Property values" value={valueFilter} onChange={event => setValueFilter(event.target.value)}>
-        <option value="">All values</option><option value="present">With value</option><option value="empty">Empty</option>
-      </select></label>
+      <Select size="small" popupClassName="flow-select-popup" aria-label="Property type" value={type} onChange={setType}
+        options={[{ value: '', label: 'All types' }, ...types.map(item => ({ value: item, label: item }))]} />
+      <Select size="small" popupClassName="flow-select-popup" aria-label="Property values" value={valueFilter} onChange={setValueFilter}
+        options={[{ value: '', label: 'All values' }, { value: 'present', label: 'With value' }, { value: 'empty', label: 'Empty' }]} />
     </div>
     {visible.length ? <dl className="flow-explorer-selection__fields">{visible.map(field => <div key={field.key}>
       <dt title={field.description || undefined}><PropertyLabel type={field.type}>{field.label}</PropertyLabel></dt>
@@ -93,9 +90,8 @@ function Comparison({ columns, choices }: { columns: readonly string[]; choices:
   const right = choices.find(item => item.key === rightKey && item.key !== left.key) ?? choices.find(item => item.key !== left.key)!;
   const fields = columns.filter(field => !differencesOnly || !sameValue(propertyValue(left, field), propertyValue(right, field)));
   function objectPicker(label: string, row: ExplorerPreviewRow, other: ExplorerPreviewRow, update: (key: string) => void) {
-    return <label><span>{label}</span><select aria-label={label} value={row.key} onChange={event => update(event.target.value)}>
-      {choices.map(item => <option key={item.key} value={item.key} disabled={item.key === other.key}>{item.title}</option>)}
-    </select></label>;
+    return <label><span>{label}</span><Select size="small" popupClassName="flow-select-popup" aria-label={label} value={row.key} onChange={update}
+      options={choices.map(item => ({ value: item.key, label: item.title, disabled: item.key === other.key }))} /></label>;
   }
   return <section aria-label="Object comparison" className="flow-explorer-selection__comparison">
     <div className="flow-explorer-selection__comparison-controls">

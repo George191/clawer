@@ -49,7 +49,6 @@ _CATALOG_FIELDS: dict[str, dict[str, str]] = {
         "url": "TEXT",
         "cover": "TEXT",
         "summary": "TEXT",
-        "summary_html": "TEXT",
         "content": "TEXT",
         "content_html": "TEXT",
         "publish_time": "TIMESTAMPTZ",
