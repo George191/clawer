@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 from collections.abc import Awaitable, Callable
 from datetime import datetime
@@ -1044,9 +1045,7 @@ class SpiderEngine:
 
     @staticmethod
     def _retry_loop():
-        for attempt in range(5):
-            yield attempt
-        raise RuntimeError("Crawl operation failed after 5 attempts")
+        return itertools.count()
 
     @staticmethod
     async def _controlled_adapter_call(operation):
