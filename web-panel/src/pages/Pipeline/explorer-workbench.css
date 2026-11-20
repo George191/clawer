@@ -1,13 +1,15 @@
 .flow-exploration-workspace { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
 .flow-exploration-bar { display:flex; flex:none; min-width:0; border-bottom:1px solid var(--ontology-control-border); background:var(--ontology-bg); }
 .flow-exploration-return { display:flex; flex:none; align-items:center; padding:0 10px; border-inline-end:1px solid var(--ontology-control-border); }
-.flow-exploration-tabs { display: flex; flex: 1; min-width:0; align-items: stretch; gap:3px; padding:4px 8px; overflow-x: auto; background: var(--ontology-toolbar); }
+.flow-exploration-tabs { display: flex; flex: 1; min-width:0; align-items: stretch; gap:3px; padding:4px 8px; overflow-x: auto; background: transparent; }
 .flow-exploration-tab { display: flex; flex: none; align-items: center; min-width: 0; border-radius:3px; color:var(--ontology-muted); }
 .flow-exploration-tab[data-current="true"] { background: var(--ontology-hover); color:var(--ontology-text); }
 .flow-exploration-bar button { display: inline-flex; align-items: center; gap: 5px; flex: none; min-height: 28px; border: 0; padding: 3px 9px; border-radius:3px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
 .flow-exploration-bar button:hover { background: var(--ontology-hover); }
 .flow-exploration-bar button:disabled { opacity: .5; cursor: default; }
 .flow-exploration-bar .flow-exploration-back { color:var(--ontology-muted); font-size:11px; white-space:nowrap; }
+.flow-exploration-bar .flow-exploration-default { display:block; max-width:175px; margin:4px 0 4px 8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ontology-text); font-weight:600; }
+.flow-exploration-bar .flow-exploration-default:hover { background:transparent; }
 .flow-exploration-tab[data-current="true"] button:first-child { font-weight:600; }
 .flow-exploration-tabs .wb-new-exploration { color:var(--ontology-muted); font-size:12px; }
 .flow-exploration-tab button:first-child { display: block; max-width: 175px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
