@@ -6,6 +6,22 @@ from unittest.mock import Mock, patch
 from tools import migrate_download_paths as migration
 
 
+def test_verification_requires_the_correct_resource_column():
+    key = 'tweet/twitter/record/thumbnail.jpg'
+    assert not migration.resource_references_match(
+        {'thumbnail': key}, {'thumbnail': None, 'extra': {'thumbnail': key}}, [key])
+
+
+def test_resource_json_verification_ignores_unrelated_delivery_metadata():
+    import json
+    key = 'tweet/twitter/record/thumbnail.jpg'
+    expected = {'extra': json.dumps({'assets': [{'thumbnail_url': key}]})}
+    actual = {'extra': {'assets': [{'thumbnail_url': key}], '_kafka_meta': {'offset': 100}}}
+    assert migration.resource_references_match(expected, actual, [key])
+    actual['extra']['assets'][0]['thumbnail_url'] = None
+    assert not migration.resource_references_match(expected, actual, [key])
+
+
 @pytest.mark.parametrize('prefix', ['social_media/twitter', 'twitter/twitter', 'tweet/twitter'])
 def test_media_migration_uses_source_route_prefix(tmp_path, prefix):
     db = migration.journal(tmp_path / 'migration.sqlite')

@@ -313,6 +313,19 @@ async def repair_references(db, mongo, registered, prefix, record_id):
                 if result.rowcount!=1:raise RuntimeError('Expected one existing ODS row: '+table+'/'+identity)
 
 
+def resource_references_match(expected, actual, paths):
+    """Match resource-bearing leaves, ignoring unrelated delivery metadata."""
+    if isinstance(expected, str) and isinstance(actual, (dict, list)) and expected[:1] in {'{', '['}:
+        expected = json.loads(expected)
+    if isinstance(expected, dict):
+        return all(resource_references_match(value, actual.get(key) if isinstance(actual, dict) else None, paths)
+                   for key, value in expected.items())
+    if isinstance(expected, list):
+        return all(resource_references_match(value, actual[index] if isinstance(actual, list) and index < len(actual) else None, paths)
+                   for index, value in enumerate(expected))
+    return not (isinstance(expected, str) and any(path in expected for path in paths)) or expected == actual
+
+
 async def verify_group(db, client, mongo, registered, prefix, record_id):
     from app.adapters.runtime import get_source_module
     from app.etl.schema.catalogs import validate_table_name
@@ -352,7 +365,7 @@ async def verify_group(db, client, mongo, registered, prefix, record_id):
                 continue
             table=validate_table_name(output.get('data_type') or kind)
             found=await pg.fetch_all(f'SELECT to_jsonb(t) AS row FROM ts_ods.ods_{table} t WHERE record_id=:id AND data_source=:source AND data_type=:kind', {'id':output.get('record_id') or record_id,'source':source,'kind':table})
-            if not found or any(new not in json.dumps(found[0]['row'],default=str) for new in relevant):
+            if not found or not resource_references_match(output, found[0]['row'], relevant):
                 return False
     for old,new in rows:
         client.stat_object(settings.minio_bucket,new)
