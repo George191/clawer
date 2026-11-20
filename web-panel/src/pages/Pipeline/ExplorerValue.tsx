@@ -37,8 +37,8 @@ function fileUrl(value: string, config?: ExplorerStorage) {
   return { name, href: config.baseUrl + '/' + config.bucket + path };
 }
 
-export function ExplorerValue({ value, text, identity = {}, field, compact = false }: {
-  value: unknown; text?: string; identity?: Record<string, unknown>; field?: string | null; compact?: boolean;
+export function ExplorerValue({ value, text, identity = {}, field }: {
+  value: unknown; text?: string; identity?: Record<string, unknown>; field?: string | null;
 }) {
   const { schema, table, config } = useContext(Storage);
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
@@ -89,12 +89,12 @@ export function ExplorerValue({ value, text, identity = {}, field, compact = fal
   if (typeof value === 'string' && /^[\s]*[\[{]/.test(value)) {
     try { parsed = JSON.parse(value); } catch { /* Invalid JSON remains its original text. */ }
   }
-  if (parsed !== null && typeof parsed === 'object') return <div className={`explorer-json${compact ? ' is-compact' : ''}`} onClick={event => { if ((event.target as Element).closest('button')) event.stopPropagation(); }}>
-    <JsonTreeValue name="" value={parsed} depth={0} comma={false} initiallyOpen={!compact} />
+  if (parsed !== null && typeof parsed === 'object') return <div className="explorer-json" onClick={event => { if ((event.target as Element).closest('button')) event.stopPropagation(); }}>
+    <JsonTreeValue name="" value={parsed} depth={0} comma={false} initiallyOpen />
   </div>;
   if (typeof value === 'string' && /<\/?(?:html|body|head|div|p|span|a|img|table|ul|ol|li|section|article|h[1-6]|br|strong|em)\b[^>]*>/i.test(value)) {
     const html = '<meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; style-src &#39;unsafe-inline&#39;; img-src data:"><style>body{margin:4px;font:11px/1.45 system-ui;overflow-wrap:anywhere}img{max-width:100%}</style>' + value;
-    return <iframe className={`explorer-html${compact ? ' is-compact' : ''}`} title="HTML content" sandbox="" referrerPolicy="no-referrer" srcDoc={html} />;
+    return <iframe className="explorer-html" title="HTML content" sandbox="" referrerPolicy="no-referrer" srcDoc={html} />;
   }
   return <span className="flow-explorer-selection__property-value">{text ?? (value == null ? 'null' : String(value))}</span>;
 }

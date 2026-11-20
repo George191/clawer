@@ -36,10 +36,12 @@
 .wb-header button:hover { background:var(--ontology-toolbar); }
 .wb-header button:disabled { opacity:.45; cursor:default; }
 .wb-header :focus-visible { outline:2px solid var(--ui-focus-ring); outline-offset:-2px; }
-.wb-type { display:inline-flex; align-items:center; gap:9px; max-width:28%; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.wb-type { display:inline-flex; align-items:center; gap:6px; max-width:28%; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
 .wb-header i:has(.flow-explorer-selection__icon) { display:inline-flex; font-style:normal; border-radius:3px; }
 .wb-query { min-height:56px; gap:12px; }
 .wb-catalog-toggle { color:var(--ontology-link)!important; }
+.wb-query > .wb-catalog-toggle { width:26px; min-height:26px; padding:4px; }
+.wb-query > .wb-catalog-toggle > .ui-icon { font-size:13px; }
 .wb-property-search { display:flex; flex:1; min-width:60px; align-items:center; gap:10px; background:var(--ontology-bg); border:1px solid var(--ontology-control-border); border-radius:4px; padding:8px 12px; color:var(--ontology-muted); }
 .wb-property-search input,.wb-popup input { min-width:0; width:100%; border:0; background:transparent; color:var(--ontology-text); font:inherit; }
 .wb-property-search input:focus { outline:none; }

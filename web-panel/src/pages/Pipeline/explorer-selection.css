@@ -71,7 +71,7 @@
 .flow-explorer-selection__control:not(:disabled):hover { background: var(--ontology-selected); }
 .flow-explorer-selection__control:disabled { color: var(--ontology-muted); cursor: default; }
 .flow-explorer-selection :focus-visible { outline: 2px solid var(--ui-focus-ring); outline-offset: -2px; }
-.flow-explorer-selection__table-title { display: flex; align-items: center; gap: 7px; overflow: hidden; }
+.flow-explorer-selection__table-title { display: flex; align-items: center; gap: 6px; overflow: hidden; }
 .flow-explorer-selection__table-title > :is(a, span:last-child) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .flow-explorer-selection a { color: var(--ontology-link); text-decoration: none; }
 .flow-explorer-selection a:hover { text-decoration: underline; }
@@ -122,7 +122,10 @@
 }
 .flow-explorer-selection__icon > .workspace-glyph { color: inherit !important; }
 .flow-explorer-selection__icon svg { stroke-width: 1.5; }
-.flow-explorer-selection__icon.is-compact { width: 24px; height: 24px; border-radius: 4px; font-size: 15px; }
+.flow-explorer-selection__icon.is-compact { width:16px; height:16px; border:0; border-radius:2px; background:transparent; color:var(--asset-color, var(--ontology-link)); font-size:14px; }
+.flow-explorer-selection__icon.is-compact .workspace-glyph { width:14px; height:14px; }
+.flow-explorer-selection__icon.is-compact .workspace-glyph > svg { display:block; width:14px; height:14px; }
+.flow-explorer-selection__icon.is-compact .workspace-glyph .ui-icon { font-size:14px; }
 .flow-explorer-selection__view {
   display: flex;
   align-items: center;
@@ -250,9 +253,16 @@
 @keyframes explorer-query-in { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
 @keyframes explorer-query-out { to { opacity:0; transform:translateY(6px); } }
 @media (prefers-reduced-motion:reduce) { .flow-explorer-query-status, .flow-explorer-query-status.is-leaving { animation:none; } }
-.flow-console--ontology .flow-explorer-selection .flow-data-table .ui-table-content { overflow:auto; scrollbar-width:auto !important; scrollbar-color:var(--ontology-muted) var(--ontology-panel); }
-.flow-explorer-selection .ui-table-content::-webkit-scrollbar { display:block !important; height:10px !important; width:10px !important; }
-.flow-explorer-selection .ui-table-content::-webkit-scrollbar-thumb { background:var(--ontology-muted); border:2px solid var(--ontology-panel); border-radius:5px; }
+.flow-console--ontology .flow-explorer-selection .flow-data-table .ui-table-content { overflow:auto; scrollbar-width:thin !important; scrollbar-color:color-mix(in srgb,var(--ontology-muted) 55%,var(--ontology-panel)) transparent; }
+.flow-explorer-selection .ui-table-content::-webkit-scrollbar { display:block !important; height:6px !important; width:6px !important; }
+.flow-explorer-selection .ui-table-content::-webkit-scrollbar-track,
+.flow-explorer-selection .ui-table-content::-webkit-scrollbar-corner { background:transparent; }
+.flow-explorer-selection .ui-table-content::-webkit-scrollbar-thumb { background:color-mix(in srgb,var(--ontology-muted) 55%,var(--ontology-panel)); border:0; border-radius:3px; }
+.flow-explorer-selection .ui-table-content::-webkit-scrollbar-thumb:hover { background:color-mix(in srgb,var(--ontology-muted) 75%,var(--ontology-panel)); }
+.flow-explorer-selection .ui-table-content::-webkit-scrollbar-button { display:none !important; height:0 !important; width:0 !important; }
+@supports selector(::-webkit-scrollbar) {
+  .flow-console--ontology .flow-explorer-selection .flow-data-table .ui-table-content { scrollbar-width:auto !important; scrollbar-color:auto; }
+}
 
 .flow-console--ontology .flow-explorer-selection__results > .flow-data-table { display:flex; flex:1; flex-direction:column; min-height:0; overflow:hidden; }
 .flow-explorer-selection .flow-data-table :is(.ui-spin-nested-loading,.ui-spin-container,.ui-table,.ui-table-container) { display:flex; flex:1; flex-direction:column; min-height:0; max-width:100%; }

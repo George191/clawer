@@ -291,7 +291,7 @@ export default function ExplorerSelection({
     };
     onRefresh();
   };
-  return <ExplorerValueProvider schema={schema} table={table}><div className={`flow-explorer-selection${panelOpen ? ' is-open' : ''}`}>
+  return <div className={`flow-explorer-selection${panelOpen ? ' is-open' : ''}`}>
     <div ref={results} role="region" aria-label="Object results" className="flow-explorer-selection__results">
       {current?.collapsed && active && <header className="flow-explorer-selection__results-header">
           <button ref={restore} type="button" className="flow-explorer-selection__control"
@@ -305,7 +305,7 @@ export default function ExplorerSelection({
         scroll={{ x: 'max-content' }} dataSource={rows} columns={tableColumns} rowSelection={checkboxProps} onRow={rowProps} />
       {footer}
     </div>
-    {panelOpen && active && <aside className="flow-explorer-selection__panel" id={panelId} aria-labelledby={panelId + '-heading'}
+    {panelOpen && active && <ExplorerValueProvider schema={schema} table={table}><aside className="flow-explorer-selection__panel" id={panelId} aria-labelledby={panelId + '-heading'}
       onKeyDown={event => { if (event.key === 'Escape' && !event.defaultPrevented && !disabled) { event.preventDefault(); collapse(); } }}>
       <header className="flow-explorer-selection__panel-header">
         <button className="flow-explorer-selection__control" type="button" aria-label="Collapse selection preview" aria-controls={panelId}
@@ -366,6 +366,6 @@ export default function ExplorerSelection({
             </>}
           </>}
       </div>
-    </aside>}
-  </div></ExplorerValueProvider>;
+    </aside></ExplorerValueProvider>}
+  </div>;
 }
