@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react';
+import { explorerPropertyType } from '../../services/explorerProperties';
 import './property-type-icon.css';
 
 function propertyGlyph(type: string) {
@@ -19,6 +21,10 @@ function propertyGlyph(type: string) {
 
 export default function PropertyTypeIcon({ type }: { type: string }) {
   return <span className="flow-ontology__property-icon" title={type} aria-hidden="true">
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" focusable="false">{propertyGlyph(type)}</svg>
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" focusable="false">{propertyGlyph(['string', 'integer', 'number', 'boolean', 'date', 'datetime', 'json'].includes(type) ? type : explorerPropertyType(type))}</svg>
   </span>;
+}
+
+export function PropertyLabel({ type, children }: { type: string; children: ReactNode }) {
+  return <span className="flow-property-label"><PropertyTypeIcon type={type} /><span>{children}</span></span>;
 }

@@ -1,0 +1,8 @@
+.explorer-field-editor { display:grid; min-width:0; width:100%; gap:4px; }
+.explorer-field-editor :is(input,select,textarea) { width:100%; min-width:0; min-height:30px; padding:5px 8px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-panel); color:var(--ontology-text); font:inherit; font-size:12px; }
+.explorer-field-editor textarea { resize:vertical; min-height:90px; font:11px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace; tab-size:2; }
+.explorer-field-editor :is(input,select,textarea):focus { outline:none; box-shadow:none; background:var(--ontology-hover); }
+.explorer-field-editor :disabled { opacity:.5; cursor:default; }
+.explorer-field-editor small { color:var(--ontology-muted); font-size:10px; }
+.explorer-field-editor input[type=number] { appearance:textfield; -moz-appearance:textfield; }
+.explorer-field-editor input::-webkit-inner-spin-button, .explorer-field-editor input::-webkit-outer-spin-button { -webkit-appearance:none; margin:0; }

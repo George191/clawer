@@ -1,0 +1,10 @@
+.explorer-json-line.fjt-line { position:relative; min-height:18px; font:11px/18px ui-monospace,SFMono-Regular,Consolas,monospace; white-space:normal; }
+.explorer-json-content { min-width:0; white-space:pre-wrap; overflow-wrap:anywhere; }
+.explorer-json-line .explorer-json-toggle { position:absolute; left:0; top:0; display:inline-flex; align-items:center; justify-content:center; width:16px; height:18px; min-height:0; padding:0; border:0; border-radius:2px; background:transparent; color:var(--ontology-muted,var(--ui-muted)); font:inherit; cursor:pointer; }
+.explorer-json-line .explorer-json-toggle:hover { background:var(--ontology-hover,var(--ui-bg)); color:var(--ontology-text,var(--ui-text)); }
+.explorer-json-toggle .ui-icon { font-size:9px; }
+.explorer-json-toggle.is-open .ui-icon { transform:rotate(180deg); }
+.explorer-json-line .fjt-key { color:var(--ontology-text,var(--ui-text)); }
+.explorer-json-line .fjt-punct, .explorer-json-line .fjt-summary-count { color:var(--ontology-muted,var(--ui-muted)); }
+.explorer-json-line :is(.fjt-string,.fjt-number,.fjt-boolean,.fjt-null) { color:var(--ontology-text,var(--ui-text)); }
+.explorer-json-line .fjt-summary-count { font-style:normal; padding-inline:4px; }

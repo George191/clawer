@@ -3,7 +3,7 @@ export type RowDraft = Record<string, string | null>;
 export function editorValue(type: string | undefined, value: unknown): string | null {
     if (value == null) return null;
     if (/^jsonb?(?:\s|$)|\[\]$/.test(type?.toLowerCase() || '') || typeof value === 'object') {
-        return JSON.stringify(value);
+        return JSON.stringify(value, null, 2);
     }
     return String(value);
 }

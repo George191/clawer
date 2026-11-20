@@ -108,7 +108,8 @@
 .flow-explorer-selection__object { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .flow-explorer-selection__identity { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .flow-explorer-selection__object-actions { display: flex; flex: 0 0 auto; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
-.flow-explorer-selection__object-actions a { font-size: 12px; }
+.flow-explorer-selection__object-actions a { padding:4px 6px; border-radius:3px; color:var(--ontology-muted); font-size:11px; }
+.flow-explorer-selection__object-actions a:hover { color:var(--ontology-text); background:var(--ontology-hover); text-decoration:none; }
 .flow-explorer-selection__object h4 { margin: 2px 0 3px; font-size: clamp(15px, 1.12vw, 19px); line-height: 1.25; }
 .flow-explorer-selection__object small,
 .flow-explorer-selection__identity > span { color: var(--ontology-muted); font-size: 12px; }
@@ -160,7 +161,9 @@
   gap: 6px;
   padding-bottom: 8px;
 }
-.flow-explorer-selection__filters > :first-child { flex: 1 1 100%; }
+.flow-explorer-selection__filters { display:grid; grid-template-columns:minmax(0,2fr) repeat(2,minmax(0,1fr)); align-items:center; }
+.flow-explorer-selection__filters > :first-child { min-width:0; }
+.flow-console--ontology .flow-explorer-selection__filters .ui-input-affix-wrapper:focus-within { border-color:var(--ontology-control-border); box-shadow:none; background:var(--ontology-hover); }
 .flow-explorer-selection__filters label,
 .flow-explorer-selection__comparison-controls label:has(select) { display: grid; flex: 1 1 100px; gap: 3px; min-width: 0; }
 .flow-explorer-selection__filters label > span,
@@ -187,10 +190,10 @@
   overflow-wrap: anywhere;
 }
 .flow-explorer-selection__fields > div + div { border-top: 1px solid var(--ontology-control-border); }
-.flow-explorer-selection__fields dt { display: grid; align-content: start; gap: 2px; color: var(--ontology-muted); }
+.flow-explorer-selection__fields dt { min-width:0; }
 .flow-explorer-selection__fields small,
 .flow-explorer-selection__comparison small { display: block; font-size: 10px; font-weight: 400; }
-.flow-explorer-selection__fields dd { margin: 0; }
+.flow-explorer-selection__fields dd { min-width:0; margin: 0; }
 .flow-explorer-selection__property-value { white-space: pre-wrap; overflow-wrap: anywhere; }
 .flow-explorer-selection__empty-value { color: var(--ontology-muted); font-style: italic; }
 .flow-explorer-selection__comparison table { width: 100%; border-collapse: collapse; table-layout: fixed; }

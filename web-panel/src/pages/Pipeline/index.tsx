@@ -1,3 +1,5 @@
+import ExplorerFieldEditor from './ExplorerFieldEditor';
+import { PropertyLabel } from './PropertyTypeIcon';
 import { JsonTreeValue } from './ExplorerJsonValue';
 import { editorValue, rowChanges } from './explorerRowEditing';
 import  React,  {  useCallback,  useEffect,  useLayoutEffect,  useRef,  useState  }  from  'react';
@@ -596,11 +598,10 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
     const cancelRowEdit = () => {
         if (!mutationPending.current) { editSnapshot.current = undefined; setEditingRowKey(undefined); setEditingDraft(null); setRowDetailsError(''); }
     };
-    const rowEditor = (key: string) => <Input size="small" aria-label={`Edit ${key}`} disabled={mutationLoading}
-        value={String(editingDraft?.[key] ?? '')} placeholder={editingDraft?.[key] === null ? 'SQL NULL' : undefined}
+    const rowEditor = (key: string) => <ExplorerFieldEditor name={key} type={data?.columnTypes?.[key]} disabled={mutationLoading}
+        value={editingDraft?.[key] ?? null}
         onKeyDown={(event) => { if (!isSchemas && event.key === 'Escape') { event.preventDefault(); cancelRowEdit(); } }}
-        addonAfter={<button type="button" disabled={mutationLoading} aria-label={`Set ${key} to null`} title="Set SQL NULL" onClick={() => setEditingDraft((current) => current ? { ...current, [key]: null } : current)}>NULL</button>}
-        onChange={(event) => setEditingDraft((current) => current ? { ...current, [key]: event.target.value } : current)} />;
+        onChange={value => setEditingDraft(current => current ? { ...current, [key]: value } : current)} />;
     const rowMutationError = (error: unknown, row: Record<string, unknown>) => {
         const response = (error as { response?: { status?: number; data?: { detail?: { code?: string }; errors?: { code?: string } } } })?.response;
         if (response?.status !== 409 || (response.data?.errors?.code ?? response.data?.detail?.code) !== 'row_version_conflict') return errorText(error);
@@ -669,7 +670,7 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
         return <section className="flow-explorer-row-mutation" aria-label={deleting ? 'Confirm row deletion' : 'Edit selected row'}>
             {rowDetailsError && <p role="alert" className="flow-explorer-row-error">{rowDetailsError}</p>}
             {editing ? <form onSubmit={event => { event.preventDefault(); void saveRowEdit(); }}>
-                <div className="flow-explorer-row-fields">{data?.columns.map(key => <div key={key} className="flow-explorer-row-field"><span>{key}</span>{rowEditor(key)}</div>)}</div>
+                <div className="flow-explorer-row-fields">{data?.columns.filter(key => !Object.prototype.hasOwnProperty.call(row.identity, key)).map(key => <div key={key} className="flow-explorer-row-field"><PropertyLabel type={data.columnTypes?.[key] || 'string'}>{key}</PropertyLabel>{rowEditor(key)}</div>)}</div>
                 <div className="flow-explorer-row-tools">
                     <Button htmlType="submit" type="primary" loading={mutationLoading} disabled={loading || !canEditRows || !row.version}>Save row</Button>
                     <Button disabled={mutationLoading} onClick={cancelRowEdit}>Cancel edit</Button>
@@ -1314,7 +1315,6 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
                                     renderRelationships={row => <ExplorerRowLinks schema={selectedSchema} table={table.name} primaryKey={row.identity} />}
                                     rowActions={rowActions} renderMutation={rowMutation}
                                     onRefresh={() => setPreviewRevision(value => value + 1)}
-                                    renderJson={row => <div className="flow-json-tree"><JsonTreeValue name="" value={row.record} depth={0} comma={false} /></div>}
                                     footer={previewPage && <footer className="flow-preview-pager">
                                     {(!previewPage.result.stableOrder || previewPage.result.hasMore && !previewPage.result.canPageFurther) && <div className="flow-preview-pager-notices" role="status">
                                         {!previewPage.result.stableOrder && <span>No stable primary key. Rows may repeat or be skipped when paging.</span>}
