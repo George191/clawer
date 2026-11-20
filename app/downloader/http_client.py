@@ -249,13 +249,18 @@ class HttpClient:
     async def _finish_download_tasks(
         self, task_id: int, tasks: set[asyncio.Future], *, url: str = "",
         cleanup_tasks: set[asyncio.Future] | None = None,
+        timeout: float | None = None,
     ) -> None:
         if not tasks:
             return
         done, pending = set(), set(tasks)
+        deadline = asyncio.get_running_loop().time() + timeout if timeout is not None else None
         try:
             while pending:
-                finished, pending = await asyncio.wait(pending, timeout=0.5)
+                remaining = deadline - asyncio.get_running_loop().time() if deadline is not None else 0.5
+                if remaining <= 0:
+                    break
+                finished, pending = await asyncio.wait(pending, timeout=min(0.5, remaining))
                 done.update(finished)
                 if any(task.cancelled() or task.exception() is not None
                        for task in cleanup_tasks or () if task in finished):
@@ -346,7 +351,7 @@ class HttpClient:
         session_kwargs: dict = {
             "impersonate": "chrome120",
             "proxy": proxy_url,
-            "timeout": None,
+            "timeout": (min(10.0, settings.http_request_timeout), settings.http_request_timeout),
             "headers": {"User-Agent": settings.http_user_agent},
             "verify": settings.http_verify_ssl,
             "allow_redirects": True,
@@ -553,7 +558,7 @@ class HttpClient:
             force_direct: 不改变采集代理模式；所有请求仍使用前置代理。
             page: 当前页码，用于日志记录。
             attempt: 当前尝试次数，用于日志记录。
-            no_timeout: 所有采集请求均不设置连接或响应超时。
+            no_timeout: 保留调用接口；页面请求统一使用 http_request_timeout。
             reuse_session: 显式复用当前协程的连接；响应 Cookie 不跨请求保留。
 
         Returns:
@@ -623,6 +628,7 @@ class HttpClient:
                     headers=headers,
                     params=config.params,
                     cookies=cookies,
+                    timeout=(min(10.0, settings.http_request_timeout), settings.http_request_timeout),
                 )
                 if config.method.upper() == "POST":
                     if config.json_data is not None:
@@ -699,7 +705,8 @@ class HttpClient:
         if asyncio.current_task() is not None:
             self._download_owners[task_id] = asyncio.current_task()
         try:
-            await _wait_for_transfer(request_task)
+            async with asyncio.timeout(settings.http_request_timeout):
+                await _wait_for_transfer(request_task)
             response = request_task.result()
             completed = True
             if task is not None:
@@ -709,6 +716,11 @@ class HttpClient:
             if reuse_session:
                 self._download_cleanup_blocked.add(asyncio.current_task())
             raise
+        except TimeoutError as exc:
+            await self.mark_last_proxy_failed(adapter_name=adapter_name)
+            raise DownloadError(
+                url_display, message=f"Page request timed out after {settings.http_request_timeout}s",
+            ) from exc
         except asyncio.CancelledError:
             cancelled = True
             raise
@@ -725,7 +737,7 @@ class HttpClient:
                 cleanup_tasks.add(close_task)
                 operations.add(close_task)
             try:
-                await self._finish_download_tasks(task_id, operations, url=url, cleanup_tasks=cleanup_tasks)
+                await self._finish_download_tasks(task_id, operations, url=url, cleanup_tasks=cleanup_tasks, timeout=5)
             except DownloadError:
                 if cancelled:
                     logger.warning("HTTP cleanup unconfirmed during page cancellation")
@@ -1197,7 +1209,7 @@ class HttpClient:
         self._last_proxy_urls.clear()
         self._retrying_tasks.clear()
         try:
-            await self._finish_download_tasks(0, tasks | cleanup_tasks, cleanup_tasks=cleanup_tasks)
+            await self._finish_download_tasks(0, tasks | cleanup_tasks, cleanup_tasks=cleanup_tasks, timeout=5)
         except BaseException:
             self._download_cleanup_blocked.update(owners)
             raise

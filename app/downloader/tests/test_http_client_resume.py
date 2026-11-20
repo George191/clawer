@@ -319,11 +319,14 @@ class DownloadResumeTests(unittest.IsolatedAsyncioTestCase):
                         await asyncio.gather(task, return_exceptions=True)
                 self.assertIsNone(self.requests[-1]["timeout"])
 
-    async def test_client_sessions_disable_timeout_for_both_flag_values(self):
+    async def test_client_sessions_bound_adapter_requests_for_both_flag_values(self):
         with patch.object(module, "_ResponseHeaderSession") as session:
             for no_timeout in (False, True):
                 await module.HttpClient._create_client(self.http, no_timeout=no_timeout)
-                self.assertIsNone(session.call_args.kwargs["timeout"])
+                self.assertEqual(
+                    session.call_args.kwargs["timeout"],
+                    (min(10.0, module.settings.http_request_timeout), module.settings.http_request_timeout),
+                )
 
     async def test_legacy_watchdog_reports_stalls_without_terminating_transfer(self):
         state = {"t": asyncio.get_running_loop().time() - 301, "bytes": 0}
@@ -333,7 +336,7 @@ class DownloadResumeTests(unittest.IsolatedAsyncioTestCase):
                 await module._stream_download_watchdog(state, 300, URL)
         self.assertEqual(warning.call_count, 2)
 
-    async def test_slow_pages_have_no_deadline_with_or_without_cached_session(self):
+    async def test_stalled_pages_timeout_and_close_cached_or_dedicated_session(self):
         self.http._before_request = AsyncMock(return_value="fixture")
         self.http._after_request = AsyncMock()
         for reuse_session in (False, True):
@@ -347,16 +350,18 @@ class DownloadResumeTests(unittest.IsolatedAsyncioTestCase):
                 return response
 
             self.outcomes[:] = [delayed_response]
-            with patch.object(module.settings, "http_request_timeout", 0.01):
+            with patch.object(module.settings, "http_request_timeout", 0.01), \
+                    patch.object(self.http, "mark_last_proxy_failed", AsyncMock()) as failed:
                 task = asyncio.create_task(self.http.request_page(
                     URL, anti_crawl_enabled=False, reuse_session=reuse_session,
                 ))
                 try:
                     await started.wait()
-                    await asyncio.sleep(0.05)
-                    self.assertFalse(task.done())
-                    release.set()
-                    self.assertEqual(await asyncio.wait_for(task, 1), "slow page")
+                    with self.assertRaisesRegex(DownloadError, "Page request timed out"):
+                        await asyncio.wait_for(task, 1)
+                    failed.assert_awaited_once()
+                    self.sessions[-1].close.assert_awaited_once()
+                    self.assertEqual(self.requests[-1]["timeout"], (0.01, 0.01))
                 finally:
                     task.cancel()
                     await asyncio.gather(task, return_exceptions=True)

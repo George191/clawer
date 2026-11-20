@@ -290,7 +290,7 @@ async def _crawl_template(
         snapshot_store = None if template.incremental else SnapshotStore(checkpoint_store)
         resume_page, resume_batch_index = await _load_resume_position(
             checkpoint_store,
-            incremental=bool(policies.get("incremental")),
+            incremental=incremental_watermark.enabled,
             batch_count=len(batch_parameter_sets),
         )
         if snapshot_store is not None and getattr(

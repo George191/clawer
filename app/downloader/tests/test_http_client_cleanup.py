@@ -71,6 +71,21 @@ class HttpCleanupTests(unittest.IsolatedAsyncioTestCase):
         self.session.request.assert_awaited_once()
         self.http._create_client.assert_awaited_once()
 
+    async def test_stalled_cleanup_exits_and_blocks_a_new_request(self):
+        async def stalled():
+            await asyncio.Event().wait()
+
+        cleanup = asyncio.create_task(stalled())
+        with self.assertRaises(DownloadCleanupError):
+            await self.http._finish_download_tasks(
+                0, {cleanup}, cleanup_tasks={cleanup}, timeout=0.01,
+            )
+        self.assertIn(asyncio.current_task(), self.http._download_cleanup_blocked)
+        with self.assertRaises(DownloadCleanupError):
+            await self.fetch()
+        await asyncio.gather(cleanup, return_exceptions=True)
+        self.session.request.assert_not_awaited()
+
     async def test_control_cancellation_registers_and_isolates_unfinished_cleanup(self):
         started, cancelled, release, closed = (asyncio.Event() for _ in range(4))
         stop = asyncio.Event()
