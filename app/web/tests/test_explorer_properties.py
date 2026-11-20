@@ -183,7 +183,23 @@ async def test_real_published_mapping_source_pin_and_authorization(props):
             await session.commit()
         get = await client.get(endpoint, headers=admin)
         assert get.status_code == 200, get.text
-        mapped = get.json()
+        physical_mapping = get.json()
+        assert physical_mapping["sourceDefinitionId"] is None
+        assert (physical_mapping["titleProperty"], physical_mapping["displayName"]) == (None, table)
+        assert [(p["id"], p["name"], p["sourceColumn"]) for p in physical_mapping["properties"]] == [
+            ("id", "id", "id"),
+            ("title", "title", "title"),
+        ]
+        physical_body = write(physical_mapping)
+        physical_body.update(displayName="Physical assets", titleProperty="title")
+        physical_body["properties"][1]["name"] = "Physical title"
+        physical_saved = await client.put(endpoint, headers=admin, json=physical_body)
+        assert physical_saved.status_code == 200, physical_saved.text
+        assert physical_saved.json()["sourceDefinitionId"] is None
+        scoped = {"definitionId": str(row.id)}
+        semantic_get = await client.get(endpoint, headers=admin, params=scoped)
+        assert semantic_get.status_code == 200, semantic_get.text
+        mapped = semantic_get.json()
         assert mapped["sourceDefinitionId"] == str(row.id)
         assert (mapped["titleProperty"], mapped["displayName"]) == ("title", "Reviewed flight")
         assert [(p["id"], p["sourceColumn"]) for p in mapped["properties"]] == [
@@ -193,7 +209,8 @@ async def test_real_published_mapping_source_pin_and_authorization(props):
         unauthorized = (await client.get(endpoint, headers=member)).json()
         assert (
             unauthorized["sourceDefinitionId"] is None
-            and unauthorized["titleProperty"] is None
+            and unauthorized["titleProperty"] == "title"
+            and unauthorized["displayName"] == "Physical assets"
             and "Reviewed flight" not in str(unauthorized)
         )
         assert (
@@ -207,6 +224,11 @@ async def test_real_published_mapping_source_pin_and_authorization(props):
         body["groups"] = ["Flight details"]
         body["properties"][1]["group"] = "Flight details"
         assert (await client.put(endpoint, headers=admin, json=body)).json()["properties"][1]["summary"]
+        physical_read = (await client.get(endpoint, headers=admin)).json()
+        assert physical_read["sourceDefinitionId"] is None
+        assert (physical_read["displayName"], physical_read["titleProperty"]) == ("Physical assets", "title")
+        assert physical_read["properties"][1]["name"] == "Physical title"
+        assert physical_read["groups"] == [] and not physical_read["properties"][1]["summary"]
         async with AsyncSession(engine, expire_on_commit=False) as session:
             published = await session.get(OntologyDefinitionRow, row.id)
             published.published_definition = {
@@ -227,7 +249,6 @@ async def test_real_published_mapping_source_pin_and_authorization(props):
             session.add(other)
             await session.commit()
         assert (await client.get(endpoint, headers=admin)).json()["sourceDefinitionId"] is None
-        scoped = {"definitionId": str(row.id)}
         redacted = (await client.get(endpoint, headers=admin, params=scoped)).json()
         assert redacted["sourceDefinitionId"] == str(row.id) and redacted["titleProperty"] is None
         assert "Flight details" not in str(redacted) and "callsign" not in str(redacted)

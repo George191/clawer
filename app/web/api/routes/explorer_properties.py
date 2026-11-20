@@ -133,26 +133,22 @@ async def warehouse_asset(layer, table, user):
 
 
 async def source(session, user, schema, table, requested):
-    if schema not in WAREHOUSE_SCHEMAS or not user.is_superuser:
-        if requested:
-            raise HTTPException(404, "Object type not found")
+    if requested is None:
         return None
+    if schema not in WAREHOUSE_SCHEMAS or not user.is_superuser:
+        raise HTTPException(404, "Object type not found")
     model = OntologyDefinitionRow
     binding = model.published_definition["source"]
     query = published_catalog_statement(user).where(
         binding["mode"].astext == "existing",
         binding["schema"].astext == schema,
         binding["table"].astext == table,
+        model.id == requested,
     )
-    if requested:
-        query = query.where(model.id == requested)
-    found = (await session.execute(query.limit(2))).all()
-    if requested and not found:
+    found = (await session.execute(query)).first()
+    if not found:
         raise HTTPException(404, "Object type not found")
-    # A physical table may back independent types in several projects. An ambiguous table has no implicit type.
-    if len(found) != 1:
-        return None
-    row, definition, _, permitted = await _definition_access(session, user, found[0][0].id)
+    row, definition, _, permitted = await _definition_access(session, user, found[0].id)
     if definition.source.schema_name != schema or definition.source.table != table:
         raise HTTPException(409, "The published source changed. Reload the property mapping.")
     ensure_source_identity(row, definition, await warehouse_table(definition.source))

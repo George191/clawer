@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { AppstoreOutlined, BarChartOutlined, DownOutlined, SearchOutlined, TableOutlined } from '@/components/ui/icons';
+import { AppstoreOutlined, ArrowLeftOutlined, BarChartOutlined, DownOutlined, SearchOutlined, TableOutlined } from '@/components/ui/icons';
 import { fetchExplorerRowByKey } from '../../services/api';
 import { projectHref } from '../../services/projectDomains';
 import { createSaved, listSaved, openSaved, removeSaved, savedPath, sharing, type Exploration, type ListKey, type SavedDetail, type SavedKind, type SavedMeta, type WorkbenchQuery } from '../../services/explorerSaved';
@@ -17,6 +17,7 @@ type Props = {
     schema: string;
     table: string;
     label: string;
+    available: boolean;
     titleProperty?: string | null;
     primaryKey?: string[];
     glyph?: ReactNode;
@@ -31,6 +32,7 @@ type Props = {
     selectResource: (v: ResourceView) => void;
     apply: (q: WorkbenchQuery) => void;
     addFilter: (field: string) => void;
+    backToTypes: () => void;
     toggleCatalog: () => void;
     closeCatalog: () => void;
     catalogOpen: boolean;
@@ -264,13 +266,14 @@ export default function ExplorerWorkbenchHeader(p: Props) {
     const changeField = (f: string) => { choose(f); setSearch(p.names?.[f] || f); show('property'); };
     return <header className="wb-header" ref={root}>
         <div className="wb-line wb-query">
-            <span className="wb-type"><button type="button" className="wb-catalog-toggle wb-type-icon" onClick={p.toggleCatalog} aria-label="Browse object types" title="Browse object types" aria-expanded={p.catalogOpen}><i>{p.glyph ?? <TableOutlined />}</i></button><strong>{p.label}</strong></span>
-            <label className="wb-property-search" ref={propertySearch} onClick={() => show('search')}><SearchOutlined /><input aria-label="Search properties to add a chart or filter" placeholder="Search properties to add a chart or filter…" value={search} onFocus={() => show('search')} onChange={e => { setSearch(e.target.value); show('search'); }} onKeyDown={e => { if (e.key === 'Enter' && find[0])
+            <button type="button" className="wb-back" onClick={p.backToTypes}><ArrowLeftOutlined /> Back to object types</button>
+            <span className="wb-type">{p.available && <button type="button" className="wb-catalog-toggle wb-type-icon" onClick={p.toggleCatalog} aria-label="Browse object types" title="Browse object types" aria-expanded={p.catalogOpen}><i>{p.glyph ?? <TableOutlined />}</i></button>}<strong title={p.schema + '.' + p.table}>{p.available ? p.label : p.table}</strong></span>
+            {p.available && <><label className="wb-property-search" ref={propertySearch} onClick={() => show('search')}><SearchOutlined /><input aria-label="Search properties to add a chart or filter" placeholder="Search properties to add a chart or filter…" value={search} onFocus={() => show('search')} onChange={e => { setSearch(e.target.value); show('search'); }} onKeyDown={e => { if (e.key === 'Enter' && find[0])
         changeField(find[0]); }}/></label>
             <button data-wb-menu="explorations" onClick={() => openMenu('explorations')}>Explorations <DownOutlined /></button>
             <button data-wb-menu="lists" onClick={() => openMenu('lists')}>Lists <DownOutlined /></button>
-            <button data-wb-menu="share" onClick={() => openMenu('share')}>Share</button><button data-wb-menu="save" className="wb-primary" onClick={() => menu === 'save' ? show('') : beginSave('exploration')}>Save</button></div>
-        <div className="wb-line wb-tools">
+            <button data-wb-menu="share" onClick={() => openMenu('share')}>Share</button><button data-wb-menu="save" className="wb-primary" onClick={() => menu === 'save' ? show('') : beginSave('exploration')}>Save</button></>}</div>
+        {p.available && <><div className="wb-line wb-tools">
             <div className="wb-left">{p.layoutControl}{p.filterButton}
                 {!!p.selected.length && <div className="wb-selection-tools" role="toolbar" aria-label="Selected object tools">
                     <span>{p.selected.length} selected</span>
@@ -327,5 +330,6 @@ export default function ExplorerWorkbenchHeader(p: Props) {
                     {shareLink && <label>Share link<input readOnly value={shareLink} onFocus={e => e.currentTarget.select()}/></label>}</>}</>}
         </section>}
         {p.resource === 'preview' && p.mode === 'explore' && <ExploreChart field={field} select={setChart} fields={p.fields} names={p.names} rows={p.rows} onFilter={f => { selectMode('results'); p.addFilter(f); }}/>}
+        </>}
     </header>;
 }

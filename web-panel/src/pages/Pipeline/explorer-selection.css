@@ -166,6 +166,7 @@
 .flow-console--ontology .flow-explorer-selection__filters .ui-input-affix-wrapper:focus-within { border-color:var(--ontology-control-border); box-shadow:none; background:var(--ontology-hover); }
 .flow-explorer-selection__filters label,
 .flow-explorer-selection__comparison-controls label:has(.ui-select) { display: grid; flex: 1 1 100px; gap: 3px; min-width: 0; }
+.flow-explorer-selection__comparison-controls > .ui-checkbox-wrapper { min-height: 26px; }
 .flow-explorer-selection__filters label > span,
 .flow-explorer-selection__comparison-controls label > span:first-child { color: var(--ontology-muted); font-size: 11px; }
 .flow-explorer-selection__properties select,

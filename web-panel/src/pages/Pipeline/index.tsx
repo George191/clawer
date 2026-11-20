@@ -3,10 +3,10 @@ import { PropertyLabel } from './PropertyTypeIcon';
 import { JsonTreeValue } from './ExplorerJsonValue';
 import { editorValue, rowChanges } from './explorerRowEditing';
 import  React,  {  useCallback,  useEffect,  useLayoutEffect,  useRef,  useState  }  from  'react';
-import  {  Link,  matchPath,  useLocation,  useNavigate, type NavigateOptions  }  from  'react-router-dom';
+import  {  Link,  matchPath,  useLocation,  useNavigate  }  from  'react-router-dom';
 import  {  Button,  Checkbox,  ConfigProvider,  Dropdown,  Input,  InputNumber,  Modal,  Select,  Space,  Spin,  Table,  Tag,  Upload,  message  }  from  '@/components/ui';
 import  enUS  from  '@/components/ui/locale';
-import  {  AlertOutlined,  ArrowLeftOutlined,  ArrowDownOutlined,  ArrowUpOutlined,  CheckOutlined,  CloseOutlined,  CodeOutlined,  DatabaseOutlined,  DeleteOutlined,  DownOutlined,  DownloadOutlined,  EditOutlined,  PlusOutlined,  ReloadOutlined,  RightOutlined,  SearchOutlined,  SettingOutlined,  TableOutlined,  UploadOutlined  }  from  '@/components/ui/icons';
+import  {  AlertOutlined,  ArrowDownOutlined,  ArrowUpOutlined,  CheckOutlined,  CloseOutlined,  CodeOutlined,  DatabaseOutlined,  DeleteOutlined,  DownOutlined,  DownloadOutlined,  EditOutlined,  PlusOutlined,  ReloadOutlined,  RightOutlined,  SearchOutlined,  SettingOutlined,  TableOutlined,  UploadOutlined  }  from  '@/components/ui/icons';
 import  '../ProductWorkspace/workspace.css';
 import CdcStatusPanel from './CdcStatusPanel';
 import OntologyExplorer, { schemaColor } from './OntologyExplorer';
@@ -114,7 +114,7 @@ const Pipeline: React.FC = () => {
             {matchPath('/ontology', pathname) ? <OntologyExplorer refreshToken={0} />
                 : matchPath('/ontology/connections', pathname) ? <DataConnections />
                 : matchPath('/ontology/lineage', pathname) ? <OntologyLineage refreshToken={0} />
-                    : matchPath('/ontology/runtime', pathname) ? <FlowRuntime /> : <ExplorerTabs />}
+                    : matchPath('/ontology/runtime', pathname) ? <FlowRuntime /> : <div className="flow-exploration-workspace"><DataLayersWorkspace /></div>}
         </section>
     </main></ConfigProvider>;
 };
@@ -136,123 +136,22 @@ const FlowRuntime: React.FC = () => {
                 : allowed ? <CdcStatusPanel /> : <div className="flow-ontology-message">Runtime diagnostics are available to administrators. You can continue exploring data assets and tables.</div>}
     </div>;
 };
-type ExplorerTab = { id: string; search: string };
-type ExplorerTabContext = ExplorerTab & {
-    active: boolean;
-    navigate: (id: string, to: string, options?: NavigateOptions) => void;
-    onLockChange: (id: string, locked: boolean) => void;
-};
-const primaryTab = 'main';
-const explorerPath = '/ontology/explorer';
-
-function ExplorerTabs() {
+const DataLayersWorkspace: React.FC = () => {
     const location = useLocation();
+    const pathname = location.pathname;
+    const search = location.search;
+    const isSchemas = !!matchPath('/ontology/explorer', pathname);
+    const workspacePath = isSchemas ? '/ontology/explorer' : '/ontology/transforms';
+    const requestedView = new URLSearchParams(search).get('view');
     const navigate = useNavigate();
     const catalogReturn = useRef('/ontology');
-    const requestedReturn = new URLSearchParams(location.search).get('returnTo');
+    const requestedReturn = new URLSearchParams(search).get('returnTo');
     if (requestedReturn === '/ontology' || requestedReturn?.startsWith('/ontology?')) catalogReturn.current = requestedReturn;
-    const activeId = new URLSearchParams(location.search).get('exploration') || primaryTab;
-    const activeTab = { id: activeId, search: location.search };
-    const [tabs, setTabs] = useState<ExplorerTab[]>(() => {
-        const params = new URLSearchParams(location.search);
-        params.delete('exploration');
-        const initial = { id: primaryTab, search: params.size ? '?' + params.toString() : '' };
-        return activeId === primaryTab ? [activeTab] : [initial, activeTab];
-    });
-    const [lockedTabs, setLockedTabs] = useState<Set<string>>(() => new Set());
-    const onLockChange = useCallback((id: string, locked: boolean) => {
-        setLockedTabs(previous => {
-            if (previous.has(id) === locked) return previous;
-            const next = new Set(previous);
-            if (locked) next.add(id); else next.delete(id);
-            return next;
-        });
-    }, []);
-    const visibleTabs = tabs.some(tab => tab.id === activeId)
-        ? tabs.map(tab => tab.id === activeId ? activeTab : tab) : [...tabs, activeTab];
-    useEffect(() => {
-        setTabs(previous => {
-            const tab = previous.find(tab => tab.id === activeId);
-            if (!tab) return [...previous, { id: activeId, search: location.search }];
-            return tab.search === location.search ? previous
-                : previous.map(tab => tab.id === activeId ? { ...tab, search: location.search } : tab);
-        });
-    }, [activeId, location.search]);
-    const activeIdRef = useRef(activeId);
-    activeIdRef.current = activeId;
-    const open = (tab: ExplorerTab, options?: NavigateOptions) => navigate(explorerPath + tab.search, options);
-    const add = () => {
-        const params = new URLSearchParams(activeTab.search);
-        params.set('exploration', randomId());
-        params.delete('saved');
-        open({ id: '', search: '?' + params.toString() });
-    };
     const backToTypes = () => {
         const target = new URL(catalogReturn.current, window.location.origin);
         for (const key of ['schema', 'table', 'tab', 'objectType']) target.searchParams.delete(key);
         navigate(target.pathname + target.search);
     };
-    const close = (id: string) => {
-        if (id === primaryTab || lockedTabs.has(id)) return;
-        const at = visibleTabs.findIndex(tab => tab.id === id);
-        const remaining = visibleTabs.filter(tab => tab.id !== id);
-        setTabs(remaining);
-        if (id === activeId) open(remaining[Math.min(at, remaining.length - 1)] ?? { id: primaryTab, search: '' }, { replace: true });
-    };
-    const address = useCallback((id: string, to: string, options?: NavigateOptions) => {
-        const target = new URL(to, window.location.origin);
-        if (target.pathname !== explorerPath) {
-            if (activeIdRef.current === id) navigate(to, options);
-            return;
-        }
-        if (id !== primaryTab) target.searchParams.set('exploration', id);
-        if (activeIdRef.current === id) navigate(explorerPath + target.search, options);
-        else setTabs(old => old.map(tab => tab.id === id ? { ...tab, search: target.search } : tab));
-    }, [navigate]);
-    const defaultTab = visibleTabs.find(tab => tab.id === primaryTab)!;
-    const defaultTitle = new URLSearchParams(defaultTab.search).get('table') || 'Exploration';
-    return <div className="flow-exploration-workspace">
-        <div className="flow-exploration-bar">
-            <div className="flow-exploration-return"><Button className="flow-exploration-back" size="small" icon={<ArrowLeftOutlined />} disabled={lockedTabs.size > 0}
-                onClick={backToTypes}>Back to object types</Button></div>
-            <button type="button" className="flow-exploration-default" aria-current={activeId === primaryTab ? 'page' : undefined}
-                title={defaultTitle} onClick={() => { if (activeId !== primaryTab) open(defaultTab); }}>{defaultTitle}</button>
-            <nav className="flow-exploration-tabs" aria-label="Explorations">
-            {visibleTabs.filter(tab => tab.id !== primaryTab).map((tab, i) => {
-                const table = new URLSearchParams(tab.search).get('table');
-                const label = table || 'Exploration ' + (i + 1);
-                return <div key={tab.id} className="flow-exploration-tab" data-current={tab.id === activeId}>
-                    <button type="button" aria-current={tab.id === activeId ? 'page' : undefined} title={label} onClick={() => { if (tab.id !== activeId) open(tab); }}>{label}</button>
-                    <button type="button" aria-label={'Close ' + label} disabled={lockedTabs.has(tab.id)}
-                        title={lockedTabs.has(tab.id) ? 'Save or cancel changes before closing' : undefined}
-                        onClick={() => close(tab.id)}><CloseOutlined /></button>
-                </div>;
-            })}
-            <button type="button" className="wb-new-exploration" onClick={add}><PlusOutlined /> New exploration</button>
-            </nav>
-        </div>
-        {visibleTabs.map(tab => <div className="flow-exploration-pane" key={tab.id} hidden={tab.id !== activeId}>
-            <DataLayersWorkspace explorerTab={{ ...tab, active: tab.id === activeId, navigate: address, onLockChange }} />
-        </div>)}
-    </div>;
-}
-
-const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ explorerTab }) => {
-    const location = useLocation();
-    const pathname = location.pathname;
-    const search = explorerTab?.search ?? location.search;
-    const isSchemas = !!matchPath('/ontology/explorer', pathname);
-    const workspacePath = isSchemas ? '/ontology/explorer' : '/ontology/transforms';
-    const requestedView = new URLSearchParams(search).get('view');
-    const routerNavigate = useNavigate();
-    const tabId = explorerTab?.id;
-    const navigateTab = explorerTab?.navigate;
-    const onTabLockChange = explorerTab?.onLockChange;
-    const tabVisible = explorerTab?.active !== false;
-    const navigate = useCallback((to: string, options?: NavigateOptions) => {
-        if (tabId && navigateTab) navigateTab(tabId, to, options);
-        else routerNavigate(to, options);
-    }, [navigateTab, routerNavigate, tabId]);
     const [canManage, setCanManage] = useState(false);
     const [mappingDirty, setMappingDirty] = useState(false);
     const [catalogOpen, setCatalogOpen] = useState(false);
@@ -1005,7 +904,7 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
         if (previewPage && scroll) scroll.scrollTop = 0;
     }, [previewPage]);
     useEffect(() => {
-        if (!selectedTableAvailable || !showStream || explorerTab?.active === false) { setStreamLoading(false); return; }
+        if (!selectedTableAvailable || !showStream) { setStreamLoading(false); return; }
         setStreamLoading(true);
         let active = true;
         let timer: number | undefined;
@@ -1023,7 +922,7 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
         };
         void refresh();
         return () => { active = false; streamRequest.current++; window.clearTimeout(timer); };
-    }, [selectedSchema, table.name, inputTopics[activeTopicIndex], selectedTableAvailable, showStream, explorerTab?.active]);
+    }, [selectedSchema, table.name, inputTopics[activeTopicIndex], selectedTableAvailable, showStream]);
     const selectResourceView = (view: typeof resourceView) => {
         if (editingRowKey || scriptDirty || apisDirty || mappingDirty || mutationPending.current) { message.warning('Save or cancel current changes before switching views'); return; }
         if (view === resourceView) return;
@@ -1116,9 +1015,9 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
     );
 
     useEffect(() => {
-        if (!isSchemas || !catalogOpen || explorerTab?.active === false) return;
+        if (!isSchemas || !catalogOpen) return;
         const outside = (event: PointerEvent) => {
-            if (event.target instanceof Element && !event.target.closest('.flow-explorer-catalog,.wb-catalog-toggle,.wb-new-exploration'))
+            if (event.target instanceof Element && !event.target.closest('.flow-explorer-catalog,.wb-catalog-toggle'))
                 setCatalogOpen(false);
         };
         const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') setCatalogOpen(false); };
@@ -1128,19 +1027,15 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
             document.removeEventListener('pointerdown', outside, true);
             document.removeEventListener('keydown', escape);
         };
-    }, [isSchemas, catalogOpen, explorerTab?.active]);
+    }, [isSchemas, catalogOpen]);
     const mapping = explorerPresentation?.presentation;
     const workbenchLocked = !!editingRowKey || !!deleteSnapshot || mutationLoading || scriptDirty || apisDirty || mappingDirty;
-    useLayoutEffect(() => {
-        if (tabId) onTabLockChange?.(tabId, workbenchLocked);
-    }, [tabId, onTabLockChange, workbenchLocked]);
     const emptyExplorer = isSchemas && (!requestedSchema || !requestedTable) && !catalogOpen && !createTableSchema;
     if (emptyExplorer) return <section className="flow-exploration-empty" aria-label="Empty exploration">
         <DatabaseOutlined />
         <h2>Choose an object type to explore</h2>
         <p>Open a Storage-backed object type to see its results in Explorer.</p>
         <Link to="/ontology">Browse Storage-backed object types</Link>
-        {tabId && tabId !== primaryTab && <Button className="wb-catalog-toggle" icon={<SearchOutlined />} onClick={() => setCatalogOpen(true)}>Browse object types</Button>}
     </section>;
     return <div className={`flow-layers flow-layers--tagged${isSchemas ? ' flow-schema-workbench explorer-object-workspace has-asset' : ''}${catalogOpen ? ' is-catalog-open' : ''}${workbenchMode === 'explore' && resourceView === 'preview' ? ' is-exploring' : ''}`}>
         <div  className="flow-layer-layout">
@@ -1202,13 +1097,13 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
                 </div>
                 </div>}
                 {!isSchemas && !selectedTableAvailable ? <div className="flow-workspace-empty" role="status"><DatabaseOutlined /><h3>{tablesLoading || !catalogLoaded && !requestError ? 'Loading schema resources…' : selectedSchema ? serverTables.length ? 'No table selected' : 'No tables in this schema' : 'No schema selected'}</h3><p>{schemaNode?.status === 'stopped' ? 'This schema is not available in the connected database.' : serverTables.length ? 'Select a table from the catalog.' : 'Select a schema to explore its tables and data.'}</p></div> : <div className="flow-inspector">
-                    {isSchemas && requestedSchema && requestedTable && <fieldset className="wb-shell" disabled={workbenchLocked || !selectedTableAvailable}>
-                        <ExplorerWorkbenchHeader key={JSON.stringify([previewIdentity, requestedSchema, requestedTable])} schema={requestedSchema} table={requestedTable}
-                            label={selectedTableAvailable ? mapping?.displayName || requestedTable : requestedTable} titleProperty={mapping?.titleProperty} primaryKey={mapping?.primaryKey}
+                    {isSchemas && requestedSchema && requestedTable && <fieldset className="wb-shell" disabled={workbenchLocked}>
+                        <ExplorerWorkbenchHeader key={JSON.stringify([previewIdentity, requestedSchema, requestedTable])} schema={requestedSchema} table={requestedTable} available={selectedTableAvailable}
+                            backToTypes={backToTypes} label={selectedTableAvailable ? mapping?.displayName || requestedTable : requestedTable} titleProperty={mapping?.titleProperty} primaryKey={mapping?.primaryKey}
                             glyph={<ExplorerTypeIcon compact dataType={selectedTableAvailable ? mapping?.dataType ?? table.dataType : undefined} table={requestedTable} />}
                             fields={data?.columns || filterFields} names={Object.fromEntries((mapping?.properties || []).flatMap(p => p.sourceColumn ? [[p.sourceColumn, p.name]] : []))}
                             rows={dataRows.map((row,i) => ({...row,...primaryKey(row,i)}))} selected={workbenchRows} query={{ ...appliedQuery, partition }} resource={resourceView} admin={canManage}
-                            layoutControl={tabVisible && showPreview && <LayoutToolbar controls={resultLayout} admin={canManage} types={data?.columnTypes} />}
+                            layoutControl={showPreview && <LayoutToolbar controls={resultLayout} admin={canManage} types={data?.columnTypes} />}
                             selectResource={selectResourceView} apply={q => {
                                 setFilterRules(q.filters.length ? normalizeFilterDepth(q.filters) : [blankExplorerFilter('rule-1')]);
                                 setFilterText(q.search || ''); setSortField(q.sorts[0]?.field || ''); setSortDirection(q.sorts[0]?.direction || 'asc');
@@ -1367,7 +1262,7 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
                                     </nav>
                                 </footer>} /> : <ConfigProvider locale={enUS}><Table className="flow-data-table" size="small" loading={loading} pagination={{ current: pageNumber, pageSize, total: data?.total ?? data?.rowCount ?? 0, size: 'small', showTotal: (total: number, range: [number, number]) => `${range[0]}–${range[1]} / ${data?.totalEstimated ? '~' : ''}${total.toLocaleString('en-US')} rows${data?.totalEstimated ? ' (estimated)' : ''} · ${table.size} · ${fieldCount} fields`, showSizeChanger: true, pageSizeOptions: [10, 20, 50], onChange: (page, size) => { if (editingRowKey) { message.warning('Save or cancel the current row edit first'); return; } setPageNumber(size !== pageSize ? 1 : page); setPageSize(size); } }} rowKey={rowKey} scroll={{ x: 'max-content' }} dataSource={dataRows} columns={dataColumns} onRow={(row) => ({ onDoubleClick: () => startRowEdit(rowKey(row)), className: editingRowKey === rowKey(row) ? 'flow-row-editing' : undefined })} /></ConfigProvider>)}
                     </div>
-                    <Modal  className="flow-surface-modal flow-script-modal"  title="Layer  script"  open={tabVisible && scriptOpen} onCancel={closeScript} keyboard={!mutationLoading} maskClosable={!mutationLoading}  footer={null}  width={720}>
+                    <Modal  className="flow-surface-modal flow-script-modal"  title="Layer  script"  open={scriptOpen} onCancel={closeScript} keyboard={!mutationLoading} maskClosable={!mutationLoading}  footer={null}  width={720}>
                         <div  className="flow-script-editor">
                             <div  className="flow-script-note">{scriptNote}. Drafts are stored separately and are not deployed to workers.</div>
                             <Input.TextArea aria-label="Layer script code" readOnly={!canManage || !scriptLoaded || mutationLoading} value={script}  onChange={(event)  =>  setScript(event.target.value)}  autoSize={{  minRows:  12,  maxRows:  22  }}  />
@@ -1375,7 +1270,7 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
 
                         </div>
                     </Modal>
-                    <Modal className="flow-surface-modal" title="Satellite vulnerability extraction" open={tabVisible && keywordsOpen} onCancel={() => { if (!keywordsSaving) setKeywordsOpen(false); }} footer={<Button disabled={keywordsSaving} onClick={() => setKeywordsOpen(false)}>Close</Button>} width={760}>
+                    <Modal className="flow-surface-modal" title="Satellite vulnerability extraction" open={keywordsOpen} onCancel={() => { if (!keywordsSaving) setKeywordsOpen(false); }} footer={<Button disabled={keywordsSaving} onClick={() => setKeywordsOpen(false)}>Close</Button>} width={760}>
                         <p>Keywords select satellite-related vulnerability records. Upload a YAML file with a keywords array (up to 1 MiB, 1,000 keywords, 200 characters each). Matching ignores case, uses word boundaries, and supports multiple keywords per record. An empty array disables matching.</p>
                         <p>Activating a version takes effect within 30 seconds for subsequent processing. Rerun historical records to update their results.</p>
                         <div className="flow-script-actions">
@@ -1402,8 +1297,8 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
                 </div>}
             </section>
         </div>
-        {tabVisible && isSchemas && canManage && createTableSchema && creationSchemas.some((item) => item.key === createTableSchema) && <NewObjectType variant="storage" schemas={creationSchemas.filter((item) => item.key === createTableSchema)} initialSchema={createTableSchema} onCancel={() => setCreateTableSchema('')} onOpenExisting={(object) => openWizardTable(object.schema, object.table)} onCreated={(schema, created) => openWizardTable(schema, created.name)} />}
-        <Modal  className="flow-surface-modal flow-offset-modal"  title="Adjust  Kafka  offset"  open={tabVisible && offsetOpen}  onCancel={() => { if (!mutationPending.current) setOffsetOpen(false); }}  cancelText="Cancel"  onOk={saveOffset} confirmLoading={mutationLoading} okButtonProps={{ disabled: !canManage || !stream?.available || offsetPartition === undefined || offset === undefined || offset < 0 || !Number.isSafeInteger(offset) }}  okText="Confirm  SET  OFFSET"  width={460}>
+        {isSchemas && canManage && createTableSchema && creationSchemas.some((item) => item.key === createTableSchema) && <NewObjectType variant="storage" schemas={creationSchemas.filter((item) => item.key === createTableSchema)} initialSchema={createTableSchema} onCancel={() => setCreateTableSchema('')} onOpenExisting={(object) => openWizardTable(object.schema, object.table)} onCreated={(schema, created) => openWizardTable(schema, created.name)} />}
+        <Modal  className="flow-surface-modal flow-offset-modal"  title="Adjust  Kafka  offset"  open={offsetOpen}  onCancel={() => { if (!mutationPending.current) setOffsetOpen(false); }}  cancelText="Cancel"  onOk={saveOffset} confirmLoading={mutationLoading} okButtonProps={{ disabled: !canManage || !stream?.available || offsetPartition === undefined || offset === undefined || offset < 0 || !Number.isSafeInteger(offset) }}  okText="Confirm  SET  OFFSET"  width={460}>
             <div  className="flow-offset-modal-body">
                 <div  className="flow-offset-modal-info">
                     <div  className="flow-offset-modal-info-row"><span>Consumer  group</span><strong>{stream?.consumerGroup || 'Unavailable'}</strong></div>
@@ -1420,7 +1315,7 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
                 <div  className="flow-offset-modal-warn"><AlertOutlined  />  Changes  apply  after  the  worker  restarts.  The  consumer  group  will  resume  from  the  new  position.</div>
             </div>
         </Modal>
-        <Modal className="flow-surface-modal"  title="Data  analysis"  open={tabVisible && showPreview && analysisOpen}  onCancel={()  =>  setAnalysisOpen(false)}  footer={<Button  onClick={()  =>  setAnalysisOpen(false)}>Close</Button>}><div  className="flow-analysis-grid"><div><span>Visible  rows</span><strong>{dataRows.length}</strong></div><div><span>Partitions</span><strong>{new  Set(dataRows.map((row)  =>  row.partition)).size}</strong></div><div><span>Ready</span><strong>{dataRows.filter((row)  =>  row.status  ===  'ready').length}</strong></div></div></Modal>
+        <Modal className="flow-surface-modal"  title="Data  analysis"  open={showPreview && analysisOpen}  onCancel={()  =>  setAnalysisOpen(false)}  footer={<Button  onClick={()  =>  setAnalysisOpen(false)}>Close</Button>}><div  className="flow-analysis-grid"><div><span>Visible  rows</span><strong>{dataRows.length}</strong></div><div><span>Partitions</span><strong>{new  Set(dataRows.map((row)  =>  row.partition)).size}</strong></div><div><span>Ready</span><strong>{dataRows.filter((row)  =>  row.status  ===  'ready').length}</strong></div></div></Modal>
         <Modal  className="flow-surface-modal flow-json-preview-modal"  title={jsonRow  ?  `Row  JSON  ·  ${table.name}`  :  'Row  JSON'}  open={!isSchemas && showPreview && !!jsonRow}  onCancel={()  =>  setJsonRow(null)}  footer={<Button  onClick={()  =>  setJsonRow(null)}>Close</Button>}  width={720}>
             <div  className="flow-json-tree">{jsonRow  ?  <JsonTreeValue  name=""  value={jsonRow}  depth={0}  comma={false}  />  :  null}</div>
         </Modal>
