@@ -1,3 +1,5 @@
+import { JsonTreeValue } from './ExplorerJsonValue';
+import { ExplorerValue } from './ExplorerValue';
 import { editorValue, rowChanges } from './explorerRowEditing';
 import  React,  {  useCallback,  useEffect,  useLayoutEffect,  useRef,  useState  }  from  'react';
 import  {  Link,  matchPath,  useLocation,  useNavigate, type NavigateOptions  }  from  'react-router-dom';
@@ -61,46 +63,6 @@ const  useFlowDropdown =  ()  =>  {  const  id = useRef(randomId());  const  [op
 const SortActionMenu: React.FC<{ onDelete: () => void; onClear: () => void }> = ({ onDelete, onClear }) => {
     const [open, setOpen] = useFlowDropdown();
     return <Dropdown overlayClassName="flow-menu-popup" open={open} onOpenChange={setOpen} trigger={['click']} menu={{ items: [{ key: 'delete', label: 'Delete sort' }, { key: 'clear', label: 'Clear all sorts' }], onClick: ({ key }) => { (key === 'delete' ? onDelete : onClear)(); setOpen(false); } }}><button type="button" className="flow-filter-sort-menu-toggle" aria-label="Sort options" onClick={(event) => event.stopPropagation()}><SortMenuChevronIcon /></button></Dropdown>;
-};
-const JsonTreeValue: React.FC<{ name: string; value: unknown; depth: number; comma: boolean }> = ({ name, value, depth, comma }) => {
-    const [open, setOpen] = useState(true);
-    const type = value === null || value === undefined ? 'null' : Array.isArray(value) ? 'array' : typeof value;
-    const label = name === '' ? null : <span className="fjt-key">&quot;{name}&quot;</span>;
-    if (type !== 'object' && type !== 'array') {
-        const text = type === 'string' ? JSON.stringify(value) : type === 'null' ? 'null' : String(value);
-        return (
-            <div className="fjt-line" style={{ paddingLeft: depth * 14 }}>
-                {label}{label ? <span className="fjt-punct">: </span> : null}
-                <span className={`fjt-${type}`}>{text}</span>{comma ? <span className="fjt-punct">,</span> : null}
-            </div>
-        );
-    }
-    const entries: Array<[string, unknown]> = type === 'array'
-        ? (value as unknown[]).map((item, index) => [String(index), item])
-        : Object.entries(value as Record<string, unknown>);
-    const count = entries.length;
-    const openBracket = type === 'array' ? '[' : '{';
-    const closeBracket = type === 'array' ? ']' : '}';
-    return (
-        <>
-            <div className="fjt-line" style={{ paddingLeft: depth * 14 }}>
-                {count > 0 ? <button type="button" className={`fjt-toggle${open ? ' is-open' : ''}`} aria-label={open ? `Collapse ${name || openBracket}` : `Expand ${name || openBracket}`} onClick={() => setOpen((current) => !current)} /> : <span className="fjt-toggle is-leaf" />}
-                {label}{label ? <span className="fjt-punct">: </span> : null}
-                {count === 0 ? <><span className="fjt-punct">{openBracket}{closeBracket}</span>{comma ? <span className="fjt-punct">,</span> : null}</>
-                    : open ? <span className="fjt-punct">{openBracket}</span>
-                        : <button type="button" className="fjt-summary" onClick={() => setOpen(true)}>{openBracket}<span className="fjt-summary-count">… {count} {type === 'array' ? 'items' : 'keys'}</span>{closeBracket}</button>}
-                {!open && count > 0 && comma ? <span className="fjt-punct">,</span> : null}
-            </div>
-            {open && count > 0 ? entries.map(([key, item], index) => (
-                <JsonTreeValue key={key} name={key} value={item} depth={depth + 1} comma={index < count - 1} />
-            )) : null}
-            {open && count > 0 ? (
-                <div className="fjt-line" style={{ paddingLeft: depth * 14 }}>
-                    <span className="fjt-punct">{closeBracket}</span>{comma ? <span className="fjt-punct">,</span> : null}
-                </div>
-            ) : null}
-        </>
-    );
 };
 const  FilterFieldLink:  React.FC<{  value:  string;  onChange:  (value:  string)  =>  void  }>  =  ({  value,  onChange  })  =>  <Dropdown overlayClassName="flow-menu-popup"  trigger={['click']}  menu={{  items:  ['record_id','data_source','data_type','status','updated_at'].map((field)  =>  ({  key:  field,  label:  field  })),  onClick:  ({  key  })  =>  onChange(key)  }}><span  className="flow-filter-field-link">{value}</span></Dropdown>;
 const  FilterFieldSpan:  React.FC<{  value:  string;  onChange:  (value:  string)  =>  void  }>  =  ({  value,  onChange  })  =>  <span  className="flow-filter-field-link"  role="button"  tabIndex={0}  onClick={()  =>  {  const  next  =  window.prompt('Filter  field',  value);  if  (next)  onChange(next);  }}  onKeyDown={(event)  =>  {  if  (event.key  ===  'Enter')  {  const  next  =  window.prompt('Filter  field',  value);  if  (next)  onChange(next);  }  }}>{value}</span>;
@@ -290,6 +252,12 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
     const queryStarted = useRef(0);
     const [queryElapsed, setQueryElapsed] = useState<number>();
     const [queryCancelled, setQueryCancelled] = useState(false);
+    const [queryStatusVisible, setQueryStatusVisible] = useState(false);
+    useEffect(() => {
+        if (loading) { setQueryStatusVisible(true); return; }
+        const timer = window.setTimeout(() => setQueryStatusVisible(false), 180);
+        return () => window.clearTimeout(timer);
+    }, [loading]);
     useEffect(() => {
         if (!loading) return;
         const timer = window.setInterval(() => setQueryElapsed(performance.now() - queryStarted.current), 100);
@@ -832,8 +800,8 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
                 if (isSchemas && presentation === 'timeSeries') return <ExplorerSeriesCell value={value} />;
                 const shown = formatCell(value);
                 const scalar = isSchemas ? exactCellValue(value, data?.columnTypes?.[key]) : undefined;
-                if (scalar === undefined) return shown;
-                return <div className="flow-explorer-value"><span title={shown}>{shown || 'Empty'}</span><Dropdown overlayClassName="flow-menu-popup flow-explorer-menu" trigger={['click']} menu={{
+                if (scalar === undefined) return isSchemas ? <ExplorerValue value={value} identity={primaryKey(row)} field={key} compact /> : shown;
+                return <div className="flow-explorer-value"><ExplorerValue value={value} identity={primaryKey(row)} field={key} compact /><Dropdown overlayClassName="flow-menu-popup flow-explorer-menu" trigger={['click']} menu={{
                     items: [{ key: 'include', label: 'Include this value' }, { key: 'exclude', label: 'Exclude this value' }],
                     onClick: ({ key: action }) => quickCellFilter(key, scalar, action === 'exclude'),
                 }}><button type="button" className="flow-cell-menu" aria-label={`Filter ${key} by ${shown || 'empty string'}`} title={`Filter ${key} by ${shown || 'empty string'}`}><DownOutlined /></button></Dropdown></div>;
@@ -1163,7 +1131,6 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
                 <div className="flow-schema-sidebar-summary">{schemas.length} schema resources</div>
             </aside>}
             <section  className="flow-layer-main">
-                {(loading || tablesLoading) && <Spin size="small" />}
                 {requestError && <div role="alert" style={{ padding: 12, color: '#ff7875' }}>{requestError} <Button size="small" onClick={() => { setRefreshVersion((value) => value + 1); refreshCatalog().catch((error) => setRequestError(errorText(error))); }}>Retry</Button></div>}
                 {resolvingExplorerAsset && <header className="flow-exploration-loading-header">
                     <span>{requestedSchema}</span>
@@ -1378,7 +1345,7 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
                                         </div>
                                     </nav>
                                 </footer>} /> : <ConfigProvider locale={enUS}><Table className="flow-data-table" size="small" loading={loading} pagination={{ current: pageNumber, pageSize, total: data?.total ?? data?.rowCount ?? 0, size: 'small', showTotal: (total: number, range: [number, number]) => `${range[0]}–${range[1]} / ${data?.totalEstimated ? '~' : ''}${total.toLocaleString('en-US')} rows${data?.totalEstimated ? ' (estimated)' : ''} · ${table.size} · ${fieldCount} fields`, showSizeChanger: true, pageSizeOptions: [10, 20, 50], onChange: (page, size) => { if (editingRowKey) { message.warning('Save or cancel the current row edit first'); return; } setPageNumber(size !== pageSize ? 1 : page); setPageSize(size); } }} rowKey={rowKey} scroll={{ x: 'max-content' }} dataSource={dataRows} columns={dataColumns} onRow={(row) => ({ onDoubleClick: () => startRowEdit(rowKey(row)), className: editingRowKey === rowKey(row) ? 'flow-row-editing' : undefined })} /></ConfigProvider>)}
-                        {isSchemas && showPreview && queryElapsed !== undefined && <div className="flow-explorer-query-status" role="status">
+                        {isSchemas && showPreview && queryStatusVisible && queryElapsed !== undefined && <div className={`flow-explorer-query-status${loading ? '' : ' is-leaving'}`} role="status">
                             <span>{queryCancelled ? 'Cancelled · ' : loading ? 'Running · ' : ''}Elapsed: {(queryElapsed / 1000).toFixed(1)} s</span>
                             {loading && <button type="button" onClick={cancelQuery}>Cancel</button>}
                         </div>}

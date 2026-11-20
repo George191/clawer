@@ -26,6 +26,11 @@ class ExplorerRowKey(BaseModel):
         return self
 
 
+class ExplorerFileQuery(ExplorerRowKey):
+    field: str = Field(min_length=1, max_length=63)
+    download: bool = True
+
+
 class ExplorerRowLinksQuery(ExplorerRowKey):
     relation: str | None = Field(default=None, min_length=1, max_length=64)
     offset: int = Field(default=0, ge=0, le=500)

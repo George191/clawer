@@ -99,6 +99,7 @@ from app.web.api.models.etl import (
     PreviewIndexCoverageInput,
     PreviewRowsQuery,
     ExplorerRowKey,
+    ExplorerFileQuery,
     ExplorerRowLinksQuery,
     SqlQuery,
 )
@@ -1913,6 +1914,20 @@ async def table_preview_rows(layer: str, table: str, payload: PreviewRowsQuery, 
                 task.cancel()
         with CancelScope(shield=True):
             await asyncio.shield(asyncio.gather(query, watcher, return_exceptions=True))
+
+
+@read.get("/object-storage")
+async def explorer_object_storage(current_user: Any = Depends(get_current_user)):
+    from app.web.services.explorer_files import storage_configuration
+    return storage_configuration()
+
+
+@read.post("/{layer}/{table}/record-file")
+async def explorer_record_file(layer: str, table: str, payload: ExplorerFileQuery, response: Response,
+                               current_user: Any = Depends(get_current_user)):
+    from app.web.services.explorer_files import download_link
+    response.headers["Cache-Control"] = "private, no-store"
+    return await download_link(layer, table, payload.key, payload.field, download=payload.download)
 
 
 @read.post("/{layer}/{table}/row-by-key")
