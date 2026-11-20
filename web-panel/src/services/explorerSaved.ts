@@ -22,11 +22,11 @@ export type SavedDetail = SavedMeta & {
 export function savedPath(schema: string, table: string) {
     return '/etl/' + encodeURIComponent(schema) + '/' + encodeURIComponent(table) + '/saved-items';
 }
-export async function listSaved(path: string, kind: SavedKind, offset: number, signal: AbortSignal) {
+export async function listSaved(path: string, kind: SavedKind, offset: number, signal: AbortSignal, search = '', sharing: 'all' | 'private' | 'shared' = 'all') {
     return unwrap<{
         items: SavedMeta[];
         hasMore: boolean;
-    }>((await client.get(path, { params: { kind, offset }, signal })).data);
+    }>((await client.get(path, { params: { kind, offset, search, sharing }, signal })).data);
 }
 export async function openSaved(path: string, id: string, signal?: AbortSignal) {
     return unwrap<SavedDetail>((await client.get(path + '/' + encodeURIComponent(id), { signal })).data);

@@ -10,6 +10,7 @@ from anyio import CancelScope, fail_after
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Path, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 from pydantic import AwareDatetime
+from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError, MultipleResultsFound
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1893,14 +1894,34 @@ async def filtered_data(layer: str, table: str, payload: DataQuery, current_user
 
 
 @read.post("/{layer}/{table}/preview-rows")
-async def table_preview_rows(layer: str, table: str, payload: PreviewRowsQuery, request: Request, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+async def table_preview_rows(layer: str, table: str, payload: PreviewRowsQuery, request: Request, current_user: Any = Depends(get_current_user), session: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     if payload.forEditing:
         get_current_active_superuser(current_user)
+    row_keys = None
+    if payload.savedListId is not None:
+        from app.web.api.models.explorer_saved_items import ExplorerSavedItem
+        from app.web.api.routes.explorer_layouts import asset
+        from app.web.api.routes.explorer_saved_items import scope
+
+        schema, _ = await asset(layer, table, current_user)
+        item = await session.scalar(select(ExplorerSavedItem).where(
+            *scope(schema, table),
+            ExplorerSavedItem.id == payload.savedListId,
+            ExplorerSavedItem.kind == "list",
+            (ExplorerSavedItem.owner_id == current_user.id) | ExplorerSavedItem.shared.is_(True),
+        ))
+        if item is None:
+            raise HTTPException(404, "Saved list not found")
+        row_keys = item.content.get("keys")
+        if not isinstance(row_keys, list):
+            raise HTTPException(409, "Saved list has no object keys")
     async def wait_for_disconnect():
         while (await request.receive())["type"] != "http.disconnect":
             pass
 
-    query = asyncio.create_task(get_etl_layers().data(layer, table, payload.model_dump(), preview_rows=True))
+    query = asyncio.create_task(get_etl_layers().data(
+        layer, table, payload.model_dump(exclude={"savedListId"}), preview_rows=True, row_keys=row_keys,
+    ))
     watcher = asyncio.create_task(wait_for_disconnect())
     try:
         done, _ = await asyncio.wait((query, watcher), return_when=asyncio.FIRST_COMPLETED)

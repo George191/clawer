@@ -937,7 +937,6 @@ h4.ui-typography { letter-spacing: -0.01em; }
  * ============================================ */
 
 .ui-message {
-  top: 84px !important;
   left: auto !important;
   right: 24px !important;
   width: auto !important;

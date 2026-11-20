@@ -48,7 +48,6 @@
 .wb-selection-tools { display:inline-flex; align-items:center; gap:4px; padding:2px 5px; border:1px solid var(--explorer-selection-stroke); border-radius:2px; background:var(--explorer-selection-bg); color:var(--ontology-text); font-size:11px; }
 .wb-selection-tools > span { padding-inline:3px; white-space:nowrap; }
 .wb-selection-tools > button { min-height:22px; padding:2px 5px; font-size:11px; }
-.wb-feedback { padding:5px 12px; margin:0; }
 .explorer-toast .ui-message-notice-content { min-width:min(360px,calc(100vw - 32px)); border-radius:3px; border-inline-start:3px solid var(--ui-action-bg); background:var(--ui-elevated); box-shadow:0 3px 12px #0005; }
 .wb-popup { position:absolute; top:100%; right:12px; width:min(310px,96%); padding:8px; display:grid; gap:4px; z-index:20; box-sizing:border-box; max-height:min(52vh,450px); overflow-y:auto; background:var(--ontology-panel); color:var(--ontology-text); border:1px solid var(--ontology-control-border); border-radius:4px; box-shadow:0 5px 20px var(--ontology-border); }
 .wb-popup--search,.wb-popup--property { left:min(18%,230px); right:auto; top:51px; }
@@ -56,8 +55,70 @@
 .wb-popup strong,.wb-popup p { margin:4px 7px; }
 .wb-popup form,.wb-popup label { display:grid; gap:7px; }
 .wb-popup input,.wb-explore select { box-sizing:border-box; background:var(--ontology-panel); border:1px solid var(--ontology-control-border); border-radius:3px; padding:7px; color:var(--ontology-text); }
-.wb-item { display:flex; justify-content:space-between; gap:6px; }
-.wb-list { margin:0; padding-left:24px; }
+.wb-active-saved { display:flex; align-items:center; gap:7px; min-width:0; padding-left:8px; border-left:1px solid var(--ontology-control-border); }
+.wb-saved-kind { display:inline-flex; align-items:center; gap:5px; color:var(--ontology-muted); white-space:nowrap; }
+.wb-active-saved strong { max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:500; }
+.wb-active-saved button { min-height:22px; width:22px; padding:2px; color:var(--ontology-muted); }
+.wb-header .wb-library { display:flex; flex-direction:column; gap:0; width:min(460px,calc(100% - 24px)); max-height:min(65vh,560px); padding:0; overflow:hidden; border-radius:3px; box-shadow:0 8px 28px #0004; }
+.wb-library-heading { display:flex; align-items:center; justify-content:space-between; padding:14px 14px 10px; }
+.wb-library-heading h3 { margin:0; font-size:14px; font-weight:600; }
+.wb-library-heading p { margin:3px 0 0; font-size:11px; color:var(--ontology-muted); }
+.wb-library-heading > button { width:26px; padding:0; justify-content:center; color:var(--ontology-muted); }
+.wb-library-controls { display:flex; gap:8px; padding:0 14px 12px; border-bottom:1px solid var(--ontology-control-border); }
+.wb-library-controls label { display:flex; flex:1; min-width:0; align-items:center; gap:7px; padding:0 9px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-bg); color:var(--ontology-muted); }
+.wb-library-controls input { border:0; padding:6px 0; background:transparent; font-size:12px; }
+.wb-library-controls select { padding:4px 7px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-bg); color:var(--ontology-text); font:inherit; font-size:12px; }
+.wb-library-items { min-height:120px; overflow:auto; overscroll-behavior:contain; padding:5px; }
+.wb-library-item { display:flex; align-items:center; border-radius:2px; }
+.wb-library-item:hover { background:var(--ontology-hover); }
+.wb-library-item.is-current { background:var(--ontology-selected); }
+.wb-library-item .wb-library-open { display:flex; flex:1; min-width:0; gap:10px; padding:10px 8px; background:transparent; }
+.wb-library-icon { display:grid; place-items:center; flex:none; width:30px; height:32px; border:1px solid var(--ontology-control-border); border-radius:3px; color:var(--ontology-muted); background:var(--ontology-bg); }
+.wb-library-open > span:nth-child(2) { flex:1; min-width:0; }
+.wb-library-open strong { display:block; margin:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; font-weight:500; }
+.wb-library-open small { display:block; margin-top:3px; color:var(--ontology-muted); font-size:10px; }
+.wb-library-open > svg { flex:none; color:var(--ontology-link); }
+.wb-library-actions { display:flex; gap:2px; padding-right:5px; }
+.wb-library-actions button { width:28px; padding:4px; justify-content:center; color:var(--ontology-muted); }
+.wb-library-actions button:last-child:hover { color:var(--ui-error,#f87171); }
+.wb-library-empty { display:grid; justify-items:center; gap:6px; padding:26px 12px; text-align:center; color:var(--ontology-muted); font-size:12px; }
+.wb-library-empty > svg { margin-bottom:4px; font-size:20px; }
+.wb-library-empty strong,.wb-library-empty p { margin:0; }
+.wb-library-empty strong { color:var(--ontology-text); font-weight:500; }
+.wb-library-footer { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 12px; border-top:1px solid var(--ontology-control-border); color:var(--ontology-muted); font-size:10px; }
+.wb-library-footer > div { display:flex; align-items:center; gap:7px; }
+.wb-library-footer button { min-height:24px; padding:3px 5px; font-size:11px; }
+.wb-library-error { padding:6px; color:var(--ui-error,#f87171); font-size:12px; }
+.flow-surface-modal.wb-saved-dialog .ui-modal-header { padding:15px 18px 12px; }
+.flow-surface-modal.wb-saved-dialog .ui-modal-body { padding:18px; font-size:12px; }
+.flow-surface-modal.wb-saved-dialog .ui-modal-footer { padding:11px 18px; background:var(--ontology-bg); }
+.wb-save-kind { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:18px; }
+.wb-save-kind button { display:grid; grid-template-columns:20px 1fr; align-items:center; gap:5px; padding:11px; border:1px solid var(--ontology-control-border); border-radius:3px; text-align:left; color:var(--ontology-text); background:var(--ontology-bg); font:inherit; cursor:pointer; }
+.wb-save-kind button[aria-pressed=true] { border-color:var(--ontology-link); background:var(--ontology-selected); }
+.wb-save-kind button:disabled { opacity:.4; cursor:default; }
+.wb-save-kind strong { font-weight:500; }
+.wb-save-kind span { grid-column:1/-1; color:var(--ontology-muted); font-size:11px; }
+.wb-dialog-field { display:grid; gap:7px; margin-top:14px; font-size:12px; font-weight:500; }
+.wb-dialog-field input { box-sizing:border-box; min-width:0; width:100%; padding:7px 9px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-bg); color:var(--ontology-text); font:inherit; font-weight:400; }
+.wb-dialog-field input:focus { outline:1px solid var(--ui-focus-ring); outline-offset:-1px; }
+.wb-dialog-help { margin:13px 0; color:var(--ontology-muted); font-size:12px; line-height:1.6; }
+.wb-dialog-error { margin:12px 0 0; padding:8px 10px; border-left:2px solid var(--ui-error,#f87171); background:var(--ontology-bg); color:var(--ui-error,#f87171); font-size:12px; }
+.wb-share-resource,.wb-share-access { display:flex; align-items:center; gap:10px; padding:12px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-bg); }
+.wb-share-resource > svg { font-size:21px; color:var(--ontology-link); }
+.wb-share-resource div,.wb-share-access div { display:grid; flex:1; gap:4px; min-width:0; }
+.wb-share-resource strong { font-weight:500; overflow-wrap:anywhere; }
+.wb-share-resource span,.wb-share-access span { color:var(--ontology-muted); font-size:11px; }
+.wb-share-access { padding:11px 0; border:0; border-top:1px solid var(--ontology-control-border); border-bottom:1px solid var(--ontology-control-border); background:transparent; }
+.wb-share-access strong { font-size:12px; font-weight:500; }
+.wb-share-link { display:flex; gap:7px; }
+.wb-share-link input { font-size:11px; }
+.wb-share-empty { display:grid; justify-items:center; gap:9px; padding:15px 6px; text-align:center; }
+.wb-share-empty > svg { font-size:26px; color:var(--ontology-muted); }
+.wb-share-empty strong { font-weight:500; }
+.wb-share-empty p { margin:0 0 5px; color:var(--ontology-muted); }
+.wb-delete-resource { display:flex; align-items:center; gap:9px; padding:11px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-bg); }
+.wb-delete-resource > svg { color:var(--ui-error,#f87171); }
+.wb-delete-resource strong { font-size:13px; font-weight:500; overflow-wrap:anywhere; }
 .wb-explore { padding:22px clamp(14px,4vw,58px); background:var(--ontology-bg); color:var(--ontology-text); }
 .wb-explore h2,.wb-explore h3 { color:inherit; margin:0; }
 .wb-explore > div:first-child { display:flex; align-items:center; justify-content:space-between; margin-bottom:18px; }

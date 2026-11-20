@@ -1044,6 +1044,7 @@ export const setDataSourcePaused = (id: string, request: { paused: boolean; expe
 export const deleteDataSource = (id: string): Promise<void> =>
   client.delete(`/etl/data-connections/${id}`).then(() => undefined);
 export interface EtlDataQuery {
+  savedListId?: string;
   withIdentity?: boolean;
   forEditing?: boolean;
   limit: number; offset: number; partition?: string; search?: string;

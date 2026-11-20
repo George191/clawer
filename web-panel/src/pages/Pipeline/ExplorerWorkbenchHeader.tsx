@@ -1,11 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { AppstoreOutlined, ArrowLeftOutlined, BarChartOutlined, DownOutlined, SearchOutlined, TableOutlined } from '@/components/ui/icons';
-import { message } from '@/components/ui';
-import { fetchExplorerRowByKey } from '../../services/api';
+import { AppstoreOutlined, ArrowLeftOutlined, BarChartOutlined, CheckOutlined, CloseOutlined, CopyOutlined, DeleteOutlined, DownOutlined, LinkOutlined, SearchOutlined, ShareAltOutlined, TableOutlined } from '@/components/ui/icons';
+import { Button, Modal, message } from '@/components/ui';
 import { projectHref } from '../../services/projectDomains';
-import { createSaved, listSaved, openSaved, removeSaved, savedPath, sharing, type Exploration, type ListKey, type SavedDetail, type SavedKind, type SavedMeta, type WorkbenchQuery } from '../../services/explorerSaved';
-import { explorerRowTitle } from './ExplorerObjectOverview';
-import { ExplorerRecordLink } from './ExplorerRecordLink';
+import { createSaved, listSaved, openSaved, removeSaved, savedPath, sharing, type Exploration, type SavedDetail, type SavedKind, type SavedMeta, type WorkbenchQuery } from '../../services/explorerSaved';
 import './explorer-workbench.css';
 export type ResourceView = 'preview' | 'schema' | 'stream' | 'evidence' | 'api';
 type RecordRow = Record<string, unknown>;
@@ -19,8 +16,6 @@ type Props = {
     table: string;
     label: string;
     available: boolean;
-    titleProperty?: string | null;
-    primaryKey?: string[];
     glyph?: ReactNode;
     fields: string[];
     names?: Record<string, string>;
@@ -31,13 +26,18 @@ type Props = {
     admin: boolean;
     layoutControl: ReactNode;
     selectResource: (v: ResourceView) => void;
-    apply: (q: WorkbenchQuery) => void;
+    saved?: SavedDetail;
+    savedLoading: boolean;
+    savedError: string;
+    openSavedItem: (id: string) => void;
+    closeSavedItem: () => void;
+    saveCompleted: (detail: SavedDetail) => void;
+    updateSavedItem: (detail: SavedDetail) => void;
     addFilter: (field: string) => void;
     backToTypes: () => void;
     toggleCatalog: () => void;
     closeCatalog: () => void;
     catalogOpen: boolean;
-    search: string;
     mode: 'explore' | 'results';
     setMode: (mode: 'explore' | 'results') => void;
     clearSelection: () => void;
@@ -74,40 +74,6 @@ function download(format: 'csv' | 'json', rows: RecordRow[], fields: string[], n
     a.click();
     window.setTimeout(() => URL.revokeObjectURL(href), 1000);
 }
-function RelatedList({ schema, table, keys, titleProperty, primaryKey }: {
-    schema: string;
-    table: string;
-    keys: ListKey[];
-    titleProperty?: string | null;
-    primaryKey?: string[];
-}) {
-    const [offset, setOffset] = useState(0);
-    const [labels, setLabels] = useState<Record<string, string>>({});
-    useEffect(() => {
-        const controller = new AbortController();
-        setLabels({});
-        const queue = keys.slice(offset, offset + 8);
-        async function next() {
-            while (queue.length && !controller.signal.aborted) {
-                const key = queue.shift()!, id = JSON.stringify(key);
-                try {
-                    const item = await fetchExplorerRowByKey(schema, table, key, controller.signal);
-                    if (!controller.signal.aborted)
-                        setLabels(v => ({ ...v, [id]: explorerRowTitle(item.row, item.identity, titleProperty, primaryKey ?? item.primaryKey) }));
-                }
-                catch {
-                    if (!controller.signal.aborted)
-                        setLabels(v => ({ ...v, [id]: 'Object unavailable' }));
-                }
-            }
-        }
-        void Promise.all([next(), next(), next()]);
-        return () => controller.abort();
-    }, [schema, table, keys, offset, titleProperty, primaryKey]);
-    return <><ul className="wb-list">{keys.slice(offset, offset + 8).map(key => <li key={JSON.stringify(key)}>
-        <ExplorerRecordLink schema={schema} table={table} identity={key}>{labels[JSON.stringify(key)] ?? 'Loading object…'}</ExplorerRecordLink></li>)}</ul>
-        {keys.length > 8 && <div><button disabled={!offset} onClick={() => setOffset(n => n - 8)}>Previous</button> {offset + 1}–{Math.min(offset + 8, keys.length)} / {keys.length} <button disabled={offset + 8 >= keys.length} onClick={() => setOffset(n => n + 8)}>Next</button></div>}</>;
-}
 function ExploreChart({ field, fields, names, rows, select, onFilter }: {
     field: string;
     fields: string[];
@@ -127,76 +93,35 @@ function ExploreChart({ field, fields, names, rows, select, onFilter }: {
         <button disabled={!field} onClick={() => onFilter(field)}>Filter by this property</button></section>;
 }
 export default function ExplorerWorkbenchHeader(p: Props) {
-    const path = savedPath(p.schema, p.table);
+    const path = savedPath(p.schema, p.table), saved = p.saved;
     const [menu, show] = useState(''), [search, setSearch] = useState(''), [choice, choose] = useState('');
     const [chart, setChart] = useState(''), [name, setName] = useState(''), [error, setError] = useState('');
-    const [busy, setBusy] = useState(false);
-    const [saved, setSaved] = useState<SavedDetail>(), [shareLink, setShareLink] = useState('');
-    const [page, setPage] = useState(0), [items, setItems] = useState<{
-        items: SavedMeta[];
-        hasMore: boolean;
-    }>(), [generation, refresh] = useState(0);
-    const [saveKind, setSaveKind] = useState<SavedKind>('exploration');
+    const [busy, setBusy] = useState(false), [dialog, setDialog] = useState<'save' | 'share' | ''>('');
+    const [deleteTarget, setDeleteTarget] = useState<SavedMeta>();
+    const [shareTarget, setShareTarget] = useState<SavedDetail>();
+    const [librarySearch, setLibrarySearch] = useState(''), [access, setAccess] = useState<'all' | 'private' | 'shared'>('all');
+    const [page, setPage] = useState(0), [items, setItems] = useState<{ items: SavedMeta[]; hasMore: boolean }>();
+    const [generation, refresh] = useState(0), [saveKind, setSaveKind] = useState<SavedKind>('exploration');
     const opening = useRef<AbortController>();
-    const root = useRef<HTMLElement>(null);
-    const propertySearch = useRef<HTMLLabelElement>(null);
-    const popup = useRef<HTMLElement>(null);
-    const applyRef = useRef(p);
-    applyRef.current = p;
-    const link = () => new URL(projectHref('/ontology/explorer?' + new URLSearchParams({ schema: p.schema, table: p.table })));
+    const root = useRef<HTMLElement>(null), propertySearch = useRef<HTMLLabelElement>(null), popup = useRef<HTMLElement>(null);
     const kind = menu === 'lists' ? 'list' : 'exploration';
-    const preservedSavedId = new URLSearchParams(p.search).get('saved');
-    useEffect(() => () => {
-        opening.current?.abort();
-    }, []);
-    function openMenu(m: string) { show(v => v === m ? '' : m); setError(''); setPage(0); setShareLink(''); }
-    function display(detail: SavedDetail, revealList: boolean) {
-        setSaved(detail);
-        if (detail.kind === 'list') {
-            show(revealList ? 'objects' : '');
-            return;
-        }
-        const view = detail.content;
-        applyRef.current.selectResource('preview');
-        applyRef.current.apply(view);
-        setChart(view.chart ?? '');
-        applyRef.current.setMode(view.view);
-        show('');
-    }
-    async function openId(id: string, revealList = true) {
-        opening.current?.abort();
-        const c = new AbortController();
-        opening.current = c;
-        try {
-            const detail = await openSaved(path, id, c.signal);
-            if (!c.signal.aborted)
-                display(detail, revealList);
-        }
-        catch (e) {
-            if (!c.signal.aborted)
-                setError(fail(e));
-        }
-    }
+    const library = menu === 'lists' || menu === 'explorations';
+    const notify = (content: string) => message.success({ content, className: 'explorer-toast', duration: 5, closable: true });
+    const link = (id: string) => new URL(projectHref('/ontology/explorer?' + new URLSearchParams({ schema: p.schema, table: p.table, saved: id }))).href;
+    useEffect(() => () => opening.current?.abort(), []);
+    useEffect(() => { setChart(saved?.kind === 'exploration' ? saved.content.chart ?? '' : ''); }, [saved?.id]);
+    function openMenu(m: string) { show(v => v === m ? '' : m); setError(''); setPage(0); setLibrarySearch(''); setAccess('all'); }
     useEffect(() => {
-        if (preservedSavedId) {
-            applyRef.current.closeCatalog();
-            void openId(preservedSavedId, false);
-        }
-        return () => opening.current?.abort();
-    }, [path, preservedSavedId]);
-    useEffect(() => {
-        if (menu !== 'lists' && menu !== 'explorations')
-            return;
+        if (!library) return;
         const c = new AbortController();
-        setItems(undefined);
-        listSaved(path, kind, page * 25, c.signal).then(v => { if (!c.signal.aborted)
-            setItems(v); }, e => { if (!c.signal.aborted)
-            setError(fail(e)); });
+        setItems(undefined); setError('');
+        listSaved(path, kind, page * 25, c.signal, librarySearch, access).then(v => {
+            if (!c.signal.aborted) setItems(v);
+        }, e => { if (!c.signal.aborted) setError(fail(e)); });
         return () => c.abort();
-    }, [path, menu, kind, page, generation]);
+    }, [path, library, kind, page, generation, librarySearch, access]);
     useEffect(() => {
-        if (!menu)
-            return;
+        if (!menu) return;
         const outside = (event: PointerEvent) => {
             const target = event.target as Node;
             const trigger = target instanceof Element ? target.closest('[data-wb-menu]') : null;
@@ -205,60 +130,56 @@ export default function ExplorerWorkbenchHeader(p: Props) {
                 || (trigger && root.current?.contains(trigger) && trigger.getAttribute('data-wb-menu') === menu);
             if (!within) show('');
         };
-        const key = (e: KeyboardEvent) => { if (e.key === 'Escape')
-            show(''); };
-        document.addEventListener('pointerdown', outside, true);
-        document.addEventListener('keydown', key);
+        const key = (e: KeyboardEvent) => { if (e.key === 'Escape') show(''); };
+        document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', key);
         return () => { document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', key); };
     }, [menu]);
     function beginSave(k: SavedKind) {
-        setSaveKind(k);
-        setName('');
-        setError('');
-        show('save');
+        if (p.savedLoading || p.savedError) return;
+        setSaveKind(k); setName(''); setError(''); show(''); setDialog('save');
     }
-    function snapshot(): Exploration {
-        return { ...p.query, chart: chart || null, view: p.mode };
-    }
+    function snapshot(): Exploration { return { ...p.query, chart: chart || null, view: p.mode }; }
+    const listKeys = p.selected.length
+        ? p.selected.map(r => Object.fromEntries(Object.entries(r.identity).map(([k, v]) => [k, String(v)])))
+        : saved?.kind === 'list' ? saved.content.keys ?? [] : [];
     async function save() {
-        if (!name.trim() || busy)
-            return;
-        setBusy(true);
-        setError('');
+        if (p.savedLoading || p.savedError || !name.trim() || busy || (saveKind === 'list' && !listKeys.length) || (saveKind === 'exploration' && saved?.kind === 'list')) return;
+        setBusy(true); setError('');
         try {
-            const content = saveKind === 'list' ? { keys: p.selected.map(r => Object.fromEntries(Object.entries(r.identity).map(([k, v]) => [k, String(v)]))) } : snapshot();
+            const content = saveKind === 'list' ? { keys: listKeys } : snapshot();
             const item = await createSaved(path, saveKind, name.trim(), content);
-            setSaved({ ...item, content: content as SavedDetail['content'], owned: true });
-            show('');
-            message.success({ content: `${saveKind === 'list' ? 'List' : 'Exploration'} saved: ${item.name}`, className: 'explorer-toast', duration: 5, closable: true });
-        }
-        catch (e) {
-            setError(fail(e));
-        }
-        finally {
-            setBusy(false);
-        }
+            setDialog(''); show(''); refresh(n => n + 1);
+            p.saveCompleted({ ...item, content: content as SavedDetail['content'], owned: true });
+            notify(`${saveKind === 'list' ? 'List' : 'Exploration'} saved: ${item.name}`);
+        } catch (e) { setError(fail(e)); } finally { setBusy(false); }
     }
-    async function share() {
-        if (!saved || busy)
-            return;
-        setBusy(true);
+    async function openShare(item?: SavedMeta) {
+        show(''); setError(''); setDialog('share'); setShareTarget(undefined);
+        if (!item) return;
+        if (item.id === saved?.id) { setShareTarget(saved); return; }
+        opening.current?.abort();
+        const c = new AbortController(); opening.current = c; setBusy(true);
+        try { const detail = await openSaved(path, item.id, c.signal); if (!c.signal.aborted) setShareTarget(detail); }
+        catch (e) { if (!c.signal.aborted) setError(fail(e)); }
+        finally { if (!c.signal.aborted) setBusy(false); }
+    }
+    async function setSharing(enabled: boolean) {
+        if (!shareTarget || !shareTarget.owned || busy) return;
+        setBusy(true); setError('');
         try {
-            let item: SavedMeta = saved;
-            if (!saved.shared) {
-                item = await sharing(path, saved, true);
-                setSaved({ ...saved, ...item });
-            }
-            const u = link();
-            u.searchParams.set('saved', item.id);
-            setShareLink(u.href);
-        }
-        catch (e) {
-            setError(fail(e));
-        }
-        finally {
-            setBusy(false);
-        }
+            const item = await sharing(path, shareTarget, enabled), detail = { ...shareTarget, ...item };
+            setShareTarget(detail); if (saved?.id === item.id) p.updateSavedItem(detail); refresh(n => n + 1);
+        } catch (e) { setError(fail(e)); } finally { setBusy(false); }
+    }
+    async function deleteSaved() {
+        if (!deleteTarget || busy) return;
+        setBusy(true); setError('');
+        try {
+            await removeSaved(path, deleteTarget);
+            if (saved?.id === deleteTarget.id) p.closeSavedItem();
+            setDeleteTarget(undefined); setDialog(''); show(''); refresh(n => n + 1);
+            notify(`${deleteTarget.kind === 'list' ? 'List' : 'Exploration'} deleted: ${deleteTarget.name}`);
+        } catch (e) { setError(fail(e)); } finally { setBusy(false); }
     }
     function selectMode(mode: 'results' | 'explore') { p.selectResource('preview'); p.setMode(mode); show(''); }
     const field = chart && p.fields.includes(chart) ? chart : p.fields[0] ?? '';
@@ -268,70 +189,58 @@ export default function ExplorerWorkbenchHeader(p: Props) {
         <div className="wb-line wb-query">
             <button type="button" className="wb-back" onClick={p.backToTypes}><ArrowLeftOutlined /> Back to object types</button>
             <span className="wb-type">{p.available && <button type="button" className="wb-catalog-toggle wb-type-icon" onClick={p.toggleCatalog} aria-label="Browse object types" title="Browse object types" aria-expanded={p.catalogOpen}><i>{p.glyph ?? <TableOutlined />}</i></button>}<strong title={p.schema + '.' + p.table}>{p.available ? p.label : p.table}</strong></span>
-            {p.available && <><label className="wb-property-search" ref={propertySearch} onClick={() => show('search')}><SearchOutlined /><input aria-label="Search properties to add a chart or filter" placeholder="Search properties to add a chart or filter…" value={search} onFocus={() => show('search')} onChange={e => { setSearch(e.target.value); show('search'); }} onKeyDown={e => { if (e.key === 'Enter' && find[0])
-        changeField(find[0]); }}/></label>
-            <button data-wb-menu="explorations" onClick={() => openMenu('explorations')}>Explorations <DownOutlined /></button>
-            <button data-wb-menu="lists" onClick={() => openMenu('lists')}>Lists <DownOutlined /></button>
-            <button data-wb-menu="share" onClick={() => openMenu('share')}>Share</button><button data-wb-menu="save" className="wb-primary" onClick={() => menu === 'save' ? show('') : beginSave('exploration')}>Save</button></>}</div>
+            {p.available && <><label className="wb-property-search" ref={propertySearch} onClick={() => show('search')}><SearchOutlined /><input aria-label="Search properties to add a chart or filter" placeholder="Search properties to add a chart or filter…" value={search} onFocus={() => show('search')} onChange={e => { setSearch(e.target.value); show('search'); }} onKeyDown={e => { if (e.key === 'Enter' && find[0]) changeField(find[0]); }}/></label>
+            <button data-wb-menu="explorations" aria-expanded={menu === 'explorations'} onClick={() => openMenu('explorations')}>Explorations <DownOutlined /></button>
+            <button data-wb-menu="lists" aria-expanded={menu === 'lists'} onClick={() => openMenu('lists')}>Lists <DownOutlined /></button>
+            <button onClick={() => void openShare(saved)} disabled={p.savedLoading || !!p.savedError}>Share</button><button className="wb-primary" disabled={p.savedLoading || !!p.savedError} onClick={() => beginSave(saved?.kind === 'list' ? 'list' : 'exploration')}>Save</button></>}
+        </div>
         {p.available && <><div className="wb-line wb-tools">
             <div className="wb-left">{p.layoutControl}{p.filterButton}
-                {saved?.kind === 'list' && <button data-wb-menu="objects" title={saved.name} aria-label={'View saved list ' + saved.name} onClick={() => openMenu('objects')}>View list ({saved.content.keys?.length ?? 0})</button>}
-                {!!p.selected.length && <div className="wb-selection-tools" role="toolbar" aria-label="Selected object tools">
-                    <span>{p.selected.length} selected</span>
-                    <button disabled={p.selected.some(row => !Object.keys(row.identity).length)} onClick={() => beginSave('list')}>Save list</button>
-                    <button aria-label="Clear selected objects" onClick={p.clearSelection}>Clear</button>
-                </div>}
-                </div>
-            <div className="wb-views"><button aria-pressed={p.resource === 'preview' && p.mode === 'explore'} onClick={() => selectMode('explore')}><BarChartOutlined /> Explore</button>
-            <button aria-pressed={p.resource === 'preview' && p.mode === 'results'} onClick={() => selectMode('results')}><AppstoreOutlined /> Results</button></div>
-            <div className="wb-right"><button data-wb-menu="asset" onClick={() => openMenu('asset')}>{p.resource === 'preview' ? 'Open in' : ({ schema: 'Schema', stream: 'Stream', evidence: 'Evidence', api: 'Published APIs' } as const)[p.resource]} <DownOutlined /></button>
-                <button data-wb-menu="export" onClick={() => openMenu('export')}>Export <DownOutlined /></button></div></div>
-        {error && <p className="wb-feedback" role="alert">{error}</p>}
-        {menu && <section className={'wb-popup wb-popup--' + menu} ref={popup} aria-label="Explorer tools">
+                {saved && <div className="wb-active-saved" aria-label="Current saved item"><span className="wb-saved-kind">{saved.kind === 'list' ? <TableOutlined /> : <BarChartOutlined />}{saved.kind === 'list' ? 'List' : 'Exploration'}</span><strong title={saved.name}>{saved.name}</strong><button type="button" aria-label="Return to all rows" title="Return to all rows" onClick={p.closeSavedItem}><CloseOutlined /></button></div>}
+                {!!p.selected.length && <div className="wb-selection-tools" role="toolbar" aria-label="Selected object tools"><span>{p.selected.length} selected</span><button disabled={p.selected.some(row => !Object.keys(row.identity).length)} onClick={() => beginSave('list')}>Save list</button><button aria-label="Clear selected objects" onClick={p.clearSelection}>Clear</button></div>}
+            </div>
+            <div className="wb-views"><button aria-pressed={p.resource === 'preview' && p.mode === 'explore'} onClick={() => selectMode('explore')}><BarChartOutlined /> Explore</button><button aria-pressed={p.resource === 'preview' && p.mode === 'results'} onClick={() => selectMode('results')}><AppstoreOutlined /> Results</button></div>
+            <div className="wb-right"><button data-wb-menu="asset" onClick={() => openMenu('asset')}>{p.resource === 'preview' ? 'Open in' : ({ schema: 'Schema', stream: 'Stream', evidence: 'Evidence', api: 'Published APIs' } as const)[p.resource]} <DownOutlined /></button><button data-wb-menu="export" onClick={() => openMenu('export')}>Export <DownOutlined /></button></div>
+        </div>
+        {menu && <section className={'wb-popup wb-popup--' + menu + (library ? ' wb-library' : '')} ref={popup} aria-label={library ? `Saved ${menu}` : 'Explorer tools'}>
+            {error && <p role="alert" className="wb-library-error">{error}</p>}
             {menu === 'search' && <>{find.map(f => <button key={f} onClick={() => changeField(f)}>{p.names?.[f] || f}</button>)}{!find.length && <p>No matching properties</p>}</>}
-            {menu === 'property' && <><strong>{p.names?.[choice] || choice}</strong>
-                <button onClick={() => { setChart(choice); setSearch(''); selectMode('explore'); }}>Add chart</button>
-                <button onClick={() => { setSearch(''); selectMode('results'); p.addFilter(choice); }}>Add filter</button></>}
-            {menu === 'asset' && <>{(['preview', 'schema', 'stream', 'evidence', ...(p.admin ? ['api'] : [])] as ResourceView[]).map(view => <button key={view} onClick={() => { p.selectResource(view); p.setMode('results'); show(''); }}>
-                    {{ preview: 'Data preview', schema: 'Properties & column mapping', stream: 'Stream', evidence: 'Evidence', api: 'Published APIs' }[view]}</button>)}</>}
-            {menu === 'export' && <>{(['csv', 'json'] as const).map(format => <button disabled={!p.rows.length} key={format} onClick={() => {
-                        download(format, p.selected.length ? p.selected.map(r => ({ ...r.record, ...r.identity })) : p.rows, p.fields, p.table);
-                        show('');
-                    }}>{format.toUpperCase()} · {p.selected.length ? 'selected objects' : 'current result page'}</button>)}</>}
-            {(menu === 'explorations' || menu === 'lists') && <><strong>{menu === 'lists' ? 'Saved lists' : 'Saved explorations'}</strong>
-                {menu === 'lists' && <button disabled={!p.selected.length || p.selected.some(r => !Object.keys(r.identity).length)} onClick={() => beginSave('list')}>Save selected objects as list</button>}
-                {!items && !error && <p role="status">Loading…</p>}{items && !items.items.length && <p>No saved {menu} for this object type.</p>}
-                {items?.items.map(item => <div className="wb-item" key={item.id}><button onClick={() => openId(item.id)}>{item.name}</button>
-                    <button aria-label={'Delete ' + item.name} onClick={async () => { if (!window.confirm('Delete ' + item.name + '?'))
-                    return; try {
-                    await removeSaved(path, item);
-                    if (saved?.id === item.id)
-                        setSaved(undefined);
-                    refresh(n => n + 1);
-                }
-                catch (e) {
-                    setError(fail(e));
-                } }}>×</button></div>)}
-                {(page > 0 || items?.hasMore) && <div><button disabled={!page} onClick={() => setPage(v => v - 1)}>Previous</button><button disabled={!items?.hasMore} onClick={() => setPage(v => v + 1)}>Next</button></div>}</>}
-            {menu === 'objects' && saved?.kind === 'list' && <><strong>List: {saved.name}</strong><p>Saved object references. Open an object to see its current details.</p><RelatedList schema={p.schema} table={p.table} keys={saved.content.keys ?? []} titleProperty={p.titleProperty} primaryKey={p.primaryKey}/></>}
-            {menu === 'save' && <form onSubmit={e => { e.preventDefault(); void save(); }}><label>{saveKind === 'list' ? 'List name' : 'Exploration name'}<input autoFocus required maxLength={100} value={name} onChange={e => setName(e.target.value)}/></label>
-                <button className="wb-primary" disabled={busy || !name.trim()}>Save {saveKind}</button></form>}
-            {menu === 'share' && <><strong>{saved ? `Share ${saved.kind}: ${saved.name}` : 'Share exploration'}</strong>
-                {!saved ? <button onClick={() => beginSave('exploration')}>Save exploration first</button> : <>
-                    <p>{saved.kind === 'list' ? 'Shares saved object references. Object values are read when opened.' : 'Shares filters, sorting, search, partition, chart and result mode. Column layouts and data snapshots are not included.'}</p>
-                    <p>People with the link must sign in and have access to this object type.</p>
-                    <button disabled={busy || (!saved.owned && !saved.shared)} onClick={share}>{saved.shared ? 'Show share link' : 'Enable link sharing'}</button>
-                    {saved.owned && saved.shared && <button onClick={async () => { try {
-                    const item = await sharing(path, saved, false);
-                    setSaved({ ...saved, ...item });
-                    setShareLink('');
-                }
-                catch (e) {
-                    setError(fail(e));
-                } }}>Stop sharing</button>}
-                    {shareLink && <label>Share link<input readOnly value={shareLink} onFocus={e => e.currentTarget.select()}/></label>}</>}</>}
+            {menu === 'property' && <><strong>{p.names?.[choice] || choice}</strong><button onClick={() => { setChart(choice); setSearch(''); selectMode('explore'); }}>Add chart</button><button onClick={() => { setSearch(''); selectMode('results'); p.addFilter(choice); }}>Add filter</button></>}
+            {menu === 'asset' && <>{(['preview', 'schema', 'stream', 'evidence', ...(p.admin ? ['api'] : [])] as ResourceView[]).map(view => <button key={view} onClick={() => { p.selectResource(view); p.setMode('results'); show(''); }}>{{ preview: 'Data preview', schema: 'Properties & column mapping', stream: 'Stream', evidence: 'Evidence', api: 'Published APIs' }[view]}</button>)}</>}
+            {menu === 'export' && <>{(['csv', 'json'] as const).map(format => <button disabled={!p.rows.length} key={format} onClick={() => { download(format, p.selected.length ? p.selected.map(r => ({ ...r.record, ...r.identity })) : p.rows, p.fields, p.table); show(''); }}>{format.toUpperCase()} · {p.selected.length ? 'selected objects' : 'current result page'}</button>)}</>}
+            {library && <>
+                <div className="wb-library-heading"><div><h3>{menu === 'lists' ? 'Lists' : 'Explorations'}</h3><p>{menu === 'lists' ? 'Saved object selections' : 'Saved searches and views'}</p></div><button aria-label="Close saved items" onClick={() => show('')}><CloseOutlined /></button></div>
+                <div className="wb-library-controls"><label><SearchOutlined /><input aria-label={`Search ${menu}`} placeholder={`Search ${menu}…`} maxLength={100} value={librarySearch} onChange={e => { setLibrarySearch(e.target.value); setPage(0); }}/></label><select aria-label="Saved item sharing" value={access} onChange={e => { setAccess(e.target.value as typeof access); setPage(0); }}><option value="all">All</option><option value="private">Private</option><option value="shared">Shared</option></select></div>
+                <div className="wb-library-items">
+                    {!items && !error && <p role="status" className="wb-library-empty">Loading saved items…</p>}
+                    {items && !items.items.length && <div className="wb-library-empty"><SearchOutlined /><strong>{librarySearch || access !== 'all' ? 'No matching saved items' : `No saved ${menu}`}</strong><p>{librarySearch || access !== 'all' ? 'Try another search or sharing filter.' : 'Save your work to return to it later.'}</p></div>}
+                    {items?.items.map(item => <div className={'wb-library-item' + (saved?.id === item.id ? ' is-current' : '')} key={item.id}>
+                        <button className="wb-library-open" aria-label={`Open ${item.kind} ${item.name}`} aria-current={saved?.id === item.id ? 'page' : undefined} onClick={() => { show(''); p.openSavedItem(item.id); }}><span className="wb-library-icon">{item.kind === 'list' ? <TableOutlined /> : <BarChartOutlined />}</span><span><strong>{item.name}</strong><small>{item.shared ? 'Shared link enabled' : 'Private'} · {p.schema}.{p.table}</small></span>{saved?.id === item.id && <CheckOutlined />}</button>
+                        <div className="wb-library-actions"><button aria-label={`Share ${item.kind} ${item.name}`} title="Share" onClick={() => void openShare(item)}><ShareAltOutlined /></button><button aria-label={`Delete ${item.kind} ${item.name}`} title="Delete" onClick={() => { show(''); setError(''); setDeleteTarget(item); }}><DeleteOutlined /></button></div>
+                    </div>)}
+                </div>
+                <footer className="wb-library-footer"><span>Created by you</span><div><button disabled={!page} onClick={() => setPage(v => v - 1)}>Previous</button><span>{page + 1}</span><button disabled={!items?.hasMore} onClick={() => setPage(v => v + 1)}>Next</button></div></footer>
+            </>}
         </section>}
-        {p.resource === 'preview' && p.mode === 'explore' && <ExploreChart field={field} select={setChart} fields={p.fields} names={p.names} rows={p.rows} onFilter={f => { selectMode('results'); p.addFilter(f); }}/>}
-        </>}
+        {p.resource === 'preview' && p.mode === 'explore' && !p.savedLoading && !p.savedError && <ExploreChart field={field} select={setChart} fields={p.fields} names={p.names} rows={p.rows} onFilter={f => { selectMode('results'); p.addFilter(f); }}/>}</>}
+        <Modal className="flow-surface-modal wb-saved-dialog" title="Save your work" open={dialog === 'save'} width={460} onCancel={() => { if (!busy) setDialog(''); }} keyboard={!busy} maskClosable={!busy} footer={<><Button disabled={busy} onClick={() => setDialog('')}>Cancel</Button><Button type="primary" loading={busy} disabled={!name.trim() || (saveKind === 'list' && !listKeys.length) || (saveKind === 'exploration' && saved?.kind === 'list')} onClick={() => void save()}>Save {saveKind}</Button></>}>
+            <div className="wb-save-kind"><button type="button" aria-pressed={saveKind === 'exploration'} disabled={saved?.kind === 'list'} onClick={() => setSaveKind('exploration')}><BarChartOutlined /><strong>Exploration</strong><span>Search, filters, sorting and chart</span></button><button type="button" aria-pressed={saveKind === 'list'} disabled={!listKeys.length} onClick={() => setSaveKind('list')}><TableOutlined /><strong>List</strong><span>{listKeys.length} selected objects</span></button></div>
+            {saved?.kind === 'list' && <p className="wb-dialog-help">A list keeps a fixed object selection. Return to all rows to create an exploration.</p>}
+            <form onSubmit={e => { e.preventDefault(); void save(); }}><label className="wb-dialog-field">{saveKind === 'list' ? 'List name' : 'Exploration name'}<input autoFocus required maxLength={100} value={name} placeholder={saveKind === 'list' ? 'Name this object selection' : 'Name this exploration'} onChange={e => setName(e.target.value)}/></label></form>
+            {error && <p role="alert" className="wb-dialog-error">{error}</p>}
+        </Modal>
+        <Modal className="flow-surface-modal wb-saved-dialog" title={shareTarget ? `Share ${shareTarget.kind}` : 'Share'} open={dialog === 'share'} width={480} onCancel={() => { if (!busy) setDialog(''); }} keyboard={!busy} maskClosable={!busy} footer={<Button disabled={busy} onClick={() => setDialog('')}>Done</Button>}>
+            {busy && !shareTarget ? <p role="status">Loading saved item…</p> : shareTarget ? <>
+                <div className="wb-share-resource">{shareTarget.kind === 'list' ? <TableOutlined /> : <BarChartOutlined />}<div><strong>{shareTarget.name}</strong><span>{shareTarget.kind === 'list' ? `${shareTarget.content.keys?.length ?? 0} saved object references` : 'Saved search, filters, sorting and chart'}</span></div></div>
+                <p className="wb-dialog-help">{shareTarget.kind === 'list' ? 'This link opens the saved object selection.' : 'This link opens the saved exploration. Save current changes as a new exploration to share them.'}</p>
+                <p className="wb-dialog-help">People with this link must sign in and have access to the underlying table. Sharing does not grant data access.</p>
+                <div className="wb-share-access"><LinkOutlined /><div><strong>{shareTarget.shared ? 'Link sharing enabled' : 'Private'}</strong><span>{shareTarget.shared ? 'People with data access can open this saved item.' : 'Only you can open this saved item.'}</span></div>{shareTarget.owned && <Button size="small" loading={busy} onClick={() => void setSharing(!shareTarget.shared)}>{shareTarget.shared ? 'Disable link' : 'Enable link'}</Button>}</div>
+                {shareTarget.shared && <label className="wb-dialog-field">Share link<div className="wb-share-link"><input readOnly value={link(shareTarget.id)} onFocus={e => e.currentTarget.select()}/><Button icon={<CopyOutlined />} aria-label="Copy share link" onClick={async () => { try { await navigator.clipboard.writeText(link(shareTarget.id)); notify('Share link copied'); } catch { setError('Unable to copy. Select and copy the link above.'); } }}>Copy</Button></div></label>}
+            </> : !error && <div className="wb-share-empty"><ShareAltOutlined /><strong>Save this result before sharing</strong><p>Choose a saved exploration or list, or save the current result.</p><Button type="primary" onClick={() => beginSave('exploration')}>Save exploration</Button></div>}
+            {error && <p role="alert" className="wb-dialog-error">{error}</p>}
+        </Modal>
+        <Modal className="flow-surface-modal wb-saved-dialog wb-delete-dialog" title={`Delete ${deleteTarget?.kind ?? 'saved item'}?`} open={!!deleteTarget} width={440} onCancel={() => { if (!busy) setDeleteTarget(undefined); }} keyboard={!busy} maskClosable={!busy} footer={<><Button disabled={busy} onClick={() => setDeleteTarget(undefined)}>Cancel</Button><Button danger type="primary" loading={busy} onClick={() => void deleteSaved()}>Delete {deleteTarget?.kind}</Button></>}>
+            <div className="wb-delete-resource"><DeleteOutlined /><strong>{deleteTarget?.name}</strong></div><p className="wb-dialog-help">This removes the saved {deleteTarget?.kind} and disables its share link. The underlying table and objects are unchanged.</p>{error && <p role="alert" className="wb-dialog-error">{error}</p>}
+        </Modal>
     </header>;
 }

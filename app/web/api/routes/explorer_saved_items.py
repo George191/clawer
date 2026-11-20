@@ -75,11 +75,18 @@ async def list_items(
     session: SessionDep,
     response: Response,
     offset: int = Query(0, ge=0, le=10000),
+    search: str = Query("", max_length=100),
+    sharing: Literal["all", "private", "shared"] = "all",
 ):
     schema, _ = await asset(layer, table, user)
+    filters = [*scope(schema, table), Item.owner_id == user.id, Item.kind == kind]
+    if search:
+        filters.append(Item.name.icontains(search, autoescape=True))
+    if sharing != "all":
+        filters.append(Item.shared.is_(sharing == "shared"))
     result = await session.scalars(
         select(Item)
-        .where(*scope(schema, table), Item.owner_id == user.id, Item.kind == kind)
+        .where(*filters)
         .order_by(Item.name, Item.id)
         .offset(offset)
         .limit(26)

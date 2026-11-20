@@ -24,7 +24,7 @@ function errorMessage(error: unknown) {
 }
 
 export function useResultLayout(identity: string, schema: string, table: string, fields: string[], sorts: ExplorerSort[],
-  applySorts: (sorts: ExplorerSort[]) => void) {
+  applySorts: (sorts: ExplorerSort[]) => void, applyInitialSorts = true) {
   const path = layoutPath(schema, table);
   const id = identity ? JSON.stringify([identity, path]) : '';
   const active = useRef(id);
@@ -56,12 +56,12 @@ export function useResultLayout(identity: string, schema: string, table: string,
       const draft = slots.personal.layout ?? slots.default.layout;
       setState({ id, slots, draft });
       const nextSorts = draft?.sorts ?? [];
-      if (initialSorts === JSON.stringify(sortsRef.current) && JSON.stringify(nextSorts) !== initialSorts) apply.current(nextSorts);
+      if (applyInitialSorts && initialSorts === JSON.stringify(sortsRef.current) && JSON.stringify(nextSorts) !== initialSorts) apply.current(nextSorts);
     }).catch(e => {
       if (active.current === id && !controller.signal.aborted) setError(errorMessage(e));
     });
     return () => controller.abort();
-  }, [id, path, revision]);
+  }, [id, path, revision, applyInitialSorts]);
 
   const current = state?.id === id ? state : undefined;
   const columns = matchColumns(fields, current?.draft?.columns);

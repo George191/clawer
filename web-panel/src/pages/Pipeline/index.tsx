@@ -18,6 +18,7 @@ import './foundry-workbench-tokens.css';
 import './ontology-workspace.css';
 import ExplorerCatalog from './ExplorerCatalog';
 import ExplorerWorkbenchHeader from './ExplorerWorkbenchHeader';
+import { openSaved, savedPath, type SavedDetail } from '../../services/explorerSaved';
 import { ExplorerTypeIcon } from './ExplorerObjectOverview';
 import ExplorerSelection, { useExplorerPresentation, type ExplorerPreviewRow } from './ExplorerSelection';
 import ExplorerRecordLink from './ExplorerRecordLink';
@@ -143,6 +144,7 @@ const DataLayersWorkspace: React.FC = () => {
     const isSchemas = !!matchPath('/ontology/explorer', pathname);
     const workspacePath = isSchemas ? '/ontology/explorer' : '/ontology/transforms';
     const requestedView = new URLSearchParams(search).get('view');
+    const requestedSavedId = isSchemas ? new URLSearchParams(search).get('saved') || '' : '';
     const navigate = useNavigate();
     const catalogReturn = useRef('/ontology');
     const requestedReturn = new URLSearchParams(search).get('returnTo');
@@ -158,6 +160,10 @@ const DataLayersWorkspace: React.FC = () => {
     const [workbenchMode, setWorkbenchMode] = useState<'explore' | 'results'>('results');
     const [workbenchRows, setWorkbenchRows] = useState<ExplorerPreviewRow[]>([]);
     const [selectionEpoch, setSelectionEpoch] = useState(0);
+    const [savedState, setSavedState] = useState<{ key: string; detail?: SavedDetail; error: string; loading: boolean }>();
+    const [savedRetry, setSavedRetry] = useState(0);
+    const [queryScope, setQueryScope] = useState('');
+    const savedController = useRef<AbortController>();
     const adminPreviewIdentity = useRef('');
     const managePermission = useRef(false);
     managePermission.current = canManage;
@@ -280,7 +286,7 @@ const DataLayersWorkspace: React.FC = () => {
         setRefreshVersion((value) => value + 1);
         refreshCatalog().catch((error) => { if (workspaceActive.current) setRequestError(errorText(error)); });
         const params = new URLSearchParams(search);
-        params.delete('create'); params.set('schema', schema); params.set('table', name);
+        params.delete('create'); params.delete('saved'); params.set('schema', schema); params.set('table', name);
         navigate(`${workspacePath}?${params.toString()}`);
     };
     const [schemaAliases, setSchemaAliases] = useState<Record<string, string>>({});
@@ -447,6 +453,30 @@ const DataLayersWorkspace: React.FC = () => {
     const sortCount = appliedQuery.sorts.length;
     const indexPreviewAsset = selectedSchema === INDEX_PREVIEW_SCHEMA && table.name === INDEX_PREVIEW_TABLE;
     const previewIdentity = useSandboxIdentity();
+    const workspaceAsset = JSON.stringify([previewIdentity, isSchemas ? requestedSchema : selectedSchema, isSchemas ? requestedTable : table.name]);
+    const requestedScope = JSON.stringify([workspaceAsset, requestedSavedId]);
+    const savedKey = requestedSavedId ? requestedScope : '';
+    const savedScope = useRef(savedKey);
+    savedScope.current = savedKey;
+    const currentQueryScope = useRef(requestedScope);
+    currentQueryScope.current = requestedScope;
+    const activeSavedState = savedState?.key === savedKey ? savedState : undefined;
+    const activeSaved = activeSavedState?.detail;
+    const savedLoading = !!requestedSavedId && (!activeSavedState || activeSavedState.loading);
+    const savedError = activeSavedState?.error || '';
+    const savedBlocked = !!requestedSavedId && (savedLoading || !!savedError || !activeSaved);
+    const queryScopeReady = !isSchemas || queryScope === requestedScope;
+    const activeSavedListId = activeSaved?.kind === 'list' ? activeSaved.id : undefined;
+    function applySavedQuery(detail?: SavedDetail) {
+        const query = detail?.kind === 'exploration' ? detail.content : { filters: [], sorts: [], search: '', partition: null, view: 'results' as const };
+        setFilterRules(query.filters.length ? normalizeFilterDepth(query.filters) : [blankExplorerFilter('rule-1')]);
+        setFilterText(query.search || ''); setSortField(query.sorts[0]?.field || ''); setSortDirection(query.sorts[0]?.direction || 'asc');
+        setSortConditions(query.sorts.slice(1)); setPartition(query.partition || undefined);
+        setAppliedQuery({ filters: query.filters, sorts: query.sorts, search: query.search || '' });
+        setWorkbenchMode(query.view); setWorkbenchRows([]); setSelectionEpoch(value => value + 1); setPageNumber(1);
+        setData(undefined); setPreviewPage(undefined); setPreviewError(''); setPreviewUnavailable(false);
+        setQueryScope(requestedScope);
+    }
     const explorerPresentation = useExplorerPresentation(
         isSchemas && selectedTableAvailable && previewIdentity ? selectedSchema : '', table.name,
         JSON.stringify([previewIdentity, refreshVersion, previewRevision]),
@@ -636,7 +666,7 @@ const DataLayersWorkspace: React.FC = () => {
         if (editingRowKey || deleteSnapshot || mutationPending.current) {
             message.warning('Save or cancel the current row edit first'); return false;
         }
-        return selectedTableAvailable && showPreview && !loading;
+        return selectedTableAvailable && showPreview && !loading && !savedBlocked && queryScopeReady;
     };
     const filterDraft = (rows: ExplorerFilter[]) => rows.filter((rule) => rule.field || /^group-(open|close)-/.test(rule.id));
     const hasFilterDraft = () => JSON.stringify(filterDraft(filterRules)) !== JSON.stringify(filterDraft(appliedQuery.filters));
@@ -708,7 +738,7 @@ const DataLayersWorkspace: React.FC = () => {
     ] : appliedTerms.map((term) => queryChip(appliedQuery.filters[term.start].id, term.children ? 'filter group' : 'filter', describeTerm(term), () => removeFilterChip(term.start, term.end)));
 
     const resultLayout = useResultLayout(isSchemas && selectedTableAvailable && showPreview ? previewIdentity : '',
-        selectedSchema, table.name, data?.columns || [], appliedQuery.sorts, updateExplorerSorts);
+        selectedSchema, table.name, data?.columns || [], appliedQuery.sorts, updateExplorerSorts, !requestedSavedId);
     const displayedColumns = isSchemas ? resultLayout.columns.filter(col => col.visible)
         : (data?.columns || []).map(field => ({ field, width: 180, presentation: 'value' as const }));
     const dataColumns: any[] = displayedColumns.map(({ field: key, width }) => {
@@ -821,7 +851,36 @@ const DataLayersWorkspace: React.FC = () => {
         setWorkbenchRows([]); setWorkbenchMode('results');
         setFilterText(''); setFilterRules([{ id: 'rule-1', field: '', operator: '=', value: '', active: true, join: 'and' }]); setSortField(''); setSortConditions([]); setAppliedQuery({ filters: [], sorts: [], search: '' });
         setPreviewError(''); setPreviewUnavailable(false); setPreviewPage(undefined); setRepairFields([]);
-    }, [selectedSchema, table.name, selectedTableAvailable, previewIdentity]);
+    }, [workspaceAsset]);
+    useEffect(() => {
+        if (!isSchemas) return;
+        if (!requestedSavedId) {
+            savedController.current?.abort();
+            setSavedState(undefined);
+            if (queryScope !== requestedScope) applySavedQuery();
+            return;
+        }
+        if (!selectedTableAvailable || !previewIdentity) return;
+        if (activeSavedState?.detail && queryScope === requestedScope) return;
+        const controller = new AbortController();
+        savedController.current?.abort(); savedController.current = controller;
+        setSavedState({ key: savedKey, error: '', loading: true });
+        setPreviewError(''); setPreviewUnavailable(false);
+        setData(undefined); setPreviewPage(undefined); setWorkbenchRows([]); setSelectionEpoch(value => value + 1); setPageNumber(1);
+        const current = () => {
+            const session = getSessionState();
+            return !controller.signal.aborted && savedScope.current === savedKey && session.authenticated && !session.locked && session.identity === previewIdentity;
+        };
+        void openSaved(savedPath(requestedSchema!, requestedTable!), requestedSavedId, controller.signal).then(detail => {
+            if (!current()) return;
+            applySavedQuery(detail);
+            setSavedState({ key: savedKey, detail, error: '', loading: false });
+            setCatalogOpen(false);
+        }).catch(error => {
+            if (current()) setSavedState({ key: savedKey, error: errorText(error), loading: false });
+        });
+        return () => controller.abort();
+    }, [requestedScope, selectedTableAvailable, savedRetry]);
     useEffect(() => {
         if (!selectedTableAvailable || (isSchemas && !scriptOpen) || scriptLoaded || scriptDirty) return;
         const version = ++metadataRequest.current;
@@ -848,16 +907,16 @@ const DataLayersWorkspace: React.FC = () => {
     }, [selectedSchema, table.name, canManage, selectedTableAvailable]);
     useEffect(() => {
         const version = ++dataRequest.current;
-        if (!selectedTableAvailable || !showPreview) { setLoading(false); return; }
+        if (!selectedTableAvailable || !showPreview || savedBlocked || !queryScopeReady) { setLoading(false); return; }
         setLoading(true); setPreviewError(''); setPreviewUnavailable(false);
         const controller = new AbortController();
         queryController.current = controller;
         const offset = (pageNumber - 1) * pageSize;
-        const query = { ...appliedQuery, limit: pageSize, offset, partition, forEditing: canManage, withIdentity: true };
+        const query = { ...appliedQuery, limit: pageSize, offset, partition, forEditing: canManage, withIdentity: true, ...(activeSavedListId ? { savedListId: activeSavedListId } : {}) };
         const current = () => {
             const session = getSessionState();
             return version === dataRequest.current && !controller.signal.aborted && classicPreviewScope.current === policyKey &&
-                session.authenticated && !session.locked && session.identity === previewIdentity;
+                (!isSchemas || currentQueryScope.current === requestedScope) && session.authenticated && !session.locked && session.identity === previewIdentity;
         };
         const timer = window.setTimeout(async () => {
             try {
@@ -890,7 +949,7 @@ const DataLayersWorkspace: React.FC = () => {
             }
         }, 100);
         return () => { window.clearTimeout(timer); controller.abort(); dataRequest.current++; };
-    }, [selectedSchema, table.name, partition, appliedQuery, pageNumber, pageSize, refreshVersion, previewRevision, selectedTableAvailable, showPreview, isSchemas, policyKey, canManage]);
+    }, [selectedSchema, table.name, partition, appliedQuery, pageNumber, pageSize, refreshVersion, previewRevision, selectedTableAvailable, showPreview, isSchemas, policyKey, canManage, savedBlocked, queryScopeReady, activeSavedListId]);
     useEffect(() => {
         if (!isSchemas || !showPreview || !selectedTableAvailable || !previewError || filterFields.length) return;
         const controller = new AbortController();
@@ -930,6 +989,33 @@ const DataLayersWorkspace: React.FC = () => {
         if (view === 'preview') params.delete('view');
         else params.set('view', view);
         navigate(`${workspacePath}?${params.toString()}`);
+    };
+    const openSavedItem = (id: string) => {
+        if (currentQueryScope.current !== requestedScope) return;
+        if (editingRowKey || deleteSnapshot || scriptDirty || apisDirty || mappingDirty || mutationPending.current) {
+            message.warning('Save or cancel current changes before opening a saved item'); return;
+        }
+        queryController.current?.abort();
+        setWorkbenchRows([]); setSelectionEpoch(value => value + 1); setPageNumber(1); setData(undefined); setPreviewPage(undefined);
+        if (id === requestedSavedId) {
+            savedController.current?.abort(); setSavedState(undefined); setSavedRetry(value => value + 1);
+        }
+        const params = new URLSearchParams(search);
+        params.set('saved', id); params.delete('view');
+        navigate(`${workspacePath}?${params.toString()}`);
+        setCatalogOpen(false);
+    };
+    const closeSavedItem = () => {
+        if (currentQueryScope.current !== requestedScope) return;
+        if (editingRowKey || deleteSnapshot || scriptDirty || apisDirty || mappingDirty || mutationPending.current) {
+            message.warning('Save or cancel current changes before returning to the table'); return;
+        }
+        savedController.current?.abort(); queryController.current?.abort(); setSavedState(undefined);
+        const params = new URLSearchParams(search); params.delete('saved'); params.delete('view');
+        navigate(`${workspacePath}?${params.toString()}`);
+    };
+    const updateSavedItem = (detail: SavedDetail) => {
+        if (detail.id === requestedSavedId) setSavedState(current => current?.key === savedKey ? { ...current, detail } : current);
     };
     const selectSchema = (schema: string) => {
         if (isSchemas && (editingRowKey || scriptDirty || apisDirty || mappingDirty || mutationPending.current)) {
@@ -1037,7 +1123,7 @@ const DataLayersWorkspace: React.FC = () => {
         <p>Open a Storage-backed object type to see its results in Explorer.</p>
         <Link to="/ontology">Browse Storage-backed object types</Link>
     </section>;
-    return <div className={`flow-layers flow-layers--tagged${isSchemas ? ' flow-schema-workbench explorer-object-workspace has-asset' : ''}${catalogOpen ? ' is-catalog-open' : ''}${workbenchMode === 'explore' && resourceView === 'preview' ? ' is-exploring' : ''}`}>
+    return <div className={`flow-layers flow-layers--tagged${isSchemas ? ' flow-schema-workbench explorer-object-workspace has-asset' : ''}${catalogOpen ? ' is-catalog-open' : ''}${workbenchMode === 'explore' && resourceView === 'preview' && !savedBlocked && queryScopeReady ? ' is-exploring' : ''}`}>
         <div  className="flow-layer-layout">
             {isSchemas ? <ExplorerCatalog schemas={schemas} tables={tablesLoadedSchema === selectedSchema ? serverTables : []}
                 selectedSchema={selectedSchema} selectedTable={table.name} catalogLoaded={catalogLoaded} tablesLoading={tablesLoading}
@@ -1099,18 +1185,15 @@ const DataLayersWorkspace: React.FC = () => {
                 {!isSchemas && !selectedTableAvailable ? <div className="flow-workspace-empty" role="status"><DatabaseOutlined /><h3>{tablesLoading || !catalogLoaded && !requestError ? 'Loading schema resources…' : selectedSchema ? serverTables.length ? 'No table selected' : 'No tables in this schema' : 'No schema selected'}</h3><p>{schemaNode?.status === 'stopped' ? 'This schema is not available in the connected database.' : serverTables.length ? 'Select a table from the catalog.' : 'Select a schema to explore its tables and data.'}</p></div> : <div className="flow-inspector">
                     {isSchemas && requestedSchema && requestedTable && <fieldset className="wb-shell" disabled={workbenchLocked}>
                         <ExplorerWorkbenchHeader key={JSON.stringify([previewIdentity, requestedSchema, requestedTable])} schema={requestedSchema} table={requestedTable} available={selectedTableAvailable}
-                            backToTypes={backToTypes} label={selectedTableAvailable ? mapping?.displayName || requestedTable : requestedTable} titleProperty={mapping?.titleProperty} primaryKey={mapping?.primaryKey}
+                            backToTypes={backToTypes} label={selectedTableAvailable ? mapping?.displayName || requestedTable : requestedTable}
                             glyph={<ExplorerTypeIcon compact dataType={selectedTableAvailable ? mapping?.dataType ?? table.dataType : undefined} table={requestedTable} />}
                             fields={data?.columns || filterFields} names={Object.fromEntries((mapping?.properties || []).flatMap(p => p.sourceColumn ? [[p.sourceColumn, p.name]] : []))}
                             rows={dataRows.map((row,i) => ({...row,...primaryKey(row,i)}))} selected={workbenchRows} query={{ ...appliedQuery, partition }} resource={resourceView} admin={canManage}
                             layoutControl={showPreview && <LayoutToolbar controls={resultLayout} admin={canManage} types={data?.columnTypes} />}
-                            selectResource={selectResourceView} apply={q => {
-                                setFilterRules(q.filters.length ? normalizeFilterDepth(q.filters) : [blankExplorerFilter('rule-1')]);
-                                setFilterText(q.search || ''); setSortField(q.sorts[0]?.field || ''); setSortDirection(q.sorts[0]?.direction || 'asc');
-                                setSortConditions(q.sorts.slice(1)); setPartition(q.partition || undefined);
-                                setAppliedQuery({filters:q.filters,sorts:q.sorts,search:q.search || ''}); setPageNumber(1);
-                            }} addFilter={addColumnFilter} toggleCatalog={() => setCatalogOpen(value => !value)}
-                            catalogOpen={catalogOpen} closeCatalog={() => setCatalogOpen(false)} search={search}
+                            selectResource={selectResourceView} saved={activeSaved} savedLoading={savedLoading} savedError={savedError}
+                            openSavedItem={openSavedItem} closeSavedItem={closeSavedItem} saveCompleted={(detail: SavedDetail) => openSavedItem(detail.id)} updateSavedItem={updateSavedItem}
+                            addFilter={addColumnFilter} toggleCatalog={() => setCatalogOpen(value => !value)}
+                            catalogOpen={catalogOpen} closeCatalog={() => setCatalogOpen(false)}
                             mode={workbenchMode} setMode={setWorkbenchMode} clearSelection={() => { setWorkbenchRows([]); setSelectionEpoch(n => n + 1); }}
                             filterButton={showPreview && <button aria-expanded={filterOpen} onClick={() => activateTool('filter')}>Filter &amp; sort{filterCount + sortCount ? ` (${filterCount + sortCount})` : ''}</button>}
                         />
@@ -1155,9 +1238,11 @@ const DataLayersWorkspace: React.FC = () => {
                         {canManage && <button type="button" aria-pressed={resourceView === 'api'} onClick={() => selectResourceView('api')}><CodeOutlined /> Published APIs</button>}
                     </nav>}
                     <div className="flow-inspector-body" ref={previewViewport}>
-                        {showIndexPreview && (canManage ? <SandboxIndexPreview /> :
+                        {isSchemas && savedLoading && <div className="flow-schema-state" role="status">Loading saved item…</div>}
+                        {isSchemas && savedError && <div className="flow-schema-state" role="alert"><strong>Saved item unavailable</strong><p>{savedError}</p><Button size="small" onClick={() => setSavedRetry(value => value + 1)}>Retry saved item</Button><Button size="small" onClick={closeSavedItem}>Return to table</Button></div>}
+                        {showIndexPreview && !savedBlocked && (canManage ? <SandboxIndexPreview /> :
                             <div className="flow-schema-state" role="status">Index-aware sandbox preview is available to administrators only.</div>)}
-                        {previewRequested && !showPreview && (policyMode === 'indexed_projection_required'
+                        {previewRequested && !showPreview && !savedBlocked && (policyMode === 'indexed_projection_required'
                             ? <section className="flow-schema-details" aria-label="Verified indexed projection preview">
                                 <header><h3>Verified indexed projection preview</h3></header>
                                 <p>This table requires a verified covering index path. Only an explicitly reviewed, read-only preview of approved fields is available.</p>
@@ -1179,7 +1264,7 @@ const DataLayersWorkspace: React.FC = () => {
                             <button type="button" className={`flow-tool ${filterOpen ? 'is-active' : ''}`} aria-expanded={filterOpen} onClick={() => activateTool('filter')}>{canManage ? 'Filter & API' : 'Filter'}</button>
                             <button type="button" className={`flow-tool ${scriptOpen ? 'is-active' : ''}`} onClick={() => activateTool('script')}>Layer script</button>
                         </div>}
-                        {isSchemas && showPreview && (filterCount > 0 || sortCount > 0) && <div className="flow-schema-applied flow-query-chips" aria-label="Applied conditions">
+                        {isSchemas && showPreview && !savedBlocked && queryScopeReady && (filterCount > 0 || sortCount > 0) && <div className="flow-schema-applied flow-query-chips" aria-label="Applied conditions">
                             <span>Applied: {filterCount} {filterCount === 1 ? 'filter' : 'filters'} · {sortCount} {sortCount === 1 ? 'sort' : 'sorts'}</span>
                             {appliedQuery.search?.trim() && queryChip('search', 'search', `Search: ${appliedQuery.search}`, () => {
                                 if (!canChangePreview()) return;
@@ -1209,13 +1294,13 @@ const DataLayersWorkspace: React.FC = () => {
                                 : !stream?.available ? <div className="flow-schema-state" role="status"><strong>{stream?.topic ? 'Stream unavailable' : 'No active stream'}</strong><p>{stream?.reason || 'There is no stream information for this table.'}</p></div>
                                 : <ExplorerStreamPositions stream={stream} />}
                         </section>}
-                        {showPreview && previewError && <div className="flow-schema-state flow-preview-error" role="alert">
+                        {showPreview && !savedBlocked && queryScopeReady && previewError && <div className="flow-schema-state flow-preview-error" role="alert">
                             <strong>Data preview unavailable</strong><p>{previewError}</p>
                             {previewUnavailable && <p>For an expensive query, narrow the filters before trying again.</p>}
                             <Button size="small" onClick={isSchemas ? () => setPreviewRevision((revision) => revision + 1) : refreshWorkspace}>Retry preview</Button>
                             {isSchemas && pageNumber > 1 && <Button size="small" onClick={() => setPageNumber(1)}>Back to first page</Button>}
                         </div>}
-                        {showPreview && filterOpen && <div className="flow-filter-card">
+                        {showPreview && !savedBlocked && queryScopeReady && filterOpen && <div className="flow-filter-card">
                                 <div className={isSchemas ? 'flow-schema-filter-search' : undefined}>
                                     {isSchemas && <span>Search across columns</span>}
                                     <Input.Search aria-label="Search all columns" size="small" placeholder="Search all columns" value={filterText} onChange={(event) => setFilterText(event.target.value)} onSearch={applyFilters} />
@@ -1230,7 +1315,7 @@ const DataLayersWorkspace: React.FC = () => {
                                 {!isSchemas && canManage && apiListOpen && apiPanel}
                             </div>}
                             {isSchemas && resourceView === 'api' && (canManage ? apiPanel : <div className="flow-schema-state" role="status">Published APIs are available to administrators only.</div>)}
-                            {showPreview && !previewError && (isSchemas ?
+                            {showPreview && !savedBlocked && queryScopeReady && !previewError && (isSchemas ?
                                 <ExplorerSelection onSelectedRowsChange={setWorkbenchRows} key={JSON.stringify([selectionEpoch, policyKey])}
                                     schema={selectedSchema} table={table.name} dataType={mapping?.dataType ?? table.dataType} rows={dataRows} columns={data?.columns ?? emptyPreviewColumns}
                                     columnTypes={data?.columnTypes} metadata={explorerPresentation}

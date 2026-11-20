@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, model_validator
 
@@ -53,6 +54,7 @@ class DataQuery(BaseModel):
 class PreviewRowsQuery(DataQuery):
     limit: int = Field(default=50, ge=1, le=PREVIEW_ROWS_MAX_LIMIT)
     offset: int = Field(default=0, ge=0, le=PREVIEW_ROWS_MAX_OFFSET)
+    savedListId: UUID | None = None
 
 
 class OffsetUpdate(BaseModel):

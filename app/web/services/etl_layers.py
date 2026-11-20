@@ -1058,7 +1058,8 @@ class EtlLayers:
         return RowPreviewPolicy(mode="indexed_id_required" if required else "classic")
 
     async def data(self, layer: str, table: str, payload: dict[str, Any] | None = None,
-                   scope: dict[str, Any] | None = None, *, preview_rows: bool = False) -> dict[str, Any]:
+                   scope: dict[str, Any] | None = None, *, preview_rows: bool = False,
+                   row_keys: list[dict[str, str]] | None = None) -> dict[str, Any]:
         started = perf_counter()
         payload = payload or {}
         schema = resolve_schema(layer)
@@ -1131,10 +1132,15 @@ class EtlLayers:
             order.append(f't.{quote_identifier(sort["field"])} {sort["direction"]}')
             sorted_fields.add(sort["field"])
         primary_key = [column["name"] for column in primary_columns]
+        if row_keys is not None and (
+            not primary_key or len(row_keys) > 100
+            or any(not isinstance(key, dict) or set(key) != set(primary_key)
+                   or any(not isinstance(value, str) for value in key.values()) for key in row_keys)
+        ):
+            raise HTTPException(409, "Saved list requires complete primary keys from this table")
         editable = bool(primary_key and payload.get("forEditing") and scope is None)
         if paged:
             order.extend(f't.{quote_identifier(field)} asc' for field in primary_key if field not in sorted_fields)
-        predicate = " WHERE " + " AND ".join(f"({item})" for item in where) if where else ""
         ordering = " ORDER BY " + ", ".join(order) if order else ""
         async with self.session(repeatable_read=bool(enrolled), query_timeout=not preview_rows) as session:
             if enrolled:
@@ -1147,6 +1153,27 @@ class EtlLayers:
                         and await _required_preview_family(session, target_schema, target_table, enrolled))):
                     raise _indexed_preview_required()
                 await session.execute(text("SET LOCAL statement_timeout='10s'" if not preview_rows else "SET LOCAL statement_timeout=0"))
+            if row_keys is not None:
+                if not row_keys:
+                    where.append("false")
+                else:
+                    types = dict((await session.execute(text("""
+                        SELECT a.attname, pg_catalog.format_type(a.atttypid, -1)
+                        FROM pg_catalog.pg_attribute a
+                        JOIN pg_catalog.pg_class c ON c.oid=a.attrelid
+                        JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+                        WHERE n.nspname=:schema AND c.relname=:table
+                          AND a.attnum>0 AND NOT a.attisdropped
+                          AND a.attname = ANY(CAST(:primary_key AS text[]))
+                    """), {"schema": schema, "table": table, "primary_key": primary_key})).all())
+                    if set(types) != set(primary_key):
+                        raise HTTPException(409, "The saved list primary key has changed")
+                    params["saved_row_keys"] = json.dumps(row_keys)
+                    selected = ", ".join(f"t.{quote_identifier(field)}" for field in primary_key)
+                    # Cast only bound keys to catalog-native types, without typmod truncation.
+                    values = ", ".join(f"CAST(saved_key.value ->> '{field}' AS {types[field]})" for field in primary_key)
+                    where.append(f"({selected}) IN (SELECT {values} FROM jsonb_array_elements(CAST(:saved_row_keys AS jsonb)) saved_key(value))")
+            predicate = " WHERE " + " AND ".join(f"({item})" for item in where) if where else ""
             if not preview_rows:
                 total = (await session.execute(text(f"SELECT count(*) FROM (SELECT 1 FROM {target} t{predicate} LIMIT 10001) flow_count"), params)).scalar_one() if where else 0
                 estimated = not where or total > 10000
