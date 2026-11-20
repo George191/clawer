@@ -84,7 +84,8 @@ def test_indexed_inventory_resumes_without_relisting_sources(tmp_path):
         ('_meta.download_status',1),('_meta.updated_at',1),('_id',1)]}}
     doc = {'_id':'row1','_meta':{'record_id':record_id,'updated_at':datetime(2026,1,1,tzinfo=timezone.utc)},'assets':{'image':old,'missing':{'status_code':404,'url':'','message':'Source file returned HTTP 404; the file no longer exists.'}}}
     def find(query, projection):
-        assert '_meta.updated_at' not in query  # Active source updates must remain discoverable.
+        assert '$lte' not in query.get('_meta.updated_at', {})  # Active source updates remain discoverable.
+        if '$or' in query:assert query['_meta.updated_at']=={'$gte':doc['_meta']['updated_at']}
         cursor = MagicMock()
         cursor.sort.return_value.hint.return_value.limit.return_value.max_time_ms.return_value = (
             [doc] if query['_meta.download_status']=='downloaded' and '$or' not in query else [])

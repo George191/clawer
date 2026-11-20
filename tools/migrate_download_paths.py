@@ -114,8 +114,9 @@ def inventory(path):
             while True:
                 query = {'_meta.download_status':status}
                 if last:
+                    query['_meta.updated_at']={'$gte':last[0]}
                     query['$or'] = [{'_meta.updated_at':{'$gt':last[0]}},{'_meta.updated_at':last[0],'_id':{'$gt':last[1]}}]
-                docs = list(collection.find(query, {'assets':1,'_meta.record_id':1,'_meta.updated_at':1}).sort([('_meta.updated_at',1),('_id',1)]).hint(compound).limit(BATCH).max_time_ms(120000))
+                docs = list(collection.find(query, {'assets':1,'_meta.record_id':1,'_meta.updated_at':1}).sort([('_meta.updated_at',1),('_id',1)]).hint(compound).limit(min(BATCH,500)).max_time_ms(120000))
                 if not docs:
                     db.execute('INSERT OR REPLACE INTO progress VALUES(?,?,1)',(name,dumps(last) if last else ''));db.commit();break
                 pending = []
