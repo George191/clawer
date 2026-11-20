@@ -525,7 +525,7 @@
 .flow-preview-pager > nav {
   justify-content: space-between; flex-wrap: wrap; gap: 5px 10px; min-height: 38px; padding: 4px 7px 4px 10px;
 }
-.flow-preview-range { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.flow-preview-range { font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .flow-preview-page-controls { flex-wrap: wrap; }
 .flow-preview-page-controls > label { white-space: nowrap; }
 .flow-preview-page-controls select {
