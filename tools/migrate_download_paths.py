@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import filetype
+import urllib3
 from minio import Minio
 from minio.commonconfig import CopySource
 from pymongo import MongoClient
@@ -44,9 +45,9 @@ def journal(path):
 
 
 def storage():
-    address = settings.minio_endpoint
+    address = settings.minio_public_endpoint or settings.minio_endpoint
     url = urlsplit(address if '://' in address else ('https://' if settings.minio_secure else 'http://') + address)
-    return Minio(url.netloc, access_key=settings.minio_access_key, secret_key=settings.minio_secret_key, secure=url.scheme == 'https')
+    return Minio(url.netloc, access_key=settings.minio_access_key, secret_key=settings.minio_secret_key, secure=url.scheme == 'https', http_client=urllib3.PoolManager(timeout=15, retries=False))
 
 
 def strings(value, path=()):
