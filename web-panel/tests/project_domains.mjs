@@ -11,6 +11,7 @@ const compile = path => ts.transpileModule(readFileSync(new URL(path, import.met
 }).outputText;
 const domainSource = compile('../src/services/projectDomains.ts');
 const routerSource = compile('../src/ProjectRouter.tsx');
+const layoutSource = compile('../src/layouts/MainLayout.tsx');
 
 function browser(frontend = 'https://app.astral-helio.internal/ontology', storage = new Map()) {
   const entries = [{ url: new URL(frontend), state: null }], listeners = new Map(), events = [];
@@ -176,5 +177,50 @@ test('the frontend root redirects before rendering App and keeps query, hash and
     assert.equal(decision.props.to, expectedPath + '?schema=ts_ods#row');
     assert.equal(decision.props.replace, true);
     assert.equal(effects.length, 1);
+  }
+});
+
+const layoutChild = '__project_layout_child__';
+function renderLayout(project, pathname) {
+  const fixture = browser('https://app.astral-helio.internal' + pathname, new Map([['helio_project_domain', project]]));
+  const React = require('react'), router = require('react-router-dom');
+  const context = { exports: {}, URL, window: fixture.window, require: name => {
+    if (name === 'react') return {
+      ...React, default: React,
+      useState: initial => [typeof initial === 'function' ? initial() : initial, () => {}],
+      useMemo: factory => factory(), useCallback: callback => callback, useEffect: () => {},
+    };
+    if (name === 'react-router-dom') return { ...router, useLocation: () => fixture.window.location, useNavigate: () => () => {} };
+    if (name === '@/components/ui') return { Layout: { Header: 'header', Content: 'section' }, Button: 'button', Space: 'span', Dropdown: 'div', Progress: 'progress' };
+    if (name === '@/components/ui/icons') return new Proxy({}, { get: (_, icon) => String(icon) });
+    if (name === '@/stores/settings') return { useThemeStore: () => ({ mode: 'dark' }) };
+    if (name === '@/services/api') return { fetchCurrentUserContext: () => { throw new Error('Effects must not run in layout rendering checks.'); } };
+    if (name === '@/services/session') return { clearSession: () => {} };
+    if (name === '@/services/projectDomains') return fixture.domains;
+    return require(name);
+  } };
+  vm.runInNewContext(layoutSource, context);
+  return context.exports.default({ children: layoutChild });
+}
+
+function containsLayoutChild(node) {
+  if (node === layoutChild) return true;
+  if (Array.isArray(node)) return node.some(containsLayoutChild);
+  return Boolean(node && typeof node === 'object' && containsLayoutChild(node.props?.children));
+}
+
+test('shared Access, Automation and Settings children render for every remembered project', () => {
+  const missing = [];
+  for (const project of ['crawler', 'vault', 'ontology', 'atlas', 'graph', 'rag']) {
+    for (const path of ['/organization', '/automation/workflows', '/settings']) {
+      if (!containsLayoutChild(renderLayout(project, path))) missing.push(`${project}:${path}`);
+    }
+  }
+  assert.deepEqual(missing, []);
+});
+
+test('Atlas, Graph and RAG project pages retain their existing empty content', () => {
+  for (const [project, path] of [['atlas', '/atlas'], ['graph', '/graph'], ['rag', '/rag']]) {
+    assert.equal(containsLayoutChild(renderLayout(project, path)), false, path);
   }
 });

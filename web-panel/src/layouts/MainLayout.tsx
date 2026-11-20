@@ -1176,7 +1176,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         >
           <Content style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             <div className={isDark ? '' : 'light-mode'} style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-              {isAtlasSurface || isGraphSurface || isRagSurface ? null : children}
+              {routedProject && (isAtlasSurface || isGraphSurface || isRagSurface) ? null : children}
             </div>
           </Content>
         </main>
