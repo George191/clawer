@@ -22,6 +22,7 @@ import {
   FileTextOutlined,
   LineChartOutlined,
   PauseCircleOutlined,
+  PlayCircleOutlined,
   PlayFilled,
   PlusOutlined,
   PushpinOutlined,
@@ -758,7 +759,7 @@ const GroundStationGlyph = () => (
 const siteKindMeta: Record<SiteKind, { icon: React.ReactNode; label: string; tint: string }> = {
   acticle: { icon: <FileTextOutlined />, label: '文章', tint: '#8AB4FF' },
   financial_report: { icon: <FinancialReportGlyph />, label: 'Financial report', tint: '#69D3B0' },
-  social_media: { icon: <SocialMediaGlyph />, label: 'Social media', tint: '#75CBFF' },
+  social_media: { icon: <PlayCircleOutlined />, label: 'Media resources', tint: '#75CBFF' },
   social_account: { icon: <UserOutlined />, label: 'Social account', tint: '#8DCFE8' },
   social_content: { icon: <SocialMediaGlyph />, label: 'Social content', tint: '#75CBFF' },
   social_hashtag: { icon: <SocialMediaGlyph />, label: 'Social hashtag', tint: '#75CBFF' },

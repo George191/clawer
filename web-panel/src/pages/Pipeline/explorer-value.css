@@ -7,6 +7,9 @@
 .explorer-file--media { display:flex; width:100%; }
 .explorer-file-media { display:block; flex-basis:100%; min-width:0; height:360px; }
 .explorer-file-media > :is(img,video,audio,iframe) { display:block; width:100%; height:100%; max-width:100%; border:0; object-fit:contain; object-position:top left; }
+.explorer-file-media--image, .explorer-file-media--video { height:180px; }
+.explorer-file-media--image > img, .explorer-file-media--video > video { width:50%; }
 .explorer-file-media--audio { height:40px; }
+.explorer-media-list { display:grid; gap:12px; min-width:0; }
 
 .explorer-html--status { display:grid; place-content:center; color:var(--ontology-muted); }

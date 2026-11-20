@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { LinkOutlined } from '@/components/ui/icons';
 import { PropertyLabel } from './PropertyTypeIcon';
-import { ExplorerPropertyValue } from './ExplorerObjectOverview';
+import { ExplorerFieldValue, explorerFields } from './ExplorerObjectOverview';
 import { ExplorerValueProvider } from './ExplorerValue';
 import { Button } from '@/components/ui';
 import { fetchExplorerRowByKey, fetchExplorerRowLinks, type ExplorerRowLinkPage } from '../../services/api';
 import { ExplorerRecordLink } from './ExplorerRecordLink';
+import { layoutPath, readLayouts, type ResultLayout } from '../../services/explorerLayouts';
 import './explorer-row-links.css';
 
 type Props = { schema: string; table: string; primaryKey: Record<string,unknown>; initialPage?: ExplorerRowLinkPage };
@@ -23,12 +24,14 @@ export function useExplorerLinkAvailability(schema: string, table: string, ident
         async function load() {
             const first = await fetchExplorerRowLinks(schema, table, JSON.parse(key), null, 0, controller.signal);
             let page = first.identities.length ? first : undefined;
+            let unavailable = !!first.reason;
             for (const relation of first.relations) {
                 if (page || relation.id === first.selected) continue;
                 const next = await fetchExplorerRowLinks(schema, table, JSON.parse(key), relation.id, 0, controller.signal);
                 if (next.identities.length) page = next;
+                unavailable ||= !!next.reason;
             }
-            if (!controller.signal.aborted) setRead({scope, page});
+            if (!controller.signal.aborted) setRead({scope, page, error: !page && unavailable ? true : undefined});
         }
         load().catch(() => { if (!controller.signal.aborted) setRead({scope, error: true}); });
         return () => controller.abort();
@@ -38,19 +41,22 @@ export function useExplorerLinkAvailability(schema: string, table: string, ident
 
 function LinkedProperties({ schema, table, identity }: {schema: string; table: string; identity: string}) {
     const [row, setRow] = useState<Awaited<ReturnType<typeof fetchExplorerRowByKey>>>();
+    const [layout, setLayout] = useState<ResultLayout | null>();
     const [failed, setFailed] = useState(false);
     useEffect(() => {
         const read = new AbortController();
-        fetchExplorerRowByKey(schema, table, JSON.parse(identity), read.signal)
-            .then(result => { if (!read.signal.aborted) setRow(result); })
+        Promise.all([fetchExplorerRowByKey(schema, table, JSON.parse(identity), read.signal), readLayouts(layoutPath(schema, table), read.signal)])
+            .then(([result, layouts]) => { if (!read.signal.aborted) { setRow(result); setLayout(layouts.personal.layout ?? layouts.default.layout); } })
             .catch(() => { if (!read.signal.aborted) setFailed(true); });
         return () => read.abort();
     }, [schema, table, identity]);
     if (failed) return <p role="alert">This record could not be read. Its access or identity may have changed.</p>;
     if (!row) return <p role="status">Loading record properties…</p>;
+    const previewRow = { record: row.row, identity: row.identity, key: identity, title: '', columnTypes: row.columnTypes };
+    const presentations = Object.fromEntries((layout?.columns ?? []).map(column => [column.field, column.presentation ?? 'value']));
     return <ExplorerValueProvider schema={schema} table={table}><dl className="explorer-linked-properties" aria-label="Related record properties">
-        {Object.entries(row.row).map(([name, value]) => <div key={name}>
-            <dt><PropertyLabel type={row.columnTypes[name] || 'string'}>{name}</PropertyLabel></dt><dd><ExplorerPropertyValue value={value} identity={row.identity} field={name} /></dd>
+        {explorerFields(previewRow, Object.keys(row.row), undefined, presentations).map(field => <div key={field.key}>
+            <dt><PropertyLabel type={field.type}>{field.label}</PropertyLabel></dt><dd><ExplorerFieldValue row={previewRow} field={field} /></dd>
         </div>)}
     </dl></ExplorerValueProvider>;
 }

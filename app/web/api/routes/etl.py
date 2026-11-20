@@ -1935,7 +1935,7 @@ async def explorer_record_file(layer: str, table: str, payload: ExplorerFileQuer
                                current_user: Any = Depends(get_current_user)):
     from app.web.services.explorer_files import download_link
     response.headers["Cache-Control"] = "private, no-store"
-    return await download_link(layer, table, payload.key, payload.field, download=payload.download)
+    return await download_link(layer, table, payload.key, payload.field, download=payload.download, path=payload.path)
 
 
 @read.post("/{layer}/{table}/row-by-key")

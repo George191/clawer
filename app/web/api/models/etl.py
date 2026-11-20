@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, model_validator
 
 
 PREVIEW_ROWS_MAX_LIMIT = 100
@@ -29,6 +29,7 @@ class ExplorerRowKey(BaseModel):
 class ExplorerFileQuery(ExplorerRowKey):
     field: str = Field(min_length=1, max_length=63)
     download: bool = True
+    path: list[StrictStr | StrictInt] = Field(default_factory=list, max_length=12)
 
 
 class ExplorerRowLinksQuery(ExplorerRowKey):
