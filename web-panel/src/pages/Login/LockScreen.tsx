@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Alert, Button, Form, Input, Typography } from '@/components/ui';
 import { LockOutlined } from '@/components/ui/icons';
 import { clearSession, getRefreshToken, unlockSession } from '../../services/session';
+import { apiUrl } from '../../services/endpoints';
 
 export default function LockScreen() {
   const [loading, setLoading] = useState(false);
@@ -11,7 +12,7 @@ export default function LockScreen() {
     if (!refresh) { clearSession(); return; }
     setLoading(true); setError('');
     try {
-      const response = await fetch('/api/v1/login/unlock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refresh_token: refresh, password }) });
+      const response = await fetch(apiUrl('/api/v1/login/unlock'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refresh_token: refresh, password }) });
       const body = await response.json() as { access_token?: string; data?: { access_token?: string }; detail?: string; errors?: string };
       if (getRefreshToken() !== refresh) return;
       if (!response.ok) {

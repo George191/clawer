@@ -57,6 +57,7 @@ import {
   type WorkspaceTemplate,
 } from '@/services/aiApi';
 import { useWebSocket } from '@/hooks/useWebSocket';
+import { apiUrl } from '@/services/endpoints';
 import { inferSearchEngine, searchEngineLabels } from '@/components/SearchEngineIcon';
 import workspacePalette from './palette';
 import { ReleaseArchiveIcon, ReleaseDraftIcon } from './releaseIcons';
@@ -925,7 +926,7 @@ const mapWorkspaceTemplate = (item: WorkspaceTemplate): TemplateAsset => ({
 });
 
 const fetchArtifactText = async (url: string, label: string) => {
-  const response = await fetch(url);
+  const response = await fetch(apiUrl(url));
   if (!response.ok) {
     throw new Error(`${label} request failed with status ${response.status}`);
   }

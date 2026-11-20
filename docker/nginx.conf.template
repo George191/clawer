@@ -1,0 +1,102 @@
+events {}
+
+http {
+    map $http_upgrade $connection_upgrade {
+        default upgrade;
+        '' close;
+    }
+
+    upstream spider_web {
+        server web:8000;
+    }
+
+    client_max_body_size 100m;
+    proxy_http_version 1.1;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+
+    ssl_certificate /etc/nginx/certs/fullchain.pem;
+    ssl_certificate_key /etc/nginx/certs/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    server {
+        listen 80 default_server;
+        server_name _;
+
+        location = /nginx-health {
+            access_log off;
+            return 200 "ok\n";
+        }
+
+        location / {
+            return 444;
+        }
+    }
+
+    server {
+        listen 443 ssl default_server;
+        server_name _;
+        ssl_reject_handshake on;
+        return 444;
+    }
+
+    server {
+        listen 80;
+        server_name ${FRONTEND_DOMAIN} ${BACKEND_DOMAIN};
+
+        location = /nginx-health {
+            access_log off;
+            return 200 "ok\n";
+        }
+
+        location / {
+            return 308 https://$host${HTTPS_REDIRECT_PORT}$request_uri;
+        }
+    }
+
+    server {
+        listen 443 ssl;
+        server_name ${FRONTEND_DOMAIN};
+
+        location = /runtime-config.js {
+            alias /etc/nginx/runtime-config.js;
+            default_type application/javascript;
+            add_header Cache-Control "no-store";
+        }
+
+        location ~ ^/(?:api|ws)(?:/|$) {
+            return 404;
+        }
+
+        location / {
+            proxy_pass http://spider_web;
+            # React history routes resolve to the SPA entry point.
+            proxy_intercept_errors on;
+            error_page 404 = /__spa_fallback;
+        }
+
+        location = /__spa_fallback {
+            internal;
+            proxy_pass http://spider_web/;
+        }
+    }
+
+    server {
+        listen 443 ssl;
+        server_name ${BACKEND_DOMAIN};
+
+        location ~ ^/(?:api|ws|docs|redoc)(?:/|$) {
+            proxy_pass http://spider_web;
+        }
+
+        location / {
+            return 404;
+        }
+    }
+}

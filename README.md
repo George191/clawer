@@ -191,14 +191,57 @@ docker compose run --rm --no-deps web python -m app.web.initial_data
 docker compose up -d
 ```
 
-服务器部署会同时构建前端和后端，并通过 Nginx 的 `${SPIDER_HTTP_PORT:-80}`
-提供入口。Celery Beat 独立保持单实例，Crawler Worker 可以横向扩容：
+服务器部署会同时构建前端和后端。Nginx 使用两个 HTTPS 域名，HTTP 请求自动跳转
+到 HTTPS。在 `.env` 中配置部署入口，域名只包含主机名，不包含协议、路径或端口：
+
+```dotenv
+FRONTEND_DOMAIN=ontology.asiral-helio.internal
+BACKEND_DOMAIN=ontology.asiral-helio.api
+SPIDER_HTTP_PORT=80
+SPIDER_HTTPS_PORT=443
+```
+
+前端 API 地址由 Nginx 启动时提供的 `/runtime-config.js` 注入；后端
+`FRONTEND_HOST` 和 CORS 来源由 Compose 从上述配置生成。域名和端口不写入镜像，
+修改入口配置后重新创建 `web`、`tls-init`、`nginx` 即可，无需重建前端：
+
+```bash
+docker compose up -d --force-recreate web tls-init nginx
+```
+
+内网 DNS 需将这两个域名解析到当前 Docker 主机，并让访问设备使用该 DNS。
+Compose 不会修改路由器或组织 DNS；迁移到另一台主机时应更新对应 DNS 记录。
+容器之间仍通过 Compose 服务名通信。
+
+`tls-init` 首次启动自动生成局域网 CA，并签发同时包含两个域名的证书。
+后续部署复用 CA 和有效证书，域名改变或证书距到期不足 30 天时自动重新签发。
+CA 私钥仅由初始化容器挂载；Nginx 只读挂载站点证书和公有 CA 证书。
+访问设备需信任该 CA，根证书可以这样导出：
+
+```bash
+mkdir -p certificate
+docker compose cp tls-init:/certs/ca.crt certificate/lan-ca.crt
+```
+
+将 `certificate/lan-ca.crt` 导入访问设备的受信任根证书库，不要分发 CA 私钥。
+迁移部署时保留 `ontology-ca`、`ontology-tls` 对应的 Compose 数据卷；新建 CA
+会要求设备重新信任。CA 损坏或密钥不匹配会明确报错，不会自动更换信任根。
+证书续期检查在初始化容器运行时进行，长期运行的部署应在到期前执行上述重新创建命令。
+
+代码更新仍按 `git add` → `git commit` → `git push` → 服务器检查工作树并
+`git pull` → 重建受影响镜像 → 重新创建对应容器的流程执行。首次完整部署：
 
 ```bash
 docker compose up -d --build
 docker compose ps
-curl http://localhost:${SPIDER_HTTP_PORT:-80}/api/health
+docker compose exec nginx nginx -t
 ```
+
+通过 `https://<BACKEND_DOMAIN>:<SPIDER_HTTPS_PORT>/api/health` 检查后端健康，
+通过 `https://<FRONTEND_DOMAIN>:<SPIDER_HTTPS_PORT>` 访问前端；443 端口可省略。
+前端域名不代理 API 或 WebSocket，相关请求使用后端域名。
+Nginx 拒绝两个配置域名之外的业务请求；HTTP 健康检查 `/nginx-health` 保留给容器探针。
+Celery Beat 独立保持单实例，Crawler Worker 可以横向扩容。
 
 Worker 总任务并发数为
 `SPIDER_CELERY_CONCURRENCY * SPIDER_CELERY_WORKER_REPLICAS`。例如 30 并发：
@@ -210,7 +253,7 @@ SPIDER_CELERY_WORKER_REPLICAS=6
 
 单实例部署可在 Compose override 中为 `crawler` 设置 `container_name: clawer-crawler`，去掉自动生成的实例编号；多副本部署不设置固定容器名。
 
-Compose 仅开放 Nginx 入口；生产环境仍应配置 HTTPS。启动前必须确保
+Compose 通过 Nginx 提供局域网 HTTPS 入口。启动前必须确保
 容器网络能够访问 `.env` 中配置的所有外部服务地址。
 
 Twitter 使用 twscrape 时，构建服务器需先准备已导入登录会话的

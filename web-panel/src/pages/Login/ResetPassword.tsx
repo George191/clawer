@@ -7,6 +7,7 @@ import {
   SafetyCertificateOutlined,
 } from '@/components/ui/icons';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { apiUrl } from '../../services/endpoints';
 import './login.css';
 
 type RecoveryStep = 'email' | 'code' | 'password';
@@ -44,7 +45,7 @@ const ResetPassword: React.FC = () => {
     setLoading(true);
     setError('');
     try {
-      const response = await fetch('/api/v1/password-recovery/code', {
+      const response = await fetch(apiUrl('/api/v1/password-recovery/code'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: targetEmail }),
@@ -68,7 +69,7 @@ const ResetPassword: React.FC = () => {
     setLoading(true);
     setError('');
     try {
-      const response = await fetch('/api/v1/password-recovery/code/verify', {
+      const response = await fetch(apiUrl('/api/v1/password-recovery/code/verify'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ challenge_token: challengeToken, code: values.code }),
@@ -89,7 +90,7 @@ const ResetPassword: React.FC = () => {
     setLoading(true);
     setError('');
     try {
-      const response = await fetch(legacyToken ? '/api/v1/reset-password/' : '/api/v1/reset-password/code', {
+      const response = await fetch(apiUrl(legacyToken ? '/api/v1/reset-password/' : '/api/v1/reset-password/code'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(legacyToken

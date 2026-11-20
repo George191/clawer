@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Button, Modal } from '@/components/ui';
 import { DownloadOutlined } from '@/components/ui/icons';
 import client from '../../services/api';
+import { apiUrl } from '../../services/endpoints';
 import { fetchPublishedOntologyType, listOntologyRecords, ontologyError } from '../../services/ontology';
 import { generateOntologySdk, ontologySdkFilename, type OntologySdkFunction } from '../../services/ontology_sdk';
 import { getSessionState } from '../../services/session';
@@ -33,7 +34,7 @@ export default function OntologySdkDownload({ definitionId }: { definitionId: st
         listOntologyRecords(definitionId, 1, 0),
         definition.definition.source.mode === 'none'
           ? client.get<FunctionsPage>('/object-types/' + encodeURIComponent(definitionId) + '/functions', {
-              baseURL: '/api/ontology/v1', signal: controller.signal,
+              baseURL: apiUrl('/api/ontology/v1'), signal: controller.signal,
             }).then(result => result.data)
           : Promise.resolve({ revision: definition.revision, items: [] }),
       ]);

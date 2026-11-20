@@ -183,6 +183,8 @@ services:
     environment:
       SPIDER_KAFKA_SSL_CAFILE: ${SPIDER_KAFKA_SSL_CAFILE:-/etc/kafka/kafka.crt}
       SPIDER_CDC_CONNECT_URL: ${SPIDER_CDC_CONNECT_URL:-http://mongo-cdc-connect:8083}
+      FRONTEND_HOST: https://${FRONTEND_DOMAIN:?FRONTEND_DOMAIN must be set in .env}:${SPIDER_HTTPS_PORT:-443}
+      BACKEND_CORS_ORIGINS: https://${FRONTEND_DOMAIN:?FRONTEND_DOMAIN must be set in .env}:${SPIDER_HTTPS_PORT:-443}
     extra_hosts:
       - "mongo.spider.internal:192.168.1.32"
     volumes:
@@ -190,7 +192,7 @@ services:
       - ./models:/app/models:ro
       - ./docker/kafka.crt:/etc/kafka/kafka.crt:ro
     working_dir: /app
-    command: uvicorn app.web.main:app --host 0.0.0.0 --port 8000
+    command: uvicorn app.web.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips=*
     healthcheck:
       test: ["CMD", "python", "-c", "import httpx; r=httpx.get('http://localhost:8000/api/health'); r.raise_for_status(); assert r.json()['data']['status'] == 'healthy'"]
       interval: 20s
@@ -200,6 +202,18 @@ services:
     networks:
       - asiral-helio
 
+  tls-init:
+    build:
+      context: .
+      dockerfile: docker/tls.Dockerfile
+    restart: "no"
+    environment:
+      FRONTEND_DOMAIN: ${FRONTEND_DOMAIN:?FRONTEND_DOMAIN must be set in .env}
+      BACKEND_DOMAIN: ${BACKEND_DOMAIN:?BACKEND_DOMAIN must be set in .env}
+    volumes:
+      - ontology-ca:/ca
+      - ontology-tls:/certs
+
   nginx:
     image: nginx:1.27-alpine
     container_name: nginx
@@ -207,10 +221,21 @@ services:
     depends_on:
       web:
         condition: service_healthy
+      tls-init:
+        condition: service_completed_successfully
+    environment:
+      FRONTEND_DOMAIN: ${FRONTEND_DOMAIN:?FRONTEND_DOMAIN must be set in .env}
+      BACKEND_DOMAIN: ${BACKEND_DOMAIN:?BACKEND_DOMAIN must be set in .env}
+      SPIDER_HTTPS_PORT: ${SPIDER_HTTPS_PORT:-443}
+      NGINX_ENVSUBST_OUTPUT_DIR: /etc/nginx
+      NGINX_ENVSUBST_FILTER: ^(FRONTEND_DOMAIN|BACKEND_DOMAIN|HTTPS_REDIRECT_PORT)$
     ports:
       - "${SPIDER_HTTP_PORT:?SPIDER_HTTP_PORT must be set in .env}:80"
+      - "${SPIDER_HTTPS_PORT:-443}:443"
     volumes:
-      - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/nginx.conf.template:/etc/nginx/templates/nginx.conf.template:ro
+      - ./docker/nginx-runtime.envsh:/docker-entrypoint.d/19-runtime-config.envsh:ro
+      - ontology-tls:/etc/nginx/certs:ro
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/nginx-health"]
       interval: 20s
@@ -352,3 +377,5 @@ networks:
 volumes:
   crawler-incremental-data:
   celerybeat-data:
+  ontology-ca:
+  ontology-tls:

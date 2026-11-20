@@ -1,6 +1,7 @@
 import axios from 'axios';
 import type { AxiosError, AxiosRequestConfig, InternalAxiosRequestConfig, AxiosResponse } from 'axios';
 import { clearSession, getAccessToken, getRefreshToken, getSessionState, lockSession, updateAccessToken } from './session';
+import { apiUrl, wsUrl } from './endpoints';
 import type {
   DashboardMetrics,
   LayerNode,
@@ -118,7 +119,7 @@ export function unwrap<T>(body: unknown): T {
 }
 
 // ── Axios 实例 ──
-const BASE_URL = '/api/v1';
+const BASE_URL = apiUrl('/api/v1');
 
 const client = axios.create({
   baseURL: BASE_URL,
@@ -236,9 +237,7 @@ export const fetchDashboardMetrics = (): Promise<DashboardMetrics> =>
 export const fetchDashboardAlerts = (): Promise<Alert[]> =>
   client.get('/dashboard/alerts').then((r) => unwrap<Alert[]>(r.data));
 
-export const DASHBOARD_WS_URL = `${
-  location.protocol === 'https:' ? 'wss:' : 'ws:'
-}//${location.host}/ws`;
+export const DASHBOARD_WS_URL = wsUrl('/ws');
 
 // ============================================================
 //  ETL Layers
@@ -1200,9 +1199,7 @@ export const fetchMonitorStats = (): Promise<MonitorStats> =>
 // ============================================================
 //  Monitoring WebSocket
 // ============================================================
-export const MONITOR_WS_URL = `${
-  location.protocol === 'https:' ? 'wss:' : 'ws:'
-}//${location.host}/api/monitor/ws`;
+export const MONITOR_WS_URL = wsUrl('/api/monitor/ws');
 
 // ============================================================
 //  AI Collect
@@ -1526,4 +1523,4 @@ export const fetchExplorerStorage = (signal: AbortSignal): Promise<ExplorerStora
 export const fetchExplorerHtml = (schema: string, table: string, key: Record<string, unknown>, field: string, signal?: AbortSignal): Promise<{ html: string }> =>
   client.post(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/record-html`, { key, field }, { signal }).then(r => unwrap<{ html: string }>(r.data));
 export const fetchExplorerFile = (schema: string, table: string, key: Record<string, unknown>, field: string, download = true, signal?: AbortSignal, path: (string | number)[] = []): Promise<{ url: string }> =>
-  client.post(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/record-file`, { key, field, download, ...(path.length ? { path } : {}) }, { signal }).then(r => unwrap<{ url: string }>(r.data));
+  client.post(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/record-file`, { key, field, download, ...(path.length ? { path } : {}) }, { signal }).then(r => ({ url: apiUrl(unwrap<{ url: string }>(r.data).url) }));

@@ -1,5 +1,6 @@
 /** AI 采集相关 API */
 import client from './api';
+import { wsUrl } from './endpoints';
 import type { ProductDomain } from './types';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -323,9 +324,7 @@ export interface WorkspaceReleasePayload {
 
 // ── API ────────────────────────────────────────────────────────────────────
 
-export const AI_ANALYZE_WS_URL = `${
-  location.protocol === 'https:' ? 'wss:' : 'ws:'
-}//${location.host}/ws`;
+export const AI_ANALYZE_WS_URL = wsUrl('/ws');
 
 export const preflightUrl = (url: string): Promise<UrlPreflightResponse> =>
   client.post('/ai/preflight', { url }, { timeout: 0 }).then((r) => r.data);

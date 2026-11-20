@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { theme } from '@/components/ui';
 import { fetchExplorerHtml, fetchExplorerFile, fetchExplorerStorage, type ExplorerStorage } from '../../services/api';
+import { apiUrl } from '../../services/endpoints';
 import { JsonTreeValue } from './ExplorerJsonValue';
 import './explorer-value.css';
 import scrollbarStyles from '../../styles/scrollbars.css?raw';
@@ -85,7 +86,7 @@ export function ExplorerValue({ value, text, identity = {}, field, presentation 
   if (media && !local && typeof source === 'string') {
     try {
       if (!/^(https?:\/\/|\/(?!\/))/.test(source)) throw new Error();
-      const url = new URL(source, location.origin);
+      const url = new URL(apiUrl(source));
       if (url.username || url.password || url.protocol !== 'https:' && url.origin !== location.origin) throw new Error();
       external = { href: url.href, name: decodeURIComponent(url.pathname.split('/').pop() || 'Media resource') };
     } catch { /* Unrecognized sources are reported below. */ }

@@ -4,6 +4,7 @@ import { LockOutlined, MailOutlined, SafetyCertificateOutlined } from '@/compone
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import './login.css';
 import { saveSession } from '../../services/session';
+import { apiUrl } from '../../services/endpoints';
 
 const Login: React.FC = () => {
   const navigate = useNavigate();
@@ -16,7 +17,7 @@ const Login: React.FC = () => {
     setLoading(true);
     setError('');
     try {
-      const response = await fetch('/api/v1/login/token', {
+      const response = await fetch(apiUrl('/api/v1/login/token'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ username: values.account, password: values.password }),

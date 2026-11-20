@@ -1,0 +1,27 @@
+#!/bin/sh
+
+for deployment_domain in "${FRONTEND_DOMAIN:?FRONTEND_DOMAIN is required}" "${BACKEND_DOMAIN:?BACKEND_DOMAIN is required}"; do
+    case "$deployment_domain" in
+        *[!A-Za-z0-9.-]*|.*|*.|*..*|'')
+            echo "Invalid deployment domain: $deployment_domain" >&2
+            exit 1
+            ;;
+    esac
+done
+
+case "${SPIDER_HTTPS_PORT:?SPIDER_HTTPS_PORT is required}" in
+    *[!0-9]*|'') echo "SPIDER_HTTPS_PORT must be a port number" >&2; exit 1 ;;
+esac
+if [ "$SPIDER_HTTPS_PORT" -lt 1 ] || [ "$SPIDER_HTTPS_PORT" -gt 65535 ]; then
+    echo "SPIDER_HTTPS_PORT must be between 1 and 65535" >&2
+    exit 1
+fi
+
+HTTPS_REDIRECT_PORT=""
+if [ "$SPIDER_HTTPS_PORT" -ne 443 ]; then
+    HTTPS_REDIRECT_PORT=":$SPIDER_HTTPS_PORT"
+fi
+export HTTPS_REDIRECT_PORT
+
+printf 'window.__APP_CONFIG__ = {"apiOrigin":"https://%s%s"};\n' \
+    "$BACKEND_DOMAIN" "$HTTPS_REDIRECT_PORT" > /etc/nginx/runtime-config.js
