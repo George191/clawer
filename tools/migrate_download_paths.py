@@ -80,9 +80,8 @@ def inventory(path):
     client = MongoClient(settings.db_url, serverSelectionTimeoutMS=15000)
     mongo = client[settings.db_name]
     snapshot = db.execute('SELECT last_key FROM progress WHERE prefix="__snapshot__"').fetchone()
-    cutoff = loads(snapshot[0]) if snapshot else datetime.now(timezone.utc)
     if not snapshot:
-        db.execute('INSERT INTO progress VALUES(?,?,1)', ('__snapshot__',dumps(cutoff)));db.commit()
+        db.execute('INSERT INTO progress VALUES(?,?,1)', ('__snapshot__',dumps(datetime.now(timezone.utc))));db.commit()
     for route in registered:
         collection = mongo[route['collection_name']]
         keys = [list(info['key']) for info in collection.index_information().values()]
@@ -98,7 +97,7 @@ def inventory(path):
             if checkpoint and checkpoint[1]:continue
             last = loads(checkpoint[0]) if checkpoint and checkpoint[0] else None
             while True:
-                query = {'_meta.download_status':status,'_meta.updated_at':{'$lte':cutoff}}
+                query = {'_meta.download_status':status}
                 if last:
                     query['$or'] = [{'_meta.updated_at':{'$gt':last[0]}},{'_meta.updated_at':last[0],'_id':{'$gt':last[1]}}]
                 docs = list(collection.find(query, {'assets':1,'_meta.record_id':1,'_meta.updated_at':1}).sort([('_meta.updated_at',1),('_id',1)]).hint(compound).limit(BATCH).max_time_ms(120000))
