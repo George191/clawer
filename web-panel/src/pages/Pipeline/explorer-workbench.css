@@ -20,9 +20,7 @@
 .flow-exploration-empty :is(p,h2) { margin: 0; }
 .flow-exploration-empty p { color: var(--ontology-muted); }
 .flow-exploration-empty a { color: var(--ontology-link); }
-.flow-exploration-loading-header { display: flex; flex: none; align-items: center; gap: 8px; min-height: 34px; padding: 4px 12px; border-bottom: 1px solid var(--ontology-control-border); background: var(--ontology-toolbar); }
-.flow-exploration-loading-header span { color: var(--ontology-muted); }
-.flow-exploration-loading-header h2 { margin: 0; color: var(--ontology-text); font-size: inherit; overflow-wrap: anywhere; }
+.explorer-object-workspace .flow-inspector { position: relative; }
 .flow-console--ontology .explorer-object-workspace.has-asset .flow-layer-layout { display: grid; grid-template-columns: minmax(0,1fr); grid-template-rows: minmax(0,1fr); position: relative; }
 .flow-console--ontology .explorer-object-workspace.has-asset .flow-layer-main { padding: 0; gap: 0; background: var(--ontology-panel); }
 .explorer-object-workspace.has-asset .flow-layer-main > :is(.flow-asset-breadcrumb,.flow-table-tabs),

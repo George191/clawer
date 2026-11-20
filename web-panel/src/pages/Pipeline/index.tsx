@@ -272,30 +272,41 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
     const [stream, setStream] = useState<EtlStreamState>();
     const [loading, setLoading] = useState(false);
     const queryController = useRef<AbortController>();
+    const catalogController = useRef<AbortController>();
+    const tablesController = useRef<AbortController>();
+    const policyController = useRef<AbortController>();
+    const [catalogLoading, setCatalogLoading] = useState(false);
+    const [policyLoading, setPolicyLoading] = useState(false);
     const queryStarted = useRef(0);
     const [queryElapsed, setQueryElapsed] = useState<number>();
     const [queryCancelled, setQueryCancelled] = useState(false);
     const [queryStatusVisible, setQueryStatusVisible] = useState(false);
-    useEffect(() => {
-        if (loading) { setQueryStatusVisible(true); return; }
-        const timer = window.setTimeout(() => setQueryStatusVisible(false), 180);
-        return () => window.clearTimeout(timer);
-    }, [loading]);
-    useEffect(() => {
-        if (!loading) return;
-        const timer = window.setInterval(() => setQueryElapsed(performance.now() - queryStarted.current), 100);
-        return () => window.clearInterval(timer);
-    }, [loading]);
     const cancelQuery = () => {
+        const metadataLoading = catalogLoading || tablesLoading;
+        catalogRequest.current++; tableRequest.current++;
+        catalogController.current?.abort(); tablesController.current?.abort();
+        policyController.current?.abort(); setPolicyLoading(false);
+        if (policyLoading) setPolicy({ key: policyKey, mode: 'unavailable' });
         queryController.current?.abort();
         setQueryElapsed(performance.now() - queryStarted.current);
-        setQueryCancelled(true); setLoading(false);
+        setQueryCancelled(true); setLoading(false); setCatalogLoading(false); setTablesLoading(false);
+        if (metadataLoading) setRequestError('Loading cancelled');
     };
     const [previewError, setPreviewError] = useState('');
     const [previewUnavailable, setPreviewUnavailable] = useState(false);
     const [previewRevision, setPreviewRevision] = useState(0);
     const [repairFields, setRepairFields] = useState<string[]>([]);
     const [tablesLoading, setTablesLoading] = useState(false);
+    const explorerLoading = loading || catalogLoading || tablesLoading || policyLoading;
+    useEffect(() => {
+        if (explorerLoading) {
+            queryStarted.current = performance.now(); setQueryElapsed(0); setQueryCancelled(false); setQueryStatusVisible(true);
+            const timer = window.setInterval(() => setQueryElapsed(performance.now() - queryStarted.current), 100);
+            return () => window.clearInterval(timer);
+        }
+        const timer = window.setTimeout(() => setQueryStatusVisible(false), 180);
+        return () => window.clearTimeout(timer);
+    }, [explorerLoading]);
     const [tablesLoadedSchema, setTablesLoadedSchema] = useState<string>();
     const [requestError, setRequestError] = useState('');
     const [streamError, setStreamError] = useState('');
@@ -337,9 +348,12 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
     const endMutation = () => { mutationPending.current = false; if (workspaceActive.current) setMutationLoading(false); };
     const refreshCatalog = async () => {
         const version = ++catalogRequest.current;
+        catalogController.current?.abort();
+        const controller = new AbortController(); catalogController.current = controller;
+        setCatalogLoading(true); setRequestError('');
         const identity = getSessionState().identity;
         try {
-            const [layers, context] = await Promise.all([fetchLayers(), fetchCurrentUserContext()]);
+            const [layers, context] = await Promise.all([fetchLayers(controller.signal), fetchCurrentUserContext(controller.signal)]);
             if (version !== catalogRequest.current || !workspaceActive.current || getSessionState().identity !== identity) return;
             adminPreviewIdentity.current = context.user.is_superuser === true ? identity : '';
             setCanManage(context.user.is_superuser === true);
@@ -347,7 +361,9 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
             setSchemas(visibleLayers);
             setSchemaAliases(Object.fromEntries(visibleLayers.map((item) => [item.key, item.alias || item.label])));
             setCatalogLoaded(true);
-        } catch (error) { if (version === catalogRequest.current && workspaceActive.current) throw error; }
+        } catch (error) {
+            if (version === catalogRequest.current && workspaceActive.current && !controller.signal.aborted) { controller.abort(); throw error; }
+        } finally { if (version === catalogRequest.current && workspaceActive.current) setCatalogLoading(false); }
     };
 
     const [selectedSchema, setSelectedSchema] = useState('');
@@ -404,7 +420,7 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
     const  previousSortConditionCount  =  useRef(sortConditions.length);
     useLayoutEffect(()  =>  {  if  (sortConditions.length  >  previousSortConditionCount.current)  sortConditionsRef.current?.scrollTo({ left: sortConditionsRef.current.scrollWidth, behavior: 'smooth' });  previousSortConditionCount.current = sortConditions.length;  },  [sortConditions.length]);
     useEffect(()  =>  {
-        // Wheel over the tab strip scrolls horizontally; the scrollbar stays hidden.
+        // Wheel over the tab strip scrolls horizontally.
         const  node  =  tableTabsRef.current;
         if  (!node)  return;
         const  onWheel  =  (event:  WheelEvent)  =>  {
@@ -547,15 +563,17 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
     const classicPreviewScope = useRef('');
     classicPreviewScope.current = showPreview ? policyKey : '';
     useEffect(() => {
-        if (!policyKey) { setPolicy(undefined); return; }
+        if (!policyKey) { setPolicy(undefined); setPolicyLoading(false); return; }
         const read = new AbortController();
+        policyController.current = read; setPolicyLoading(true);
         const current = () => {
             const session = getSessionState();
             return !read.signal.aborted && session.authenticated && !session.locked && session.identity === previewIdentity;
         };
         void fetchRowPreviewPolicy(selectedSchema, table.name, read.signal).then(value => {
             if (current()) setPolicy({ key: policyKey, mode: value?.mode === 'classic' || value?.mode === 'indexed_id_required' || value?.mode === 'indexed_projection_required' ? value.mode : 'unavailable' });
-        }).catch(() => { if (current()) setPolicy({ key: policyKey, mode: 'unavailable' }); });
+        }).catch(() => { if (current()) setPolicy({ key: policyKey, mode: 'unavailable' }); })
+            .finally(() => { if (current()) setPolicyLoading(false); });
         return () => read.abort();
     }, [policyKey]);
     useEffect(() => {
@@ -843,7 +861,7 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
 
     useEffect(() => {
         workspaceActive.current = true;
-        return () => { workspaceActive.current = false; catalogRequest.current++; selection.current = ''; };
+        return () => { workspaceActive.current = false; catalogRequest.current++; catalogController.current?.abort(); selection.current = ''; };
     }, []);
     useEffect(() => {
         if (!loadExplorerCatalog || catalogLoaded) return;
@@ -870,11 +888,12 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
     }, [search, schemas, catalogLoaded, navigate, workspacePath, isSchemas]);
     useEffect(() => {
         const version = ++tableRequest.current;
+        const controller = new AbortController(); tablesController.current = controller;
         if (!selectedSchemaAvailable) {
             loadedSchema.current = '';
             setTablesLoading(false); setTablesLoadedSchema(undefined); setServerTables([]);
             setTable({ name: '', rowCount: 0, size: '', updatedAt: '' }); setData(undefined);
-            return () => { tableRequest.current++; };
+            return () => { tableRequest.current++; controller.abort(); };
         }
         setTablesLoading(true); setTablesLoadedSchema(undefined); setRequestError('');
         if (loadedSchema.current !== selectedSchema) {
@@ -882,8 +901,8 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
             setServerTables([]); setTable({ name: '', rowCount: 0, size: '', updatedAt: '' });
             setClosedTables(new Set()); setPartition(undefined); setPageNumber(1); setEditingRowKey(undefined); setEditingDraft(null); setData(undefined); setStream(undefined); setOffsets([]); setInputTopics([]); setScript(''); setOpenApis([]);
         }
-        fetchLayerTables(selectedSchema, 'current').then((items) => { if (version === tableRequest.current) { setServerTables(items); setTablesLoadedSchema(selectedSchema); } }).catch((error) => { if (version === tableRequest.current) setRequestError(errorText(error)); }).finally(() => { if (version === tableRequest.current) setTablesLoading(false); });
-        return () => { tableRequest.current++; };
+        fetchLayerTables(selectedSchema, 'current', controller.signal).then((items) => { if (version === tableRequest.current) { setServerTables(items); setTablesLoadedSchema(selectedSchema); } }).catch((error) => { if (version === tableRequest.current && !controller.signal.aborted) setRequestError(errorText(error)); }).finally(() => { if (version === tableRequest.current) setTablesLoading(false); });
+        return () => { tableRequest.current++; controller.abort(); };
     }, [selectedSchema, refreshVersion, selectedSchemaAvailable]);
     useEffect(() => {
         const params = new URLSearchParams(search);
@@ -933,8 +952,7 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
         if (!selectedTableAvailable || !showPreview) { setLoading(false); return; }
         setLoading(true); setPreviewError(''); setPreviewUnavailable(false);
         const controller = new AbortController();
-        queryController.current = controller; queryStarted.current = performance.now();
-        setQueryElapsed(0); setQueryCancelled(false);
+        queryController.current = controller;
         const offset = (pageNumber - 1) * pageSize;
         const query = { ...appliedQuery, limit: pageSize, offset, partition, forEditing: canManage, withIdentity: true };
         const current = () => {
@@ -1097,10 +1115,6 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
         </section>
     );
 
-    const resolvingExplorerAsset = isSchemas && !!requestedSchema && !!requestedTable && !requestError && (
-        !catalogLoaded || schemas.some(schema => schema.key === requestedSchema) && (!selectedSchemaAvailable || tablesLoadedSchema !== selectedSchema
-            || !selectedTableAvailable && serverTables.some(item => item.name === requestedTable))
-    );
     useEffect(() => {
         if (!isSchemas || !catalogOpen || explorerTab?.active === false) return;
         const outside = (event: PointerEvent) => {
@@ -1128,7 +1142,7 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
         <Link to="/ontology">Browse Storage-backed object types</Link>
         {tabId && tabId !== primaryTab && <Button className="wb-catalog-toggle" icon={<SearchOutlined />} onClick={() => setCatalogOpen(true)}>Browse object types</Button>}
     </section>;
-    return <div className={`flow-layers flow-layers--tagged${isSchemas ? ' flow-schema-workbench explorer-object-workspace' : ''}${isSchemas && (selectedTableAvailable || resolvingExplorerAsset) ? ' has-asset' : ''}${catalogOpen ? ' is-catalog-open' : ''}${workbenchMode === 'explore' && resourceView === 'preview' ? ' is-exploring' : ''}`}>
+    return <div className={`flow-layers flow-layers--tagged${isSchemas ? ' flow-schema-workbench explorer-object-workspace has-asset' : ''}${catalogOpen ? ' is-catalog-open' : ''}${workbenchMode === 'explore' && resourceView === 'preview' ? ' is-exploring' : ''}`}>
         <div  className="flow-layer-layout">
             {isSchemas ? <ExplorerCatalog schemas={schemas} tables={tablesLoadedSchema === selectedSchema ? serverTables : []}
                 selectedSchema={selectedSchema} selectedTable={table.name} catalogLoaded={catalogLoaded} tablesLoading={tablesLoading}
@@ -1143,14 +1157,10 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
                 <div className="flow-schema-sidebar-summary">{schemas.length} schema resources</div>
             </aside>}
             <section  className="flow-layer-main">
-                {requestError && <div role="alert" style={{ padding: 12, color: '#ff7875' }}>{requestError} <Button size="small" onClick={() => { setRefreshVersion((value) => value + 1); refreshCatalog().catch((error) => setRequestError(errorText(error))); }}>Retry</Button></div>}
-                {resolvingExplorerAsset && <header className="flow-exploration-loading-header">
-                    <span>{requestedSchema}</span>
-                    <h2>{requestedTable}</h2>
-                </header>}
-                <nav className="flow-asset-breadcrumb" aria-label="Breadcrumb">{isSchemas ? <span>Explorer</span> : <><button type="button" onClick={() => navigate('/ontology')}>Ontology Foundry</button><RightOutlined /><span>Transformations</span></>}{selectedSchema && <><RightOutlined /><strong>{selectedSchema}</strong></>}{isSchemas && table.name && <><RightOutlined /><strong aria-current="page" title={table.name}>{table.name}</strong></>}</nav>
-                {(!isSchemas || !table.name && !resolvingExplorerAsset) && <div className="flow-layer-overview" style={{ '--schema-color': selectedSchema ? schemaColor(selectedSchema) : undefined } as React.CSSProperties}>
-                    {isSchemas ? <span className="flow-schema-asset-icon" aria-hidden="true"><DatabaseOutlined /></span> : <div className="flow-layer-glyph"><PostgresIcon className="flow-layer-glyph-svg" /></div>}
+                {requestError && (!isSchemas || selectedTableAvailable) && <div role="alert" style={{ padding: 12, color: '#ff7875' }}>{requestError} <Button size="small" onClick={refreshWorkspace}>Retry</Button></div>}
+                {!isSchemas && <nav className="flow-asset-breadcrumb" aria-label="Breadcrumb"><button type="button" onClick={() => navigate('/ontology')}>Ontology Foundry</button><RightOutlined /><span>Transformations</span>{selectedSchema && <><RightOutlined /><strong>{selectedSchema}</strong></>}</nav>}
+                {!isSchemas && <div className="flow-layer-overview" style={{ '--schema-color': selectedSchema ? schemaColor(selectedSchema) : undefined } as React.CSSProperties}>
+                    <div className="flow-layer-glyph"><PostgresIcon className="flow-layer-glyph-svg" /></div>
                     <h3>{schemaAliases[selectedSchema] || selectedSchema || 'No schema selected'}<em>{selectedSchema}{schemaNode?.database ? ` · ${schemaNode.database}` : ''}</em></h3>
                     <div  className="flow-layer-overview-stats">
                         <span><b>{schemaNode?.tables ?? serverTables.length}</b> tables</span>
@@ -1191,11 +1201,11 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
                     {tables.map((item)  =>  {  const  active  =  table.name  ===  item.name;  return  <button  type="button"  role="tab"  aria-selected={active}  className={active  ?  'is-active'  :  ''}  key={item.name}  title={item.name} onKeyDown={(event) => { if (event.key === 'Delete') { event.preventDefault(); closeTable(item.name); } }} onClick={() => selectTable(item)}><span  className="flow-tab-favicon"><TemplateGlyph  kind={inferSiteKind(item.dataType || '', item.name)}  source={item.name}  /></span><span  className="flow-tab-label">{item.name}</span><span  className="flow-tab-close"  title={`Close ${item.name} (Delete)`} onClick={(event) => { event.stopPropagation(); closeTable(item.name); }}>&times;</span></button>;  })}
                 </div>
                 </div>}
-                {!selectedTableAvailable ? <div className="flow-workspace-empty" role="status"><DatabaseOutlined /><h3>{resolvingExplorerAsset || tablesLoading || !catalogLoaded && !requestError ? 'Loading schema resources…' : selectedSchema ? serverTables.length ? 'No table selected' : 'No tables in this schema' : 'No schema selected'}</h3>{!resolvingExplorerAsset && <p>{schemaNode?.status === 'stopped' ? 'This schema is not available in the connected database.' : serverTables.length ? 'Select a table from the catalog.' : 'Select a schema to explore its tables and data.'}</p>}</div> : <div className="flow-inspector">
-                    {isSchemas && <fieldset className="wb-shell" disabled={workbenchLocked}>
-                        <ExplorerWorkbenchHeader key={JSON.stringify([previewIdentity, selectedSchema, table.name])} schema={selectedSchema} table={table.name}
-                            label={mapping?.displayName || table.name} titleProperty={mapping?.titleProperty} primaryKey={mapping?.primaryKey}
-                            glyph={<ExplorerTypeIcon compact dataType={mapping?.dataType ?? table.dataType} table={table.name} />}
+                {!isSchemas && !selectedTableAvailable ? <div className="flow-workspace-empty" role="status"><DatabaseOutlined /><h3>{tablesLoading || !catalogLoaded && !requestError ? 'Loading schema resources…' : selectedSchema ? serverTables.length ? 'No table selected' : 'No tables in this schema' : 'No schema selected'}</h3><p>{schemaNode?.status === 'stopped' ? 'This schema is not available in the connected database.' : serverTables.length ? 'Select a table from the catalog.' : 'Select a schema to explore its tables and data.'}</p></div> : <div className="flow-inspector">
+                    {isSchemas && requestedSchema && requestedTable && <fieldset className="wb-shell" disabled={workbenchLocked || !selectedTableAvailable}>
+                        <ExplorerWorkbenchHeader key={JSON.stringify([previewIdentity, requestedSchema, requestedTable])} schema={requestedSchema} table={requestedTable}
+                            label={selectedTableAvailable ? mapping?.displayName || requestedTable : requestedTable} titleProperty={mapping?.titleProperty} primaryKey={mapping?.primaryKey}
+                            glyph={<ExplorerTypeIcon compact dataType={selectedTableAvailable ? mapping?.dataType ?? table.dataType : undefined} table={requestedTable} />}
                             fields={data?.columns || filterFields} names={Object.fromEntries((mapping?.properties || []).flatMap(p => p.sourceColumn ? [[p.sourceColumn, p.name]] : []))}
                             rows={dataRows.map((row,i) => ({...row,...primaryKey(row,i)}))} selected={workbenchRows} query={{ ...appliedQuery, partition }} resource={resourceView} admin={canManage}
                             layoutControl={tabVisible && showPreview && <LayoutToolbar controls={resultLayout} admin={canManage} types={data?.columnTypes} />}
@@ -1210,6 +1220,9 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
                             filterButton={showPreview && <button aria-expanded={filterOpen} onClick={() => activateTool('filter')}>Filter &amp; sort{filterCount + sortCount ? ` (${filterCount + sortCount})` : ''}</button>}
                         />
                     </fieldset>}
+                    {!selectedTableAvailable ? <div className="flow-inspector-body" aria-busy={explorerLoading}>
+                        {requestError ? <div className="flow-schema-state" role="alert">{requestError} <Button size="small" onClick={refreshWorkspace}>Retry</Button></div> : !explorerLoading && <div className="flow-schema-state" role="status">{requestedSchema && requestedTable ? 'Object type is unavailable.' : 'Choose an object type from the catalog.'}</div>}
+                    </div> : <>
                     <div  className="flow-table-header">
                         <div className="flow-table-header-left">
                             {isSchemas && <span className="flow-schema-asset-icon" aria-hidden="true"><TableOutlined /></span>}
@@ -1353,10 +1366,6 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
                                         </div>
                                     </nav>
                                 </footer>} /> : <ConfigProvider locale={enUS}><Table className="flow-data-table" size="small" loading={loading} pagination={{ current: pageNumber, pageSize, total: data?.total ?? data?.rowCount ?? 0, size: 'small', showTotal: (total: number, range: [number, number]) => `${range[0]}–${range[1]} / ${data?.totalEstimated ? '~' : ''}${total.toLocaleString('en-US')} rows${data?.totalEstimated ? ' (estimated)' : ''} · ${table.size} · ${fieldCount} fields`, showSizeChanger: true, pageSizeOptions: [10, 20, 50], onChange: (page, size) => { if (editingRowKey) { message.warning('Save or cancel the current row edit first'); return; } setPageNumber(size !== pageSize ? 1 : page); setPageSize(size); } }} rowKey={rowKey} scroll={{ x: 'max-content' }} dataSource={dataRows} columns={dataColumns} onRow={(row) => ({ onDoubleClick: () => startRowEdit(rowKey(row)), className: editingRowKey === rowKey(row) ? 'flow-row-editing' : undefined })} /></ConfigProvider>)}
-                        {isSchemas && showPreview && queryStatusVisible && queryElapsed !== undefined && <div className={`flow-explorer-query-status${loading ? '' : ' is-leaving'}`} role="status">
-                            <span>{queryCancelled ? 'Cancelled · ' : loading ? 'Running · ' : ''}Elapsed: {(queryElapsed / 1000).toFixed(1)} s</span>
-                            {loading && <button type="button" onClick={cancelQuery}>Cancel</button>}
-                        </div>}
                     </div>
                     <Modal  className="flow-surface-modal flow-script-modal"  title="Layer  script"  open={tabVisible && scriptOpen} onCancel={closeScript} keyboard={!mutationLoading} maskClosable={!mutationLoading}  footer={null}  width={720}>
                         <div  className="flow-script-editor">
@@ -1385,6 +1394,11 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
                             ]} />
                         </>}
                     </Modal>
+                    </>}
+                    {isSchemas && queryStatusVisible && queryElapsed !== undefined && <div className={`flow-explorer-query-status${explorerLoading ? '' : ' is-leaving'}`} role="status">
+                        <span>{queryCancelled ? 'Cancelled · ' : explorerLoading ? 'Running · ' : ''}Elapsed: {(queryElapsed / 1000).toFixed(1)} s</span>
+                        {explorerLoading && <button type="button" onClick={cancelQuery}>Cancel</button>}
+                    </div>}
                 </div>}
             </section>
         </div>

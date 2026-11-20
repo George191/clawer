@@ -9,7 +9,7 @@
 .physical-property-workbench .flow-foundry-property-workspace.has-inspector { grid-template-columns:minmax(0,1fr) minmax(255px,28%); }
 .physical-property-workbench .flow-foundry-property-tools { flex-wrap: nowrap; }
 .physical-property-workbench .flow-foundry-property-workspace { align-items: stretch; }
-.physical-property-workbench .flow-foundry-property-table-wrap { scrollbar-gutter: auto; }
+
 .physical-property-workbench .flow-foundry-property-list th,
 .physical-property-workbench .flow-foundry-property-list td { padding: 5px 7px; }
 .physical-property-workbench .flow-foundry-property-list tbody > tr td:first-child { min-width: 120px; }

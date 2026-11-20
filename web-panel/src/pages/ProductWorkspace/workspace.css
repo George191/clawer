@@ -802,8 +802,8 @@
 .flow-tab-search-input::placeholder{color:#5a6675}
 .flow-tab-search-section-label{padding:8px 8px 4px;color:#6c7a8c;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em}
 .flow-tab-search-list{max-height:240px;overflow-y:auto}
-.flow-tab-search-list::-webkit-scrollbar{width:4px}
-.flow-tab-search-list::-webkit-scrollbar-thumb{background:rgba(148,163,184,.2);border-radius:2px}
+
+
 .flow-tab-search-item{display:flex;align-items:center;gap:8px;width:100%;height:30px;padding:0 8px;border:0;border-radius:5px;background:transparent;color:#9ba8b8;font-size:10px;cursor:pointer;text-align:left;transition:background .1s ease,color .1s ease}
 .flow-tab-search-item:hover{background:rgba(255,255,255,.05);color:#c8d4e0}
 .flow-tab-search-item.is-active{background:rgba(139,130,248,.12);color:#fff;font-weight:600}
@@ -1158,7 +1158,7 @@
 .flow-table-tab-menu.ui-dropdown-trigger:hover,.flow-table-tab-menu.ui-dropdown-trigger:focus{color:#fff;background:transparent;border:0;box-shadow:none}
 .flow-table-tabs .flow-table-add-tag{width:24px;min-width:24px;max-width:24px;margin:0 0 1px 2px;padding:0}
 .flow-table-tabs{display:flex;align-items:flex-end;gap:0;flex:1;min-width:0;padding:3px 2px 0}
-.flow-table-tabs::-webkit-scrollbar{display:none}
+
 .flow-table-tabs button{display:flex;align-items:center;gap:6px;height:30px;max-width:200px;min-width:44px;margin:0;padding:0 10px 0 8px;border:0;background:transparent;color:#9ba8b8;font-size:10px;font-weight:500;cursor:pointer;transition:background .1s ease,color .1s ease;white-space:nowrap;overflow:visible;flex:none;position:relative;border-radius:8px 8px 0 0}
 .flow-table-tabs button:hover{background:transparent;color:#9aa8b6}
 .flow-table-tabs button.is-active{background:linear-gradient(180deg,#2a2e35,#2c3038);color:#fff;z-index:3}
@@ -1385,8 +1385,8 @@ body.flow-entering .flow-layer-main{opacity:0;transform:translateX(8px)}
 @media(max-width:1180px){.flow-filter-api-section{right:0;width:min(350px,100%)}}
 .flow-filter-field-popup,.flow-filter-value-popup,.flow-filter-operator-dropdown .ui-dropdown-menu{background:#202631!important;border-color:rgba(148,163,184,.24)!important;box-shadow:0 8px 24px rgba(0,0,0,.3)!important;color:#d7dee7!important}.flow-filter-field-options button,.flow-filter-value-options label,.flow-filter-value-label,.flow-filter-operator-dropdown .ui-dropdown-menu-item{font-size:11px!important;line-height:18px!important;color:#d7dee7!important}.flow-filter-field-options button{height:24px!important;padding:2px 10px!important}.flow-filter-field-options button:hover,.flow-filter-field-options button.is-selected,.flow-filter-operator-dropdown .ui-dropdown-menu-item:hover{background:#2b3544!important;color:#fff!important}.flow-filter-field-search{background:#202631!important;border-top-color:rgba(148,163,184,.24)!important}.flow-filter-field-search input,.flow-filter-value-popup>.ui-input{color:#d7dee7!important;font-size:11px!important}.flow-filter-value-options label{height:24px!important}.flow-filter-value-popup>strong{font-size:11px!important;color:#d7dee7}.flow-filter-value-actions{border-top-color:rgba(148,163,184,.24)!important}.flow-filter-value-actions .ui-btn{font-size:11px!important}
 
-/* /flow/layers data panel: hidden-scrollbar tab overflow, chrome-style tab separators, datatype glyphs */
-.flow-layers--tagged .flow-table-tabs{overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
+/* /flow/layers data panel: scrollable tab overflow, chrome-style tab separators, datatype glyphs */
+.flow-layers--tagged .flow-table-tabs{overflow-x:auto;overflow-y:hidden;}
 .flow-layers--tagged .flow-table-tabs button:not(.is-active):not(.flow-table-add-tag)+button:not(.is-active):not(.flow-table-add-tag)::after{content:'';position:absolute;left:0;top:50%;transform:translateY(-50%);width:1px;height:13px;background:rgba(148,163,184,.22);pointer-events:none}
 .flow-layers--tagged .flow-table-tabs .flow-tab-favicon svg{width:12px;height:12px}
 .flow-table-tab-dropdown .flow-tab-search-icon-wrap svg{width:13px;height:13px}
