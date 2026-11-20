@@ -228,7 +228,7 @@
   border-bottom: 1px solid var(--ontology-border);
   font-size: 13px; font-weight: 650;
 }
-.flow-explorer-overview__information h5 > .ui-icon { color: var(--ontology-link); }
+.flow-explorer-overview__information h5 > .ui-icon { color: var(--ontology-muted); }
 .flow-explorer-overview__information :is(dl, p) { margin: 0; padding: 0; }
 .flow-explorer-overview__information dl > div + div { border-top:1px solid var(--ontology-control-border); }
 .flow-explorer-overview__information dt { min-width: 0; color: var(--ontology-muted); overflow-wrap: anywhere; }
