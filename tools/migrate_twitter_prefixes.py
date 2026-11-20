@@ -113,6 +113,37 @@ def worker(path, shard, db_gate):
             if int(record_id, 16) % migration.WORKERS == shard:
                 repair((f"{route['data_type']}/{route['template_name']}", record_id))
 
+    inventory = migration.journal(path)
+    pending = []
+    for route in registered:
+        if route['template_name'] != 'twitter':
+            continue
+        # Download failures can still own valid files; inventory all source assets.
+        for doc in mongo[route['collection_name']].find({'assets': {'$exists': True}},
+                {'assets': 1, '_meta.record_id': 1}).batch_size(migration.BATCH):
+            record_id = doc['_meta']['record_id']
+            if int(record_id, 16) % migration.WORKERS != shard:
+                continue
+            for _, value in migration.strings(doc['assets']):
+                if value.startswith(('http://', 'https://', 's3://', 'minio://')):
+                    continue
+                parts = value.split('/')
+                if len(parts) < 4 or parts[2] != record_id:
+                    raise ValueError('Invalid Twitter resource ownership: ' + value)
+                prefix = '/'.join(parts[:2])
+                canonical = (len(parts) == 4 and migration.HEX.fullmatch(Path(parts[-1]).stem)
+                             and prefix == f"{route['data_type']}/{route['template_name']}")
+                pending.append((value, prefix, record_id, shard, value if canonical else None,
+                                'canonical' if canonical else 'planned'))
+                if len(pending) == migration.BATCH:
+                    inventory.executemany('INSERT OR IGNORE INTO objects(old,prefix,record_id,shard,new,phase) VALUES(?,?,?,?,?,?)', pending)
+                    inventory.commit()
+                    pending.clear()
+    if pending:
+        inventory.executemany('INSERT OR IGNORE INTO objects(old,prefix,record_id,shard,new,phase) VALUES(?,?,?,?,?,?)', pending)
+        inventory.commit()
+    inventory.close()
+
     async def run():
         db = migration.journal(path)
         with db_gate:
