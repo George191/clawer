@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { AppstoreOutlined, ArrowLeftOutlined, BarChartOutlined, CheckOutlined, CloseOutlined, CopyOutlined, DeleteOutlined, DownOutlined, LinkOutlined, SearchOutlined, ShareAltOutlined, TableOutlined } from '@/components/ui/icons';
+import { AppstoreOutlined, ArrowLeftOutlined, BarChartOutlined, CheckOutlined, CloseOutlined, CodeOutlined, CopyOutlined, DeleteOutlined, DownOutlined, ExportOutlined, FileExcelOutlined, LinkOutlined, SearchOutlined, ShareAltOutlined, TableOutlined } from '@/components/ui/icons';
 import { Button, Modal, message } from '@/components/ui';
 import { projectHref } from '../../services/projectDomains';
 import { createSaved, listSaved, openSaved, removeSaved, savedPath, sharing, type Exploration, type SavedDetail, type SavedKind, type SavedMeta, type WorkbenchQuery } from '../../services/explorerSaved';
@@ -97,6 +97,8 @@ export default function ExplorerWorkbenchHeader(p: Props) {
     const [menu, show] = useState(''), [search, setSearch] = useState(''), [choice, choose] = useState('');
     const [chart, setChart] = useState(''), [name, setName] = useState(''), [error, setError] = useState('');
     const [busy, setBusy] = useState(false), [dialog, setDialog] = useState<'save' | 'share' | ''>('');
+    const [exportOpen, setExportOpen] = useState(false);
+    const exportControl = useRef<HTMLDivElement>(null);
     const [deleteTarget, setDeleteTarget] = useState<SavedMeta>();
     const [shareTarget, setShareTarget] = useState<SavedDetail>();
     const [librarySearch, setLibrarySearch] = useState(''), [access, setAccess] = useState<'all' | 'private' | 'shared'>('all');
@@ -106,11 +108,18 @@ export default function ExplorerWorkbenchHeader(p: Props) {
     const root = useRef<HTMLElement>(null), propertySearch = useRef<HTMLLabelElement>(null), popup = useRef<HTMLElement>(null);
     const kind = menu === 'lists' ? 'list' : 'exploration';
     const library = menu === 'lists' || menu === 'explorations';
-    const notify = (content: string) => message.success({ content, className: 'explorer-toast', duration: 5, closable: true });
+    const notify = (content: string, description?: string) => message.success({ content, description, className: 'explorer-toast' });
     const link = (id: string) => new URL(projectHref('/ontology/explorer?' + new URLSearchParams({ schema: p.schema, table: p.table, saved: id }))).href;
     useEffect(() => () => opening.current?.abort(), []);
     useEffect(() => { setChart(saved?.kind === 'exploration' ? saved.content.chart ?? '' : ''); }, [saved?.id]);
-    function openMenu(m: string) { show(v => v === m ? '' : m); setError(''); setPage(0); setLibrarySearch(''); setAccess('all'); }
+    function openMenu(m: string) { setExportOpen(false); show(v => v === m ? '' : m); setError(''); setPage(0); setLibrarySearch(''); setAccess('all'); }
+    useEffect(() => {
+        if (!exportOpen) return;
+        const outside = (event: PointerEvent) => { if (!exportControl.current?.contains(event.target as Node)) setExportOpen(false); };
+        const key = (event: KeyboardEvent) => { if (event.key === 'Escape') { setExportOpen(false); exportControl.current?.querySelector<HTMLButtonElement>('.wb-export-toggle')?.focus(); } };
+        document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', key);
+        return () => { document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', key); };
+    }, [exportOpen]);
     useEffect(() => {
         if (!library) return;
         const c = new AbortController();
@@ -150,7 +159,7 @@ export default function ExplorerWorkbenchHeader(p: Props) {
             const item = await createSaved(path, saveKind, name.trim(), content);
             setDialog(''); show(''); refresh(n => n + 1);
             p.saveCompleted({ ...item, content: content as SavedDetail['content'], owned: true });
-            notify(`${saveKind === 'list' ? 'List' : 'Exploration'} saved: ${item.name}`);
+            notify(`${saveKind === 'list' ? 'List' : 'Exploration'} saved`, item.name);
         } catch (e) { setError(fail(e)); } finally { setBusy(false); }
     }
     async function openShare(item?: SavedMeta) {
@@ -178,7 +187,7 @@ export default function ExplorerWorkbenchHeader(p: Props) {
             await removeSaved(path, deleteTarget);
             if (saved?.id === deleteTarget.id) p.closeSavedItem();
             setDeleteTarget(undefined); setDialog(''); show(''); refresh(n => n + 1);
-            notify(`${deleteTarget.kind === 'list' ? 'List' : 'Exploration'} deleted: ${deleteTarget.name}`);
+            notify(`${deleteTarget.kind === 'list' ? 'List' : 'Exploration'} deleted`, deleteTarget.name);
         } catch (e) { setError(fail(e)); } finally { setBusy(false); }
     }
     function selectMode(mode: 'results' | 'explore') { p.selectResource('preview'); p.setMode(mode); show(''); }
@@ -200,14 +209,21 @@ export default function ExplorerWorkbenchHeader(p: Props) {
                 {!!p.selected.length && <div className="wb-selection-tools" role="toolbar" aria-label="Selected object tools"><span>{p.selected.length} selected</span><button disabled={p.selected.some(row => !Object.keys(row.identity).length)} onClick={() => beginSave('list')}>Save list</button><button aria-label="Clear selected objects" onClick={p.clearSelection}>Clear</button></div>}
             </div>
             <div className="wb-views"><button aria-pressed={p.resource === 'preview' && p.mode === 'explore'} onClick={() => selectMode('explore')}><BarChartOutlined /> Explore</button><button aria-pressed={p.resource === 'preview' && p.mode === 'results'} onClick={() => selectMode('results')}><AppstoreOutlined /> Results</button></div>
-            <div className="wb-right"><button data-wb-menu="asset" onClick={() => openMenu('asset')}>{p.resource === 'preview' ? 'Open in' : ({ schema: 'Schema', stream: 'Stream', evidence: 'Evidence', api: 'Published APIs' } as const)[p.resource]} <DownOutlined /></button><button data-wb-menu="export" onClick={() => openMenu('export')}>Export <DownOutlined /></button></div>
+            <div className="wb-right"><button data-wb-menu="asset" onClick={() => openMenu('asset')}>{p.resource === 'preview' ? 'Open in' : ({ schema: 'Schema', stream: 'Stream', evidence: 'Evidence', api: 'Published APIs' } as const)[p.resource]} <DownOutlined /></button>
+                <div className={'wb-export' + (exportOpen ? ' is-open' : '')} ref={exportControl}>
+                    <button className="wb-export-toggle" aria-expanded={exportOpen} aria-controls="explorer-export-formats" onClick={() => { show(''); setExportOpen(value => !value); }}><ExportOutlined /> Export</button>
+                    <div className="wb-export-options" id="explorer-export-formats" aria-hidden={!exportOpen}><div className="wb-export-choices">{(['csv', 'json'] as const).map(format => <button type="button" key={format} aria-label={`Export ${format.toUpperCase()}`} title={`${format.toUpperCase()} · ${p.selected.length ? 'selected objects' : 'current result page'}`} tabIndex={exportOpen ? 0 : -1} disabled={!exportOpen || !p.rows.length} onClick={() => {
+                        download(format, p.selected.length ? p.selected.map(r => ({ ...r.record, ...r.identity })) : p.rows, p.fields, p.table);
+                        setExportOpen(false); exportControl.current?.querySelector<HTMLButtonElement>('.wb-export-toggle')?.focus();
+                    }}>{format === 'csv' ? <FileExcelOutlined /> : <CodeOutlined />}<span>{format.toUpperCase()}</span></button>)}</div></div>
+                </div>
+            </div>
         </div>
         {menu && <section className={'wb-popup wb-popup--' + menu + (library ? ' wb-library' : '')} ref={popup} aria-label={library ? `Saved ${menu}` : 'Explorer tools'}>
             {error && <p role="alert" className="wb-library-error">{error}</p>}
             {menu === 'search' && <>{find.map(f => <button key={f} onClick={() => changeField(f)}>{p.names?.[f] || f}</button>)}{!find.length && <p>No matching properties</p>}</>}
             {menu === 'property' && <><strong>{p.names?.[choice] || choice}</strong><button onClick={() => { setChart(choice); setSearch(''); selectMode('explore'); }}>Add chart</button><button onClick={() => { setSearch(''); selectMode('results'); p.addFilter(choice); }}>Add filter</button></>}
             {menu === 'asset' && <>{(['preview', 'schema', 'stream', 'evidence', ...(p.admin ? ['api'] : [])] as ResourceView[]).map(view => <button key={view} onClick={() => { p.selectResource(view); p.setMode('results'); show(''); }}>{{ preview: 'Data preview', schema: 'Properties & column mapping', stream: 'Stream', evidence: 'Evidence', api: 'Published APIs' }[view]}</button>)}</>}
-            {menu === 'export' && <>{(['csv', 'json'] as const).map(format => <button disabled={!p.rows.length} key={format} onClick={() => { download(format, p.selected.length ? p.selected.map(r => ({ ...r.record, ...r.identity })) : p.rows, p.fields, p.table); show(''); }}>{format.toUpperCase()} · {p.selected.length ? 'selected objects' : 'current result page'}</button>)}</>}
             {library && <>
                 <div className="wb-library-heading"><div><h3>{menu === 'lists' ? 'Lists' : 'Explorations'}</h3><p>{menu === 'lists' ? 'Saved object selections' : 'Saved searches and views'}</p></div><button aria-label="Close saved items" onClick={() => show('')}><CloseOutlined /></button></div>
                 <div className="wb-library-controls"><label><SearchOutlined /><input aria-label={`Search ${menu}`} placeholder={`Search ${menu}…`} maxLength={100} value={librarySearch} onChange={e => { setLibrarySearch(e.target.value); setPage(0); }}/></label><select aria-label="Saved item sharing" value={access} onChange={e => { setAccess(e.target.value as typeof access); setPage(0); }}><option value="all">All</option><option value="private">Private</option><option value="shared">Shared</option></select></div>

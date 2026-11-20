@@ -83,7 +83,7 @@ const App: React.FC = () => {
 
   message.config({
     top: 64,
-    duration: 2.2,
+    duration: 5,
     maxCount: 3,
     rtl: false,
   });

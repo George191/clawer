@@ -933,53 +933,6 @@ h4.ui-typography { letter-spacing: -0.01em; }
   border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
 }
 /* ============================================
- *   System Tips
- * ============================================ */
-
-.ui-message {
-  left: auto !important;
-  right: 24px !important;
-  width: auto !important;
-  transform: none !important;
-  text-align: right;
-  pointer-events: none;
-}
-
-.ui-message .ui-message-notice {
-  padding: 0 !important;
-  text-align: right;
-}
-
-.ui-message .ui-message-notice-wrapper {
-  text-align: right;
-}
-
-.ui-message .ui-message-notice-content {
-  min-height: 36px;
-  padding: 8px 14px !important;
-  border-radius: 14px !important;
-  background: rgba(31, 35, 39, 0.96) !important;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.32) !important;
-  color: rgba(245, 247, 247, 0.92) !important;
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 20px;
-  text-align: left;
-  pointer-events: auto;
-}
-
-.ui-message .ui-message-custom-content {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.ui-message .ui-icon {
-  font-size: 14px;
-}
-
-/* ============================================
  *   Responsive
  * ============================================ */
 

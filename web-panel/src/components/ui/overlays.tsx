@@ -1,6 +1,7 @@
 import React, { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { createRoot, type Root } from 'react-dom/client';
+import { AlertOutlined, CheckOutlined, CloseCircleOutlined, CloseOutlined, InfoCircleOutlined } from './icons';
 import './overlays.css';
 
 type AnyProps = { [key: string]: any };
@@ -228,23 +229,46 @@ export function Popconfirm({ children, title, description, onConfirm, onCancel, 
 }
 
 export type MessageType = 'success' | 'error' | 'warning' | 'info' | 'loading';
-export interface MessageConfig extends AnyProps { content?: React.ReactNode; key?: React.Key; type?: MessageType; duration?: number; closable?: boolean; onClose?: () => void; }
-type Notice = MessageConfig & { key: React.Key; finish: () => void; timer?: ReturnType<typeof setTimeout> };
+export interface MessageConfig extends AnyProps { content?: React.ReactNode; description?: React.ReactNode; key?: React.Key; type?: MessageType; duration?: number; closable?: boolean; onClose?: () => void; }
+type Notice = MessageConfig & { key: React.Key; finish: () => void; timer?: ReturnType<typeof setTimeout>; remaining?: number; deadline: number; hovered: boolean; focused: boolean };
 export interface MessageResult extends Promise<void> { (): void; }
 let noticeRoot: Root | null = null; let noticeHost: HTMLDivElement | null = null; let sequence = 0;
-let messageSettings: AnyProps = { top:24,duration:3,maxCount:5 }; const notices = new Map<React.Key,Notice>();
-const symbols: Record<MessageType,string> = {success:'✓',error:'×',warning:'!',info:'i',loading:''};
+let messageSettings: AnyProps = { top:24,duration:5,maxCount:5 }; const notices = new Map<React.Key,Notice>();
+const symbols: Record<MessageType,React.ReactNode> = {success:<CheckOutlined />,error:<CloseCircleOutlined />,warning:<AlertOutlined />,info:<InfoCircleOutlined />,loading:null};
+function scheduleNotice(notice: Notice) {
+  clearTimeout(notice.timer);
+  if (notice.remaining === undefined || notice.hovered || notice.focused) return;
+  notice.deadline = Date.now() + notice.remaining;
+  notice.timer = setTimeout(() => { if (notices.get(notice.key) === notice) removeNotice(notice.key); }, notice.remaining);
+}
+function pauseNotice(notice: Notice, reason: 'hovered' | 'focused', paused: boolean) {
+  if (notices.get(notice.key) !== notice || notice[reason] === paused) return;
+  const wasPaused = notice.hovered || notice.focused;
+  notice[reason] = paused;
+  if (paused && !wasPaused) {
+    clearTimeout(notice.timer);
+    if (notice.remaining !== undefined) notice.remaining = Math.max(0, notice.deadline - Date.now());
+  } else if (!notice.hovered && !notice.focused) scheduleNotice(notice);
+}
 function renderNotices() {
   if (!noticeHost) { noticeHost=document.createElement('div'); noticeHost.dataset.uiMessages=''; (messageSettings.getContainer?.() || document.body).appendChild(noticeHost); noticeRoot=createRoot(noticeHost); }
-  noticeRoot!.render(<div className={cx('ui-message',messageSettings.rtl && 'ui-message-rtl')} style={{top:messageSettings.top}}>{[...notices.values()].map(notice => <div key={notice.key} className={cx('ui-message-notice',notice.className)} style={notice.style}><div className={cx('ui-message-notice-content',`ui-message-${notice.type || 'info'}`)} role={notice.type==='error' || notice.type==='warning'?'alert':'status'} aria-live={notice.type==='error'?'assertive':'polite'} onClick={notice.onClick}><span aria-hidden="true" className={cx('ui-message-icon',notice.type==='loading' && 'ui-overlay-spinner')}>{notice.icon ?? symbols[notice.type || 'info']}</span><span>{notice.content}</span>{notice.closable && <button type="button" className="ui-message-close" aria-label="Dismiss notification" onClick={event=>{event.stopPropagation();removeNotice(notice.key);}}>×</button>}</div></div>)}</div>);
+  noticeRoot!.render(<div className={cx('ui-message',messageSettings.rtl && 'ui-message-rtl')} style={{top:messageSettings.top}}>{[...notices.values()].map(notice => <div key={notice.key} className={cx('ui-message-notice',notice.className)} style={notice.style}>
+    <div className={cx('ui-message-notice-content',`ui-message-${notice.type || 'info'}`)} role={notice.type==='error' || notice.type==='warning'?'alert':'status'} aria-live={notice.type==='error'?'assertive':'polite'} tabIndex={0} onClick={notice.onClick}
+      onMouseEnter={()=>pauseNotice(notice,'hovered',true)} onMouseLeave={()=>pauseNotice(notice,'hovered',false)}
+      onFocus={()=>pauseNotice(notice,'focused',true)} onBlur={event=>{if(!event.currentTarget.contains(event.relatedTarget))pauseNotice(notice,'focused',false);}}>
+      <span aria-hidden="true" className={cx('ui-message-icon',notice.type==='loading' && 'ui-overlay-spinner')}>{notice.icon ?? symbols[notice.type || 'info']}</span>
+      <div className="ui-message-text"><span className={notice.description ? 'ui-message-title' : undefined}>{notice.content}</span>{notice.description && <div className="ui-message-description">{notice.description}</div>}</div>
+      {notice.closable !== false && <button type="button" className="ui-message-close" aria-label="Dismiss notification" onClick={event=>{event.stopPropagation();removeNotice(notice.key);}}><CloseOutlined /></button>}
+    </div></div>)}</div>);
 }
-function removeNotice(key: React.Key) { const notice=notices.get(key); if (!notice) return; clearTimeout(notice.timer); notices.delete(key); notice.finish(); notice.onClose?.(); renderNotices(); }
+function removeNotice(key: React.Key) { const notice=notices.get(key); if (!notice) return; clearTimeout(notice.timer); notices.delete(key); renderNotices(); notice.finish(); notice.onClose?.(); }
 function openMessage(config: MessageConfig): MessageResult {
   const key=config.key ?? `message-${++sequence}`; const old=notices.get(key); clearTimeout(old?.timer);
   let resolve!: () => void; const promise=new Promise<void>(finish=>{resolve=finish;});
   const finish=()=>{old?.finish();resolve();};
-  const notice: Notice={...config,key,finish}; const duration=config.duration ?? (config.type==='loading'?0:messageSettings.duration);
-  notices.set(key,notice); if (duration>0) notice.timer=setTimeout(()=>removeNotice(key),duration*1000);
+  const duration=config.duration ?? (config.type==='loading'?0:messageSettings.duration);
+  const notice: Notice={...config,key,finish,remaining:duration>0?duration*1000:undefined,deadline:0,hovered:old?.hovered??false,focused:old?.focused??false};
+  notices.set(key,notice); scheduleNotice(notice);
   while (notices.size>messageSettings.maxCount) removeNotice(notices.keys().next().value!);
   renderNotices(); const result=(()=>removeNotice(key)) as MessageResult; result.then=promise.then.bind(promise);result.catch=promise.catch.bind(promise);result.finally=promise.finally.bind(promise);Object.defineProperty(result,Symbol.toStringTag,{value:'Promise'}); return result;
 }
@@ -256,7 +280,7 @@ export const message={
   useMessage: () => [message,null] as const,
 };
 export const notification={
-  open:(config:AnyProps)=>openMessage({...config,content:<div><strong>{config.message}</strong>{config.description && <div>{config.description}</div>}</div>,duration:config.duration??4.5}),
+  open:(config:AnyProps)=>openMessage({...config,content:config.message,duration:config.duration??5}),
   success:(config:AnyProps)=>notification.open({...config,type:'success'}),error:(config:AnyProps)=>notification.open({...config,type:'error'}),warning:(config:AnyProps)=>notification.open({...config,type:'warning'}),info:(config:AnyProps)=>notification.open({...config,type:'info'}),
   destroy:message.destroy,config:message.config,useNotification:()=>[notification,null] as const,
 };
