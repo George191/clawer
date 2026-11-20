@@ -290,14 +290,14 @@ class EtlLayers:
         self._pg = get_pg_client()
 
     @asynccontextmanager
-    async def session(self, *, repeatable_read: bool = False):
+    async def session(self, *, repeatable_read: bool = False, query_timeout: bool = True):
         try:
-            with fail_after(12):
+            with fail_after(12 if query_timeout else None):
                 await self._pg.connect(max_retries=1)
                 async with self._pg.session() as session:
                     mode = "ISOLATION LEVEL REPEATABLE READ READ ONLY" if repeatable_read else "READ ONLY"
                     await session.execute(text(f"SET TRANSACTION {mode}"))
-                    await session.execute(text("SET LOCAL statement_timeout = '10s'"))
+                    await session.execute(text("SET LOCAL statement_timeout = '10s'" if query_timeout else "SET LOCAL statement_timeout = 0"))
                     yield session
         except HTTPException:
             raise
@@ -1136,7 +1136,7 @@ class EtlLayers:
             order.extend(f't.{quote_identifier(field)} asc' for field in primary_key if field not in sorted_fields)
         predicate = " WHERE " + " AND ".join(f"({item})" for item in where) if where else ""
         ordering = " ORDER BY " + ", ".join(order) if order else ""
-        async with (self.session(repeatable_read=True) if enrolled else self.session()) as session:
+        async with self.session(repeatable_read=bool(enrolled), query_timeout=not preview_rows) as session:
             if enrolled:
                 # The app-level safeguard checks the actual selected relation
                 # (plus its stable catalog family) in the business transaction.
@@ -1146,7 +1146,7 @@ class EtlLayers:
                     or ((target_schema, target_table) != (schema, table)
                         and await _required_preview_family(session, target_schema, target_table, enrolled))):
                     raise _indexed_preview_required()
-                await session.execute(text("SET LOCAL statement_timeout='10s'"))
+                await session.execute(text("SET LOCAL statement_timeout='10s'" if not preview_rows else "SET LOCAL statement_timeout=0"))
             if not preview_rows:
                 total = (await session.execute(text(f"SELECT count(*) FROM (SELECT 1 FROM {target} t{predicate} LIMIT 10001) flow_count"), params)).scalar_one() if where else 0
                 estimated = not where or total > 10000

@@ -234,3 +234,7 @@
   .flow-explorer-selection .flow-data-table .flow-explorer-selection__title-column { width: 164px; min-width: 164px; max-width: 164px; }
   .flow-explorer-overview__summary { grid-auto-flow: row; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+.flow-explorer-query-status { display: flex; flex: none; align-items: center; gap: 10px; padding: 4px 12px; color: var(--ui-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.flow-explorer-query-status button { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.flow-explorer-query-status button:hover { color: var(--ui-text); }

@@ -424,7 +424,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     updateQuery({ schema: null, table: null, tab: null }, true);
   };
   const openWorkspace = () => {
-    if (selectedId) navigate(`/ontology/explorer?${new URLSearchParams({ schema: selectedSchema, table: selectedTable })}`);
+    if (selectedId) navigate(`/ontology/explorer?${new URLSearchParams({ schema: selectedSchema, table: selectedTable, returnTo: '/ontology?' + params.toString() })}`);
   };
   const startNewObject = () => {
     const destination = source || selectedSchema;
@@ -496,8 +496,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const visibleProperties = data ? inspectorAllProperties ? data.properties : data.properties.slice(0, 6) : [];
   const identity = data || catalog.items.find((object) => object.id === inspectorId);
   const selectedColor = identity ? accentStyle(identity.dataType) : undefined;
-  const matchingPublishedCount = publishedPage?.identity === sessionIdentity && publishedPage?.keyword === catalogSearch.trim()
-    && publishedPage.includeHidden === publishedHidden && publishedPage.includeDeleted === publishedDeleted ? publishedPage.total : null;
+  const matchingPublishedCount = publishedPage?.identity === sessionIdentity ? publishedPage.total : null;
   const displayedTotal = publishedCatalog ? matchingPublishedCount : confirmedTotal;
   const lineageLink = <button type="button" className="flow-ontology__sidebar-link" onClick={() => navigate('/ontology/lineage')}><ApartmentOutlined /><span>Lineage &amp; impact</span><ArrowRightOutlined /></button>;
   const groupTotal = Object.values(facetGroupCounts).reduce((sum, count) => sum + count, 0);

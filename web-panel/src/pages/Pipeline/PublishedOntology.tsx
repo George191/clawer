@@ -79,10 +79,9 @@ export default function PublishedOntology({ selection, view, includeHidden, incl
   const keyword = search.trim();
   const requestedOffset = Number(params.get('publishedOffset'));
   const catalogOffset = Number.isInteger(requestedOffset) && requestedOffset >= 0 && requestedOffset <= maxOffset ? requestedOffset : 0;
-  const [hasLoadedCatalog, setHasLoadedCatalog] = useState(false);
   const sameCatalogQuery = retainedPage?.keyword === keyword && retainedPage.offset === catalogOffset;
   const sameFilters = retainedPage?.includeHidden === includeHidden && retainedPage.includeDeleted === includeDeleted;
-  const catalogPage = (hasLoadedCatalog || sameCatalogQuery) && sameFilters ? retainedPage : undefined;
+  const catalogPage = retainedPage;
   const [metadata, setMetadata] = useState<{ version: number; object?: PublishedOntologyType; error?: string }>();
   const [query, setQuery] = useState<RecordQuery>({ deleted: false, offset: 0 });
   const { deleted, offset } = query;
@@ -104,7 +103,7 @@ export default function PublishedOntology({ selection, view, includeHidden, incl
   const identity = useRef(getSessionState().identity).current;
   const current = () => active.current && identity === getSessionState().identity;
   const reload = () => setVersion(value => value + 1);
-  const reloadCatalog = () => { onCatalogPage(undefined); reload(); };
+  const reloadCatalog = () => { reload(); };
   const changeCatalogOffset = (value: number) => setParams(previous => {
     const next = new URLSearchParams(previous);
     if (value) next.set('publishedOffset', String(value)); else next.delete('publishedOffset');
@@ -120,11 +119,9 @@ export default function PublishedOntology({ selection, view, includeHidden, incl
         .then(data => {
           if (!request.signal.aborted && current()) {
             onCatalogPage({ ...data, offset: catalogOffset, keyword, identity, includeHidden, includeDeleted });
-            setHasLoadedCatalog(true);
           }
         }, failure => {
           if (!request.signal.aborted && current()) {
-            onCatalogPage(undefined);
             setCatalogError(describe(failure, 'Unable to load published object types.'));
           }
         })
@@ -135,9 +132,9 @@ export default function PublishedOntology({ selection, view, includeHidden, incl
 
   const object = metadata?.object;
   const pageRead = recordRead?.query === query && recordRead.version === version ? recordRead : undefined;
-  const records = pageRead?.page;
+  const records = pageRead?.page ?? recordRead?.page;
   const metadataError = metadata?.version === version ? metadata.error : undefined;
-  const loading = selection ? !metadataError && !pageRead : catalogLoading || (!catalogError && (!catalogPage || !sameCatalogQuery));
+  const loading = selection ? !metadataError && !pageRead : catalogLoading || (!catalogError && (!catalogPage || !sameCatalogQuery || !sameFilters));
   const error = selection ? metadataError : catalogError;
   useEffect(() => {
     if (!selection) return;
@@ -204,7 +201,7 @@ export default function PublishedOntology({ selection, view, includeHidden, incl
   const available = records?.actions || [];
   const createAction = available.find(item => item.kind === 'create');
   const selectedRow = chosenRecord && records ? records.items.findIndex(record => chosenRecord.id ? record.id === chosenRecord.id : record === chosenRecord) : -1;
-  const selectedRecord = selectedRow < 0 ? undefined : records?.items[selectedRow];
+  const selectedRecord = loading || selectedRow < 0 ? undefined : records?.items[selectedRow];
   useEffect(() => {
     if (records && chosenRecord && !selectedRecord) setChosenRecord(undefined);
   }, [records, chosenRecord, selectedRecord]);
@@ -304,7 +301,7 @@ export default function PublishedOntology({ selection, view, includeHidden, incl
             </div>}
             <div className={`flow-published-results-body${selectedRecord ? ' has-selection' : ''}`}>
               <div className="flow-published-record-pane">
-                <div className="flow-published-record-scroll" tabIndex={0} role="region" aria-label="Object results table" aria-busy={loading}>
+                <div className="flow-published-record-scroll" tabIndex={0} role="region" aria-label="Object results table" aria-busy={loading} ref={element => { if (element) element.inert = loading; }}>
                   <table style={{ width: `max(100%, ${276 + resultColumns.length * 164}px)` }}>
                     <colgroup><col className="flow-published-select-column" /><col className="flow-published-title-column" />
                       {resultColumns.map(prop => <col key={prop.id} />)}</colgroup>

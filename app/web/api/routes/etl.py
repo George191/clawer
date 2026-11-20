@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 import json
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from anyio import fail_after
+from anyio import CancelScope, fail_after
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Path, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 from pydantic import AwareDatetime
@@ -1891,10 +1892,27 @@ async def filtered_data(layer: str, table: str, payload: DataQuery, current_user
 
 
 @read.post("/{layer}/{table}/preview-rows")
-async def table_preview_rows(layer: str, table: str, payload: PreviewRowsQuery, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+async def table_preview_rows(layer: str, table: str, payload: PreviewRowsQuery, request: Request, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
     if payload.forEditing:
         get_current_active_superuser(current_user)
-    return await get_etl_layers().data(layer, table, payload.model_dump(), preview_rows=True)
+    async def wait_for_disconnect():
+        while (await request.receive())["type"] != "http.disconnect":
+            pass
+
+    query = asyncio.create_task(get_etl_layers().data(layer, table, payload.model_dump(), preview_rows=True))
+    watcher = asyncio.create_task(wait_for_disconnect())
+    try:
+        done, _ = await asyncio.wait((query, watcher), return_when=asyncio.FIRST_COMPLETED)
+        if query in done:
+            return query.result()
+        watcher.result()
+        raise HTTPException(499, "Explorer query was cancelled")
+    finally:
+        for task in (query, watcher):
+            if not task.done():
+                task.cancel()
+        with CancelScope(shield=True):
+            await asyncio.shield(asyncio.gather(query, watcher, return_exceptions=True))
 
 
 @read.post("/{layer}/{table}/row-by-key")

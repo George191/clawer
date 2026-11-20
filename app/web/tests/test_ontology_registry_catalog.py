@@ -113,6 +113,8 @@ async def test_published_catalog_pages_visible_matches_and_projects_fields(db):
             "CREATE TEMP TABLE ontology_registry_definitions (id uuid PRIMARY KEY, project_id uuid,"
             " revision integer, published_at timestamptz, published_definition jsonb, hidden boolean DEFAULT false,"
             " deleted boolean DEFAULT false, updated_at timestamptz)",
+            "CREATE TEMP TABLE ontology_runtime_records (id uuid PRIMARY KEY, definition_id uuid,"
+            " deleted boolean DEFAULT false, revision integer DEFAULT 1)",
         ):
             await session.execute(text(ddl))
         ids = {"u": actor.id, "p": project, "t": tenant}
@@ -172,7 +174,14 @@ async def test_published_catalog_pages_visible_matches_and_projects_fields(db):
         with pytest.raises(HTTPException) as conflict:
             await change("delete", 1)
         assert conflict.value.status_code == 409
+        await session.execute(text("INSERT INTO ontology_runtime_records VALUES "
+            "(:active,:definition,false,1),(:deleted,:definition,true,2),(:other,:other_definition,false,1)"),
+            {"active": uuid4(), "deleted": uuid4(), "other": uuid4(),
+             "definition": row_ids["one"], "other_definition": row_ids["two"]})
         assert (await change("delete", 2))["deleted"]
+        records = text("SELECT deleted, revision FROM ontology_runtime_records WHERE definition_id=:id ORDER BY revision")
+        assert (await session.execute(records, {"id": row_ids["one"]})).all() == [(True, 2), (True, 2)]
+        assert (await session.execute(records, {"id": row_ids["two"]})).all() == [(False, 1)]
         with pytest.raises(HTTPException) as removed:
             await published_type(row_ids["one"], session, actor)
         assert removed.value.status_code == 404
@@ -185,6 +194,8 @@ async def test_published_catalog_pages_visible_matches_and_projects_fields(db):
         await session.execute(text("UPDATE team_user_join SET role='OWNER'"))
         restored = await change("restore", 3)
         assert restored["hidden"] and not restored["deleted"]
+        assert (await session.execute(records, {"id": row_ids["one"]})).all() == [(False, 3), (False, 3)]
+        assert (await session.execute(records, {"id": row_ids["two"]})).all() == [(False, 1)]
         assert not (await change("unhide", 4))["hidden"]
         assert (await published_types(session, actor, 2, 999, "miXed%_")) == {"items": [], "hasMore": False, "total": 3}
         # Administrative access still requires an enabled project membership.
