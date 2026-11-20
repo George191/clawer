@@ -30,7 +30,7 @@ services:
       - ./docker/kafka.crt:/etc/kafka/kafka.crt:ro
     entrypoint: ["bash", "/mongo-cdc-connect.sh"]
     networks:
-      asiral-helio:
+      astral-helio:
         aliases:
           - mongo-cdc-connect
 
@@ -47,7 +47,7 @@ services:
       - ./docker/kafka.crt:/etc/kafka/kafka.crt:ro
     command: ["python", "-m", "app.syncer.postgres_worker", "--batch", "50"]
     networks:
-      - asiral-helio
+      - astral-helio
 
   # ════════════════════════════════════════════════════════════
   # External infrastructure is reached through the IPs or hostnames in .env.
@@ -86,7 +86,7 @@ services:
       start_period: 30s
       retries: 3
     # networks:
-    #   - asiral-helio
+    #   - astral-helio
 
   celery-beat:
     build:
@@ -101,7 +101,7 @@ services:
     working_dir: /app
     command: celery -A app.scheduler.celery_app beat --loglevel=info --schedule=/data/celerybeat-schedule
     networks:
-      - asiral-helio
+      - astral-helio
 
   # ── 2. Downloader — 下载服务 ──────────────────────────────
   scheduler-worker: &scheduler-worker
@@ -121,7 +121,7 @@ services:
       start_period: 30s
       retries: 3
     networks:
-      - asiral-helio
+      - astral-helio
 
   search-worker:
     <<: *scheduler-worker
@@ -149,7 +149,7 @@ services:
       - ./output/downloader-tmp:/tmp
     command: ["python", "-m", "app.downloader.main", "--poll", "60", "--batch", "128"]
     networks:
-      - asiral-helio
+      - astral-helio
 
   # ── 3. Syncer — Kafka 同步服务 ────────────────────────────
   syncer:
@@ -165,7 +165,7 @@ services:
       - ./docker/kafka.crt:/etc/kafka/kafka.crt:ro
     command: ["python", "-m", "app.syncer.main", "--batch", "50", "--concurrency", "10", "--poll", "60", "--startup-delay", "15"]
     networks:
-      - asiral-helio
+      - astral-helio
 
   # ── 4. Web — FastAPI 管理面板 ─────────────────────────────
   web:
@@ -207,7 +207,7 @@ services:
       start_period: 15s
       retries: 3
     networks:
-      - asiral-helio
+      - astral-helio
 
   dns:
     image: coredns/coredns:1.15.0
@@ -225,7 +225,7 @@ services:
     volumes:
       - ./docker/Corefile:/etc/coredns/Corefile:ro
     networks:
-      - asiral-helio
+      - astral-helio
 
   tls-init:
     build:
@@ -268,7 +268,7 @@ services:
       start_period: 5s
       retries: 3
     networks:
-      - asiral-helio
+      - astral-helio
 
   # ════════════════════════════════════════════════════════════
   # ETL Pipeline
@@ -290,7 +290,7 @@ services:
       sh -c "python -m app.etl.main --init-schema &&
              python -m app.etl.main --layer rds"
     networks:
-      - asiral-helio
+      - astral-helio
 
   # ── ODS Worker — 操作数据存储层（标准化）──────────────────────
   ods-worker:
@@ -309,7 +309,7 @@ services:
       - ./docker/kafka.crt:/etc/kafka/kafka.crt:ro
     command: python -m app.etl.main --layer ods
     networks:
-      - asiral-helio
+      - astral-helio
 
   # ── TASK Worker — 卫星漏洞抽取 ─────────────────────────────────
   task-worker:
@@ -325,7 +325,7 @@ services:
       - ./docker/kafka.crt:/etc/kafka/kafka.crt:ro
     command: python -m app.etl.main --layer task --table vulnerability
     networks:
-      - asiral-helio
+      - astral-helio
 
   # # ── DWD Worker — 明细数据层 ───────────────────────────────────
   # dwd-worker:
@@ -342,7 +342,7 @@ services:
   #   working_dir: /app
   #   command: python -m app.etl.main --layer dwd
   #   networks:
-  #     - asiral-helio
+  #     - astral-helio
 
   # # ── DWS Worker — 汇总数据层 ───────────────────────────────────
   # dws-worker:
@@ -359,7 +359,7 @@ services:
   #   working_dir: /app
   #   command: python -m app.etl.main --layer dws
   #   networks:
-  #     - asiral-helio
+  #     - astral-helio
 
   # # ── DIM Worker — 维度数据层 ───────────────────────────────────
   # dim-worker:
@@ -376,7 +376,7 @@ services:
   #   working_dir: /app
   #   command: python -m app.etl.main --layer dim
   #   networks:
-  #     - asiral-helio
+  #     - astral-helio
 
   # # ── ADS Worker — 应用数据存储层（算法分析）────────────────────
   # ads-worker:
@@ -393,10 +393,10 @@ services:
   #   working_dir: /app
   #   command: python -m app.etl.main --layer ads
   #   networks:
-  #     - asiral-helio
+  #     - astral-helio
 
 networks:
-  asiral-helio:
+  astral-helio:
     driver: bridge
 
 volumes:

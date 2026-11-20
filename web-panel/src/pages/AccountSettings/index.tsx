@@ -32,7 +32,7 @@ const AccountSettings: React.FC = () => {
             <div className="acc-actions"><Button type="primary" htmlType="submit">Save changes</Button><Button htmlType="reset">Cancel</Button></div>
           </Form>
         </section>
-        <section className="acc-card acc-danger"><CardTitle title="Deactivate account" /><div className="acc-danger-box"><strong>Are you sure you want to deactivate your account?</strong><span>Once deactivated, access to all Asiral Helio workspaces will be suspended.</span></div><Checkbox checked={deactivate} onChange={event => setDeactivate(event.target.checked)}>I confirm my account deactivation</Checkbox><div><Button danger type="primary" disabled={!deactivate}>Deactivate account</Button></div></section>
+        <section className="acc-card acc-danger"><CardTitle title="Deactivate account" /><div className="acc-danger-box"><strong>Are you sure you want to deactivate your account?</strong><span>Once deactivated, access to all Astral Helio workspaces will be suspended.</span></div><Checkbox checked={deactivate} onChange={event => setDeactivate(event.target.checked)}>I confirm my account deactivation</Checkbox><div><Button danger type="primary" disabled={!deactivate}>Deactivate account</Button></div></section>
       </>}
 
       {tab === 'security' && <>
@@ -63,8 +63,8 @@ const AccountSettings: React.FC = () => {
         ].map(([brand, name, detail, enabled]) => <div className="acc-connection-item" key={String(brand)}><img src={`https://cdn.simpleicons.org/${brand}`} alt={`${name} logo`} /><div><strong>{name}</strong><span>{detail}</span></div><Switch defaultChecked={Boolean(enabled)} aria-label={`${name} connection`} /></div>)}</div></section>
         <section className="acc-card"><CardTitle title="Social Accounts" description="Display content from social accounts on your site" /><div className="acc-connection-list">{[
           ['facebook', 'Facebook', 'Not Connected', false],
-          ['x', 'Twitter', '@AsiralHelio', true],
-          ['instagram', 'Instagram', '@AsiralHelio', true],
+          ['x', 'Twitter', '@AstralHelio', true],
+          ['instagram', 'Instagram', '@AstralHelio', true],
           ['dribbble', 'Dribbble', 'Not Connected', false],
           ['behance', 'Behance', 'Not Connected', false],
         ].map(([brand, name, detail, connected]) => <div className="acc-connection-item" key={String(brand)}><img src={`https://cdn.simpleicons.org/${brand}`} alt={`${name} logo`} /><div><strong>{name}</strong><span className={connected ? 'is-connected' : ''}>{detail}</span></div><Button className="acc-social-action" type={connected ? 'primary' : 'default'} aria-label={`${connected ? 'Disconnect' : 'Connect'} ${name}`}>{connected ? <DeleteOutlined /> : <LinkOutlined />}</Button></div>)}</div></section>

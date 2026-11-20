@@ -9,7 +9,7 @@
 ## UI 生成 Prompt
 
 ```text
-为 Asiral Helio 数据平台设计“自动化中心”桌面端界面。它是跨产品域基础底座，不是 Collect、Data Lake 或 ETL Pipeline 中的第四个业务产品。
+为 Astral Helio 数据平台设计“自动化中心”桌面端界面。它是跨产品域基础底座，不是 Collect、Data Lake 或 ETL Pipeline 中的第四个业务产品。
 
 保持现有紧凑、专业、深浅主题兼容的数据平台视觉。全局顶栏左侧保留当前产品域切换器；右侧在原“模板管理 + 任务调度”位置放置常驻“自动化中心”入口和图标式“组织与权限”入口。删除租户、团队切换器与 PRODUCTION 标签。
 

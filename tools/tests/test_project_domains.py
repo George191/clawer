@@ -11,8 +11,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 PROJECTS = ("crawler", "ontology", "atlas", "graph", "rag", "vault")
 SUFFIXES = {
-    "FRONTEND_DOMAIN_SUFFIX": "asiral-helio.internal",
-    "BACKEND_DOMAIN_SUFFIX": "asiral-helio.api",
+    "FRONTEND_DOMAIN_SUFFIX": "astral-helio.internal",
+    "BACKEND_DOMAIN_SUFFIX": "astral-helio.api",
 }
 
 
@@ -46,16 +46,16 @@ class ProjectDomainsTest(unittest.TestCase):
             # Replace the wildcard leaf with the previous single-project SAN contract.
             csr = path / "previous.csr"
             run(["openssl", "req", "-new", "-key", str(path / "certs/privkey.pem"), "-out", str(csr),
-                 "-subj", "/CN=ontology.asiral-helio.internal", "-addext",
-                 "subjectAltName=DNS:ontology.asiral-helio.internal,DNS:ontology.asiral-helio.api"])
+                 "-subj", "/CN=ontology.astral-helio.internal", "-addext",
+                 "subjectAltName=DNS:ontology.astral-helio.internal,DNS:ontology.astral-helio.api"])
             run(["openssl", "x509", "-req", "-in", str(csr), "-CA", str(ca), "-CAkey", str(path / "ca/ca.key"),
                  "-set_serial", "42", "-days", "365", "-copy_extensions", "copy", "-out", str(certificate)])
             result = run(command, env=env)
             self.assertIn("deployment domains changed", result.stdout)
             self.assertEqual(ca_hash, hashlib.sha256(ca.read_bytes()).hexdigest())
             sans = run(["openssl", "x509", "-in", str(certificate), "-noout", "-ext", "subjectAltName"]).stdout
-            self.assertIn("DNS:*.asiral-helio.internal", sans)
-            self.assertIn("DNS:*.asiral-helio.api", sans)
+            self.assertIn("DNS:*.astral-helio.internal", sans)
+            self.assertIn("DNS:*.astral-helio.api", sans)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_runtime_config_routes_each_project_to_its_backend(self):
@@ -72,12 +72,12 @@ class ProjectDomainsTest(unittest.TestCase):
                         'const window = {location: {hostname: process.argv[1]}}; '
                         'require("vm").runInNewContext(require("fs").readFileSync(0, "utf8"), {window}); '
                         'console.log(JSON.stringify(window.__APP_CONFIG__));',
-                        f"{project}.asiral-helio.internal",
+                        f"{project}.astral-helio.internal",
                     ], input=output.read_text())
                     config = json.loads(result.stdout)
                     port_suffix = "" if port == "443" else f":{port}"
-                    self.assertEqual(config["apiOrigin"], f"https://{project}.asiral-helio.api{port_suffix}")
-                    self.assertEqual(config["frontendDomainSuffix"], "asiral-helio.internal")
+                    self.assertEqual(config["apiOrigin"], f"https://{project}.astral-helio.api{port_suffix}")
+                    self.assertEqual(config["frontendDomainSuffix"], "astral-helio.internal")
 
     def test_suffix_injection_and_invalid_dns_labels_are_rejected(self):
         for suffix in ("valid.internal\ninvalid", "bad-.internal", "example.internal;return 200;"):

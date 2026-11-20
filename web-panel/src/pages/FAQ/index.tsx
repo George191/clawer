@@ -38,7 +38,7 @@ const FAQ: React.FC = () => {
   const { token } = theme.useToken();
   return <main className="faq-page" style={{ '--faq-primary': token.colorPrimary } as React.CSSProperties}>
     <section className="faq-hero">
-      <div className="faq-hero-copy"><Tag color="cyan">HELP CENTER</Tag><Typography.Title>Frequently Asked Questions</Typography.Title><Typography.Paragraph>Find quick answers about Asiral Helio and keep your data workflows moving.</Typography.Paragraph><Input size="large" prefix={<SearchOutlined />} placeholder="Search your question" aria-label="Search frequently asked questions" /></div>
+      <div className="faq-hero-copy"><Tag color="cyan">HELP CENTER</Tag><Typography.Title>Frequently Asked Questions</Typography.Title><Typography.Paragraph>Find quick answers about Astral Helio and keep your data workflows moving.</Typography.Paragraph><Input size="large" prefix={<SearchOutlined />} placeholder="Search your question" aria-label="Search frequently asked questions" /></div>
       <div className="faq-hero-art"><QuestionCircleOutlined /><ApiOutlined /></div>
     </section>
     <div className="faq-heading"><Typography.Title level={3}>Knowledge base</Typography.Title><Typography.Text type="secondary">Browse common questions by topic</Typography.Text></div>

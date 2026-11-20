@@ -116,7 +116,7 @@ const ResetPassword: React.FC = () => {
   return (
         <div className="sp-login-form-wrap">
           <div className="sp-login-form-brand">
-            <span className="sp-login-form-logo"><img src="/astral-helio-mark.svg" alt="" /><b>ASIRAL HELIO</b></span>
+            <span className="sp-login-form-logo"><img src="/astral-helio-mark.svg" alt="" /><b>ASTRAL HELIO</b></span>
             <Typography.Text className="sp-login-eyebrow">IDENTITY RECOVERY</Typography.Text>
           </div>
           <div className="sp-recovery-progress" aria-label={`Step ${step === 'email' ? 1 : step === 'code' ? 2 : 3} of 3`}>

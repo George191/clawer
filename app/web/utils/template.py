@@ -73,7 +73,7 @@ def generate_test_email(email_to: str) -> EmailData:
 
 
 def generate_reset_password_email(email_to: str, email: str, token: str) -> EmailData:
-    subject = "ASIRAL HELIO - Password recovery"
+    subject = "ASTRAL HELIO - Password recovery"
     link = f"{settings.FRONTEND_HOST}/reset-password?token={token}"
     html_content = render_email_template(
         template_name="reset_password.html",
@@ -90,7 +90,7 @@ def generate_reset_password_email(email_to: str, email: str, token: str) -> Emai
 
 
 def generate_password_verification_email(email_to: str, code: str, valid_minutes: int) -> EmailData:
-    subject = "ASIRAL HELIO - Password reset verification code"
+    subject = "ASTRAL HELIO - Password reset verification code"
     html_content = render_email_template(
         template_name="password_verification.html",
         context={

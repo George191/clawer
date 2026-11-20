@@ -76,7 +76,7 @@ const AuthLayout: React.FC<React.PropsWithChildren> = ({ children }) => {
       {!compact && <AuthBackground />}
       <div className="sp-login-graph" aria-hidden="true">
         <div className="sp-login-copy" key={isRecovery ? 'recovery-copy' : 'login-copy'}>
-          <Typography.Text className="sp-login-brand">ASIRAL HELIO</Typography.Text>
+          <Typography.Text className="sp-login-brand">ASTRAL HELIO</Typography.Text>
           <Typography.Title level={1}>{isRecovery ? 'Secure Identity Recovery' : 'Unified Data Intelligence Platform'}</Typography.Title>
           <Typography.Paragraph>{isRecovery ? 'Restore access to your unified data intelligence workspace through an auditable verification flow.' : 'Connect collection, lakehouse, ETL, AI and geospatial data in one observable and governed platform.'}</Typography.Paragraph>
           {!isRecovery && <div className="sp-login-domain-list"><span>Data Collection</span><span>Data Lake</span><span>ETL</span><span>GIS Cockpit</span><span>AI Workspace</span></div>}

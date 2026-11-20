@@ -8,7 +8,7 @@ const source = readFileSync(new URL('../src/services/session.ts', import.meta.ur
 const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
 }).outputText;
-const suffix = 'asiral-helio.internal';
+const suffix = 'astral-helio.internal';
 const cookieName = '__Secure-helio_session';
 const origin = project => `https://${project}.${suffix}`;
 
@@ -78,7 +78,7 @@ test('production sessions use a secure parent-domain cookie shared by sibling pr
   assert.equal(sibling.session.getRefreshToken(), token.refresh);
   assert.equal(sibling.session.getSessionState().authenticated, true);
   assert.equal(first.jar.read('unrelated.internal', 'https:'), '');
-  assert.equal(first.jar.read('ontology.asiral-helio.internal.attacker.test', 'https:'), '');
+  assert.equal(first.jar.read('ontology.astral-helio.internal.attacker.test', 'https:'), '');
   assert.equal(first.jar.read('ontology.' + suffix, 'http:'), '');
 });
 

@@ -63,10 +63,10 @@ const Login: React.FC = () => {
   return (
         <div className="sp-login-form-wrap">
           <div className="sp-login-form-brand">
-            <span className="sp-login-form-logo"><img src="/astral-helio-mark.svg" alt="" /><b>ASIRAL HELIO</b></span>
+            <span className="sp-login-form-logo"><img src="/astral-helio-mark.svg" alt="" /><b>ASTRAL HELIO</b></span>
             <Typography.Text className="sp-login-eyebrow">SECURE PLATFORM ACCESS</Typography.Text>
           </div>
-          <Typography.Title level={2}>Sign in to Asiral Helio</Typography.Title>
+          <Typography.Title level={2}>Sign in to Astral Helio</Typography.Title>
           <Typography.Paragraph type="secondary" className="sp-login-form-subtitle">Access your unified data, compute and geospatial workspace.</Typography.Paragraph>
           {error && <Alert className="sp-login-error" message={<span title={error}>{error}</span>} type="error" showIcon style={{ marginBottom: 18 }} />}
           <Form layout="vertical" onFinish={submit} initialValues={{ account: '', remember: true }}>

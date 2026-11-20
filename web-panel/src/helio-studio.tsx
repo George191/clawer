@@ -18,7 +18,7 @@ function HelioStudio() {
   }, [cycling, paused]);
   return <main className={`helio-studio ${light ? 'is-light' : ''}`}>
     <header className="studio-header">
-      <div className="studio-brand"><img src="/astral-helio-mark.svg" alt="" /><span>ASIRAL HELIO<span className="studio-divider">/</span>CHARACTER STUDIO</span></div>
+      <div className="studio-brand"><img src="/astral-helio-mark.svg" alt="" /><span>ASTRAL HELIO<span className="studio-divider">/</span>CHARACTER STUDIO</span></div>
       <button className="studio-theme" onClick={() => setLight(!light)}>{light ? '深色环境' : '浅色环境'}</button>
     </header>
     <section className="studio-title"><div><span className="studio-eyebrow">数据中台 · 统一助手</span><h1>Helio</h1></div><p>从数据采集、治理到本体仓库与情报驾驶舱，<br />同一位伙伴，连贯表达每一个工作阶段。</p></section>
