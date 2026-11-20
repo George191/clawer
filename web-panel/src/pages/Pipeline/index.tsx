@@ -34,9 +34,9 @@ import SandboxIndexPreview, { INDEX_PREVIEW_SCHEMA, INDEX_PREVIEW_TABLE } from '
 import { appendAndFilters, blankExplorerFilter, cellFilterRows, countFilterTerms, exactCellValue, explorerFilterTerms, hasOr } from './explorerFilters';
 import type { ExplorerFilter } from './explorerFilters';
 import  {  TemplateGlyph,  inferSiteKind  }  from  '../AICollect/WorkspaceDock';
-import { fetchCurrentUserContext, fetchLayers, fetchLayerTables, fetchTableData, fetchHandlerCode, queryEtlTable, queryExplorerPreview, fetchRowPreviewPolicy, fetchEtlTableColumns, fetchTablePartitions, fetchTableStream, fetchLayerScript, setTableOffset, validateHandlerCode, saveHandlerCode, updateEtlRow, deleteEtlRow, fetchEtlApis, createEtlApi, updateEtlApi, deleteEtlApi, fetchVulnerabilityKeywords, uploadVulnerabilityKeywords, activateVulnerabilityKeywordVersion, downloadVulnerabilityKeywordVersion, downloadCurrentVulnerabilityKeywords } from '../../services/api';
+import { fetchCurrentUserContext, fetchLayers, fetchLayerTables, fetchTableData, fetchHandlerCode, queryEtlTable, queryExplorerPreview, fetchRowPreviewPolicy, fetchEtlTableColumns, fetchTableStream, fetchLayerScript, setTableOffset, validateHandlerCode, saveHandlerCode, updateEtlRow, deleteEtlRow, fetchEtlApis, createEtlApi, updateEtlApi, deleteEtlApi, fetchVulnerabilityKeywords, uploadVulnerabilityKeywords, activateVulnerabilityKeywordVersion, downloadVulnerabilityKeywordVersion, downloadCurrentVulnerabilityKeywords } from '../../services/api';
 import type { RowPreviewMode, EtlDataQuery, EtlPublishedApi, VulnerabilityKeywordConfig } from '../../services/api';
-import  type  {  LayerNode,  LayerTable,  QueryResult,  ExplorerPreviewResult,  EtlPartition,  EtlStreamState  }  from  '../../services/types';
+import  type  {  LayerNode,  LayerTable,  QueryResult,  ExplorerPreviewResult,  EtlStreamState  }  from  '../../services/types';
 
 type  FilterCheckboxChange  =  {  target:  {  checked:  boolean  }  };
 type RowSnapshot = { data: QueryResult; row: Record<string, unknown>; version: string };
@@ -240,7 +240,6 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
     const [schemaSearch, setSchemaSearch] = useState('');
     const [schemas, setSchemas] = useState<LayerNode[]>([]);
     const [serverTables, setServerTables] = useState<LayerTable[]>([]);
-    const [partitions, setPartitions] = useState<EtlPartition[]>([]);
     const [data, setData] = useState<QueryResult>();
     const [previewPage, setPreviewPage] = useState<{ offset: number; limit: number; result: ExplorerPreviewResult }>();
     const previewViewport = useRef<HTMLDivElement>(null);
@@ -393,12 +392,11 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
         return  ()  =>  node.removeEventListener('wheel',  onWheel);
     },  []);
     useEffect(()  =>  {  if  (!sortConditionsOverflow)  return;  const  frame  =  window.requestAnimationFrame(()  =>  sortConditionsRef.current?.scrollTo({ left: sortConditionsRef.current.scrollWidth, behavior: 'smooth' }));  return  ()  =>  window.cancelAnimationFrame(frame);  },  [sortConditionsOverflow]);
-    const  [partitionOpen,  setPartitionOpen]  =  useState(false);
     const  [analysisOpen,  setAnalysisOpen]  =  useState(false);
-    const  activateTool  =  (tool:  'filter'  |  'partition'  |  'script'  |  'analysis')  =>  {
+    const  activateTool  =  (tool:  'filter'  |  'script'  |  'analysis')  =>  {
         if (tool === 'script' && scriptOpen) { closeScript(); return; }
-        const  next  =  (tool  ===  'filter'  &&  !filterOpen)  ||  (tool  ===  'partition'  &&  !partitionOpen)  ||  (tool  ===  'script'  &&  !scriptOpen)  ||  (tool  ===  'analysis'  &&  !analysisOpen);
-        setFilterOpen(next  &&  tool  ===  'filter');  setPartitionOpen(next  &&  tool  ===  'partition');  setScriptOpen(next  &&  tool  === 'script');  setAnalysisOpen(next  &&  tool  === 'analysis');
+        const  next  =  (tool  ===  'filter'  &&  !filterOpen)  ||  (tool  ===  'script'  &&  !scriptOpen)  ||  (tool  ===  'analysis'  &&  !analysisOpen);
+        setFilterOpen(next  &&  tool  ===  'filter');  setScriptOpen(next  &&  tool  === 'script');  setAnalysisOpen(next  &&  tool  === 'analysis');
     };
     const [openApis, setOpenApis] = useState<OpenApiAccess[]>([]);
     const [apisDirty, setApisDirty] = useState(false);
@@ -703,7 +701,7 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
     const requireAppliedFilterDraft = () => {
         if (!canChangePreview()) return false;
         if (!hasFilterDraft()) return true;
-        setFilterOpen(true); setPartitionOpen(false);
+        setFilterOpen(true);
         message.warning('Apply your pending column filter edits before using this shortcut');
         return false;
     };
@@ -720,7 +718,7 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
         const next = appendAndFilters(filterDraft(filterRules), [{ ...blankExplorerFilter(id), field }], randomId());
         if (next.length > 100) { message.warning('The table supports up to 100 filter rows'); return; }
         setFilterRules(normalizeFilterDepth(next));
-        setFilterOpen(true); setPartitionOpen(false);
+        setFilterOpen(true);
         window.requestAnimationFrame(() => document.getElementById(`explorer-filter-${id}`)?.scrollIntoView({ block: 'nearest' }));
     };
     const quickCellFilter = (field: string, value: string | null, exclude: boolean) => {
@@ -739,7 +737,7 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
         if (!canChangePreview()) return false;
         const draft = [...(sortField ? [{ field: sortField, direction: sortDirection }] : []), ...sortConditions.filter((item) => item.field)];
         if (JSON.stringify(draft) === JSON.stringify(appliedQuery.sorts)) return true;
-        setFilterOpen(true); setPartitionOpen(false);
+        setFilterOpen(true);
         message.warning('Apply your pending sort edits before using this shortcut');
         return false;
     };
@@ -876,19 +874,11 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
     selection.current = `${selectedSchema}/${table.name}`;
     useEffect(() => {
         setKeywordsOpen(false);
-        setEditingRowKey(undefined); setEditingDraft(null); setPartition(undefined); setPageNumber(1); setData(undefined); setPartitions([]); setScript(''); setSavedScript(''); setScriptLoaded(false); setScriptNote('Loading script…'); setOpenApis([]); setInputTopics([]); setActiveTopicIndex(0); setStream(undefined); setOffsets([]); setStreamError(''); setOffsetPartition(undefined); setOffset(undefined); setOffsetOpen(false);
+        setEditingRowKey(undefined); setEditingDraft(null); setPartition(undefined); setPageNumber(1); setData(undefined); setScript(''); setSavedScript(''); setScriptLoaded(false); setScriptNote('Loading script…'); setOpenApis([]); setInputTopics([]); setActiveTopicIndex(0); setStream(undefined); setOffsets([]); setStreamError(''); setOffsetPartition(undefined); setOffset(undefined); setOffsetOpen(false);
         setWorkbenchRows([]); setWorkbenchMode('results');
         setFilterText(''); setFilterRules([{ id: 'rule-1', field: '', operator: '=', value: '', active: true, join: 'and' }]); setSortField(''); setSortConditions([]); setAppliedQuery({ filters: [], sorts: [], search: '' });
         setPreviewError(''); setPreviewUnavailable(false); setPreviewPage(undefined); setRepairFields([]);
     }, [selectedSchema, table.name, selectedTableAvailable, previewIdentity]);
-    useEffect(() => {
-        if (!selectedTableAvailable || !showPreview) return;
-        let active = true;
-        fetchTablePartitions(selectedSchema, table.name)
-            .then((items) => { if (active) setPartitions(items); })
-            .catch((error) => { if (active) message.error(errorText(error)); });
-        return () => { active = false; };
-    }, [selectedSchema, table.name, selectedTableAvailable, showPreview]);
     useEffect(() => {
         if (!selectedTableAvailable || (isSchemas && !scriptOpen) || scriptLoaded || scriptDirty) return;
         const version = ++metadataRequest.current;
@@ -1194,7 +1184,6 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
                             backButton={catalogReturn && <Button size="small" icon={<ArrowLeftOutlined />} disabled={workbenchLocked} onClick={() => navigate(catalogReturn)}>Back to object types</Button>}
                             mode={workbenchMode} setMode={setWorkbenchMode} clearSelection={() => { setWorkbenchRows([]); setSelectionEpoch(n => n + 1); }}
                             filterButton={showPreview && <button aria-expanded={filterOpen} onClick={() => activateTool('filter')}>Filter &amp; sort{filterCount + sortCount ? ` (${filterCount + sortCount})` : ''}</button>}
-                            partitionsButton={showPreview && partitions.length > 0 && <button aria-expanded={partitionOpen} onClick={() => activateTool('partition')}>{partition || 'Partitions'}</button>}
                         />
                     </fieldset>}
                     <div  className="flow-table-header">
@@ -1290,7 +1279,7 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
                         </section>}
                         {showPreview && previewError && <div className="flow-schema-state flow-preview-error" role="alert">
                             <strong>Data preview unavailable</strong><p>{previewError}</p>
-                            {previewUnavailable && <p>For an expensive query, narrow the filters or select a partition before trying again.</p>}
+                            {previewUnavailable && <p>For an expensive query, narrow the filters before trying again.</p>}
                             <Button size="small" onClick={isSchemas ? () => setPreviewRevision((revision) => revision + 1) : refreshWorkspace}>Retry preview</Button>
                             {isSchemas && pageNumber > 1 && <Button size="small" onClick={() => setPageNumber(1)}>Back to first page</Button>}
                         </div>}
@@ -1309,7 +1298,6 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
                                 {!isSchemas && canManage && apiListOpen && apiPanel}
                             </div>}
                             {isSchemas && resourceView === 'api' && (canManage ? apiPanel : <div className="flow-schema-state" role="status">Published APIs are available to administrators only.</div>)}
-                            {showPreview && partitionOpen &&  <div  className="flow-partition-tags">{partitions.map((item)  =>  <Tag.CheckableTag  key={item.name}  checked={partition  ===  item.name}  onChange={() => { if (editingRowKey) { message.warning('Save or cancel the current row edit first'); return; } setPartition(partition === item.name ? undefined : item.name); setPageNumber(1); }}>{item.name.replace('p2026_',  '')}</Tag.CheckableTag>)}</div>}
                             {showPreview && !previewError && (isSchemas ?
                                 <ExplorerSelection onSelectedRowsChange={setWorkbenchRows} key={JSON.stringify([selectionEpoch, policyKey])}
                                     schema={selectedSchema} table={table.name} dataType={mapping?.dataType ?? table.dataType} rows={dataRows} columns={data?.columns ?? emptyPreviewColumns}
@@ -1326,7 +1314,7 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
                                     footer={previewPage && <footer className="flow-preview-pager">
                                     {(!previewPage.result.stableOrder || previewPage.result.hasMore && !previewPage.result.canPageFurther) && <div className="flow-preview-pager-notices" role="status">
                                         {!previewPage.result.stableOrder && <span>No stable primary key. Rows may repeat or be skipped when paging.</span>}
-                                        {previewPage.result.hasMore && !previewPage.result.canPageFurther && <span>Interactive preview limit reached. Narrow filters or choose a partition to continue.</span>}
+                                        {previewPage.result.hasMore && !previewPage.result.canPageFurther && <span>Interactive preview limit reached. Narrow filters to continue.</span>}
                                     </div>}
                                     <nav aria-label="Preview pagination">
                                         <span className="flow-preview-range" aria-live="polite">{loading ? 'Loading preview…' : previewPage.result.rowCount

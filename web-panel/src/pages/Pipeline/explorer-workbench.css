@@ -49,12 +49,14 @@
 .wb-header .wb-primary { background:var(--ui-action-bg); color:var(--ui-action-text); border-color:var(--ui-action-bg); }
 .wb-header .wb-primary:not(:disabled):hover { background:var(--ui-action-hover); }
 .wb-header .wb-primary:not(:disabled):active { background:var(--ui-action-active); }
-.wb-tools { min-height:40px; justify-content:space-between; position:relative; }
+.wb-tools { min-height:34px; font-size:11px; justify-content:space-between; position:relative; }
 .wb-tools > div { display:flex; align-items:center; gap:4px; }
-.wb-views button { border-radius:0; align-self:stretch; min-height:39px; }
+.wb-views button { border-radius:0; align-self:stretch; min-height:33px; }
 .wb-views button[aria-pressed=true] { color:var(--ontology-link); box-shadow:inset 0 -3px var(--ontology-link); }
 .wb-right button,.wb-left > button { border-color:var(--ontology-control-border); }
-.wb-left .wb-selected { color:var(--ontology-link); background:var(--ontology-selected); border-color:var(--ontology-control-border); }
+.wb-selection-tools { display:inline-flex; align-items:center; gap:4px; padding:2px 5px; border:1px solid var(--explorer-selection-stroke); border-radius:2px; background:var(--explorer-selection-bg); color:var(--ontology-text); font-size:11px; }
+.wb-selection-tools > span { padding-inline:3px; white-space:nowrap; }
+.wb-selection-tools > button { min-height:22px; padding:2px 5px; font-size:11px; }
 .wb-feedback { padding:5px 12px; margin:0; }
 .wb-popup { position:absolute; top:100%; right:12px; width:min(310px,96%); padding:8px; display:grid; gap:4px; z-index:20; box-sizing:border-box; max-height:min(52vh,450px); overflow-y:auto; background:var(--ontology-panel); color:var(--ontology-text); border:1px solid var(--ontology-control-border); border-radius:4px; box-shadow:0 5px 20px var(--ontology-border); }
 .wb-popup--search,.wb-popup--property { left:min(18%,230px); right:auto; top:51px; }
