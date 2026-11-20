@@ -123,7 +123,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     assert args.journal.is_file(), 'Resume the existing inventory journal'
     ctx = multiprocessing.get_context('spawn')
-    db_gate = ctx.BoundedSemaphore(1)
+    db_gate = ctx.BoundedSemaphore(4)
     processes = [ctx.Process(target=worker, args=(str(args.journal), n, db_gate)) for n in range(migration.WORKERS)]
     for process in processes:
         process.start()
