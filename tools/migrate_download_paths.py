@@ -62,9 +62,24 @@ def strings(value, path=()):
         yield '.'.join(path), value
 
 
+async def connect_pg():
+    """Do not reserve idle database slots while the six workers copy files."""
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    from sqlalchemy.pool import NullPool
+    from app.storage.postgres_client import _resolved_pg_url
+    pg=get_pg_client()
+    if pg._engine is None:
+        pg._engine=create_async_engine(_resolved_pg_url(),poolclass=NullPool,
+            connect_args={'timeout':10,'command_timeout':30,'prepared_statement_cache_size':0})
+        pg._session_factory=async_sessionmaker(pg._engine,expire_on_commit=False)
+        pg._connected=True
+    async with pg._engine.connect() as connection:
+        await connection.execute(text('SELECT 1'))
+    return pg
+
+
 async def routes():
-    pg = get_pg_client()
-    await pg.connect(max_retries=1)
+    pg = await connect_pg()
     try:
         return await collection_route_store.list_by_data_type(None)
     finally:
@@ -309,9 +324,9 @@ async def verify_group(db, client, mongo, registered, prefix, record_id):
     db.commit();return True
 
 
-def worker(path, shard, mode):
+def worker(path, shard, mode, db_gate):
     db,client=journal(path),storage()
-    registered=asyncio.run(routes())
+    with db_gate:registered=asyncio.run(routes())
     mongo_client=MongoClient(settings.db_url,serverSelectionTimeoutMS=15000)
     mongo=mongo_client[settings.db_name]
     phase='planned' if mode=='apply' else 'source_updated' if mode=='verify' else 'verified'
@@ -321,7 +336,7 @@ def worker(path, shard, mode):
     async def run():
         pg=get_pg_client()
         if mode in {'apply','verify'}:
-            await pg.connect(max_retries=1)
+            with db_gate:await connect_pg()
         try:
             phases=('planned','error','source_updated') if mode=='apply' else ('source_updated',) if mode=='verify' else ('verified',)
             last=('', '')
@@ -340,9 +355,11 @@ def worker(path, shard, mode):
                     try:
                         if mode=='apply':
                             apply_group(db,client,mongo,registered,prefix,record_id)
-                            await repair_references(db,mongo,registered,prefix,record_id)
-                            await verify_group(db,client,mongo,registered,prefix,record_id)
-                        elif mode=='verify':await verify_group(db,client,mongo,registered,prefix,record_id)
+                            with db_gate:
+                                await repair_references(db,mongo,registered,prefix,record_id)
+                                await verify_group(db,client,mongo,registered,prefix,record_id)
+                        elif mode=='verify':
+                            with db_gate:await verify_group(db,client,mongo,registered,prefix,record_id)
                         else:
                             for old,new in db.execute('SELECT old,new FROM objects WHERE prefix=? AND record_id=? AND phase="verified"',(prefix,record_id)).fetchall():
                                 client.stat_object(settings.minio_bucket,new)
@@ -369,7 +386,8 @@ def main():
     elif args.mode in {'apply','verify','clean'}:
         # Immutable shard ownership and a durable shared journal make restarts safe.
         ctx=multiprocessing.get_context('spawn')
-        processes=[ctx.Process(target=worker,args=(str(args.journal),n,args.mode)) for n in range(WORKERS)]
+        db_gate=ctx.BoundedSemaphore(1)
+        processes=[ctx.Process(target=worker,args=(str(args.journal),n,args.mode,db_gate)) for n in range(WORKERS)]
         for process in processes:process.start()
         for process in processes:process.join()
         if any(p.exitcode for p in processes):raise SystemExit(1)
