@@ -270,13 +270,13 @@ export default function ExplorerWorkbenchHeader(p: Props) {
             <button data-wb-menu="lists" onClick={() => openMenu('lists')}>Lists <DownOutlined /></button>
             <button data-wb-menu="share" onClick={() => openMenu('share')}>Share</button><button data-wb-menu="save" className="wb-primary" onClick={() => menu === 'save' ? show('') : beginSave('exploration')}>Save</button></div>
         <div className="wb-line wb-tools">
-            <div className="wb-left">{p.layoutControl}
+            <div className="wb-left">{p.layoutControl}{p.filterButton}
                 {!!p.selected.length && <div className="wb-selection-tools" role="toolbar" aria-label="Selected object tools">
                     <span>{p.selected.length} selected</span>
                     <button disabled={p.selected.some(row => !Object.keys(row.identity).length)} onClick={() => beginSave('list')}>Save list</button>
                     <button aria-label="Clear selected objects" onClick={p.clearSelection}>Clear</button>
                 </div>}
-                {p.filterButton}</div>
+                </div>
             <div className="wb-views"><button aria-pressed={p.resource === 'preview' && p.mode === 'explore'} onClick={() => selectMode('explore')}><BarChartOutlined /> Explore</button>
             <button aria-pressed={p.resource === 'preview' && p.mode === 'results'} onClick={() => selectMode('results')}><AppstoreOutlined /> Results</button></div>
             <div className="wb-right"><button data-wb-menu="asset" onClick={() => openMenu('asset')}>{p.resource === 'preview' ? 'Open in' : ({ schema: 'Schema', stream: 'Stream', evidence: 'Evidence', api: 'Published APIs' } as const)[p.resource]} <DownOutlined /></button>

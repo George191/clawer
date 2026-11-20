@@ -94,7 +94,7 @@ def normalize_acticle(record: dict[str, Any]) -> dict[str, Any]:
     original = record
     record, asset_paths = apply_asset_path_overrides(record)
     meta = record.get("_meta") or {}
-    summary_html = safe_str(record.get("summary_html") or record.get("summary"))
+    summary = safe_str(record.get("summary"))
     content_html = _article_asset_html(
         safe_str(record.get("content_html") or record.get("content")), original, record, asset_paths,
     )
@@ -115,8 +115,7 @@ def normalize_acticle(record: dict[str, Any]) -> dict[str, Any]:
         **{field: safe_str(record.get(field)) for field in (
             "source_id", "account", "gh_id", "zoro_guid", "title", "url", "cover", "info_source", "source_type",
         )},
-        "summary": html_to_text(summary_html),
-        "summary_html": summary_html,
+        "summary": html_to_text(summary),
         "content": safe_str(record.get("content")) or html_to_text(content_html),
         "content_html": content_html,
         "publish_time": publish_time,
