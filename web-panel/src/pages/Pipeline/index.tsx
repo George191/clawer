@@ -1213,7 +1213,6 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
                 </div>
                 </div>}
                 {!selectedTableAvailable ? <div className="flow-workspace-empty" role="status"><DatabaseOutlined /><h3>{resolvingExplorerAsset || tablesLoading || !catalogLoaded && !requestError ? 'Loading schema resources…' : selectedSchema ? serverTables.length ? 'No table selected' : 'No tables in this schema' : 'No schema selected'}</h3>{!resolvingExplorerAsset && <p>{schemaNode?.status === 'stopped' ? 'This schema is not available in the connected database.' : serverTables.length ? 'Select a table from the catalog.' : 'Select a schema to explore its tables and data.'}</p>}</div> : <div className="flow-inspector">
-                    {isSchemas && catalogReturn && <div className="flow-published-results-context"><Button size="small" icon={<ArrowLeftOutlined />} disabled={workbenchLocked} onClick={() => navigate(catalogReturn)}>Back to object types</Button></div>}
                     {isSchemas && <fieldset className="wb-shell" disabled={workbenchLocked}>
                         <ExplorerWorkbenchHeader key={JSON.stringify([previewIdentity, selectedSchema, table.name])} schema={selectedSchema} table={table.name}
                             label={mapping?.displayName || table.name} titleProperty={mapping?.titleProperty} primaryKey={mapping?.primaryKey}
@@ -1228,6 +1227,7 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
                                 setAppliedQuery({filters:q.filters,sorts:q.sorts,search:q.search || ''}); setPageNumber(1);
                             }} addFilter={addColumnFilter} toggleCatalog={() => setCatalogOpen(value => !value)}
                             catalogOpen={catalogOpen} closeCatalog={() => setCatalogOpen(false)} search={search}
+                            backButton={catalogReturn && <Button size="small" icon={<ArrowLeftOutlined />} disabled={workbenchLocked} onClick={() => navigate(catalogReturn)}>Back to object types</Button>}
                             mode={workbenchMode} setMode={setWorkbenchMode} clearSelection={() => { setWorkbenchRows([]); setSelectionEpoch(n => n + 1); }}
                             filterButton={showPreview && <button aria-expanded={filterOpen} onClick={() => activateTool('filter')}>Filter &amp; sort{filterCount + sortCount ? ` (${filterCount + sortCount})` : ''}</button>}
                             partitionsButton={showPreview && partitions.length > 0 && <button aria-expanded={partitionOpen} onClick={() => activateTool('partition')}>{partition || 'Partitions'}</button>}
