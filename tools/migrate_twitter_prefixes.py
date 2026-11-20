@@ -17,7 +17,7 @@ from tools import migrate_download_paths as migration
 from app.records.field_names import normalize_record_fields, SYSTEM_ROOT_FIELDS
 from app.utils.path import get_nested_value
 
-SCOPE = "prefix IN ('social_media/twitter','twitter/twitter','tweet/twitter')"
+SCOPE = "prefix IN ('social_media/twitter','twitter/twitter','tweet/twitter','account/twitter')"
 
 
 def media_alias_updates(record):
