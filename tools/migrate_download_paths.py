@@ -331,7 +331,7 @@ def worker(path, shard, mode):
                     if mode=='apply' and last!=('', ''):
                         last=('', '');continue
                     finished=db.execute('SELECT done FROM progress WHERE prefix="__inventory__"').fetchone()
-                    if mode=='apply' and not finished:
+                    if mode=='apply' and (not finished or not finished[0]):
                         import time
                         time.sleep(2);last=('', '');continue
                     break
