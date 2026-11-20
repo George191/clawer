@@ -28,8 +28,8 @@ def media_alias_updates(record):
             for index, child in enumerate(value):
                 visit(child, f'{path}.{index}', media)
         elif isinstance(value, dict):
-            if media and 'contentType' in value and 'content_type' in value:
-                if value['contentType'] != value['content_type']:
+            if media and 'contentType' in value:
+                if 'content_type' in value and value['contentType'] != value['content_type']:
                     raise ValueError('Conflicting media content types at ' + path)
                 unset[path + '.contentType'] = ''
             for key, child in value.items():
@@ -66,7 +66,12 @@ def worker(path, shard, db_gate):
                 continue
             cleaned = deepcopy(doc)
             for path in unset:
-                get_nested_value(cleaned, path.rsplit('.', 1)[0]).pop('contentType')
+                parent_path = path.rsplit('.', 1)[0]
+                parent = get_nested_value(cleaned, parent_path)
+                native = parent.pop('contentType')
+                if 'content_type' not in parent:
+                    parent['content_type'] = native
+                    fields[parent_path + '.content_type'] = native
             normalize_record_fields(cleaned)
             fields.update({'_meta.sync_status': 'pending', '_meta.updated_at': datetime.now(timezone.utc),
                            '_meta.write_token': uuid4().hex})

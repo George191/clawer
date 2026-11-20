@@ -21,3 +21,7 @@ def test_nested_tweet_media_aliases_are_included():
         {'contentType': 'video/mp4', 'content_type': 'video/mp4'},
     ]}}]}
     assert media_alias_updates(record) == {'referenced_tweets.0.tweet.media.0.contentType': ''}
+
+
+def test_native_media_type_without_canonical_field_is_selected_for_repair():
+    assert media_alias_updates({'media': [{'contentType': 'video/mp4'}]}) == {'media.0.contentType': ''}
