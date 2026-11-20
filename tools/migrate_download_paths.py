@@ -52,6 +52,7 @@ def storage():
 
 def strings(value, path=()):
     if isinstance(value, dict):
+        if value.get('status_code') == 404 and value.get('url') == '':return
         for key, item in value.items():
             yield from strings(item, (*path, str(key)))
     elif isinstance(value, list):
@@ -116,7 +117,8 @@ def inventory(path):
                             if value:raise ValueError('Unsupported resource reference: '+value)
                             continue
                         if parts[2]!=doc['_meta']['record_id']:raise ValueError('Resource owned by another record: '+value)
-                        canonical=len(parts)==4 and HEX.fullmatch(Path(parts[-1]).stem)
+                        canonical=(len(parts)==4 and HEX.fullmatch(Path(parts[-1]).stem)
+                                   and '/'.join(parts[:2])==f"{route['data_type']}/{route['template_name']}")
                         pending.append((value,'/'.join(parts[:2]),parts[2],int(parts[2],16)%WORKERS,value if canonical else None,'canonical' if canonical else 'planned'))
                         if len(pending)==BATCH:
                             db.executemany('INSERT OR IGNORE INTO objects(old,prefix,record_id,shard,new,phase) VALUES(?,?,?,?,?,?)',pending);db.commit();pending.clear()
@@ -181,7 +183,12 @@ def apply_group(db, client, mongo, registered, prefix, record_id):
         if not any(old in value for _, doc in docs for _, value in strings(doc.get('assets', {}))):
             # Unreferenced objects are explicitly recorded and left untouched.
             db.execute('UPDATE objects SET phase="unreferenced",error=NULL WHERE old=?', (old,));db.commit();continue
-        new = new or copy_object(client,old,prefix,record_id)
+        owners = [route for route, doc in docs
+                  if any(old in value for _, value in strings(doc.get('assets', {})))]
+        targets = {f"{route['data_type']}/{route['template_name']}" for route in owners}
+        if len(targets) != 1:
+            raise ValueError('Resource must have exactly one source storage prefix: ' + old)
+        new = new or copy_object(client,old,targets.pop(),record_id)
         replacements[old] = new
         db.execute('UPDATE objects SET new=?,error=NULL WHERE old=?',(new,old));db.commit()
     for route, doc in docs:

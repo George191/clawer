@@ -1,8 +1,32 @@
 import hashlib
+import pytest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from tools import migrate_download_paths as migration
+
+
+@pytest.mark.parametrize('prefix', ['social_media/twitter', 'twitter/twitter', 'tweet/twitter'])
+def test_media_migration_uses_source_route_prefix(tmp_path, prefix):
+    db = migration.journal(tmp_path / 'migration.sqlite')
+    record_id = 'a' * 32
+    old = f'{prefix}/{record_id}/video.mp4.mp4'
+    new = f'tweet/twitter/{record_id}/' + 'b' * 64 + '.mp4'
+    db.execute('INSERT INTO objects(old,prefix,record_id,shard) VALUES(?,?,?,?)',
+               (old, prefix, record_id, int(record_id, 16) % 6))
+    db.commit()
+    route = {'collection_name': 'tweet_twitter', 'template_name': 'twitter', 'data_type': 'tweet'}
+    doc = {'_id': 1, 'assets': {'media': {'0': {'url': old}}}}
+    mongo = Mock()
+    mongo.__getitem__ = Mock(return_value=Mock())
+    mongo['tweet_twitter'].update_one.return_value.matched_count = 1
+    with patch.object(migration, 'source_documents', return_value=[(route, doc)]), \
+            patch.object(migration, 'copy_object', return_value=new) as copy:
+        migration.apply_group(db, Mock(), mongo, [route], prefix, record_id)
+    assert copy.call_args.args[2] == 'tweet/twitter'
+    assert mongo['tweet_twitter'].update_one.call_args.args[1]['$set']['assets.media.0.url'] == new
+    assert db.execute('SELECT new,phase FROM objects').fetchone() == (new, 'source_updated')
+    db.close()
 
 
 def test_copy_flattens_duplicate_extension_and_checks_published_bytes():
@@ -58,7 +82,7 @@ def test_indexed_inventory_resumes_without_relisting_sources(tmp_path):
     collection = client.__getitem__.return_value.__getitem__.return_value
     collection.index_information.return_value = {'downloads': {'key': [
         ('_meta.download_status',1),('_meta.updated_at',1),('_id',1)]}}
-    doc = {'_id':'row1','_meta':{'record_id':record_id,'updated_at':datetime(2026,1,1,tzinfo=timezone.utc)},'assets':{'image':old}}
+    doc = {'_id':'row1','_meta':{'record_id':record_id,'updated_at':datetime(2026,1,1,tzinfo=timezone.utc)},'assets':{'image':old,'missing':{'status_code':404,'url':'','message':'Source file returned HTTP 404; the file no longer exists.'}}}
     def find(query, projection):
         cursor = MagicMock()
         cursor.sort.return_value.hint.return_value.limit.return_value.max_time_ms.return_value = (
