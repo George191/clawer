@@ -144,8 +144,8 @@ function requireLogin() {
   }
 }
 
-export const fetchCurrentUserContext = (): Promise<CurrentUserContext> =>
-  client.get('/users/me/context').then((r) => unwrap<CurrentUserContext>(r.data));
+export const fetchCurrentUserContext = (signal?: AbortSignal): Promise<CurrentUserContext> =>
+  client.get('/users/me/context', { signal, ...(signal ? { timeout: 0 } : {}) }).then((r) => unwrap<CurrentUserContext>(r.data));
 
 // 请求拦截器
 client.interceptors.request.use(
@@ -243,8 +243,8 @@ export const DASHBOARD_WS_URL = `${
 // ============================================================
 //  ETL Layers
 // ============================================================
-export const fetchLayers = (): Promise<LayerNode[]> =>
-  client.get('/etl/layers').then((r) => unwrap<LayerNode[]>(r.data));
+export const fetchLayers = (signal?: AbortSignal): Promise<LayerNode[]> =>
+  client.get('/etl/layers', { signal, ...(signal ? { timeout: 0 } : {}) }).then((r) => unwrap<LayerNode[]>(r.data));
 
 export const fetchEtlObjectTypes = (params: { schema?: string; search?: string; group?: string; ids?: string; limit?: number; offset?: number; includeHidden?: boolean } = {}, signal?: AbortSignal): Promise<EtlObjectCatalog> =>
   client.get('/etl/object-types', { params, signal }).then((r) => unwrap<EtlObjectCatalog>(r.data));
@@ -269,8 +269,8 @@ export const updateEtlObjectFavorite = (schema: string, table: string, favorite:
 export const fetchCdcStatus = (signal?: AbortSignal): Promise<CdcStatus> =>
   client.get('/cdc/status', { signal, timeout: 22000 }).then((r) => unwrap<CdcStatus>(r.data));
 
-export const fetchLayerTables = (layer: string, tableRole = 'current'): Promise<LayerTable[]> =>
-  client.get(`/etl/${layer}/tables`, { params: { tableRole } }).then((r) => unwrap<LayerTable[]>(r.data));
+export const fetchLayerTables = (layer: string, tableRole = 'current', signal?: AbortSignal): Promise<LayerTable[]> =>
+  client.get(`/etl/${layer}/tables`, { params: { tableRole }, signal, ...(signal ? { timeout: 0 } : {}) }).then((r) => unwrap<LayerTable[]>(r.data));
 
 export const fetchEtlTableColumns = (layer: string, table: string, signal?: AbortSignal): Promise<EtlTableColumn[]> =>
   client.get(`/etl/${encodeURIComponent(layer)}/${encodeURIComponent(table)}/columns`, { signal }).then((r) => unwrap<EtlTableColumn[]>(r.data));
@@ -1413,7 +1413,7 @@ export const checkPreviewIndexCoverage = (
 
 export type RowPreviewMode = 'classic' | 'indexed_id_required' | 'indexed_projection_required';
 export const fetchRowPreviewPolicy = (schema: string, table: string, signal?: AbortSignal): Promise<{ mode: RowPreviewMode }> =>
-  client.get(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/row-preview-policy`, { signal })
+  client.get(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/row-preview-policy`, { signal, timeout: 0 })
     .then(r => unwrap<{ mode: RowPreviewMode }>(r.data));
 
 export type IndexedIdSamplePredicate = { idEquals: string } | { idFrom: string; idTo: string };
