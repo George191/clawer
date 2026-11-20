@@ -4,9 +4,11 @@ from datetime import datetime, timezone
 import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
+from contextlib import nullcontext
 
 from tools.migrate_twitter_prefixes import media_alias_updates
 from tools import migrate_download_paths as migration
+from tools import migrate_twitter_prefixes as scoped
 
 
 def test_identical_media_alias_is_removed_without_touching_other_values():
@@ -66,4 +68,44 @@ async def test_verification_requires_the_current_source_contract(tmp_path, chang
         client.stat_object.assert_not_called()
     else:
         assert db.execute('SELECT phase FROM objects').fetchone()[0] == 'verified'
+    db.close()
+
+
+def test_busy_source_waits_without_stopping_other_work_or_falsely_completing(tmp_path):
+    record_id = 'a' * 32
+    old, new = f'tweet/twitter/{record_id}/old.mp4', f'tweet/twitter/{record_id}/' + 'b' * 64 + '.mp4'
+    path = tmp_path / 'journal.sqlite'
+    db = migration.journal(path)
+    db.execute('INSERT INTO progress VALUES(?,?,1)', ('twitter-contract-assets:0', ''))
+    db.execute('INSERT INTO objects(old,prefix,record_id,shard,new) VALUES(?,?,?,?,?)',
+               (old, 'tweet/twitter', record_id, 0, new))
+    db.commit()
+    route = {'collection_name': 'tweet_twitter', 'template_name': 'twitter', 'data_type': 'tweet'}
+    busy = {'_id': 1, '_meta': {'download_status': 'downloading'}, 'assets': {'file': old}}
+    ready = {'_id': 1, '_meta': {'download_status': 'downloaded', 'data_type': 'tweet',
+                               'template': 'tweet_twitter'}, 'assets': {'file': new}}
+    collection = Mock()
+    collection.find_one.side_effect = [{'_meta': {'download_status': 'downloading'}},
+                                       {'_meta': {'download_status': 'downloaded'}}]
+    mongo_client = Mock()
+    mongo_client.__getitem__ = Mock(return_value={'tweet_twitter': collection})
+    storage = Mock()
+    async def verify(journal, *args):
+        journal.execute('UPDATE objects SET phase="verified" WHERE old=?', (old,))
+        journal.commit()
+        return True
+    repair = AsyncMock()
+    with patch.object(migration, 'storage', return_value=storage), \
+            patch.object(migration, 'routes', AsyncMock(return_value=[route])), \
+            patch.object(scoped, 'MongoClient', return_value=mongo_client), \
+            patch.object(migration, 'source_documents', side_effect=[[(route, busy)], [(route, ready)], [(route, ready)]]), \
+            patch.object(migration, 'connect_pg', AsyncMock(return_value=SimpleNamespace(close=AsyncMock()))), \
+            patch.object(migration, 'verify_group', verify), \
+            patch.object(migration, 'repair_references', repair), \
+            patch.object(scoped.asyncio, 'sleep', AsyncMock()) as sleep:
+        scoped.worker(str(path), 0, nullcontext())
+    assert db.execute('SELECT phase FROM objects').fetchone()[0] == 'complete'
+    sleep.assert_awaited_once_with(10)
+    repair.assert_not_awaited()
+    storage.remove_object.assert_called_once_with(migration.settings.minio_bucket, old)
     db.close()

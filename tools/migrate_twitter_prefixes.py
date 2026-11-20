@@ -56,8 +56,14 @@ def worker(path, shard, db_gate):
             for attempt in range(3):
                 try:
                     migration.apply_group(db, client, mongo, registered, *group)
-                    break
-                except (migration.urllib3.exceptions.TimeoutError, migration.ConcurrentSourceUpdate) as error:
+                    return True
+                except migration.ConcurrentSourceUpdate:
+                    db.rollback()
+                    db.execute('UPDATE objects SET phase="source_busy",error=NULL WHERE prefix=? AND record_id=? AND phase IN ("planned","error")', group)
+                    db.commit()
+                    print(json.dumps({'worker': shard, 'record': group[1], 'waiting_for_source': True}), flush=True)
+                    return False
+                except migration.urllib3.exceptions.TimeoutError as error:
                     print(json.dumps({'worker': shard, 'record': group[1], 'copy_retry': type(error).__name__,
                                       'attempt': attempt + 1}), flush=True)
                     if attempt == 2:
@@ -156,6 +162,14 @@ def worker(path, shard, db_gate):
             pg = await migration.connect_pg()
         try:
             while True:
+                waiting = db.execute(f'SELECT DISTINCT prefix,record_id FROM objects WHERE {SCOPE} AND shard=? AND phase="source_busy" LIMIT ?', (shard, migration.BATCH)).fetchall()
+                for prefix, record_id in waiting:
+                    claims = [mongo[route['collection_name']].find_one({'_meta.record_id': record_id},
+                              {'_meta.download_status': 1}) for route in registered
+                              if route['template_name'] == prefix.split('/')[1]]
+                    if not any(doc and (doc.get('_meta') or {}).get('download_status') == 'downloading' for doc in claims):
+                        db.execute('UPDATE objects SET phase="planned" WHERE prefix=? AND record_id=? AND phase="source_busy"', (prefix, record_id))
+                        db.commit()
                 pending = db.execute(f'''SELECT DISTINCT prefix,record_id FROM objects
                     WHERE {SCOPE} AND shard=? AND phase="source_updated"
                     ORDER BY CASE WHEN prefix IN ('social_media/twitter','twitter/twitter') THEN 0 ELSE 1 END,
@@ -185,11 +199,15 @@ def worker(path, shard, db_gate):
                     db.execute('UPDATE objects SET phase="complete",error=NULL WHERE old=?', (old,))
                     db.commit()
                 groups = db.execute(f'SELECT DISTINCT prefix,record_id FROM objects WHERE {SCOPE} AND shard=? AND phase IN ("planned","error") LIMIT 100', (shard,)).fetchall()
+                applied = []
                 if groups:
                     with ThreadPoolExecutor(max_workers=2) as pool:
-                        list(pool.map(apply, groups))
-                print(json.dumps({'worker': shard, 'copied_groups': len(groups), 'verified_groups': len(pending), 'old_keys_removed': len(rows)}), flush=True)
+                        applied = list(pool.map(apply, groups))
+                print(json.dumps({'worker': shard, 'processed_groups': sum(applied), 'deferred_groups': applied.count(False), 'verified_groups': len(pending), 'old_keys_removed': len(rows)}), flush=True)
                 if not pending and not groups and not rows:
+                    if db.execute(f'SELECT 1 FROM objects WHERE {SCOPE} AND shard=? AND phase="source_busy" LIMIT 1', (shard,)).fetchone():
+                        await asyncio.sleep(10)
+                        continue
                     break
             print(json.dumps({'worker': shard, 'complete': True}), flush=True)
         finally:
