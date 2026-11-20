@@ -1,10 +1,12 @@
-.result-column-header { display: flex; align-items: center; gap: 3px; position: relative; width: 100%; min-width: 0; padding-right: 8px; }
-.result-column-header .flow-column-menu { min-width: 0; }
+.result-column-header { display: flex; align-items: center; gap: 3px; position: relative; width: 100%; min-width: 0; padding:0 8px 0 6px; }
+.result-column-header > .ui-dropdown-trigger { flex:1; min-width:0; }
+.result-column-header .flow-column-menu { width:100%; min-width:0; justify-content:space-between; }
+.flow-column-menu-end { display:inline-flex; flex:none; align-items:center; gap:4px; margin-inline-start:auto; }
 .result-column-header .result-grip, .result-column-config .result-grip { cursor: grab; color: var(--ontology-muted); user-select: none; }
 .result-column-header:has(.flow-column-menu:is(:hover,:focus-visible,[aria-expanded="true"],.is-sorted)) { border-radius:3px; background:var(--ontology-hover); color:var(--ontology-muted); }
 .flow-console--ontology .flow-schema-workbench .flow-data-table .result-column-header .flow-column-menu:is(:hover,:focus-visible,[aria-expanded="true"],.is-sorted) { background:transparent; border-color:transparent; }
 .result-resizer { cursor: col-resize; touch-action: none; align-self: stretch; position: absolute; right: -7px; width: 9px; top: -7px; bottom: -7px; z-index: 1; }
-.result-resizer:hover, .result-resizer:focus-visible { border-right: 2px solid var(--ui-focus-ring); }
+.result-resizer:hover, .result-resizer:focus-visible { border-right: 2px solid var(--ontology-muted); }
 .flow-console--ontology .flow-data-table th:has(.result-column-header) .ui-table-heading { display: flex; width: 100%; }
 .flow-console--ontology .flow-data-table td.result-cell-clip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .flow-console--ontology .flow-data-table td.result-cell-wrap,
