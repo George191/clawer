@@ -18,7 +18,6 @@ for root in (Path.cwd(), *Path(__file__).resolve().parents):
 
 from app.base.http import DownloadCleanupError, DownloadError, DownloadResponse, FileDownloadResponse
 from app.downloader import worker as module
-from app.downloader.adapters.sec_edgar import validate_response as validate_sec_response
 from app.records.download_resources import apply_record_updates
 
 
@@ -41,7 +40,6 @@ class DownloadWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.worker._http.download_to_file.side_effect = self.fetch_fixture
         self.patches = [
             patch.object(module.settings, "http_download_timeout", 1.0),
-            patch.object(module, "get_download_response_validator", lambda _: None),
             patch.object(module.filetype, "guess", lambda _: None),
         ]
         for item in self.patches:
@@ -244,12 +242,12 @@ class DownloadWorkerTests(unittest.IsolatedAsyncioTestCase):
             expected = hashlib.sha256(self.response.data).hexdigest()
             self.assertEqual(self.worker._minio.upload_file.await_args.args[3], f'record/{expected}.png')
 
-    async def test_sec_file_validation_rejects_auth_page_before_upload(self):
+    async def test_all_templates_reject_auth_page_before_upload(self):
         self.response = replace(self.response, data=b"<html>login.zscaler.net</html>")
-        with patch.object(module, "get_download_response_validator", lambda _: validate_sec_response):
+        for template in ('sec_edgar', 'twitter', 'news'):
             with self.assertRaisesRegex(DownloadError, "Zscaler authentication page"):
-                await self.download()
-        self.worker._http.mark_last_proxy_failed.assert_awaited_once()
+                await self.worker._download_item(self.item, template, 'news', 'record', True)
+        self.assertEqual(self.worker._http.mark_last_proxy_failed.await_count, 3)
         self.worker._minio.upload_file.assert_not_awaited()
         self.assert_temporary_files_removed()
 
@@ -301,6 +299,18 @@ class DownloadWorkerTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(DownloadError, "attachment is HTML"):
             await self.download()
         self.assertEqual(self.worker._http.download_to_file.await_count, 1)
+        self.worker._minio.upload_file.assert_not_awaited()
+        self.assert_temporary_files_removed()
+
+    async def test_html_authentication_page_is_not_uploaded_as_media(self):
+        for filename in ("image.jpg", "video.mp4", "audio.mp3"):
+            with self.subTest(filename=filename):
+                self.item = replace(self.item, filename=filename)
+                self.response = replace(self.response, headers={"content-type": "text/html"},
+                                        data=b"<html>Login required</html>")
+                with self.assertRaisesRegex(DownloadError, "media download returned HTML"):
+                    await self.download()
+        self.assertEqual(self.worker._http.download_to_file.await_count, 3)
         self.worker._minio.upload_file.assert_not_awaited()
         self.assert_temporary_files_removed()
 
