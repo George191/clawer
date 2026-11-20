@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { AppstoreOutlined, ArrowLeftOutlined, BarChartOutlined, CheckOutlined, CloseOutlined, CodeOutlined, CopyOutlined, DeleteOutlined, DownOutlined, ExportOutlined, FileExcelOutlined, LinkOutlined, SearchOutlined, ShareAltOutlined, TableOutlined } from '@/components/ui/icons';
-import { Button, Modal, message } from '@/components/ui';
+import { Button, Dropdown, Modal, message } from '@/components/ui';
 import { projectHref } from '../../services/projectDomains';
 import { createSaved, listSaved, openSaved, removeSaved, savedPath, sharing, type Exploration, type SavedDetail, type SavedKind, type SavedMeta, type WorkbenchQuery } from '../../services/explorerSaved';
 import './explorer-workbench.css';
@@ -130,7 +130,7 @@ export default function ExplorerWorkbenchHeader(p: Props) {
         return () => c.abort();
     }, [path, library, kind, page, generation, librarySearch, access]);
     useEffect(() => {
-        if (!menu) return;
+        if (!menu || library) return;
         const outside = (event: PointerEvent) => {
             const target = event.target as Node;
             const trigger = target instanceof Element ? target.closest('[data-wb-menu]') : null;
@@ -142,7 +142,7 @@ export default function ExplorerWorkbenchHeader(p: Props) {
         const key = (e: KeyboardEvent) => { if (e.key === 'Escape') show(''); };
         document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', key);
         return () => { document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', key); };
-    }, [menu]);
+    }, [menu, library]);
     function beginSave(k: SavedKind) {
         if (p.savedLoading || p.savedError) return;
         setSaveKind(k); setName(''); setError(''); show(''); setDialog('save');
@@ -194,13 +194,30 @@ export default function ExplorerWorkbenchHeader(p: Props) {
     const field = chart && p.fields.includes(chart) ? chart : p.fields[0] ?? '';
     const find = p.fields.filter(f => [f, p.names?.[f]].join(' ').toLowerCase().includes(search.toLowerCase())).slice(0, 30);
     const changeField = (f: string) => { choose(f); setSearch(p.names?.[f] || f); show('property'); };
+    const libraryContent = <section className="wb-library" aria-label={`Saved ${menu}`}>
+        {error && <p role="alert" className="wb-library-error">{error}</p>}
+        <div className="wb-library-heading"><div><h3>{menu === 'lists' ? 'Lists' : 'Explorations'}</h3><p>{menu === 'lists' ? 'Saved object selections' : 'Saved searches and views'}</p></div><button aria-label="Close saved items" onClick={() => show('')}><CloseOutlined /></button></div>
+        <div className="wb-library-controls"><label><SearchOutlined /><input aria-label={`Search ${menu}`} placeholder={`Search ${menu}…`} maxLength={100} value={librarySearch} onChange={e => { setLibrarySearch(e.target.value); setPage(0); }}/></label><select aria-label="Saved item sharing" value={access} onChange={e => { setAccess(e.target.value as typeof access); setPage(0); }}><option value="all">All</option><option value="private">Private</option><option value="shared">Shared</option></select></div>
+        <div className="wb-library-items">
+            {!items && !error && <p role="status" className="wb-library-empty">Loading saved items…</p>}
+            {items && !items.items.length && <div className="wb-library-empty"><SearchOutlined /><strong>{librarySearch || access !== 'all' ? 'No matching saved items' : `No saved ${menu}`}</strong><p>{librarySearch || access !== 'all' ? 'Try another search or sharing filter.' : 'Save your work to return to it later.'}</p></div>}
+            {items?.items.map(item => <div className={'wb-library-item' + (saved?.id === item.id ? ' is-current' : '')} key={item.id}>
+                <button className="wb-library-open" aria-label={`Open ${item.kind} ${item.name}`} aria-current={saved?.id === item.id ? 'page' : undefined} onClick={() => { show(''); p.openSavedItem(item.id); }}><span className="wb-library-icon">{item.kind === 'list' ? <TableOutlined /> : <BarChartOutlined />}</span><span><strong>{item.name}</strong><small>{item.shared ? 'Shared link enabled' : 'Private'} · {p.schema}.{p.table}</small></span>{saved?.id === item.id && <CheckOutlined />}</button>
+                <div className="wb-library-actions"><button aria-label={`Share ${item.kind} ${item.name}`} title="Share" onClick={() => void openShare(item)}><ShareAltOutlined /></button><button aria-label={`Delete ${item.kind} ${item.name}`} title="Delete" onClick={() => { show(''); setError(''); setDeleteTarget(item); }}><DeleteOutlined /></button></div>
+            </div>)}
+        </div>
+        <footer className="wb-library-footer"><span>Created by you</span><div><button disabled={!page} onClick={() => setPage(v => v - 1)}>Previous</button><span>{page + 1}</span><button disabled={!items?.hasMore} onClick={() => setPage(v => v + 1)}>Next</button></div></footer>
+    </section>;
     return <header className="wb-header" ref={root}>
         <div className="wb-line wb-query">
             <button type="button" className="wb-back" onClick={p.backToTypes}><ArrowLeftOutlined /> Back to object types</button>
             <span className="wb-type">{p.available && <button type="button" className="wb-catalog-toggle wb-type-icon" onClick={p.toggleCatalog} aria-label="Browse object types" title="Browse object types" aria-expanded={p.catalogOpen}><i>{p.glyph ?? <TableOutlined />}</i></button>}<strong title={p.schema + '.' + p.table}>{p.available ? p.label : p.table}</strong></span>
             {p.available && <><label className="wb-property-search" ref={propertySearch} onClick={() => show('search')}><SearchOutlined /><input aria-label="Search properties to add a chart or filter" placeholder="Search properties to add a chart or filter…" value={search} onFocus={() => show('search')} onChange={e => { setSearch(e.target.value); show('search'); }} onKeyDown={e => { if (e.key === 'Enter' && find[0]) changeField(find[0]); }}/></label>
-            <button data-wb-menu="explorations" aria-expanded={menu === 'explorations'} onClick={() => openMenu('explorations')}>Explorations <DownOutlined /></button>
-            <button data-wb-menu="lists" aria-expanded={menu === 'lists'} onClick={() => openMenu('lists')}>Lists <DownOutlined /></button>
+            {(['explorations', 'lists'] as const).map(entry => <Dropdown key={entry} trigger={['click']} placement="bottomRight" open={menu === entry}
+                onOpenChange={next => { if (next) openMenu(entry); else show(current => current === entry ? '' : current); }}
+                overlayClassName="flow-menu-popup wb-library-popup" popupRender={() => libraryContent}>
+                <button type="button" data-wb-menu={entry}>{entry === 'lists' ? 'Lists' : 'Explorations'} <DownOutlined /></button>
+            </Dropdown>)}
             <button onClick={() => void openShare(saved)} disabled={p.savedLoading || !!p.savedError}>Share</button><button className="wb-primary" disabled={p.savedLoading || !!p.savedError} onClick={() => beginSave(saved?.kind === 'list' ? 'list' : 'exploration')}>Save</button></>}
         </div>
         {p.available && <><div className="wb-line wb-tools">
@@ -219,24 +236,12 @@ export default function ExplorerWorkbenchHeader(p: Props) {
                 </div>
             </div>
         </div>
-        {menu && <section className={'wb-popup wb-popup--' + menu + (library ? ' wb-library' : '')} ref={popup} aria-label={library ? `Saved ${menu}` : 'Explorer tools'}>
+        {menu && !library && <section className={'wb-popup wb-popup--' + menu} ref={popup} aria-label="Explorer tools">
             {error && <p role="alert" className="wb-library-error">{error}</p>}
             {menu === 'search' && <>{find.map(f => <button key={f} onClick={() => changeField(f)}>{p.names?.[f] || f}</button>)}{!find.length && <p>No matching properties</p>}</>}
             {menu === 'property' && <><strong>{p.names?.[choice] || choice}</strong><button onClick={() => { setChart(choice); setSearch(''); selectMode('explore'); }}>Add chart</button><button onClick={() => { setSearch(''); selectMode('results'); p.addFilter(choice); }}>Add filter</button></>}
             {menu === 'asset' && <>{(['preview', 'schema', 'stream', 'evidence', ...(p.admin ? ['api'] : [])] as ResourceView[]).map(view => <button key={view} onClick={() => { p.selectResource(view); p.setMode('results'); show(''); }}>{{ preview: 'Data preview', schema: 'Properties & column mapping', stream: 'Stream', evidence: 'Evidence', api: 'Published APIs' }[view]}</button>)}</>}
-            {library && <>
-                <div className="wb-library-heading"><div><h3>{menu === 'lists' ? 'Lists' : 'Explorations'}</h3><p>{menu === 'lists' ? 'Saved object selections' : 'Saved searches and views'}</p></div><button aria-label="Close saved items" onClick={() => show('')}><CloseOutlined /></button></div>
-                <div className="wb-library-controls"><label><SearchOutlined /><input aria-label={`Search ${menu}`} placeholder={`Search ${menu}…`} maxLength={100} value={librarySearch} onChange={e => { setLibrarySearch(e.target.value); setPage(0); }}/></label><select aria-label="Saved item sharing" value={access} onChange={e => { setAccess(e.target.value as typeof access); setPage(0); }}><option value="all">All</option><option value="private">Private</option><option value="shared">Shared</option></select></div>
-                <div className="wb-library-items">
-                    {!items && !error && <p role="status" className="wb-library-empty">Loading saved items…</p>}
-                    {items && !items.items.length && <div className="wb-library-empty"><SearchOutlined /><strong>{librarySearch || access !== 'all' ? 'No matching saved items' : `No saved ${menu}`}</strong><p>{librarySearch || access !== 'all' ? 'Try another search or sharing filter.' : 'Save your work to return to it later.'}</p></div>}
-                    {items?.items.map(item => <div className={'wb-library-item' + (saved?.id === item.id ? ' is-current' : '')} key={item.id}>
-                        <button className="wb-library-open" aria-label={`Open ${item.kind} ${item.name}`} aria-current={saved?.id === item.id ? 'page' : undefined} onClick={() => { show(''); p.openSavedItem(item.id); }}><span className="wb-library-icon">{item.kind === 'list' ? <TableOutlined /> : <BarChartOutlined />}</span><span><strong>{item.name}</strong><small>{item.shared ? 'Shared link enabled' : 'Private'} · {p.schema}.{p.table}</small></span>{saved?.id === item.id && <CheckOutlined />}</button>
-                        <div className="wb-library-actions"><button aria-label={`Share ${item.kind} ${item.name}`} title="Share" onClick={() => void openShare(item)}><ShareAltOutlined /></button><button aria-label={`Delete ${item.kind} ${item.name}`} title="Delete" onClick={() => { show(''); setError(''); setDeleteTarget(item); }}><DeleteOutlined /></button></div>
-                    </div>)}
-                </div>
-                <footer className="wb-library-footer"><span>Created by you</span><div><button disabled={!page} onClick={() => setPage(v => v - 1)}>Previous</button><span>{page + 1}</span><button disabled={!items?.hasMore} onClick={() => setPage(v => v + 1)}>Next</button></div></footer>
-            </>}
+
         </section>}
         {p.resource === 'preview' && p.mode === 'explore' && !p.savedLoading && !p.savedError && <ExploreChart field={field} select={setChart} fields={p.fields} names={p.names} rows={p.rows} onFilter={f => { selectMode('results'); p.addFilter(f); }}/>}</>}
         <Modal className="flow-surface-modal wb-saved-dialog" title="Save your work" open={dialog === 'save'} width={460} onCancel={() => { if (!busy) setDialog(''); }} keyboard={!busy} maskClosable={!busy} footer={<><Button disabled={busy} onClick={() => setDialog('')}>Cancel</Button><Button type="primary" loading={busy} disabled={!name.trim() || (saveKind === 'list' && !listKeys.length) || (saveKind === 'exploration' && saved?.kind === 'list')} onClick={() => void save()}>Save {saveKind}</Button></>}>

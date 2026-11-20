@@ -20,9 +20,9 @@
 .is-exploring .wb-shell { overflow:auto; }
 .wb-header { position: relative; font-size: 13px; background:var(--ontology-panel); }
 .wb-line { display:flex; align-items:center; min-width:0; gap:8px; padding:0 12px; border-bottom:1px solid var(--ontology-control-border); }
-.wb-line button,.wb-popup button,.wb-explore button { display:inline-flex; align-items:center; justify-content:center; gap:5px; min-height:28px; padding:3px 9px; border:1px solid transparent; border-radius:3px; color:var(--ontology-text); background:transparent; font:inherit; cursor:pointer; }
-.wb-header button:hover { background:var(--ontology-toolbar); }
-.wb-header button:disabled { opacity:.45; cursor:default; }
+.wb-line button,.wb-popup button,.wb-library button,.wb-explore button { display:inline-flex; align-items:center; justify-content:center; gap:5px; min-height:28px; padding:3px 9px; border:1px solid transparent; border-radius:3px; color:var(--ontology-text); background:transparent; font:inherit; cursor:pointer; }
+.wb-header button:hover,.wb-library button:hover { background:var(--ontology-toolbar); }
+.wb-header button:disabled,.wb-library button:disabled { opacity:.45; cursor:default; }
 .flow-console--ontology .flow-exploration-workspace :is(button,input,select,textarea):focus { outline:none; box-shadow:none; }
 .flow-console--ontology .flow-exploration-workspace button:focus-visible { outline:1px solid var(--ontology-muted); outline-offset:-3px; }
 .flow-console--ontology .flow-exploration-workspace :is(input,select,textarea):focus { background:var(--ontology-hover); }
@@ -67,16 +67,18 @@
 .wb-saved-kind { display:inline-flex; align-items:center; gap:5px; color:var(--ontology-muted); white-space:nowrap; }
 .wb-active-saved strong { max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:500; }
 .wb-active-saved button { min-height:22px; width:22px; padding:2px; color:var(--ontology-muted); }
-.wb-header .wb-library { display:flex; flex-direction:column; gap:0; width:min(460px,calc(100% - 24px)); max-height:min(65vh,560px); padding:0; overflow:hidden; border-radius:3px; box-shadow:0 8px 28px #0004; }
+.ui-dropdown.wb-library-popup { width:min(460px,calc(100vw - 16px)); min-width:0; max-height:min(65vh,560px); padding:0; overflow:hidden; border-radius:3px; background:var(--ontology-panel); border-color:var(--ontology-control-border); box-shadow:0 8px 28px #0004; font-size:13px; }
+.wb-library { display:flex; flex-direction:column; gap:0; max-height:inherit; min-height:0; color:var(--ontology-text); }
+.wb-library > :not(.wb-library-items) { flex-shrink:0; }
 .wb-library-heading { display:flex; align-items:center; justify-content:space-between; padding:14px 14px 10px; }
 .wb-library-heading h3 { margin:0; font-size:14px; font-weight:600; }
 .wb-library-heading p { margin:3px 0 0; font-size:11px; color:var(--ontology-muted); }
 .wb-library-heading > button { width:26px; padding:0; justify-content:center; color:var(--ontology-muted); }
 .wb-library-controls { display:flex; gap:8px; padding:0 14px 12px; border-bottom:1px solid var(--ontology-control-border); }
 .wb-library-controls label { display:flex; flex:1; min-width:0; align-items:center; gap:7px; padding:0 9px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-bg); color:var(--ontology-muted); }
-.wb-library-controls input { border:0; padding:6px 0; background:transparent; font-size:12px; }
+.wb-library-controls input { width:100%; min-width:0; border:0; padding:6px 0; background:transparent; color:var(--ontology-text); font:inherit; font-size:12px; }
 .wb-library-controls select { padding:4px 7px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-bg); color:var(--ontology-text); font:inherit; font-size:12px; }
-.wb-library-items { min-height:120px; overflow:auto; overscroll-behavior:contain; padding:5px; }
+.wb-library-items { flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; padding:5px; }
 .wb-library-item { display:flex; align-items:center; border-radius:2px; }
 .wb-library-item:hover { background:var(--ontology-hover); }
 .wb-library-item.is-current { background:var(--ontology-selected); }
