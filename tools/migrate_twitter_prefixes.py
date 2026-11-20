@@ -161,9 +161,10 @@ def worker(path, shard, db_gate):
                     for attempt in range(3):
                         try:
                             with db_gate:
-                                await migration.repair_references(db, mongo, registered, *group)
                                 if not await migration.verify_group(db, client, mongo, registered, *group):
-                                    raise RuntimeError('Twitter references did not verify: ' + '/'.join(group))
+                                    await migration.repair_references(db, mongo, registered, *group)
+                                    if not await migration.verify_group(db, client, mongo, registered, *group):
+                                        raise RuntimeError('Twitter references did not verify: ' + '/'.join(group))
                             break
                         except (TimeoutError, migration.urllib3.exceptions.TimeoutError):
                             print(json.dumps({'worker': shard, 'record': group[1], 'verification_timeout': True,

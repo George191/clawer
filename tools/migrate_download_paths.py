@@ -310,6 +310,7 @@ async def repair_references(db, mongo, registered, prefix, record_id):
 async def verify_group(db, client, mongo, registered, prefix, record_id):
     from app.adapters.runtime import get_source_module
     from app.etl.schema.catalogs import validate_table_name
+    from app.etl.source_fences import business_version
     rows=db.execute('SELECT old,new FROM objects WHERE prefix=? AND record_id=? AND phase="source_updated"',(prefix,record_id)).fetchall()
     docs=source_documents(mongo,registered,prefix,record_id)
     pg=get_pg_client()
@@ -319,6 +320,14 @@ async def verify_group(db, client, mongo, registered, prefix, record_id):
         source=route['collection_name'];kind=validate_table_name(route['data_type'])
         raw=await pg.fetch_all(f'SELECT raw_data FROM ts_rds.rds_{kind} WHERE record_id=:id AND data_source=:source AND data_type=:kind', {'id':record_id,'source':source,'kind':kind})
         if not raw:
+            return False
+        snapshot = raw[0]['raw_data']
+        if isinstance(snapshot, str):snapshot=json.loads(snapshot)
+        source_meta, stored_meta = doc.get('_meta') or {}, snapshot.get('_meta') or {}
+        if (business_version(source_meta) != business_version(stored_meta)
+                or source_meta.get('write_token') != stored_meta.get('write_token')
+                or stored_meta.get('data_type') != kind
+                or stored_meta.get('template') != route['collection_name']):
             return False
         raw_json=json.dumps(raw[0]['raw_data'],default=str)
         current_json=json.dumps(doc,default=str)
