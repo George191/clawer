@@ -90,10 +90,19 @@ def worker(path, shard, db_gate):
                 pending = db.execute(f'SELECT DISTINCT prefix,record_id FROM objects WHERE {SCOPE} AND shard=? AND phase="source_updated" LIMIT 100', (shard,)).fetchall()
                 for group in pending:
                     repair(group)
-                    with db_gate:
-                        await migration.repair_references(db, mongo, registered, *group)
-                        if not await migration.verify_group(db, client, mongo, registered, *group):
-                            raise RuntimeError('Twitter references did not verify: ' + '/'.join(group))
+                    for attempt in range(3):
+                        try:
+                            with db_gate:
+                                await migration.repair_references(db, mongo, registered, *group)
+                                if not await migration.verify_group(db, client, mongo, registered, *group):
+                                    raise RuntimeError('Twitter references did not verify: ' + '/'.join(group))
+                            break
+                        except TimeoutError:
+                            print(json.dumps({'worker': shard, 'record': group[1], 'commit_timeout': True,
+                                              'attempt': attempt + 1}), flush=True)
+                            if attempt == 2:
+                                raise
+                            await asyncio.sleep(10)
                 rows = db.execute(f'SELECT old,new FROM objects WHERE {SCOPE} AND shard=? AND phase="verified" LIMIT ?', (shard, migration.BATCH)).fetchall()
                 for old, new in rows:
                     if old == new or not new.startswith(target_prefixes):
