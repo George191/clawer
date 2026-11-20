@@ -209,10 +209,71 @@ def apply_group(db, client, mongo, registered, prefix, record_id):
     db.commit()
 
 
-async def verify_group(db, client, mongo, registered, prefix, record_id):
-    from app.adapters.runtime import get_source_module
+def declared_normalizer(module, kind, source):
     from importlib import import_module
     from app.etl.normalizers import _NORMALIZER_MODULES, _NORMALIZER_REGISTRY
+    normalizer=getattr(module,'NORMALIZERS',{}).get(kind) if module else None
+    if normalizer is None:
+        if kind in _NORMALIZER_MODULES:import_module('app.etl.normalizers.'+_NORMALIZER_MODULES[kind])
+        normalizer=_NORMALIZER_REGISTRY.get(kind+':'+source) or _NORMALIZER_REGISTRY.get(kind+':*')
+    if normalizer is None:raise RuntimeError('No declared normalizer for '+source+'/'+kind)
+    return normalizer
+
+
+async def repair_references(db, mongo, registered, prefix, record_id):
+    """Repair current database references explicitly, including sources with paused CDC topics."""
+    from app.adapters.runtime import get_source_module
+    from app.etl.schema.catalogs import validate_table_name
+    from app.etl.source_fences import business_version
+    rows=db.execute('SELECT old,new FROM objects WHERE prefix=? AND record_id=? AND phase="source_updated"',(prefix,record_id)).fetchall()
+    if not rows:return
+    pg=get_pg_client()
+    docs=source_documents(mongo,registered,prefix,record_id)
+    if not docs:raise RuntimeError('Source disappeared before reference repair')
+    for route,doc in docs:
+        source=route['collection_name'];kind=validate_table_name(route['data_type'])
+        body={k:v for k,v in doc.items() if k!='_id'}
+        module=await get_source_module(source,export='NORMALIZERS')
+        normalizer=declared_normalizer(module,kind,source)
+        outputs=normalizer({**body,'data_source':source})
+        if inspect.isawaitable(outputs):outputs=await outputs
+        if not isinstance(outputs,list):outputs=[outputs]
+        updates=[]
+        for output in outputs:
+            fields={key:value for key,value in output.items()
+                    if key not in {'record_id','data_source','data_type'} and any(new in json.dumps(value,default=str) for _,new in rows)}
+            if fields:updates.append((validate_table_name(output.get('data_type') or kind),output.get('record_id') or record_id,fields))
+        async with pg.session() as session:
+            await session.execute(text("SET LOCAL lock_timeout='5s'"))
+            await session.execute(text("SET LOCAL statement_timeout='30s'"))
+            current=(await session.execute(text(f'SELECT raw_data FROM ts_rds.rds_{kind} WHERE record_id=:id AND data_source=:src AND data_type=:kind FOR UPDATE'),{'id':record_id,'src':source,'kind':kind})).mappings().first()
+            if not current:raise RuntimeError('Source has no current RDS row: '+source+'/'+record_id)
+            raw=current['raw_data']
+            if isinstance(raw,str):raw=json.loads(raw)
+            if business_version(raw.get('_meta') or {})>business_version(doc['_meta']):
+                raise RuntimeError('RDS advanced during migration; resume with the latest source')
+            # Keep real delivery positions; the source snapshot and revision come from Mongo.
+            if '_kafka_meta' in raw:body['_kafka_meta']=raw['_kafka_meta']
+            await session.execute(text(f'UPDATE ts_rds.rds_{kind} SET raw_data=CAST(:raw AS jsonb),updated_at=NOW() WHERE record_id=:id AND data_source=:src AND data_type=:kind'),{'raw':json.dumps(body,ensure_ascii=False,default=str),'id':record_id,'src':source,'kind':kind})
+            for table,identity,fields in sorted(updates,key=lambda row:(row[0],row[1])):
+                columns=(await session.execute(text("SELECT column_name,data_type FROM information_schema.columns WHERE table_schema='ts_ods' AND table_name=:table"),{'table':'ods_'+table})).mappings().all()
+                types={row['column_name']:row['data_type'] for row in columns}
+                parameters={'id':identity,'src':source,'kind':table};assignments=[]
+                for index,(name,value) in enumerate(fields.items()):
+                    if name not in types:raise RuntimeError('Missing ODS path column: '+table+'.'+name)
+                    parameter='value_'+str(index);quoted='"'+name.replace('"','""')+'"'
+                    if types[name] in {'json','jsonb'}:
+                        parameters[parameter]=value if isinstance(value,str) else json.dumps(value,ensure_ascii=False,default=str)
+                        assignments.append(quoted+'=CAST(:'+parameter+' AS '+types[name]+')')
+                    elif types[name] in {'text','character varying'}:
+                        parameters[parameter]=value;assignments.append(quoted+'=:'+parameter)
+                    else:raise RuntimeError('Unexpected storage reference column type: '+table+'.'+name)
+                result=await session.execute(text(f'UPDATE ts_ods.ods_{table} SET '+','.join(assignments)+',updated_at=NOW() WHERE record_id=:id AND data_source=:src AND data_type=:kind'),parameters)
+                if result.rowcount!=1:raise RuntimeError('Expected one existing ODS row: '+table+'/'+identity)
+
+
+async def verify_group(db, client, mongo, registered, prefix, record_id):
+    from app.adapters.runtime import get_source_module
     from app.etl.schema.catalogs import validate_table_name
     rows=db.execute('SELECT old,new FROM objects WHERE prefix=? AND record_id=? AND phase="source_updated"',(prefix,record_id)).fetchall()
     docs=source_documents(mongo,registered,prefix,record_id)
@@ -229,11 +290,7 @@ async def verify_group(db, client, mongo, registered, prefix, record_id):
         if any(old in current_json or old in raw_json or (new in current_json and new not in raw_json) for old,new in rows):
             return False
         module=await get_source_module(source,export='NORMALIZERS')
-        normalizer=getattr(module,'NORMALIZERS',{}).get(kind) if module else None
-        if normalizer is None:
-            if kind in _NORMALIZER_MODULES:import_module('app.etl.normalizers.'+_NORMALIZER_MODULES[kind])
-            normalizer=_NORMALIZER_REGISTRY.get(kind+':'+source) or _NORMALIZER_REGISTRY.get(kind+':*')
-        if normalizer is None:raise RuntimeError('No declared normalizer for '+source+'/'+kind)
+        normalizer=declared_normalizer(module,kind,source)
         normalized=normalizer({**doc,'data_source':source})
         if inspect.isawaitable(normalized):
             normalized=await normalized
@@ -259,13 +316,15 @@ def worker(path, shard, mode):
     mongo_client=MongoClient(settings.db_url,serverSelectionTimeoutMS=15000)
     mongo=mongo_client[settings.db_name]
     phase='planned' if mode=='apply' else 'source_updated' if mode=='verify' else 'verified'
-    db.execute('UPDATE objects SET error=NULL WHERE shard=? AND phase=?',(shard,phase));db.commit()
+    db.execute('UPDATE objects SET error=NULL WHERE shard=? AND phase=?',(shard,phase))
+    if mode=='apply':db.execute('UPDATE objects SET error=NULL WHERE shard=? AND phase="source_updated"',(shard,))
+    db.commit()
     async def run():
         pg=get_pg_client()
-        if mode=='verify':
+        if mode in {'apply','verify'}:
             await pg.connect(max_retries=1)
         try:
-            phases=('planned','error') if mode=='apply' else ('source_updated',) if mode=='verify' else ('verified',)
+            phases=('planned','error','source_updated') if mode=='apply' else ('source_updated',) if mode=='verify' else ('verified',)
             last=('', '')
             while True:
                 groups=db.execute('SELECT DISTINCT prefix,record_id FROM objects WHERE shard=? AND phase IN ('+','.join('?' for _ in phases)+') AND error IS NULL AND (prefix,record_id)>(?,?) ORDER BY prefix,record_id LIMIT ?', (shard,*phases,*last,BATCH)).fetchall()
@@ -280,7 +339,10 @@ def worker(path, shard, mode):
                 for prefix,record_id in groups:
                     assert int(record_id,16)%WORKERS==shard
                     try:
-                        if mode=='apply':apply_group(db,client,mongo,registered,prefix,record_id)
+                        if mode=='apply':
+                            apply_group(db,client,mongo,registered,prefix,record_id)
+                            await repair_references(db,mongo,registered,prefix,record_id)
+                            await verify_group(db,client,mongo,registered,prefix,record_id)
                         elif mode=='verify':await verify_group(db,client,mongo,registered,prefix,record_id)
                         else:
                             for old,new in db.execute('SELECT old,new FROM objects WHERE prefix=? AND record_id=? AND phase="verified"',(prefix,record_id)).fetchall():
@@ -295,7 +357,7 @@ def worker(path, shard, mode):
                 last=groups[-1]
                 print(json.dumps({'shard':shard,'mode':mode,'checkpoint':last}),flush=True)
         finally:
-            if mode=='verify':await pg.close()
+            if mode in {'apply','verify'}:await pg.close()
     asyncio.run(run());mongo_client.close();db.close()
 
 

@@ -101,3 +101,42 @@ def test_indexed_inventory_resumes_without_relisting_sources(tmp_path):
     assert db.execute('SELECT old,phase FROM objects').fetchall() == [(old,'planned')]
     assert db.execute('SELECT done FROM progress WHERE prefix="__inventory__"').fetchone()[0] == 1
     db.close()
+
+@pytest.mark.asyncio
+async def test_reference_repair_preserves_delivery_positions_and_updates_only_path_columns(tmp_path):
+    from contextlib import asynccontextmanager
+    from datetime import datetime, timezone
+    from unittest.mock import AsyncMock
+    import json
+    record_id='a'*32
+    old=f'news/source/{record_id}/file.jpg.jpg'
+    new=f'news/source/{record_id}/'+ 'b'*64 + '.jpg'
+    db=migration.journal(tmp_path/'journal.sqlite')
+    db.execute('INSERT INTO objects(old,prefix,record_id,shard,new,phase) VALUES(?,?,?,?,?,?)',(old,'news/source',record_id,0,new,'source_updated'));db.commit()
+    route={'collection_name':'news_source','data_type':'news','template_name':'source'}
+    doc={'_id':1,'_meta':{'record_id':record_id,'updated_at':datetime(2026,1,2,tzinfo=timezone.utc)},'title':'source title','assets':{'image':new}}
+    calls=[]
+    class Result:
+        rowcount=1
+        def __init__(self,value=None):self.value=value
+        def mappings(self):return self
+        def first(self):return self.value
+        def all(self):return self.value
+    async def execute(sql,params=None):
+        sql=str(sql);calls.append((sql,params))
+        if sql.startswith('SELECT raw_data'):return Result({'raw_data':{'_meta':{'updated_at':'2026-01-01T00:00:00Z'},'_kafka_meta':{'kafka_offset':123}}})
+        if 'information_schema.columns' in sql:return Result([{'column_name':'url','data_type':'text'},{'column_name':'images','data_type':'jsonb'}])
+        return Result()
+    @asynccontextmanager
+    async def session():yield SimpleNamespace(execute=execute)
+    module=SimpleNamespace(NORMALIZERS={'news':lambda doc:{'url':new,'images':[{'url':new}],'title':'source title'}})
+    with patch.object(migration,'source_documents',return_value=[(route,doc)]),patch.object(migration,'get_pg_client',return_value=SimpleNamespace(session=session)),patch('app.adapters.runtime.get_source_module',AsyncMock(return_value=module)):
+        await migration.repair_references(db,Mock(),[], 'news/source',record_id)
+    rds=[(sql,p) for sql,p in calls if sql.startswith('UPDATE ts_rds')][0]
+    assert json.loads(rds[1]['raw'])['_kafka_meta']=={'kafka_offset':123}
+    assert 'kafka_offset=' not in rds[0]
+    ods=[sql for sql,p in calls if sql.startswith('UPDATE ts_ods')][0]
+    assert '"url"=' in ods and '"images"=CAST(' in ods
+    assert 'title=' not in ods
+    assert any('FOR UPDATE' in sql for sql,p in calls)
+    db.close()
