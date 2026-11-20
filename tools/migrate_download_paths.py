@@ -34,6 +34,10 @@ HEX = re.compile(r'^[0-9a-f]{64}$')
 RECORD = re.compile(r'^[0-9a-f]{32}$')
 
 
+class ConcurrentSourceUpdate(RuntimeError):
+    """The current source is claimed or changed; reread it before retrying."""
+
+
 def journal(path):
     db = sqlite3.connect(path, timeout=60)
     db.execute('PRAGMA journal_mode=WAL')
@@ -211,6 +215,8 @@ def source_documents(mongo, registered, prefix, record_id):
 def apply_group(db, client, mongo, registered, prefix, record_id):
     rows = db.execute('SELECT old,new FROM objects WHERE prefix=? AND record_id=? AND phase IN ("planned","error")', (prefix,record_id)).fetchall()
     docs = source_documents(mongo, registered, prefix, record_id)
+    if any((doc.get('_meta') or {}).get('download_status') == 'downloading' for _, doc in docs):
+        raise ConcurrentSourceUpdate('Source is currently claimed by the downloader')
     replacements = {}
     for old, new in rows:
         if new and any(new in value for _, doc in docs for _, value in strings(doc.get('assets', {}))):
@@ -238,7 +244,7 @@ def apply_group(db, client, mongo, registered, prefix, record_id):
             fields.update({'_meta.sync_status':'pending','_meta.updated_at':datetime.now(timezone.utc)})
             result = mongo[route['collection_name']].update_one(conditions,{'$set':fields,'$inc':{'_meta.download_version':1}})
             if result.matched_count != 1:
-                raise RuntimeError('Concurrent source update; resume after the download finishes')
+                raise ConcurrentSourceUpdate('Concurrent source update; reread the latest record')
     for old in replacements:
         db.execute('UPDATE objects SET phase="source_updated" WHERE old=?',(old,))
     db.commit()

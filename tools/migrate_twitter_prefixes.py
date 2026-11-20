@@ -57,8 +57,8 @@ def worker(path, shard, db_gate):
                 try:
                     migration.apply_group(db, client, mongo, registered, *group)
                     break
-                except migration.urllib3.exceptions.TimeoutError:
-                    print(json.dumps({'worker': shard, 'record': group[1], 'copy_timeout': True,
+                except (migration.urllib3.exceptions.TimeoutError, migration.ConcurrentSourceUpdate) as error:
+                    print(json.dumps({'worker': shard, 'record': group[1], 'copy_retry': type(error).__name__,
                                       'attempt': attempt + 1}), flush=True)
                     if attempt == 2:
                         raise

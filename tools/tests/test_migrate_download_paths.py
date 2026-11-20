@@ -131,6 +131,18 @@ def test_partition_ownership_is_disjoint_and_complete():
     assert sum(len(shard) for shard in shards) == len(records)
     assert all(len(a & b)==0 for i,a in enumerate(shards) for b in shards[i+1:])
 
+
+def test_active_download_claim_is_checked_before_transferring_bytes(tmp_path):
+    db = migration.journal(tmp_path / 'journal.sqlite')
+    doc = {'_meta': {'download_status': 'downloading'}}
+    client = Mock()
+    with patch.object(migration, 'source_documents', return_value=[({}, doc)]):
+        with pytest.raises(migration.ConcurrentSourceUpdate):
+            migration.apply_group(db, client, None, [], 'tweet/twitter', 'a' * 32)
+    client.get_object.assert_not_called()
+    client.fput_object.assert_not_called()
+    db.close()
+
 def test_indexed_inventory_resumes_without_relisting_sources(tmp_path):
     from datetime import datetime, timezone
     from unittest.mock import MagicMock
