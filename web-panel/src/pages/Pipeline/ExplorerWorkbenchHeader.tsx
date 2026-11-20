@@ -37,7 +37,6 @@ type Props = {
     mode: 'explore' | 'results';
     setMode: (mode: 'explore' | 'results') => void;
     clearSelection: () => void;
-    backButton?: ReactNode;
     filterButton?: ReactNode;
 };
 function textValue(value: unknown) {
@@ -262,8 +261,8 @@ export default function ExplorerWorkbenchHeader(p: Props) {
     const find = p.fields.filter(f => [f, p.names?.[f]].join(' ').toLowerCase().includes(search.toLowerCase())).slice(0, 30);
     const changeField = (f: string) => { choose(f); setSearch(p.names?.[f] || f); show('property'); };
     return <header className="wb-header" ref={root}>
-        <div className="wb-line wb-query">{p.backButton}<button className="wb-catalog-toggle" onClick={p.toggleCatalog} aria-label="Browse object types" aria-expanded={p.catalogOpen}><SearchOutlined /></button>
-            <span className="wb-type"><i>{p.glyph ?? <TableOutlined />}</i><strong>{p.label}</strong></span>
+        <div className="wb-line wb-query">
+            <span className="wb-type"><button type="button" className="wb-catalog-toggle wb-type-icon" onClick={p.toggleCatalog} aria-label="Browse object types" title="Browse object types" aria-expanded={p.catalogOpen}><i>{p.glyph ?? <TableOutlined />}</i></button><strong>{p.label}</strong></span>
             <label className="wb-property-search" ref={propertySearch} onClick={() => show('search')}><SearchOutlined /><input aria-label="Search properties to add a chart or filter" placeholder="Search properties to add a chart or filter…" value={search} onFocus={() => show('search')} onChange={e => { setSearch(e.target.value); show('search'); }} onKeyDown={e => { if (e.key === 'Enter' && find[0])
         changeField(find[0]); }}/></label>
             <button onClick={() => openMenu('explorations')}>Explorations <DownOutlined /></button>
