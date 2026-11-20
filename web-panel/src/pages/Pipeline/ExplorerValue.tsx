@@ -51,8 +51,8 @@ function HtmlPreview({ value, identity, field }: { value: string; identity: Reco
     }, () => { if (!controller.signal.aborted) setError(true); });
     return () => controller.abort();
   }, [schema, table, key, field, value]);
-  if (error) return <span role="alert">HTML preview failed. Reload to retry.</span>;
-  if (html === undefined) return <span role="status">Loading HTML preview…</span>;
+  if (error) return <div className="explorer-html explorer-html--status" role="alert">HTML preview failed. Reload to retry.</div>;
+  if (html === undefined) return <div className="explorer-html explorer-html--status" role="status">Loading HTML preview…</div>;
   const dark = document.documentElement.dataset.theme !== 'light';
   const style = `body{margin:16px;font:13px/1.65 system-ui;overflow-wrap:anywhere;color:${dark ? '#d8dee9' : '#263244'};background:${dark ? '#242936' : '#fff'}}img,video{display:block;max-width:100%;height:auto;margin:12px auto}audio{width:100%}a{color:${dark ? '#80bfff' : '#176bb5'}}table{border-collapse:collapse;max-width:100%}td,th{border:1px solid #687080;padding:6px}pre{white-space:pre-wrap}blockquote{margin:12px 0;padding-left:16px;border-left:3px solid #687080}`;
   const doc = '<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; style-src &#39;unsafe-inline&#39;; img-src https: http: data:; media-src https: http:; base-uri &#39;none&#39;; form-action &#39;none&#39;"><style>' + style + '</style>' + html;

@@ -11,7 +11,7 @@ import { editorValue, rowChanges, type RowDraft } from './explorerRowEditing';
 import {
     ExplorerObjectOverview, ExplorerProperties, ExplorerRecordActions, ExplorerTypeIcon, explorerRowTitle, useExplorerPresentation,
 } from './ExplorerSelection';
-import ExplorerRowLinks from './ExplorerRowLinks';
+import ExplorerRowLinks, { useExplorerLinkAvailability } from './ExplorerRowLinks';
 import './ontology-frame.css';
 import './explorer-record.css';
 
@@ -81,6 +81,8 @@ function RecordPage({ schema, table, identity }: { schema: string; table: string
     const layout=layouts?.personal.layout ?? layouts?.default.layout;
     const presentations=Object.fromEntries((layout?.columns ?? []).map(c=>[c.field,c.presentation??'value']));
     const locked=busy || !!draft || confirmDelete;
+    const links = useExplorerLinkAvailability(schema, table, result?.identity, revision);
+    const currentMode = mode === 'links' && !links.page ? 'overview' : mode;
     async function mutate(remove: boolean) {
         if (!result?.rowVersion || busy || stale) return;
         setError(''); setBusy(true);
@@ -143,22 +145,23 @@ function RecordPage({ schema, table, identity }: { schema: string; table: string
                 <Button danger disabled={busy || stale} onClick={()=>void mutate(true)}>Confirm delete</Button>
             </section>}
             <div className="record-tabs" aria-label="Object views">{(['overview','properties'] as const).map(tab=>
-                <button type="button" key={tab} aria-pressed={tab===mode} disabled={locked} onClick={()=>setMode(tab)}>
+                <button type="button" key={tab} aria-pressed={tab===currentMode} disabled={locked} onClick={()=>setMode(tab)}>
                     {{overview:'Overview',properties:'Properties'}[tab]}</button>)}
-                {groups.map(name => <button type="button" key={name} disabled={locked} aria-pressed={mode === 'group:' + name}
+                {groups.map(name => <button type="button" key={name} disabled={locked} aria-pressed={currentMode === 'group:' + name}
                     onClick={() => setMode(`group:${name}`)}>{name}</button>)}
-                <button type="button" aria-pressed={mode==='links'} disabled={locked} onClick={()=>setMode('links')}>Links</button>
+                {links.page && <button type="button" aria-pressed={currentMode==='links'} disabled={locked} onClick={()=>setMode('links')}>Links</button>}
             </div>
+            {links.error && <p role="alert">Unable to read relationships. <Button size="small" onClick={links.retry}>Retry</Button></p>}
             <div className="record-content">{draft ? <form className="record-edit" onSubmit={e=>{e.preventDefault();void mutate(false);}}>
                 {editFields.map(name=><div key={name} className="record-edit-field"><PropertyLabel type={result.columnTypes[name]}>{name}</PropertyLabel>
                     <ExplorerFieldEditor name={name} type={result.columnTypes[name]} disabled={busy || stale} value={draft[name]}
                         onChange={value=>setDraft({...draft,[name]:value})} />
                 </div>)}<div className="record-operations"><Button disabled={busy} onClick={()=>setDraft(undefined)}>Cancel edit</Button>
                     <Button type="primary" htmlType="submit" disabled={busy || stale}>Save changes</Button></div>
-            </form> : mode==='links' ? <ExplorerRowLinks schema={schema} table={table} primaryKey={result.identity}/> :
+            </form> : currentMode==='links' ? <ExplorerRowLinks schema={schema} table={table} primaryKey={result.identity} initialPage={links.page}/> :
                 !metadata ? <p role="status">Loading object presentation…</p> :
                 metadata.error ? <p>Properties are unavailable until the object presentation loads.</p> :
-                mode==='properties' ? <ExplorerProperties presentation={presentation} presentations={presentations} row={row}/> :
+                currentMode==='properties' ? <ExplorerProperties presentation={presentation} presentations={presentations} row={row}/> :
                 <ExplorerObjectOverview row={row} presentation={presentation} presentations={presentations} typeName={typeName} group={currentGroup}/>}</div>
         </>}
     </article>;

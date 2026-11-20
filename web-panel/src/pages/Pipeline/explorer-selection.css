@@ -104,8 +104,8 @@
 }
 .flow-explorer-selection__cards button[aria-pressed='true'] { border-color:var(--explorer-selection-stroke); background:var(--explorer-selection-bg); color:var(--ontology-text); }
 .flow-explorer-selection__cards button span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.flow-explorer-selection__content { flex: 1; min-width: 0; min-height: 0; overflow: auto; padding: clamp(14px, 1.6vw, 25px); }
-.flow-explorer-selection__object { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.flow-explorer-selection__content { display:flex; flex-direction:column; flex: 1; min-width: 0; min-height: 0; overflow: hidden; padding: clamp(14px, 1.6vw, 25px); }
+.flow-explorer-selection__object { flex:none; display: flex; align-items: center; gap: 12px; min-width: 0; }
 .flow-explorer-selection__identity { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .flow-explorer-selection__object-actions { display: flex; flex: 0 0 auto; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
 .flow-explorer-selection__object-actions a { padding:4px 6px; border-radius:3px; color:var(--ontology-muted); font-size:11px; }
@@ -283,3 +283,9 @@
 .flow-explorer-selection__panel-header { min-width:0; min-height:34px; padding:4px 8px; font-size:11px; }
 .flow-explorer-selection__panel-header h3 { font-size:12px; }
 .flow-explorer-selection__panel-header .ui-btn { font-size:11px; min-height:24px; }
+
+.flow-explorer-selection__content > .flow-explorer-selection__view { flex:none; }
+.flow-explorer-selection__properties { display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden; }
+.flow-explorer-selection__properties > .flow-explorer-selection__filters { flex:none; }
+.flow-explorer-selection__properties > .flow-explorer-selection__fields { flex:1; min-height:0; overflow:auto; }
+.flow-explorer-selection__content > :is(.flow-explorer-overview,.explorer-row-links,.flow-explorer-selection__comparison,.flow-explorer-row-mutation) { flex:1; min-height:0; overflow:auto; }

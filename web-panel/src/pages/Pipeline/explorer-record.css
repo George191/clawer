@@ -34,4 +34,5 @@
 .record-error { display: flex; gap: 10px; align-items: center; color: var(--ui-error); }
 
 .explorer-full-record > * { flex-shrink: 0; width: 100%; }
-.explorer-full-record > .record-content { flex: 1; min-height: 0; overflow: auto; }
+.explorer-full-record > .record-content { display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden; }
+.explorer-full-record > .record-content > :is(.flow-explorer-overview,.explorer-row-links,.record-edit) { flex:1; min-height:0; overflow:auto; }

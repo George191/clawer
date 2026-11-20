@@ -1331,7 +1331,7 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
                                     loading={loading} locked={!!editingRowKey || !!deleteSnapshot || mutationLoading}
                                     renderTitleLink={row => <ExplorerRecordLink schema={selectedSchema} table={table.name} identity={row.identity}>{row.title}</ExplorerRecordLink>}
                                     renderFullDetails={row => <ExplorerRecordLink schema={selectedSchema} table={table.name} identity={row.identity} />}
-                                    renderRelationships={row => <ExplorerRowLinks schema={selectedSchema} table={table.name} primaryKey={row.identity} />}
+                                    renderRelationships={(row, page) => <ExplorerRowLinks schema={selectedSchema} table={table.name} primaryKey={row.identity} initialPage={page} />}
                                     rowActions={rowActions} renderMutation={rowMutation}
                                     onRefresh={() => setPreviewRevision(value => value + 1)}
                                     footer={previewPage && <footer className="flow-preview-pager">

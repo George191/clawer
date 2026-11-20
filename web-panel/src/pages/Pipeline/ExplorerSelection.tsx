@@ -1,5 +1,7 @@
 import { PropertyLabel } from './PropertyTypeIcon';
 import { ExplorerValueProvider } from './ExplorerValue';
+import { useExplorerLinkAvailability } from './ExplorerRowLinks';
+import type { ExplorerRowLinkPage } from '../../services/api';
 import { useEffect, useId, useRef, useState } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
 import { Button, Checkbox, Dropdown, Input, Select, Table, message } from '@/components/ui';
@@ -129,7 +131,7 @@ type Props = {
   footer?: ReactNode;
   renderTitleLink?: (row: ExplorerPreviewRow) => ReactNode;
   renderFullDetails?: (row: ExplorerPreviewRow) => ReactNode;
-  renderRelationships?: (row: ExplorerPreviewRow) => ReactNode;
+  renderRelationships?: (row: ExplorerPreviewRow, page?: ExplorerRowLinkPage) => ReactNode;
   rowActions?: (row: ExplorerPreviewRow) => MenuItem[];
   renderMutation?: (row: ExplorerPreviewRow) => ReactNode;
   onRefresh?: () => void;
@@ -287,7 +289,8 @@ export default function ExplorerSelection({
     width: 232, fixed: 'left', onHeaderCell: () => ({ scope: 'col' }), render: titleCell });
   const active = activeIndex == null ? undefined : describeRow(rows[activeIndex], activeIndex);
   const panelOpen = Boolean(active && !current?.collapsed);
-  const hasLinks = Boolean(active && renderRelationships && Object.keys(active.identity).length);
+  const links = useExplorerLinkAvailability(schema, table, panelOpen && renderRelationships ? active?.identity : undefined, active?.version);
+  const hasLinks = Boolean(links.page);
   const groups = presentation?.groups ?? [];
   const group = view.startsWith('group:') ? view.slice(6) : undefined;
   const displayView = view === 'links' && !hasLinks || group && !groups.includes(group) ? 'overview' : view;
@@ -365,7 +368,8 @@ export default function ExplorerSelection({
                   {hasLinks && <button type="button" aria-pressed={displayView === 'links'} onClick={() => setView('links')}><LinkOutlined /> Links</button>}
                 </nav>
               </div>
-              {displayView === 'links' ? renderRelationships?.(active)
+              {links.error && <p role="alert">Unable to read relationships. <Button size="small" onClick={links.retry}>Retry</Button></p>}
+              {displayView === 'links' ? renderRelationships?.(active, links.page)
                 : !metadata ? <p role="status">Loading object presentation…</p>
                 : metadata.error ? <p>Properties are unavailable until the object presentation loads.</p>
                 : displayView === 'properties'
