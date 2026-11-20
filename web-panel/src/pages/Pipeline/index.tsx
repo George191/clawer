@@ -153,7 +153,12 @@ function ExplorerTabs() {
     if (requestedReturn === '/ontology' || requestedReturn?.startsWith('/ontology?')) catalogReturn.current = requestedReturn;
     const activeId = new URLSearchParams(location.search).get('exploration') || primaryTab;
     const activeTab = { id: activeId, search: location.search };
-    const [tabs, setTabs] = useState<ExplorerTab[]>([activeTab]);
+    const [tabs, setTabs] = useState<ExplorerTab[]>(() => {
+        const params = new URLSearchParams(location.search);
+        params.delete('exploration');
+        const initial = { id: primaryTab, search: params.size ? '?' + params.toString() : '' };
+        return activeId === primaryTab ? [activeTab] : [initial, activeTab];
+    });
     const [lockedTabs, setLockedTabs] = useState<Set<string>>(() => new Set());
     const onLockChange = useCallback((id: string, locked: boolean) => {
         setLockedTabs(previous => {
@@ -176,9 +181,19 @@ function ExplorerTabs() {
     const activeIdRef = useRef(activeId);
     activeIdRef.current = activeId;
     const open = (tab: ExplorerTab, options?: NavigateOptions) => navigate(explorerPath + tab.search, options);
-    const add = () => open({ id: '', search: '?exploration=' + randomId() });
+    const add = () => {
+        const params = new URLSearchParams(activeTab.search);
+        params.set('exploration', randomId());
+        params.delete('saved');
+        open({ id: '', search: '?' + params.toString() });
+    };
+    const backToTypes = () => {
+        const target = new URL(catalogReturn.current, window.location.origin);
+        for (const key of ['schema', 'table', 'tab', 'objectType']) target.searchParams.delete(key);
+        navigate(target.pathname + target.search);
+    };
     const close = (id: string) => {
-        if (lockedTabs.has(id)) return;
+        if (id === primaryTab || lockedTabs.has(id)) return;
         const at = visibleTabs.findIndex(tab => tab.id === id);
         const remaining = visibleTabs.filter(tab => tab.id !== id);
         setTabs(remaining);
@@ -194,12 +209,16 @@ function ExplorerTabs() {
         if (activeIdRef.current === id) navigate(explorerPath + target.search, options);
         else setTabs(old => old.map(tab => tab.id === id ? { ...tab, search: target.search } : tab));
     }, [navigate]);
+    const defaultTab = visibleTabs.find(tab => tab.id === primaryTab)!;
+    const defaultTitle = new URLSearchParams(defaultTab.search).get('table') || 'Exploration';
     return <div className="flow-exploration-workspace">
         <div className="flow-exploration-bar">
             <div className="flow-exploration-return"><Button className="flow-exploration-back" size="small" icon={<ArrowLeftOutlined />} disabled={lockedTabs.size > 0}
-                onClick={() => navigate(catalogReturn.current)}>Back to object types</Button></div>
+                onClick={backToTypes}>Back to object types</Button></div>
+            <button type="button" className="flow-exploration-default" aria-current={activeId === primaryTab ? 'page' : undefined}
+                title={defaultTitle} onClick={() => { if (activeId !== primaryTab) open(defaultTab); }}>{defaultTitle}</button>
             <nav className="flow-exploration-tabs" aria-label="Explorations">
-            {visibleTabs.map((tab, i) => {
+            {visibleTabs.filter(tab => tab.id !== primaryTab).map((tab, i) => {
                 const table = new URLSearchParams(tab.search).get('table');
                 const label = table || 'Exploration ' + (i + 1);
                 return <div key={tab.id} className="flow-exploration-tab" data-current={tab.id === activeId}>
