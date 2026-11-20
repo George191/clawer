@@ -17,14 +17,13 @@ from pymongo import MongoClient
 
 from app.config.settings import settings
 from app.downloader.worker import DownloadWorker
-from app.models.template import DownloadConfig
+from app.engine.template_loader import TemplateLoader
 from app.records.download_resources import (
     decode_manifest, encode_manifest, encode_plan, item_fingerprint, template_download_items,
 )
 
 WORKERS = 6
 BATCH_SIZE = 200
-CONFIG = DownloadConfig(selector='cover', selector_type='json', link_type='src', asset_type='image')
 
 
 def collection():
@@ -50,6 +49,10 @@ async def work(folder, number):
     journal.execute('CREATE TABLE IF NOT EXISTS items (id TEXT PRIMARY KEY, status TEXT, object_key TEXT, error TEXT, attempts INTEGER, source_url TEXT)')
     journal.execute('CREATE TABLE IF NOT EXISTS checkpoint (id INTEGER PRIMARY KEY CHECK(id=1), last_id TEXT)')
     downloader = DownloadWorker(template_name='acticle_wechat', data_type='acticle')
+    released = await TemplateLoader().load_released('acticle_wechat', validate_params=False, load_adapter=False)
+    template = released.template
+    configs = [config for config in template.download if config.selector == 'cover']
+    assert len(configs) == 1, 'Published WeChat template must declare exactly one cover download'
 
     async def process(doc):
         ident = str(doc['_id'])
@@ -72,12 +75,12 @@ async def work(folder, number):
                         raise RuntimeError('Existing cover reference has no readable MinIO object')
                     status = 'already_local'
                 else:
-                    item, = template_download_items(doc, [CONFIG])
+                    item, = template_download_items(doc, configs)
                     # A prior upload followed by a write conflict can be reused on resume.
                     stored = before[1] if before and before[1] and before[3] == url else ''
                     if not stored:
                         stored = await downloader._download_item(
-                            item, 'acticle_wechat', 'acticle', meta['record_id'], settings.download_use_proxy,
+                            item, 'acticle_wechat', 'acticle', meta['record_id'], template.effective_download_use_proxy,
                         )
                     if not stored or not await downloader._minio.object_exists(stored):
                         raise RuntimeError('Cover download failed or object verification failed')
