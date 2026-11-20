@@ -20,9 +20,10 @@ def storage():
     's3://internal/docs/report%20one.pdf', 'minio://internal/docs/report%20one.pdf',
     '/internal/docs/report%20one.pdf', 'http://minio.internal:9000/internal/docs/report%20one.pdf',
     'http://files.example:9000/internal/docs/report%20one.pdf',
+    'tweet/twitter/record/photo.jpg', 'tweet/twitter/record/video.mp4',
 ])
 def test_configured_objects(value):
-    assert files.object_key(value) == 'docs/report one.pdf'
+    assert files.object_key(value) == (value if value.startswith('tweet/') else 'docs/report one.pdf')
 
 
 @pytest.mark.parametrize('value', [None, {}, 'javascript:alert(1)', 'https://outside.example/internal/x',
@@ -60,6 +61,21 @@ async def test_preview_signs_inline_pdf_without_attachment():
         assert sign.call_args.kwargs['response_headers']['response-content-disposition'].startswith('inline;')
         assert sign.call_args.kwargs['response_headers']['response-content-type'] == 'application/pdf'
         assert sign.call_args.kwargs['expires'].total_seconds() == 3600
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('name,mime', [('photo.jpg', 'image/jpeg'), ('video.mp4', 'video/mp4')])
+async def test_social_media_preview_signs_downloaded_object(name, mime):
+    key = 'tweet/twitter/record/' + name
+    with patch.object(files, 'row_by_key', AsyncMock(return_value={'row': {'url': key}})), \
+         patch.object(files, 'Minio') as client:
+        client.return_value.presigned_get_object.return_value = 'https://signed.example/object'
+        assert await files.download_link('ts_ods', 'ods_social_media', {'id': 1}, 'url', download=False) == {
+            'url': 'https://signed.example/object'}
+        sign = client.return_value.presigned_get_object
+        assert sign.call_args.args == ('internal', key)
+        assert sign.call_args.kwargs['response_headers']['response-content-type'] == mime
+        assert sign.call_args.kwargs['response_headers']['response-content-disposition'].startswith('inline;')
 
 
 @pytest.mark.asyncio

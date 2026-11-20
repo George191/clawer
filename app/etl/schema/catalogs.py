@@ -222,7 +222,6 @@ _CATALOG_FIELDS: dict[str, dict[str, str]] = {
         "content_id": "BIGINT NOT NULL",
         "media_index": "INTEGER NOT NULL",
         "media_type": "TEXT NOT NULL",
-        "platform_media_id": "TEXT",
         "source_url": "TEXT",
         "url": "TEXT",
         "width": "INTEGER",

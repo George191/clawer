@@ -32,7 +32,7 @@ def object_key(value):
         url = urlsplit(value)
     except ValueError as exc:
         raise HTTPException(422, "This property is not a configured MinIO file") from exc
-    if value.startswith(('acticle/', 'news/')):
+    if value.startswith(('acticle/', 'news/', 'tweet/twitter/')):
         key = unquote(value)
     elif url.scheme in ('s3', 'minio') and url.netloc == config['bucket']:
         key = unquote(url.path.lstrip('/'))

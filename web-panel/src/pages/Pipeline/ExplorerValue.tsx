@@ -28,7 +28,7 @@ function fileUrl(value: string, config?: ExplorerStorage) {
       path = url.pathname.slice(config.bucket.length + 1);
     } else return;
   } catch {
-    if (value.startsWith('acticle/') || value.startsWith('news/')) path = '/' + value;
+    if (value.startsWith('acticle/') || value.startsWith('news/') || value.startsWith('tweet/twitter/')) path = '/' + value;
     else if (value.startsWith('/' + config.bucket + '/')) path = value.slice(config.bucket.length + 1);
     else return;
   }
