@@ -198,7 +198,8 @@ client.interceptors.response.use(
         if (refreshToken) {
           try {
             const refreshUrl = config._refreshUrl!;
-            let refreshPromise = refreshPromises.get(refreshUrl);
+            const refreshKey = JSON.stringify([refreshUrl, refreshToken]);
+            let refreshPromise = refreshPromises.get(refreshKey);
             if (!refreshPromise) {
               refreshPromise = axios.post(refreshUrl, null, {
                 params: { refresh_token: refreshToken }, timeout: 15000,
@@ -208,8 +209,8 @@ client.interceptors.response.use(
                 // Do not restore a session that was signed out during the refresh.
                 if (!updateAccessToken(token, refreshToken)) throw new Error('Session changed');
                 return token;
-              }).finally(() => { refreshPromises.delete(refreshUrl); });
-              refreshPromises.set(refreshUrl, refreshPromise);
+              }).finally(() => { refreshPromises.delete(refreshKey); });
+              refreshPromises.set(refreshKey, refreshPromise);
             }
             await refreshPromise;
             return client(config);

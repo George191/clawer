@@ -14,7 +14,7 @@ const compiled = Object.fromEntries(['services/api', 'services/aiApi', 'services
   'services/ontology_graph', 'services/ontology_revisions', 'hooks/useWebSocket'].map(name => [name, source(name)]));
 const changedEvent = 'project-domain-changed';
 
-function fixture() {
+function fixture({ refresh } = {}) {
   const events = new EventTarget(), cache = new Map(), requests = [], refreshes = [];
   let project = 'ontology', detectedProject = project, token = 'access-1', locked = false;
   const window = {
@@ -40,7 +40,10 @@ function fixture() {
     const client = axios.create(config);
     client.defaults.adapter = async config => { requests.push(axios.getUri(config)); return response(config); };
     return client;
-  }, async post(url) { refreshes.push(url); return { data: { access_token: 'access-2' } }; } };
+  }, async post(url, body, config) {
+    refreshes.push(url);
+    return refresh ? refresh(url, config) : { data: { access_token: 'access-2' } };
+  } };
   function load(name, additions = {}) {
     if (cache.has(name)) return cache.get(name);
     const exports = {};
@@ -122,6 +125,49 @@ test('revision requests queued before a switch resolve their URL and refresh on 
     'https://crawler.astral-helio.api/api/ontology/v1/object-types/type%2F1/revision-workspace',
   ]);
   assert.deepEqual(f.refreshes, ['https://crawler.astral-helio.api/v1/login/refresh-token']);
+});
+
+test('a new session refreshes independently while an old session refresh is still pending', async () => {
+  const pending = [];
+  const f = fixture({ refresh: (url, config) => new Promise(resolve => pending.push({ url, config, resolve })) });
+  let identity = 'old-session', token = 'old-access', refresh = 'old-refresh', cleared = 0;
+  Object.assign(f.session, {
+    getSessionState: () => ({ authenticated: true, locked: false, identity }),
+    getAccessToken: () => token, getRefreshToken: () => refresh,
+    updateAccessToken: (next, expectedRefresh) => {
+      if (refresh !== expectedRefresh) return false;
+      token = next;
+      return true;
+    },
+    clearSession: () => { cleared++; token = null; refresh = null; },
+  });
+  f.window.location.replace = () => {};
+  const api = f.load('services/api');
+  api.default.defaults.adapter = async config => {
+    if (config.headers.Authorization !== 'Bearer new-access-refreshed') {
+      throw new axios.AxiosError('Unauthorized', 'ERR_BAD_REQUEST', config, {}, { ...f.response(config), status: 401 });
+    }
+    return f.response(config);
+  };
+  const flush = async () => { for (let index = 0; index < 12; index++) await Promise.resolve(); };
+  const oldRequest = api.fetchLayers().then(() => null, error => error);
+  await flush();
+  assert.equal(pending.length, 1);
+  // Signing out and signing in replaces both the session identity and refresh token.
+  identity = 'new-session'; token = 'new-access'; refresh = 'new-refresh';
+  const newRequest = api.fetchLayers().then(value => ({ value }), error => ({ error }));
+  await flush();
+  assert.equal(pending.length, 2);
+  assert.deepEqual(pending.map(item => item.config.params.refresh_token), ['old-refresh', 'new-refresh']);
+  assert.equal(pending[0].url, pending[1].url);
+  pending[0].resolve({ data: { access_token: 'old-access-refreshed' } });
+  assert.equal((await oldRequest).response.status, 401);
+  assert.equal(cleared, 0);
+  assert.equal(refresh, 'new-refresh');
+  pending[1].resolve({ data: { access_token: 'new-access-refreshed' } });
+  assert.equal((await newRequest).error, undefined);
+  assert.equal(token, 'new-access-refreshed');
+  assert.equal(cleared, 0);
 });
 
 test('locked sessions never dispatch an HTTP request', async () => {
