@@ -8,7 +8,33 @@ import { fetchExplorerRowByKey, fetchExplorerRowLinks, type ExplorerRowLinkPage 
 import { ExplorerRecordLink } from './ExplorerRecordLink';
 import './explorer-row-links.css';
 
-type Props = { schema: string; table: string; primaryKey: Record<string,unknown> };
+type Props = { schema: string; table: string; primaryKey: Record<string,unknown>; initialPage?: ExplorerRowLinkPage };
+
+export function useExplorerLinkAvailability(schema: string, table: string, identity?: Record<string, unknown>, revision: string | number = 0) {
+    const [retry, setRetry] = useState(0);
+    const key = JSON.stringify(identity ?? {});
+    const scope = JSON.stringify([schema, table, key, revision, retry]);
+    const [read, setRead] = useState<{scope: string; page?: ExplorerRowLinkPage; error?: true}>();
+    useEffect(() => {
+        if (!schema || !table || !Object.keys(JSON.parse(key)).length) {
+            setRead({scope}); return;
+        }
+        const controller = new AbortController();
+        async function load() {
+            const first = await fetchExplorerRowLinks(schema, table, JSON.parse(key), null, 0, controller.signal);
+            let page = first.identities.length ? first : undefined;
+            for (const relation of first.relations) {
+                if (page || relation.id === first.selected) continue;
+                const next = await fetchExplorerRowLinks(schema, table, JSON.parse(key), relation.id, 0, controller.signal);
+                if (next.identities.length) page = next;
+            }
+            if (!controller.signal.aborted) setRead({scope, page});
+        }
+        load().catch(() => { if (!controller.signal.aborted) setRead({scope, error: true}); });
+        return () => controller.abort();
+    }, [schema, table, key, scope]);
+    return { ...(read?.scope === scope ? read : undefined), retry: () => setRetry(n => n + 1) };
+}
 
 function LinkedProperties({ schema, table, identity }: {schema: string; table: string; identity: string}) {
     const [row, setRow] = useState<Awaited<ReturnType<typeof fetchExplorerRowByKey>>>();
@@ -29,23 +55,26 @@ function LinkedProperties({ schema, table, identity }: {schema: string; table: s
     </dl></ExplorerValueProvider>;
 }
 
-function LinkPage({ schema, table, primaryKey }: Props) {
-    const [relation, setRelation] = useState<string | null>(null);
+function LinkPage({ schema, table, primaryKey, initialPage }: Props) {
+    const [relation, setRelation] = useState<string | null>(initialPage?.selected ?? null);
     const [offset, setOffset] = useState(0);
     const [retry, setRetry] = useState(0);
-    const [page, setPage] = useState<ExplorerRowLinkPage>();
+    const [page, setPage] = useState<ExplorerRowLinkPage | undefined>(initialPage);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [expanded, setExpanded] = useState('');
     const key = JSON.stringify(primaryKey);
     useEffect(() => {
+        if (initialPage && relation === initialPage.selected && offset === initialPage.offset && retry === 0) {
+            setPage(initialPage); setLoading(false); return;
+        }
         const controller = new AbortController();
         setError(''); setLoading(true); setExpanded('');
         fetchExplorerRowLinks(schema, table, JSON.parse(key), relation, offset, controller.signal)
             .then(value => { if (!controller.signal.aborted) { setPage(value); setLoading(false); } })
             .catch(() => { if (!controller.signal.aborted) { setError('Unable to read related records.'); setLoading(false); } });
         return () => controller.abort();
-    }, [schema, table, key, relation, offset, retry]);
+    }, [schema, table, key, relation, offset, retry, initialPage]);
     if (error) return <p role="alert">{error} <Button onClick={() => setRetry(v => v + 1)}>Retry</Button></p>;
     if (!page) return <p role="status">Looking up related records…</p>;
     if (!page.relations.length) return <section className="explorer-row-links explorer-links-empty" role="status"><LinkOutlined /><strong>No relationships</strong><p>No declared relationships are available for this record.</p></section>;

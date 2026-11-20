@@ -8,3 +8,5 @@
 .explorer-file [role=alert] { color:var(--ui-error); }
 .explorer-file-preview .ui-modal-body > :is(img,video,audio,iframe) { display:block; width:100%; max-height:70vh; border:0; object-fit:contain; }
 .explorer-file-preview .ui-modal-body > iframe { height:70vh; }
+
+.explorer-html--status { display:grid; place-content:center; color:var(--ontology-muted); }
