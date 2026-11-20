@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, Modal } from '@/components/ui';
+import { Button, Checkbox, Input, Modal, Select } from '@/components/ui';
 import { layoutPath, readLayouts, writeLayout, type ExplorerSort, type Layouts, type Presentation, type ResultColumn, type ResultLayout } from '../../services/explorerLayouts';
 import './explorer-result-layout.css';
 
@@ -157,31 +157,30 @@ export function LayoutToolbar({ controls: c, admin, types }: { controls: Control
   return <>
     <button className="flow-tool" type="button" aria-label="Configure columns" disabled={!c.ready} onClick={() => c.setOpen(true)}>Custom layout <span aria-hidden="true">▾</span></button>
     {!c.open && error}
-    <Modal title="Configure columns" open={c.open} onCancel={() => c.setOpen(false)} footer={null} width={570}>
+    <Modal className="flow-surface-modal result-layout-modal" title="Configure columns" open={c.open} onCancel={() => c.setOpen(false)} footer={null} width={570}>
       <div className="result-column-config">
-        <label>Find columns<input type="search" value={c.search} onChange={e => c.setSearch(e.target.value)} /></label>
+        <label className="result-column-search">Find columns<Input size="small" type="search" placeholder="Search columns" value={c.search} onChange={e => c.setSearch(e.target.value)} /></label>
         <div className="result-layout-actions">
-          <Button disabled={c.saving} onClick={() => c.change({ columns: c.columns.map(col => ({ ...col, visible: true })) })}>Show all</Button>
-          <Button disabled={c.saving} onClick={() => c.change({ columns: c.columns.map(col => ({ ...col, visible: false })) })}>Hide all</Button>
+          <Button size="small" disabled={c.saving} onClick={() => c.change({ columns: c.columns.map(col => ({ ...col, visible: true })) })}>Show all</Button>
+          <Button size="small" disabled={c.saving} onClick={() => c.change({ columns: c.columns.map(col => ({ ...col, visible: false })) })}>Hide all</Button>
         </div>
         <ul aria-label="Column order">{columns.map(col => <li key={col.field} {...drag(col.field, c)}>
           <span className="result-grip" aria-hidden="true">⠿</span>
-          <label><input type="checkbox" checked={col.visible} disabled={c.saving} onChange={e => c.column(col.field, { visible: e.target.checked })} />{col.field}</label>
-          {columnPresentations(types?.[col.field]).length > 1 && <select aria-label={'Display ' + col.field + ' as'} value={col.presentation}
-            disabled={c.saving} onChange={e => c.column(col.field, { presentation: e.target.value as Presentation })}>
-            {columnPresentations(types?.[col.field]).map(mode => <option key={mode} value={mode}>{labels[mode]}</option>)}
-          </select>}
-          <button type="button" aria-label={'Move ' + col.field + ' to top'} disabled={c.saving || c.columns[0] === col} onClick={() => c.move(col.field, c.columns[0].field)}>Top</button>
-          <button type="button" aria-label={'Move ' + col.field + ' to bottom'} disabled={c.saving || c.columns[c.columns.length - 1] === col} onClick={() => c.move(col.field, c.columns[c.columns.length - 1].field)}>Bottom</button>
+          <Checkbox checked={col.visible} disabled={c.saving} onChange={e => c.column(col.field, { visible: e.target.checked })}>{col.field}</Checkbox>
+          <span className="result-column-presentation">{columnPresentations(types?.[col.field]).length > 1 && <Select size="small" popupClassName="flow-select-popup result-layout-popup" aria-label={'Display ' + col.field + ' as'} value={col.presentation}
+            disabled={c.saving} onChange={value => c.column(col.field, { presentation: value as Presentation })}
+            options={columnPresentations(types?.[col.field]).map(mode => ({ value: mode, label: labels[mode] }))} />}</span>
+          <span className="result-column-order"><Button size="small" type="text" aria-label={'Move ' + col.field + ' to top'} disabled={c.saving || c.columns[0] === col} onClick={() => c.move(col.field, c.columns[0].field)}>Top</Button>
+          <Button size="small" type="text" aria-label={'Move ' + col.field + ' to bottom'} disabled={c.saving || c.columns[c.columns.length - 1] === col} onClick={() => c.move(col.field, c.columns[c.columns.length - 1].field)}>Bottom</Button></span>
         </li>)}</ul>
         {!columns.length && <p>No matching columns.</p>}
-        <label><input type="checkbox" checked={c.layout.wrap} disabled={c.saving} onChange={e => c.change({ wrap: e.target.checked })} />Wrap text in cells</label>
+        <Checkbox checked={c.layout.wrap} disabled={c.saving} onChange={e => c.change({ wrap: e.target.checked })}>Wrap text in cells</Checkbox>
         {error}
         {c.notice && <p role="status">{c.notice}</p>}
         <div className="result-layout-actions">
-          <Button disabled={c.saving} onClick={() => c.save('personal', true)}>Restore table default</Button>
-          {admin && <Button disabled={c.saving} onClick={() => c.save('default')}>Save as table default</Button>}
-          <Button type="primary" disabled={c.saving} onClick={() => c.save('personal')}>Save personal layout</Button>
+          <Button size="small" disabled={c.saving} onClick={() => c.save('personal', true)}>Restore table default</Button>
+          {admin && <Button size="small" disabled={c.saving} onClick={() => c.save('default')}>Save as table default</Button>}
+          <Button size="small" type="primary" disabled={c.saving} onClick={() => c.save('personal')}>Save personal layout</Button>
         </div>
       </div>
     </Modal>
