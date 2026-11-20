@@ -84,35 +84,17 @@ def worker(path, shard, db_gate):
         with db_gate:
             pg = await migration.connect_pg()
         try:
-            while True:
-                groups = db.execute(f'SELECT DISTINCT prefix,record_id FROM objects WHERE {SCOPE} AND shard=? AND phase="planned" LIMIT ?',
-                                    (shard, migration.BATCH)).fetchall()
-                if not groups:
-                    break
-                with ThreadPoolExecutor(max_workers=8) as pool:
-                    list(pool.map(apply, groups))
-                print(json.dumps({'worker': shard, 'source_groups_updated': len(groups)}), flush=True)
             db.execute(f'UPDATE objects SET phase="source_updated" WHERE {SCOPE} AND shard=? AND phase="verified"', (shard,))
             db.commit()
             while True:
-                groups = db.execute(f'SELECT DISTINCT prefix,record_id FROM objects WHERE {SCOPE} AND shard=? AND phase="source_updated" LIMIT ?',
-                                    (shard, migration.BATCH)).fetchall()
-                if not groups:
-                    break
-                results = []
-                for group in groups:
+                pending = db.execute(f'SELECT DISTINCT prefix,record_id FROM objects WHERE {SCOPE} AND shard=? AND phase="source_updated" LIMIT 100', (shard,)).fetchall()
+                for group in pending:
                     repair(group)
                     with db_gate:
                         await migration.repair_references(db, mongo, registered, *group)
-                        results.append(await migration.verify_group(db, client, mongo, registered, *group))
-                print(json.dumps({'worker': shard, 'verified_groups': sum(results), 'waiting': results.count(False)}), flush=True)
-                if not all(results):
-                    await asyncio.sleep(30)
-            while True:
-                rows = db.execute(f'SELECT old,new FROM objects WHERE {SCOPE} AND shard=? AND phase="verified" LIMIT ?',
-                                  (shard, migration.BATCH)).fetchall()
-                if not rows:
-                    break
+                        if not await migration.verify_group(db, client, mongo, registered, *group):
+                            raise RuntimeError('Twitter references did not verify: ' + '/'.join(group))
+                rows = db.execute(f'SELECT old,new FROM objects WHERE {SCOPE} AND shard=? AND phase="verified" LIMIT ?', (shard, migration.BATCH)).fetchall()
                 for old, new in rows:
                     if old == new or not new.startswith('tweet/twitter/'):
                         raise ValueError('Invalid Twitter rename: ' + old)
@@ -120,6 +102,13 @@ def worker(path, shard, db_gate):
                     client.remove_object(migration.settings.minio_bucket, old)
                     db.execute('UPDATE objects SET phase="complete",error=NULL WHERE old=?', (old,))
                     db.commit()
+                groups = db.execute(f'SELECT DISTINCT prefix,record_id FROM objects WHERE {SCOPE} AND shard=? AND phase IN ("planned","error") LIMIT 100', (shard,)).fetchall()
+                if groups:
+                    with ThreadPoolExecutor(max_workers=2) as pool:
+                        list(pool.map(apply, groups))
+                print(json.dumps({'worker': shard, 'copied_groups': len(groups), 'verified_groups': len(pending), 'old_keys_removed': len(rows)}), flush=True)
+                if not pending and not groups and not rows:
+                    break
             print(json.dumps({'worker': shard, 'complete': True}), flush=True)
         finally:
             await pg.close()
