@@ -60,12 +60,7 @@ def worker(path, shard):
                 print(json.dumps({'worker': shard, 'verified_groups': sum(results), 'waiting': results.count(False)}), flush=True)
                 if not all(results):
                     await asyncio.sleep(30)
-            for old, new in db.execute(f'SELECT old,new FROM objects WHERE {SCOPE} AND shard=? AND phase="verified"', (shard,)).fetchall():
-                client.stat_object(migration.settings.minio_bucket, new)
-                client.remove_object(migration.settings.minio_bucket, old)
-                db.execute('UPDATE objects SET phase="complete",error=NULL WHERE old=?', (old,))
-                db.commit()
-            print(json.dumps({'worker': shard, 'complete': True}), flush=True)
+            print(json.dumps({'worker': shard, 'verification_complete': True, 'old_objects_retained': True}), flush=True)
         finally:
             await pg.close()
             db.close()
