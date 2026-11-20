@@ -1,3 +1,4 @@
+import { ExplorerValue } from './ExplorerValue';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { ProfileOutlined } from '@/components/ui/icons';
 import { inferSiteKind, TemplateGlyph } from '../AICollect/WorkspaceDock';
@@ -103,11 +104,11 @@ function formattedText(value: unknown, format: Format) {
   return rawText(value);
 }
 
-export function ExplorerPropertyValue({ value, format = 'default' }: { value: unknown; format?: Format }) {
+export function ExplorerPropertyValue({ value, format = 'default', identity, field }: { value: unknown; format?: Format; identity?: RowValues; field?: string | null }) {
   if (value === undefined) return <span className="flow-explorer-selection__empty-value">Missing</span>;
   if (value === null) return <span className="flow-explorer-selection__empty-value">No value</span>;
   if (value === '') return <span className="flow-explorer-selection__empty-value">Empty string</span>;
-  return <span className="flow-explorer-selection__property-value">{formattedText(value, format)}</span>;
+  return <ExplorerValue value={value} text={formattedText(value, format)} identity={identity} field={field} />;
 }
 
 export const explorerFieldValue = (row: ExplorerPreviewRow, field: Field) =>
@@ -118,7 +119,7 @@ export function ExplorerFieldValue({ row, field }: { row: ExplorerPreviewRow; fi
   return field.presentation !== 'value' && notEmpty(value)
     ? <Suspense fallback={<span role="status">Loading property preview…</span>}>
       <ExplorerPropertyPreview kind={field.presentation} value={value} label={field.label} />
-    </Suspense> : <ExplorerPropertyValue value={value} format={field.format} />;
+    </Suspense> : <ExplorerPropertyValue value={value} format={field.format} identity={row.identity} field={field.field} />;
 }
 
 export function ExplorerObjectOverview({ row, columns = Object.keys(row.record), presentation, presentations, group, typeName }: {
@@ -132,7 +133,7 @@ export function ExplorerObjectOverview({ row, columns = Object.keys(row.record),
   return <div className="flow-explorer-overview">
     {!!summary.length && <dl className="flow-explorer-overview__summary" aria-label="Summary properties">
       {summary.map(field => <div key={field.key}><dt>{field.label}</dt><dd>
-        <ExplorerPropertyValue value={explorerFieldValue(row, field)} format={field.format} />
+        <ExplorerPropertyValue value={explorerFieldValue(row, field)} format={field.format} identity={row.identity} field={field.field} />
       </dd></div>)}
     </dl>}
     {(details.length > 0 || group !== undefined) && <section className="flow-explorer-overview__information" aria-label={heading}>

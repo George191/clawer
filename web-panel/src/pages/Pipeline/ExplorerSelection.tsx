@@ -1,3 +1,4 @@
+import { ExplorerValueProvider } from './ExplorerValue';
 import { useEffect, useId, useRef, useState } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
 import { Button, Checkbox, Dropdown, Input, Table } from '@/components/ui';
@@ -92,7 +93,7 @@ function Comparison({ columns, choices }: { columns: readonly string[]; choices:
         const different = !sameValue(leftValue, rightValue);
         return <tr key={field} className={different ? 'is-different' : undefined}>
           <th scope="row">{field}{different && <small>Different</small>}</th>
-          <td><PropertyValue value={leftValue} /></td><td><PropertyValue value={rightValue} /></td>
+          <td><PropertyValue value={leftValue} identity={left.identity} field={field} /></td><td><PropertyValue value={rightValue} identity={right.identity} field={field} /></td>
         </tr>;
       })}</tbody></table> : <p role="status">No differing properties.</p>}
   </section>;
@@ -290,7 +291,7 @@ export default function ExplorerSelection({
     };
     onRefresh();
   };
-  return <div className={`flow-explorer-selection${panelOpen ? ' is-open' : ''}`}>
+  return <ExplorerValueProvider schema={schema} table={table}><div className={`flow-explorer-selection${panelOpen ? ' is-open' : ''}`}>
     <div ref={results} role="region" aria-label="Object results" className="flow-explorer-selection__results">
       {current?.collapsed && active && <header className="flow-explorer-selection__results-header">
           <button ref={restore} type="button" className="flow-explorer-selection__control"
@@ -366,5 +367,5 @@ export default function ExplorerSelection({
           </>}
       </div>
     </aside>}
-  </div>;
+  </div></ExplorerValueProvider>;
 }

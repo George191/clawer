@@ -1,3 +1,4 @@
+import { ExplorerValueProvider } from './ExplorerValue';
 import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui';
@@ -172,5 +173,5 @@ export default function ExplorerRecordPage() {
     if (!identity || ![schema,table].every(v=>/^[a-z_][a-z0-9_]{0,62}$/.test(v))) {
         return <article className="flow-console--ontology explorer-full-record"><h1>Invalid object link</h1><Link to="/ontology/explorer">Return to Explorer</Link></article>;
     }
-    return <RecordPage key={location.search} schema={schema} table={table} identity={identity}/>;
+    return <ExplorerValueProvider schema={schema} table={table}><RecordPage key={location.search} schema={schema} table={table} identity={identity}/></ExplorerValueProvider>;
 }

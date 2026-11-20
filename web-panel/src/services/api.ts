@@ -1519,3 +1519,9 @@ export const checkSandboxHandoffSenderProof = (request: SandboxHandoffCopyReques
   client.post(`${sandboxPipelinePath}/handoff/sender-proof`, request, { signal, _noAutomaticAuthReplay: true } as AxiosRequestConfig & { _noAutomaticAuthReplay: true }).then(r => unwrap<SandboxHandoffCopyReceipt>(r.data));
 export const copySandboxHandoff = (request: SandboxHandoffCopyRequest, signal?: AbortSignal): Promise<SandboxHandoffCopyReceipt> =>
   client.post(`${sandboxPipelinePath}/handoff/copies`, request, { signal, _noAutomaticAuthReplay: true } as AxiosRequestConfig & { _noAutomaticAuthReplay: true }).then(r => unwrap<SandboxHandoffCopyReceipt>(r.data));
+
+export type ExplorerStorage = { baseUrl: string; origins: string[]; bucket: string };
+export const fetchExplorerStorage = (signal: AbortSignal): Promise<ExplorerStorage> =>
+  client.get('/etl/object-storage', { signal }).then(r => unwrap<ExplorerStorage>(r.data));
+export const fetchExplorerFile = (schema: string, table: string, key: Record<string, unknown>, field: string, download = true, signal?: AbortSignal): Promise<{ url: string }> =>
+  client.post(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/record-file`, { key, field, download }, { signal }).then(r => unwrap<{ url: string }>(r.data));
