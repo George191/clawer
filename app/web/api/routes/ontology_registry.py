@@ -6,13 +6,14 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Response
-from sqlalchemy import String, func
+from sqlalchemy import String, func, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
 from app.web.api.dependencies import CurrentUser, SessionDep
 from app.web.api.models import Team, TeamUserJoin
+from app.web.api.models.ontology_runtime import OntologyRuntimeRecord
 from app.web.api.models.ontology_registry import (
     Definition,
     CatalogChange,
@@ -291,6 +292,10 @@ async def change_catalog_state(definition_id: UUID, payload: CatalogChange, sess
         row.hidden = payload.operation == "hide"
     else:
         row.deleted = payload.operation == "delete"
+        await session.execute(update(OntologyRuntimeRecord).where(
+            OntologyRuntimeRecord.definition_id == row.id,
+            OntologyRuntimeRecord.deleted != row.deleted,
+        ).values(deleted=row.deleted, revision=OntologyRuntimeRecord.revision + 1))
     row.revision += 1
     row.updated_at = datetime.now(timezone.utc)
     result = {"id": row.id, "revision": row.revision, "hidden": row.hidden, "deleted": row.deleted}

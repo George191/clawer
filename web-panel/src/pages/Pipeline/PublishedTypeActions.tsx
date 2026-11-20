@@ -7,8 +7,8 @@ const labels = { hide: 'Hide object type', unhide: 'Unhide object type', delete:
 const details = {
   hide: 'Hide this type from the default catalog. Project administrators can find it using Show hidden object types.',
   unhide: 'Show this type in the default catalog for its authorized readers.',
-  delete: 'Remove access to this type and its records. Records and relationships are retained for restoration.',
-  restore: 'Restore access to this type under its existing permissions and visibility settings.',
+  delete: 'Delete this type and move all object-managed records to Deleted. Records and relationships are retained. Source table data is not modified.',
+  restore: 'Restore this type and move all object-managed records, including individually deleted records, to Active under the existing permissions and visibility settings.',
 };
 
 export function PublishedTypeActions({ item, onChanged }: { item: PublishedCatalogItem; onChanged: () => void }) {

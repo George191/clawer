@@ -300,7 +300,7 @@ export default function ExplorerSelection({
       {metadata?.error && <div role="alert" className="flow-explorer-selection__mapping-error">
         Unable to load object presentation. {onRefresh && <Button size="small" onClick={onRefresh}>Retry</Button>}
       </div>}
-      <Table<RecordRow> className="flow-data-table" size="small" loading={loading} pagination={false} rowKey={(record, index = 0) => rowKey(record, index)}
+      <Table<RecordRow> className="flow-data-table" size="small" loading={loading && !columns.length} pagination={false} rowKey={(record, index = 0) => rowKey(record, index)}
         scroll={{ x: 'max-content' }} dataSource={rows} columns={tableColumns} rowSelection={checkboxProps} onRow={rowProps} />
       {footer}
     </div>

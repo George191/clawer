@@ -3,7 +3,7 @@ import  React,  {  useCallback,  useEffect,  useLayoutEffect,  useRef,  useState
 import  {  Link,  matchPath,  useLocation,  useNavigate, type NavigateOptions  }  from  'react-router-dom';
 import  {  Button,  Checkbox,  ConfigProvider,  Dropdown,  Input,  InputNumber,  Modal,  Select,  Space,  Spin,  Table,  Tag,  Upload,  message  }  from  '@/components/ui';
 import  enUS  from  '@/components/ui/locale';
-import  {  AlertOutlined,  ArrowDownOutlined,  ArrowUpOutlined,  CheckOutlined,  CloseOutlined,  CodeOutlined,  DatabaseOutlined,  DeleteOutlined,  DownOutlined,  DownloadOutlined,  EditOutlined,  PlusOutlined,  ReloadOutlined,  RightOutlined,  SearchOutlined,  SettingOutlined,  TableOutlined,  UploadOutlined  }  from  '@/components/ui/icons';
+import  {  AlertOutlined,  ArrowLeftOutlined,  ArrowDownOutlined,  ArrowUpOutlined,  CheckOutlined,  CloseOutlined,  CodeOutlined,  DatabaseOutlined,  DeleteOutlined,  DownOutlined,  DownloadOutlined,  EditOutlined,  PlusOutlined,  ReloadOutlined,  RightOutlined,  SearchOutlined,  SettingOutlined,  TableOutlined,  UploadOutlined  }  from  '@/components/ui/icons';
 import  '../ProductWorkspace/workspace.css';
 import CdcStatusPanel from './CdcStatusPanel';
 import OntologyExplorer, { schemaColor } from './OntologyExplorer';
@@ -256,6 +256,8 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
     const isSchemas = !!matchPath('/ontology/explorer', pathname);
     const workspacePath = isSchemas ? '/ontology/explorer' : '/ontology/transforms';
     const requestedView = new URLSearchParams(search).get('view');
+    const returnTo = new URLSearchParams(search).get('returnTo');
+    const catalogReturn = returnTo === '/ontology' || returnTo?.startsWith('/ontology?') ? returnTo : undefined;
     const routerNavigate = useNavigate();
     const tabId = explorerTab?.id;
     const navigateTab = explorerTab?.navigate;
@@ -284,6 +286,20 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
     const previewViewport = useRef<HTMLDivElement>(null);
     const [stream, setStream] = useState<EtlStreamState>();
     const [loading, setLoading] = useState(false);
+    const queryController = useRef<AbortController>();
+    const queryStarted = useRef(0);
+    const [queryElapsed, setQueryElapsed] = useState<number>();
+    const [queryCancelled, setQueryCancelled] = useState(false);
+    useEffect(() => {
+        if (!loading) return;
+        const timer = window.setInterval(() => setQueryElapsed(performance.now() - queryStarted.current), 100);
+        return () => window.clearInterval(timer);
+    }, [loading]);
+    const cancelQuery = () => {
+        queryController.current?.abort();
+        setQueryElapsed(performance.now() - queryStarted.current);
+        setQueryCancelled(true); setLoading(false);
+    };
     const [previewError, setPreviewError] = useState('');
     const [previewUnavailable, setPreviewUnavailable] = useState(false);
     const [previewRevision, setPreviewRevision] = useState(0);
@@ -937,6 +953,8 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
         if (!selectedTableAvailable || !showPreview) { setLoading(false); return; }
         setLoading(true); setPreviewError(''); setPreviewUnavailable(false);
         const controller = new AbortController();
+        queryController.current = controller; queryStarted.current = performance.now();
+        setQueryElapsed(0); setQueryCancelled(false);
         const offset = (pageNumber - 1) * pageSize;
         const query = { ...appliedQuery, limit: pageSize, offset, partition, forEditing: canManage, withIdentity: true };
         const current = () => {
@@ -971,7 +989,7 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
                 } else setData(undefined);
                 setPreviewPage(undefined); setPreviewError(errorText(error));
             } finally {
-                if (current()) setLoading(false);
+                if (current()) { setQueryElapsed(performance.now() - queryStarted.current); setLoading(false); }
             }
         }, 100);
         return () => { window.clearTimeout(timer); controller.abort(); dataRequest.current++; };
@@ -1195,6 +1213,7 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
                 </div>
                 </div>}
                 {!selectedTableAvailable ? <div className="flow-workspace-empty" role="status"><DatabaseOutlined /><h3>{resolvingExplorerAsset || tablesLoading || !catalogLoaded && !requestError ? 'Loading schema resources…' : selectedSchema ? serverTables.length ? 'No table selected' : 'No tables in this schema' : 'No schema selected'}</h3>{!resolvingExplorerAsset && <p>{schemaNode?.status === 'stopped' ? 'This schema is not available in the connected database.' : serverTables.length ? 'Select a table from the catalog.' : 'Select a schema to explore its tables and data.'}</p>}</div> : <div className="flow-inspector">
+                    {isSchemas && catalogReturn && <div className="flow-published-results-context"><Button size="small" icon={<ArrowLeftOutlined />} disabled={workbenchLocked} onClick={() => navigate(catalogReturn)}>Back to object types</Button></div>}
                     {isSchemas && <fieldset className="wb-shell" disabled={workbenchLocked}>
                         <ExplorerWorkbenchHeader key={JSON.stringify([previewIdentity, selectedSchema, table.name])} schema={selectedSchema} table={table.name}
                             label={mapping?.displayName || table.name} titleProperty={mapping?.titleProperty} primaryKey={mapping?.primaryKey}
@@ -1328,7 +1347,7 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
                             {isSchemas && resourceView === 'api' && (canManage ? apiPanel : <div className="flow-schema-state" role="status">Published APIs are available to administrators only.</div>)}
                             {showPreview && partitionOpen &&  <div  className="flow-partition-tags">{partitions.map((item)  =>  <Tag.CheckableTag  key={item.name}  checked={partition  ===  item.name}  onChange={() => { if (editingRowKey) { message.warning('Save or cancel the current row edit first'); return; } setPartition(partition === item.name ? undefined : item.name); setPageNumber(1); }}>{item.name.replace('p2026_',  '')}</Tag.CheckableTag>)}</div>}
                             {showPreview && !previewError && (isSchemas ?
-                                <ExplorerSelection onSelectedRowsChange={setWorkbenchRows} key={JSON.stringify([selectionEpoch, policyKey, pageNumber, pageSize, partition, appliedQuery])}
+                                <ExplorerSelection onSelectedRowsChange={setWorkbenchRows} key={JSON.stringify([selectionEpoch, policyKey])}
                                     schema={selectedSchema} table={table.name} dataType={mapping?.dataType ?? table.dataType} rows={dataRows} columns={data?.columns ?? emptyPreviewColumns}
                                     columnTypes={data?.columnTypes} metadata={explorerPresentation}
                                     dataColumns={dataColumns} rowKey={rowKey} rowIdentity={primaryKey} rowVersion={rowVersion}
@@ -1359,6 +1378,10 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
                                         </div>
                                     </nav>
                                 </footer>} /> : <ConfigProvider locale={enUS}><Table className="flow-data-table" size="small" loading={loading} pagination={{ current: pageNumber, pageSize, total: data?.total ?? data?.rowCount ?? 0, size: 'small', showTotal: (total: number, range: [number, number]) => `${range[0]}–${range[1]} / ${data?.totalEstimated ? '~' : ''}${total.toLocaleString('en-US')} rows${data?.totalEstimated ? ' (estimated)' : ''} · ${table.size} · ${fieldCount} fields`, showSizeChanger: true, pageSizeOptions: [10, 20, 50], onChange: (page, size) => { if (editingRowKey) { message.warning('Save or cancel the current row edit first'); return; } setPageNumber(size !== pageSize ? 1 : page); setPageSize(size); } }} rowKey={rowKey} scroll={{ x: 'max-content' }} dataSource={dataRows} columns={dataColumns} onRow={(row) => ({ onDoubleClick: () => startRowEdit(rowKey(row)), className: editingRowKey === rowKey(row) ? 'flow-row-editing' : undefined })} /></ConfigProvider>)}
+                        {isSchemas && showPreview && queryElapsed !== undefined && <div className="flow-explorer-query-status" role="status">
+                            <span>{queryCancelled ? 'Cancelled · ' : loading ? 'Running · ' : ''}Elapsed: {(queryElapsed / 1000).toFixed(1)} s</span>
+                            {loading && <button type="button" onClick={cancelQuery}>Cancel</button>}
+                        </div>}
                     </div>
                     <Modal  className="flow-surface-modal flow-script-modal"  title="Layer  script"  open={tabVisible && scriptOpen} onCancel={closeScript} keyboard={!mutationLoading} maskClosable={!mutationLoading}  footer={null}  width={720}>
                         <div  className="flow-script-editor">
