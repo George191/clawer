@@ -1,5 +1,4 @@
 import { JsonTreeValue } from './ExplorerJsonValue';
-import { ExplorerValue } from './ExplorerValue';
 import { editorValue, rowChanges } from './explorerRowEditing';
 import  React,  {  useCallback,  useEffect,  useLayoutEffect,  useRef,  useState  }  from  'react';
 import  {  Link,  matchPath,  useLocation,  useNavigate, type NavigateOptions  }  from  'react-router-dom';
@@ -24,7 +23,6 @@ import ExplorerRowLinks from './ExplorerRowLinks';
 import NewObjectType from './NewObjectType';
 import ExplorerTableSchema from './ExplorerTableSchema';
 import { LayoutHeader, LayoutToolbar, useResultLayout } from './ExplorerResultLayout';
-import { ExplorerSeriesCell } from './ExplorerSeriesCell';
 import ExplorerTableEvidence from './ExplorerTableEvidence';
 import ExplorerStreamPositions, { topicRate } from './ExplorerStreamPositions';
 import ExplorerIndexCoverage from './ExplorerIndexCoverage';
@@ -773,7 +771,7 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
         selectedSchema, table.name, data?.columns || [], appliedQuery.sorts, updateExplorerSorts);
     const displayedColumns = isSchemas ? resultLayout.columns.filter(col => col.visible)
         : (data?.columns || []).map(field => ({ field, width: 180, presentation: 'value' as const }));
-    const dataColumns: any[] = displayedColumns.map(({ field: key, width, presentation }) => {
+    const dataColumns: any[] = displayedColumns.map(({ field: key, width }) => {
         const sort = appliedQuery.sorts.find((item) => item.field === key);
         return {
             title: isSchemas ? <LayoutHeader field={key} width={width} controls={resultLayout}><Dropdown overlayClassName="flow-menu-popup flow-explorer-menu" trigger={['click']} menu={{
@@ -797,11 +795,10 @@ const DataLayersWorkspace: React.FC<{ explorerTab?: ExplorerTabContext }> = ({ e
                 onCell: () => ({ style: { width, minWidth: width, maxWidth: width } }) }),
             render: (value: unknown, row: Record<string, unknown>) => {
                 if (!isSchemas && editingRowKey === rowKey(row) && editingDraft) return rowEditor(key);
-                if (isSchemas && presentation === 'timeSeries') return <ExplorerSeriesCell value={value} />;
                 const shown = formatCell(value);
                 const scalar = isSchemas ? exactCellValue(value, data?.columnTypes?.[key]) : undefined;
-                if (scalar === undefined) return isSchemas ? <ExplorerValue value={value} identity={primaryKey(row)} field={key} compact /> : shown;
-                return <div className="flow-explorer-value"><ExplorerValue value={value} identity={primaryKey(row)} field={key} compact /><Dropdown overlayClassName="flow-menu-popup flow-explorer-menu" trigger={['click']} menu={{
+                if (scalar === undefined) return shown;
+                return <div className="flow-explorer-value"><span title={shown}>{shown || 'Empty'}</span><Dropdown overlayClassName="flow-menu-popup flow-explorer-menu" trigger={['click']} menu={{
                     items: [{ key: 'include', label: 'Include this value' }, { key: 'exclude', label: 'Exclude this value' }],
                     onClick: ({ key: action }) => quickCellFilter(key, scalar, action === 'exclude'),
                 }}><button type="button" className="flow-cell-menu" aria-label={`Filter ${key} by ${shown || 'empty string'}`} title={`Filter ${key} by ${shown || 'empty string'}`}><DownOutlined /></button></Dropdown></div>;
