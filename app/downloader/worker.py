@@ -513,11 +513,11 @@ class DownloadWorker:
                 await self._http.mark_last_proxy_failed()
                 raise
             content_type = response.content_type or "application/octet-stream"
-            filename = item.filename
+            extension = Path(item.filename).suffix
             detected_type = filetype.guess(response.read_prefix(32768))
             if detected_type is not None:
                 content_type = detected_type.mime
-                filename += f".{detected_type.extension}"
+                extension = f".{detected_type.extension}"
             digest = hashlib.sha256()
             with response.path.open("rb") as content:
                 while chunk := content.read(1024 * 1024):
@@ -527,7 +527,7 @@ class DownloadWorker:
                 response.path,
                 template_name,
                 data_type,
-                f"{record_id}/{source_fingerprint(item)}/{digest.hexdigest()}/{filename}",
+                f"{record_id}/{digest.hexdigest()}{extension}",
                 content_type,
             )
             logger.debug(

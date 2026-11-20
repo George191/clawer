@@ -204,7 +204,7 @@ class DownloadWorkerTests(unittest.IsolatedAsyncioTestCase):
                 while chunk := stream.read(1024 * 1024):
                     actual.update(chunk)
             self.assertEqual(actual.hexdigest(), expected.hexdigest())
-            self.assertEqual(filename, f"record/{module.source_fingerprint(self.item)}/{expected.hexdigest()}/file")
+            self.assertEqual(filename, f"record/{expected.hexdigest()}")
             return "stored/object"
 
         self.worker._http.download_to_file.side_effect = fetch
@@ -232,9 +232,17 @@ class DownloadWorkerTests(unittest.IsolatedAsyncioTestCase):
             await self.download()
         call = self.worker._minio.upload_file.await_args
         expected = hashlib.sha256(self.response.data).hexdigest()
-        self.assertEqual(call.args[3], f"record/{module.source_fingerprint(self.item)}/{expected}/file.png")
+        self.assertEqual(call.args[3], f"record/{expected}.png")
         self.assertEqual(call.args[4], "image/png")
         self.assert_temporary_files_removed()
+
+    async def test_detected_extension_is_not_duplicated_in_flat_object_path(self):
+        for filename in ('photo.png', 'photo.png.png', 'photo.jpg'):
+            self.item = replace(self.item, filename=filename)
+            with patch.object(module.filetype, 'guess', lambda _: types.SimpleNamespace(mime='image/png', extension='png')):
+                await self.download()
+            expected = hashlib.sha256(self.response.data).hexdigest()
+            self.assertEqual(self.worker._minio.upload_file.await_args.args[3], f'record/{expected}.png')
 
     async def test_sec_file_validation_rejects_auth_page_before_upload(self):
         self.response = replace(self.response, data=b"<html>login.zscaler.net</html>")
