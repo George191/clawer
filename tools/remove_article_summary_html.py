@@ -37,7 +37,7 @@ async def main():
                         WHERE schema_name='ts_ods' AND table_name='ods_acticle' AND source_key=:key"""),
                         {'settings': json.dumps(settings), 'version': uuid4(), 'key': row['source_key']})
             await session.commit()
-        await save_registered_ddl(pg, 'ods', 'acticle', current_table_ddl('ods', 'acticle'),
+        await save_registered_ddl(pg, layer='ods', table='acticle', ddl_sql=current_table_ddl('ods', 'acticle'),
                                   allow_update=True, updated_by='maintenance:remove-derived-article-summary')
         rows = await pg.fetch_all("""SELECT table_schema,table_name FROM information_schema.columns
             WHERE column_name='summary_html' AND table_name IN ('ods_acticle','ods_news')""")
