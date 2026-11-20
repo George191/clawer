@@ -82,7 +82,7 @@
 .wb-library-item { display:flex; align-items:center; border-radius:2px; }
 .wb-library-item:hover { background:var(--ontology-hover); }
 .wb-library-item.is-current { background:var(--ontology-selected); }
-.wb-library-item .wb-library-open { display:flex; flex:1; min-width:0; gap:10px; padding:10px 8px; background:transparent; }
+.wb-library-item .wb-library-open { display:flex; flex:1; min-width:0; justify-content:flex-start; gap:10px; padding:10px 8px; background:transparent; text-align:left; }
 .wb-library-icon { display:grid; place-items:center; flex:none; width:30px; height:32px; border:1px solid var(--ontology-control-border); border-radius:3px; color:var(--ontology-muted); background:var(--ontology-bg); }
 .wb-library-open > span:nth-child(2) { flex:1; min-width:0; }
 .wb-library-open strong { display:block; margin:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; font-weight:500; }
