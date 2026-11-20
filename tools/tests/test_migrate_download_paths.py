@@ -48,3 +48,32 @@ def test_partition_ownership_is_disjoint_and_complete():
     assert len(set.union(*shards)) == len(records)
     assert sum(len(shard) for shard in shards) == len(records)
     assert all(len(a & b)==0 for i,a in enumerate(shards) for b in shards[i+1:])
+
+def test_indexed_inventory_resumes_without_relisting_sources(tmp_path):
+    from datetime import datetime, timezone
+    from unittest.mock import MagicMock
+    record_id = 'a' * 32
+    old = 'news/source/' + record_id + '/image.jpg.jpg'
+    client = MagicMock()
+    collection = client.__getitem__.return_value.__getitem__.return_value
+    collection.index_information.return_value = {'downloads': {'key': [
+        ('_meta.download_status',1),('_meta.updated_at',1),('_id',1)]}}
+    doc = {'_id':'row1','_meta':{'record_id':record_id,'updated_at':datetime(2026,1,1,tzinfo=timezone.utc)},'assets':{'image':old}}
+    def find(query, projection):
+        cursor = MagicMock()
+        cursor.sort.return_value.hint.return_value.limit.return_value.max_time_ms.return_value = (
+            [doc] if query['_meta.download_status']=='downloaded' and '$or' not in query else [])
+        return cursor
+    collection.find.side_effect = find
+    async def routes():
+        return [{'template_name':'source','collection_name':'news_source','data_type':'news'}]
+    path = tmp_path / 'journal.sqlite'
+    with patch.object(migration,'MongoClient',return_value=client), patch.object(migration,'routes',routes):
+        migration.inventory(path)
+        calls = collection.find.call_count
+        migration.inventory(path)
+    assert collection.find.call_count == calls
+    db = migration.journal(path)
+    assert db.execute('SELECT old,phase FROM objects').fetchall() == [(old,'planned')]
+    assert db.execute('SELECT done FROM progress WHERE prefix="__inventory__"').fetchone()[0] == 1
+    db.close()

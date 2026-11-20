@@ -84,7 +84,7 @@ def inventory(path):
         db.execute('INSERT INTO progress VALUES(?,?,1)', ('__snapshot__',dumps(cutoff)));db.commit()
     for route in registered:
         collection = mongo[route['collection_name']]
-        keys = [list(info['key'].items()) for info in collection.index_information().values()]
+        keys = [list(info['key']) for info in collection.index_information().values()]
         compound = [('_meta.download_status',1),('_meta.updated_at',1),('_id',1)]
         # Sources without download state indexes have no downloader lifecycle to migrate.
         if compound not in keys:
