@@ -6,19 +6,27 @@
 .result-column-header:has(.flow-column-menu:is(:hover,:focus-visible,[aria-expanded="true"],.is-sorted)) { border-radius:3px; background:var(--ontology-hover); color:var(--ontology-muted); }
 .flow-console--ontology .flow-schema-workbench .flow-data-table .result-column-header .flow-column-menu:is(:hover,:focus-visible,[aria-expanded="true"],.is-sorted) { background:transparent; border-color:transparent; }
 .result-resizer { cursor: col-resize; touch-action: none; align-self: stretch; position: absolute; right: -7px; width: 9px; top: -7px; bottom: -7px; z-index: 1; }
-.result-resizer:hover, .result-resizer:focus-visible { border-right: 2px solid var(--ontology-muted); }
+.result-resizer::after { content:""; position:absolute; right:0; top:50%; width:1px; height:18px; transform:translateY(-50%); background:transparent; }
+.result-resizer:hover::after, .result-resizer:focus-visible::after { background:var(--ontology-control-border); }
+.result-resizer:focus-visible { outline:none; }
 .flow-console--ontology .flow-data-table th:has(.result-column-header) .ui-table-heading { display: flex; width: 100%; }
 .flow-console--ontology .flow-data-table td.result-cell-clip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .flow-console--ontology .flow-data-table td.result-cell-wrap,
 .flow-console--ontology .flow-data-table td.result-cell-wrap .flow-explorer-value > span:first-child {
   white-space: pre-wrap; overflow-wrap: anywhere; overflow: visible; text-overflow: clip;
 }
-.result-column-config, .result-column-config > label:has(input[type=search]) { display: grid; gap: 10px; }
-.result-column-config input[type=search] { border: 1px solid var(--ontology-control-border, #737e88); border-radius: 4px; padding: 6px; background: transparent; color: inherit; }
-.result-column-config ul { padding: 0; margin: 0; max-height: 36vh; overflow: auto; list-style: none; }
-.result-column-config li, .result-layout-actions, .result-column-config label { display: flex; gap: 8px; align-items: center; }
-.result-column-config li { padding: 5px 0; border-bottom: 1px solid var(--ontology-border, #737e8844); }
-.result-column-config li label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.result-column-config li button { background: transparent; border: 0; color: inherit; cursor: pointer; text-decoration: underline; }
-.result-column-config li button:disabled { opacity: .45; }
-.result-layout-actions { flex-wrap: wrap; }
+.flow-surface-modal.result-layout-modal .ui-modal-body { font-size:12px; }
+.result-column-config, .result-column-search { display:grid; gap:10px; }
+.result-column-search { color:var(--ontology-muted); }
+.result-column-config ul { padding:4px 8px; margin:0; max-height:36vh; overflow:auto; list-style:none; border:1px solid var(--ontology-control-border); border-radius:3px; }
+.result-column-config li { display:grid; grid-template-columns:12px minmax(0,1fr) 112px auto; gap:8px; align-items:center; min-height:36px; padding:4px 0; }
+.result-column-config li + li { border-top:1px solid var(--ontology-border); }
+.result-column-config .ui-checkbox-wrapper { min-width:0; }
+.result-column-config li .ui-checkbox-wrapper > span:last-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.result-column-config .ui-checkbox-input:checked + .ui-checkbox-inner { background:var(--ontology-muted); border-color:var(--ontology-muted); }
+.result-column-presentation .ui-select { width:100%; }
+.result-column-order, .result-layout-actions { display:flex; gap:6px; align-items:center; }
+.result-column-order { gap:2px; }
+.result-column-order .ui-btn { color:var(--ontology-muted); }
+.result-layout-actions { flex-wrap:wrap; }
+.flow-select-popup.result-layout-popup .ui-select-item-option-selected { background:var(--ontology-hover); color:var(--ontology-text); }
