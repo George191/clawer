@@ -84,8 +84,6 @@ def worker(path, shard, db_gate):
         with db_gate:
             pg = await migration.connect_pg()
         try:
-            db.execute(f'UPDATE objects SET phase="source_updated" WHERE {SCOPE} AND shard=? AND phase="verified"', (shard,))
-            db.commit()
             while True:
                 pending = db.execute(f'SELECT DISTINCT prefix,record_id FROM objects WHERE {SCOPE} AND shard=? AND phase="source_updated" LIMIT 100', (shard,)).fetchall()
                 for group in pending:
