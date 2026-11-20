@@ -159,6 +159,8 @@ function RecordPage({ schema, table, identity }: { schema: string; table: string
                 </div>)}<div className="record-operations"><Button disabled={busy} onClick={()=>setDraft(undefined)}>Cancel edit</Button>
                     <Button type="primary" htmlType="submit" disabled={busy || stale}>Save changes</Button></div>
             </form> : currentMode==='links' ? <ExplorerRowLinks schema={schema} table={table} primaryKey={result.identity} initialPage={links.page}/> :
+                !layouts && !layoutError ? <p role="status">Loading property layout…</p> :
+                layoutError ? <p>Properties are unavailable until the layout loads.</p> :
                 !metadata ? <p role="status">Loading object presentation…</p> :
                 metadata.error ? <p>Properties are unavailable until the object presentation loads.</p> :
                 currentMode==='properties' ? <ExplorerProperties presentation={presentation} presentations={presentations} row={row}/> :

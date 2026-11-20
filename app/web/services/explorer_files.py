@@ -1,5 +1,6 @@
 """Resolve only configured MinIO objects referenced by readable physical records."""
 import json
+import re
 from datetime import timedelta
 from html import escape
 
@@ -32,7 +33,7 @@ def object_key(value):
         url = urlsplit(value)
     except ValueError as exc:
         raise HTTPException(422, "This property is not a configured MinIO file") from exc
-    if value.startswith(('acticle/', 'news/', 'tweet/twitter/')):
+    if re.fullmatch(r'[a-z][a-z0-9_]*/[a-z][a-z0-9_]*/[^?#]+', value):
         key = unquote(value)
     elif url.scheme in ('s3', 'minio') and url.netloc == config['bucket']:
         key = unquote(url.path.lstrip('/'))
@@ -65,9 +66,22 @@ def signed_link(key, *, download=False, client=None):
     return url
 
 
-async def download_link(layer, table, identity, field, *, download=True):
+async def download_link(layer, table, identity, field, *, download=True, path=()):
     record = await row_by_key(layer, table, identity, editable=False)
-    key = object_key(record['row'].get(field))
+    value = record['row'].get(field)
+    if path and isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError as exc:
+            raise HTTPException(422, "This property is not a resource list or object") from exc
+    for segment in path:
+        if type(segment) is int and isinstance(value, list) and 0 <= segment < len(value):
+            value = value[segment]
+        elif type(segment) is str and isinstance(value, dict) and segment in value:
+            value = value[segment]
+        else:
+            raise HTTPException(422, "The resource path does not exist in this property")
+    key = object_key(value)
     return {"url": await run_in_threadpool(signed_link, key, download=download)}
 
 
@@ -96,14 +110,10 @@ def render_html(record, field):
         value = resources.get(value, value)
         if value in signed:
             return signed[value]
-        # ODS media fields store bucket-relative keys, rather than public URLs.
-        if value.startswith(('acticle/', 'news/')):
-            key = value
-        else:
-            try:
-                key = object_key(value)
-            except HTTPException:
-                return value if value.startswith(('https://', 'http://', 'data:image/')) else None
+        try:
+            key = object_key(value)
+        except HTTPException:
+            return value if value.startswith(('https://', 'http://', 'data:image/')) else None
         signed[value] = signed_link(key, client=client)
         return signed[value]
 

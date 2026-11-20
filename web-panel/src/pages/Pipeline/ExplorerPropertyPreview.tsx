@@ -80,28 +80,6 @@ function Geometry({ value, label }: {value: unknown; label: string}) {
         <button type="button" onClick={()=>setWorld(v=>!v)}>{world?'Fit geometry':'World extent'}</button></figcaption></figure>;
 }
 
-function Media({value,label}:{value:unknown;label:string}) {
-    const [loaded,setLoaded]=useState(false),[failed,setFailed]=useState(false);
-    const ref=value && typeof value==='object' ? value as Record<string,unknown> : {};
-    const src=typeof value==='string'?value:ref.url;
-    let url:URL;
-    try {
-        if(typeof src!=='string' || !/^(https?:\/\/|\/(?!\/))/.test(src)) throw new Error();
-        url=new URL(src,location.origin);
-        if(url.username || url.password || (url.protocol!=='https:' && url.origin!==location.origin))throw new Error();
-    } catch {return <p>Expected an HTTPS media URL or a same-origin path.</p>;}
-    const mime=typeof ref.mimeType==='string'?ref.mimeType.toLowerCase():'';
-    const kind=mime.startsWith('image/') || /\.(?:png|svg|jpe?g|gif|webp|avif)$/i.test(url.pathname)?'image':
-        mime.startsWith('video/') || /\.(?:mp4|webm|ogv)$/i.test(url.pathname)?'video':
-        mime.startsWith('audio/') || /\.(?:mp3|wav|ogg|m4a)$/i.test(url.pathname)?'audio':null;
-    if(!kind)return <a href={url.href} target="_blank" rel="noopener noreferrer">Open media resource</a>;
-    if(failed)return <div role="status">Could not load this media. <button type="button" onClick={()=>setFailed(false)}>Retry</button></div>;
-    if(!loaded)return <button type="button" onClick={()=>setLoaded(true)}>Preview {kind} from {url.hostname}</button>;
-    return kind==='image'?<img className="explorer-property-image" src={url.href} alt={label} referrerPolicy="no-referrer" onError={()=>setFailed(true)}/>:
-        kind==='video'?<video src={url.href} controls preload="metadata" aria-label={label} onError={()=>setFailed(true)}/>:
-            <audio src={url.href} controls preload="metadata" aria-label={label} onError={()=>setFailed(true)}/>;
-}
-
 function TimeSeries({value,label}:{value:unknown;label:string}) {
     const [expanded,setExpanded]=useState(false);
     const [page,setPage]=useState(0);
@@ -123,9 +101,8 @@ function TimeSeries({value,label}:{value:unknown;label:string}) {
             </div>}</>}</details></div>;
 }
 
-export default function ExplorerPropertyPreview({kind,value,label}:{kind:'value'|'timeSeries'|'geoJson'|'media';value:unknown;label:string}) {
+export default function ExplorerPropertyPreview({kind,value,label}:{kind:'timeSeries'|'geoJson';value:unknown;label:string}) {
     if(value==null) return <span>Null</span>;
-    if(kind==='media') return <Media key={JSON.stringify(value)} value={value} label={label}/>;
     if(kind==='geoJson') return <Geometry value={value} label={label}/>;
     return <TimeSeries value={value} label={label}/>;
 }

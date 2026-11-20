@@ -83,7 +83,7 @@ export function explorerFields(row: ExplorerPreviewRow, columns: readonly string
     (property.sourceColumn == null || columns.includes(property.sourceColumn))).map(property => ({
     field: property.sourceColumn, key: property.id, label: property.name, description: property.description,
     type: property.type || property.sqlType || 'Unknown', format: property.formatter,
-    presentation: property.presentation !== 'value' ? property.presentation : presentations?.[property.sourceColumn ?? ''] || 'value',
+    presentation: presentations?.[property.sourceColumn ?? ''] || 'value',
     summary: property.summary, group: property.group,
   }));
 }
@@ -117,7 +117,8 @@ export const explorerFieldValue = (row: ExplorerPreviewRow, field: Field) =>
 
 export function ExplorerFieldValue({ row, field }: { row: ExplorerPreviewRow; field: Field }) {
   const value = explorerFieldValue(row, field);
-  return field.presentation !== 'value' && notEmpty(value)
+  if (field.presentation === 'media' && notEmpty(value)) return <ExplorerValue value={value} identity={row.identity} field={field.field} presentation="media" />;
+  return field.presentation !== 'value' && field.presentation !== 'media' && notEmpty(value)
     ? <Suspense fallback={<span role="status">Loading property preview…</span>}>
       <ExplorerPropertyPreview kind={field.presentation} value={value} label={field.label} />
     </Suspense> : <ExplorerPropertyValue value={value} format={field.format} identity={row.identity} field={field.field} />;
@@ -134,7 +135,7 @@ export function ExplorerObjectOverview({ row, columns = Object.keys(row.record),
   return <div className="flow-explorer-overview">
     {!!summary.length && <dl className="flow-explorer-overview__summary" aria-label="Summary properties">
       {summary.map(field => <div key={field.key}><dt><PropertyLabel type={field.type}>{field.label}</PropertyLabel></dt><dd>
-        <ExplorerPropertyValue value={explorerFieldValue(row, field)} format={field.format} identity={row.identity} field={field.field} />
+        <ExplorerFieldValue row={row} field={field} />
       </dd></div>)}
     </dl>}
     {(details.length > 0 || group !== undefined) && <section className="flow-explorer-overview__information" aria-label={heading}>

@@ -8,7 +8,7 @@ import { Button, Checkbox, Dropdown, Input, Select, Table, message } from '@/com
 import type { ColumnsType, MenuItem, TableProps } from '@/components/ui';
 import { BarsOutlined, CopyOutlined, DownOutlined, LinkOutlined, ReloadOutlined, SearchOutlined } from '@/components/ui/icons';
 import {
-  ExplorerFieldValue, ExplorerObjectOverview, ExplorerPropertyValue as PropertyValue, ExplorerTypeIcon,
+  ExplorerFieldValue, ExplorerObjectOverview, ExplorerTypeIcon,
   explorerFields, explorerFieldValue, explorerRowTitle, propertyValue,
   type ExplorerOverviewPresentation, type ExplorerPresentationRead, type ExplorerPreviewRow, type ExplorerPropertyPresentation,
 } from './ExplorerObjectOverview';
@@ -84,7 +84,7 @@ function sameValue(left: unknown, right: unknown): boolean {
   return keys.length === Object.keys(b).length && keys.every(key => Object.prototype.hasOwnProperty.call(b, key) && sameValue(a[key], b[key]));
 }
 
-function Comparison({ columns, choices }: { columns: readonly string[]; choices: ExplorerPreviewRow[] }) {
+function Comparison({ columns, choices, presentations }: { columns: readonly string[]; choices: ExplorerPreviewRow[]; presentations?: Record<string, ExplorerPropertyPresentation> }) {
   const [leftKey, setLeft] = useState(choices[0].key);
   const [rightKey, setRight] = useState(choices[1].key);
   const [differencesOnly, setDifferencesOnly] = useState(false);
@@ -107,7 +107,7 @@ function Comparison({ columns, choices }: { columns: readonly string[]; choices:
         const different = !sameValue(leftValue, rightValue);
         return <tr key={field} className={different ? 'is-different' : undefined}>
           <th scope="row"><PropertyLabel type={left.columnTypes[field] || right.columnTypes[field] || 'string'}>{field}</PropertyLabel>{different && <small>Different</small>}</th>
-          <td><PropertyValue value={leftValue} identity={left.identity} field={field} /></td><td><PropertyValue value={rightValue} identity={right.identity} field={field} /></td>
+          <td><ExplorerFieldValue row={left} field={explorerFields(left, [field], undefined, presentations)[0]} /></td><td><ExplorerFieldValue row={right} field={explorerFields(right, [field], undefined, presentations)[0]} /></td>
         </tr>;
       })}</tbody></table> : <p role="status">No differing properties.</p>}
   </section>;
@@ -344,7 +344,7 @@ export default function ExplorerSelection({
       </div>}
       <div className="flow-explorer-selection__content">
         {displayView === 'compare' && displayed.length > 1
-          ? <Comparison columns={columns} choices={displayed.map(index => describeRow(rows[index], index))} />
+          ? <Comparison columns={columns} presentations={presentations} choices={displayed.map(index => describeRow(rows[index], index))} />
           : <>
             <div className="flow-explorer-selection__object">
               <ExplorerTypeIcon dataType={dataType} table={table} />

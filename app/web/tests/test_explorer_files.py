@@ -21,9 +21,10 @@ def storage():
     '/internal/docs/report%20one.pdf', 'http://minio.internal:9000/internal/docs/report%20one.pdf',
     'http://files.example:9000/internal/docs/report%20one.pdf',
     'tweet/twitter/record/photo.jpg', 'tweet/twitter/record/video.mp4',
+    'filing/sec/record/report.pdf', 'social_account/twitter/record/avatar.jpg',
 ])
 def test_configured_objects(value):
-    assert files.object_key(value) == (value if value.startswith('tweet/') else 'docs/report one.pdf')
+    assert files.object_key(value) == (value if '://' not in value and not value.startswith('/') else 'docs/report one.pdf')
 
 
 @pytest.mark.parametrize('value', [None, {}, 'javascript:alert(1)', 'https://outside.example/internal/x',
@@ -102,7 +103,45 @@ async def test_file_http_contract_rejects_arbitrary_urls_and_signs_record_field(
             result = await client.post(path, json={'key': {'id': 1}, 'field': 'document', 'download': False})
             assert result.status_code == 200
             assert result.headers['cache-control'] == 'private, no-store'
-            sign.assert_awaited_once_with('ts_qa', 'items', {'id': 1}, 'document', download=False)
+            sign.assert_awaited_once_with('ts_qa', 'items', {'id': 1}, 'document', download=False, path=[])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('value,path,key', [
+    ([{'url': 'news/source/record/photo.jpg'}], [0, 'url'], 'news/source/record/photo.jpg'),
+    ('["acticle/wechat/record/cover.jpg"]', [0], 'acticle/wechat/record/cover.jpg'),
+    ({'url': 'filing/sec/record/report.pdf'}, ['url'], 'filing/sec/record/report.pdf'),
+])
+async def test_resource_path_signs_only_the_stored_nested_value(value, path, key):
+    with patch.object(files, 'row_by_key', AsyncMock(return_value={'row': {'resources': value}})), \
+         patch.object(files, 'signed_link', return_value='https://signed.example/object') as sign:
+        assert await files.download_link('ts_qa', 'items', {'id': 1}, 'resources', download=False, path=path) == {'url': 'https://signed.example/object'}
+        sign.assert_called_once_with(key, download=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('path', [[-1, 'url'], [1, 'url'], ['0', 'url'], [0, 'missing'], [True], [0, 'url', 'x']])
+async def test_invalid_resource_path_never_signs(path):
+    with patch.object(files, 'row_by_key', AsyncMock(return_value={'row': {'images': [{'url': 'news/source/image.jpg'}]}})), \
+         patch.object(files, 'signed_link') as sign:
+        with pytest.raises(HTTPException) as error:
+            await files.download_link('ts_qa', 'items', {'id': 1}, 'images', path=path)
+        assert error.value.status_code == 422
+        sign.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_resource_path_http_contract_is_bounded_and_strict():
+    from app.web.tests.test_transfer_plans import api
+    with patch.object(files, 'download_link', AsyncMock(return_value={'url': 'https://signed.example/object'})) as sign:
+        async with api(False) as client:
+            endpoint = '/etl/ts_qa/items/record-file'
+            body = {'key': {'id': 1}, 'field': 'images', 'download': False}
+            for path in ([True], [1.5], [{}], list(range(13))):
+                assert (await client.post(endpoint, json={**body, 'path': path})).status_code == 422
+            sign.assert_not_called()
+            assert (await client.post(endpoint, json={**body, 'path': [0, 'url']})).status_code == 200
+            sign.assert_awaited_once_with('ts_qa', 'items', {'id': 1}, 'images', download=False, path=[0, 'url'])
 
 
 @pytest.mark.asyncio
