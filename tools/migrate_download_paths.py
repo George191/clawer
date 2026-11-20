@@ -71,31 +71,61 @@ async def routes():
 
 
 def inventory(path):
-    db, client = journal(path), storage()
+    # Source-owned assets avoid an expensive bucket-wide object listing and retain live-reference scope.
+    from bson.json_util import dumps, loads
+    db = journal(path)
     registered = asyncio.run(routes())
-    types = {r['data_type'] for r in registered} | {'social_media', 'financial_report', 'twitter'}
-    prefixes = [o.object_name for o in client.list_objects(settings.minio_bucket, recursive=False) if o.object_name.rstrip('/') in types]
-    for prefix in prefixes:
-        checkpoint = db.execute('SELECT last_key,done FROM progress WHERE prefix=?', (prefix,)).fetchone()
-        if checkpoint and checkpoint[1]:
+    registered.sort(key=lambda r: (r['template_name'] != 'twitter', r['data_type'] in {'patent','filing'}, r['collection_name']))
+    client = MongoClient(settings.db_url, serverSelectionTimeoutMS=15000)
+    mongo = client[settings.db_name]
+    snapshot = db.execute('SELECT last_key FROM progress WHERE prefix="__snapshot__"').fetchone()
+    cutoff = loads(snapshot[0]) if snapshot else datetime.now(timezone.utc)
+    if not snapshot:
+        db.execute('INSERT INTO progress VALUES(?,?,1)', ('__snapshot__',dumps(cutoff)));db.commit()
+    for route in registered:
+        collection = mongo[route['collection_name']]
+        keys = [list(info['key'].items()) for info in collection.index_information().values()]
+        compound = [('_meta.download_status',1),('_meta.updated_at',1),('_id',1)]
+        # Sources without download state indexes have no downloader lifecycle to migrate.
+        if compound not in keys:
+            if collection.find_one({'assets':{'$exists':True}}, {'_id':1}, max_time_ms=30000):
+                raise RuntimeError('Source with assets lacks its required download index: '+route['collection_name'])
             continue
-        pending = []
-        for obj in client.list_objects(settings.minio_bucket, prefix=prefix, recursive=True, start_after=checkpoint[0] if checkpoint else None):
-            parts = obj.object_name.split('/')
-            if len(parts) < 4 or not RECORD.fullmatch(parts[2]):
-                raise ValueError('Unsupported resource layout: ' + obj.object_name)
-            canonical = len(parts) == 4 and HEX.fullmatch(Path(parts[-1]).stem)
-            pending.append((obj.object_name, '/'.join(parts[:2]), parts[2], int(parts[2], 16) % WORKERS, obj.object_name if canonical else None, 'canonical' if canonical else 'planned'))
-            if len(pending) == BATCH:
-                db.executemany('INSERT OR IGNORE INTO objects(old,prefix,record_id,shard,new,phase) VALUES(?,?,?,?,?,?)', pending)
-                db.execute('INSERT OR REPLACE INTO progress VALUES(?,?,0)', (prefix, obj.object_name))
-                db.commit();pending.clear()
-                print(json.dumps({'inventory':prefix,'last':obj.object_name}), flush=True)
-        if pending:
-            db.executemany('INSERT OR IGNORE INTO objects(old,prefix,record_id,shard,new,phase) VALUES(?,?,?,?,?,?)', pending)
-        db.execute('INSERT OR REPLACE INTO progress VALUES(?,?,1)', (prefix, pending[-1][0] if pending else checkpoint[0] if checkpoint else ''))
-        db.commit()
-    db.close()
+        for status in ('downloaded','downloading','pending'):
+            name = 'mongo:'+route['collection_name']+':'+status
+            checkpoint = db.execute('SELECT last_key,done FROM progress WHERE prefix=?',(name,)).fetchone()
+            if checkpoint and checkpoint[1]:continue
+            last = loads(checkpoint[0]) if checkpoint and checkpoint[0] else None
+            while True:
+                query = {'_meta.download_status':status,'_meta.updated_at':{'$lte':cutoff}}
+                if last:
+                    query['$or'] = [{'_meta.updated_at':{'$gt':last[0]}},{'_meta.updated_at':last[0],'_id':{'$gt':last[1]}}]
+                docs = list(collection.find(query, {'assets':1,'_meta.record_id':1,'_meta.updated_at':1}).sort([('_meta.updated_at',1),('_id',1)]).hint(compound).limit(BATCH).max_time_ms(120000))
+                if not docs:
+                    db.execute('INSERT OR REPLACE INTO progress VALUES(?,?,1)',(name,dumps(last) if last else ''));db.commit();break
+                pending = []
+                for doc in docs:
+                    for _,value in strings(doc.get('assets',{})):
+                        if value.startswith(('http://','https://','s3://','minio://')):
+                            url=urlsplit(value)
+                            if url.path.startswith('/'+settings.minio_bucket+'/'):
+                                value=url.path[len(settings.minio_bucket)+2:]
+                            else:continue
+                        parts=value.split('/')
+                        if len(parts)<4 or not RECORD.fullmatch(parts[2]):
+                            if value:raise ValueError('Unsupported resource reference: '+value)
+                            continue
+                        if parts[2]!=doc['_meta']['record_id']:raise ValueError('Resource owned by another record: '+value)
+                        canonical=len(parts)==4 and HEX.fullmatch(Path(parts[-1]).stem)
+                        pending.append((value,'/'.join(parts[:2]),parts[2],int(parts[2],16)%WORKERS,value if canonical else None,'canonical' if canonical else 'planned'))
+                        if len(pending)==BATCH:
+                            db.executemany('INSERT OR IGNORE INTO objects(old,prefix,record_id,shard,new,phase) VALUES(?,?,?,?,?,?)',pending);db.commit();pending.clear()
+                if pending:db.executemany('INSERT OR IGNORE INTO objects(old,prefix,record_id,shard,new,phase) VALUES(?,?,?,?,?,?)',pending)
+                last=(docs[-1]['_meta']['updated_at'],docs[-1]['_id'])
+                db.execute('INSERT OR REPLACE INTO progress VALUES(?,?,0)',(name,dumps(last)));db.commit()
+                print(json.dumps({'inventory':name,'records':len(docs)}),flush=True)
+    db.execute('INSERT OR REPLACE INTO progress VALUES("__inventory__","",1)');db.commit()
+    client.close();db.close()
 
 
 def copy_object(client, old, prefix, record_id):
@@ -150,7 +180,7 @@ def apply_group(db, client, mongo, registered, prefix, record_id):
             replacements[old] = new;continue
         if not any(old in value for _, doc in docs for _, value in strings(doc.get('assets', {}))):
             # Unreferenced objects are explicitly recorded and left untouched.
-            db.execute('UPDATE objects SET phase="unreferenced",error=NULL WHERE old=?', (old,));continue
+            db.execute('UPDATE objects SET phase="unreferenced",error=NULL WHERE old=?', (old,));db.commit();continue
         new = new or copy_object(client,old,prefix,record_id)
         replacements[old] = new
         db.execute('UPDATE objects SET new=?,error=NULL WHERE old=?',(new,old));db.commit()
@@ -221,6 +251,8 @@ def worker(path, shard, mode):
     registered=asyncio.run(routes())
     mongo_client=MongoClient(settings.db_url,serverSelectionTimeoutMS=15000)
     mongo=mongo_client[settings.db_name]
+    phase='planned' if mode=='apply' else 'source_updated' if mode=='verify' else 'verified'
+    db.execute('UPDATE objects SET error=NULL WHERE shard=? AND phase=?',(shard,phase));db.commit()
     async def run():
         pg=get_pg_client()
         if mode=='verify':
@@ -229,8 +261,14 @@ def worker(path, shard, mode):
             phases=('planned','error') if mode=='apply' else ('source_updated',) if mode=='verify' else ('verified',)
             last=('', '')
             while True:
-                groups=db.execute('SELECT DISTINCT prefix,record_id FROM objects WHERE shard=? AND phase IN ('+','.join('?' for _ in phases)+') AND (prefix,record_id)>(?,?) ORDER BY prefix,record_id LIMIT ?', (shard,*phases,*last,BATCH)).fetchall()
+                groups=db.execute('SELECT DISTINCT prefix,record_id FROM objects WHERE shard=? AND phase IN ('+','.join('?' for _ in phases)+') AND error IS NULL AND (prefix,record_id)>(?,?) ORDER BY prefix,record_id LIMIT ?', (shard,*phases,*last,BATCH)).fetchall()
                 if not groups:
+                    if mode=='apply' and last!=('', ''):
+                        last=('', '');continue
+                    finished=db.execute('SELECT done FROM progress WHERE prefix="__inventory__"').fetchone()
+                    if mode=='apply' and not finished:
+                        import time
+                        time.sleep(2);last=('', '');continue
                     break
                 for prefix,record_id in groups:
                     assert int(record_id,16)%WORKERS==shard
@@ -241,7 +279,7 @@ def worker(path, shard, mode):
                             for old,new in db.execute('SELECT old,new FROM objects WHERE prefix=? AND record_id=? AND phase="verified"',(prefix,record_id)).fetchall():
                                 client.stat_object(settings.minio_bucket,new)
                                 client.remove_object(settings.minio_bucket,old)
-                                db.execute('UPDATE objects SET phase="complete",error=NULL WHERE old=?',(old,))
+                                db.execute('UPDATE objects SET phase="complete",error=NULL WHERE old=?',(old,));db.commit()
                             db.commit()
                     except Exception as error:
                         db.rollback()
