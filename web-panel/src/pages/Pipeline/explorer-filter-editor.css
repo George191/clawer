@@ -4,6 +4,8 @@
 .flow-console--ontology .explorer-filter-editor .flow-filter-rule { min-height:28px; min-width:max-content; gap:4px; margin:0; }
 .explorer-filter-editor .flow-filter-row-content { display:inline-flex; align-items:center; gap:3px; }
 .explorer-filter-editor .flow-filter-row-check { display:inline-flex; align-items:center; height:26px; }
+.explorer-filter-editor .explorer-filter-rule-actions { gap:1px; height:24px; }
+.flow-console--ontology .explorer-filter-editor .explorer-filter-rule-actions .explorer-filter-mini { width:20px; min-width:20px; height:24px; }
 .flow-console--ontology .explorer-filter-editor .flow-filter-custom-checkbox { color:var(--ui-action-bg); }
 .explorer-filter-editor :is(.explorer-filter-field-link,.explorer-filter-op,.explorer-filter-value) { display:inline-flex; align-items:center; box-sizing:border-box; min-height:26px; max-width:240px; padding:2px 3px; border:1px solid transparent; border-radius:3px; color:var(--ontology-text); font-size:12px; line-height:20px; cursor:pointer; }
 .explorer-filter-editor :is(.explorer-filter-field-link,.explorer-filter-op,.explorer-filter-value):hover { border-color:var(--ontology-control-border); background:var(--ontology-hover); }
@@ -20,7 +22,11 @@
 .flow-console--ontology .explorer-filter-editor .flow-filter-sort button { display:inline-flex; flex:none; align-items:center; justify-content:center; width:20px; min-width:20px; height:22px; padding:0; border:0; border-radius:2px; background:transparent; color:var(--ontology-muted); }
 .flow-console--ontology .explorer-filter-editor .flow-filter-sort button:hover { background:var(--ontology-hover); color:var(--ontology-text); }
 .explorer-filter-editor .explorer-filter-sort-field > .flow-filter-sort-direction-toggle { margin-left:auto; }
-.explorer-filter-editor .explorer-filter-sort-menu-toggle svg { display:block; width:12px; height:12px; }
+.explorer-filter-editor .explorer-filter-sort-remove { opacity:0; pointer-events:none; }
+.explorer-filter-editor .explorer-filter-sort-field:is(:hover,:focus-within) .explorer-filter-sort-remove { opacity:1; pointer-events:auto; }
+@media (hover:none), (pointer:coarse) {
+  .explorer-filter-editor .explorer-filter-sort-remove { opacity:1; pointer-events:auto; }
+}
 .explorer-filter-editor .explorer-sort-scroll-buttons { display:flex; align-items:center; gap:3px; }
 .explorer-filter-editor .flow-filter-apply { flex-wrap:wrap; gap:9px; padding:7px 6px 8px; border-top:1px solid var(--ontology-border); }
 .flow-console--ontology .explorer-filter-editor .explorer-filter-apply-button { min-height:28px; padding:3px 12px; border:1px solid var(--ui-action-bg); border-radius:3px; background:var(--ui-action-bg); color:var(--ui-action-text); font:inherit; font-size:12px; font-weight:500; line-height:20px; cursor:pointer; }
@@ -45,3 +51,6 @@
 
 .explorer-filter-editor .explorer-filter-advanced { margin:0; padding:7px 6px; border-top:1px solid var(--ontology-border); color:var(--ontology-muted); font-size:11px; }
 .explorer-filter-editor .explorer-filter-advanced > summary { cursor:pointer; }
+
+.explorer-filter-editor .flow-filter-rule > :is(.explorer-filter-index-notice,.ui-tooltip-trigger:has(> .explorer-filter-index-notice)) { order:2; margin-left:auto; }
+.explorer-filter-editor .flow-filter-rule:has(.explorer-filter-index-notice) > .flow-filter-row-end-actions { order:3; margin-left:0; }

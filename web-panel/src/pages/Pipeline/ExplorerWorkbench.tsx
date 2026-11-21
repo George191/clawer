@@ -5,18 +5,18 @@ import { ArrowDownOutlined, ArrowUpOutlined, DownOutlined, FilterOutlined, PlusO
 import ExplorerWorkbenchHeader from './ExplorerWorkbenchHeader';
 import ExplorerSelection from './ExplorerSelection';
 import { LayoutHeader, type useResultLayout } from './ExplorerResultLayout';
-import { exactCellValue } from './explorerFilters';
+import { activeExplorerFilters, exactCellValue, type ExplorerFilter } from './explorerFilters';
 import type { ExplorerSort } from '../../services/explorerLayouts';
-import { SortDirectionIcon } from './ExplorerFilterEditor';
 
 type Row = Record<string, unknown>;
 type Layout = ReturnType<typeof useResultLayout>;
 
-export function explorerResultColumns({ layout, sorts, types, names = {}, addFilter, setSort, clearSorts, filterValue }: {
-  layout: Layout; sorts: ExplorerSort[]; types?: Record<string, string>; names?: Record<string, string>;
-  addFilter: (field: string) => void; setSort: (field: string, direction: 'asc' | 'desc') => void;
+export function explorerResultColumns({ layout, sorts, filters = [], types, names = {}, addFilter, openFilter, setSort, clearSorts, filterValue }: {
+  layout: Layout; sorts: ExplorerSort[]; filters?: ExplorerFilter[]; types?: Record<string, string>; names?: Record<string, string>;
+  addFilter: (field: string) => void; openFilter: (field: string) => void; setSort: (field: string, direction: 'asc' | 'desc') => void;
   clearSorts: () => void; filterValue: (field: string, value: string | null, exclude: boolean) => void;
 }): ColumnsType<Row> {
+  const filteredFields = new Set(activeExplorerFilters(filters).map(rule => rule.field));
   return layout.columns.filter(column => column.visible).map(({ field, width }) => {
     const sort = sorts.find(item => item.field === field), label = names[field] || field;
     return {
@@ -39,8 +39,12 @@ export function explorerResultColumns({ layout, sorts, types, names = {}, addFil
           else setSort(field, key === 'desc' ? 'desc' : 'asc');
         },
       }}><button type="button" className={`flow-column-menu${sort ? ' is-sorted' : ''}`} aria-label={`Column actions for ${field}`} title={label}>
-        <span>{label}</span><span className="flow-column-menu-end">{sort ? <><SortDirectionIcon direction={sort.direction} />{sorts.indexOf(sort) + 1}</> : <DownOutlined />}</span>
-      </button></Dropdown></LayoutHeader>,
+        <span>{label}</span><span className="flow-column-menu-end" role={sort ? 'img' : undefined} aria-label={sort ? `Sorted ${sort.direction === 'asc' ? 'ascending' : 'descending'}` : undefined}>
+          {sort ? sort.direction === 'asc' ? <ArrowUpOutlined /> : <ArrowDownOutlined /> : <DownOutlined />}
+        </span>
+      </button></Dropdown>{filteredFields.has(field) && <button type="button" className="flow-column-filter" draggable={false}
+        aria-label={`Edit filters for ${field}`} title={`Edit filters for ${label}`} onClick={event => { event.stopPropagation(); openFilter(field); }}
+        onDragStart={event => { event.preventDefault(); event.stopPropagation(); }}><FilterOutlined /></button>}</LayoutHeader>,
       render: (value: unknown) => {
         const shown = value == null ? 'null' : typeof value === 'object' ? JSON.stringify(value) : String(value);
         const scalar = exactCellValue(value, types?.[field]);

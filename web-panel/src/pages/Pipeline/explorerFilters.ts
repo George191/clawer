@@ -34,6 +34,11 @@ export function explorerFilterTerms(rows: ExplorerFilter[]): FilterTerm[] {
     return root;
 }
 
+export function activeExplorerFilters(rows: ExplorerFilter[]): ExplorerFilter[] {
+    const flatten = (terms: FilterTerm[]): ExplorerFilter[] => terms.flatMap(term => term.children ? flatten(term.children) : [term.rule!]);
+    return flatten(explorerFilterTerms(rows));
+}
+
 export const hasOr = (terms: FilterTerm[]): boolean => terms.slice(0, -1).some((term) => term.join === 'or');
 export const countFilterTerms = (terms: FilterTerm[]): number =>
     terms.reduce((total, term) => total + (term.children ? countFilterTerms(term.children) : 1), 0);

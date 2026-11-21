@@ -21,6 +21,7 @@ import './explorer-resource-tools.css';
 import ExplorerCatalog from './ExplorerCatalog';
 import ExplorerWorkbench, { ExplorerFilterButton, ExplorerResults, ExplorerResultsFooter, explorerResultColumns } from './ExplorerWorkbench';
 import ExplorerSearchCondition from './ExplorerSearchCondition';
+import ExplorerFilterIndexNotice from './ExplorerFilterIndexNotice';
 import PublishedExplorer from './PublishedExplorer';
 import { openSaved, savedPath, type SavedDetail } from '../../services/explorerSaved';
 import { catalogReturnHref, compactExplorerSearch } from '../../services/explorerNavigation';
@@ -40,7 +41,7 @@ import { useSandboxIdentity } from './SandboxMarkings';
 import { getSessionState } from '../../services/session';
 import { explorerResourceCapabilities } from '../../services/explorerCapabilities';
 import SandboxIndexPreview, { INDEX_PREVIEW_SCHEMA, INDEX_PREVIEW_TABLE } from './SandboxIndexPreview';
-import { appendAndFilters, blankExplorerFilter, cellFilterRows, countFilterTerms, exactCellValue, explorerFilterTerms } from './explorerFilters';
+import { activeExplorerFilters, appendAndFilters, blankExplorerFilter, cellFilterRows, countFilterTerms, exactCellValue, explorerFilterTerms, hasOr } from './explorerFilters';
 import type { ExplorerFilter } from './explorerFilters';
 import  {  TemplateGlyph,  inferSiteKind  }  from  '../AICollect/WorkspaceDock';
 import { fetchCurrentUserContext, fetchLayers, fetchLayerTables, fetchTableData, fetchHandlerCode, queryEtlTable, queryExplorerPreview, fetchRowPreviewPolicy, fetchEtlTableColumns, fetchTableStream, fetchLayerScript, setTableOffset, validateHandlerCode, saveHandlerCode, updateEtlRow, deleteEtlRow, fetchEtlApis, createEtlApi, updateEtlApi, deleteEtlApi, fetchVulnerabilityKeywords, uploadVulnerabilityKeywords, activateVulnerabilityKeywordVersion, downloadVulnerabilityKeywordVersion, downloadCurrentVulnerabilityKeywords } from '../../services/api';
@@ -631,6 +632,17 @@ const DataLayersWorkspace: React.FC = () => {
         setFilterOpen(true);
         window.requestAnimationFrame(() => document.getElementById(`explorer-filter-${id}`)?.scrollIntoView({ block: 'nearest' }));
     };
+    const openColumnFilter = (field: string) => {
+        if (!canChangePreview()) return;
+        const applied = activeExplorerFilters(appliedQuery.filters).find(rule => rule.field === field);
+        const row = filterRules.find(rule => rule.id === applied?.id) || filterRules.find(rule => rule.field === field);
+        setWorkbenchMode('results'); setFilterOpen(true);
+        if (row) window.requestAnimationFrame(() => {
+            const element = document.getElementById(`explorer-filter-${row.id}`);
+            element?.scrollIntoView({ block: 'nearest' });
+            element?.querySelector<HTMLElement>('[role="button"]')?.focus();
+        });
+    };
     const quickCellFilter = (field: string, value: string | null, exclude: boolean) => {
         if (!requireAppliedFilterDraft()) return;
         const id = randomId();
@@ -661,7 +673,7 @@ const DataLayersWorkspace: React.FC = () => {
 
     const resultLayout = useResultLayout(isSchemas && selectedTableAvailable && showPreview ? previewIdentity : '',
         selectedSchema, table.name, data?.columns || [], appliedQuery.sorts, updateExplorerSorts, !requestedSavedId);
-    const dataColumns: any[] = isSchemas ? explorerResultColumns({ layout: resultLayout, sorts: appliedQuery.sorts, types: data?.columnTypes,
+    const dataColumns: any[] = isSchemas ? explorerResultColumns({ layout: resultLayout, sorts: appliedQuery.sorts, filters: appliedQuery.filters, openFilter: openColumnFilter, types: data?.columnTypes,
         addFilter: addColumnFilter, setSort: setHeaderSort, clearSorts: () => { if (requireAppliedSortDraft()) updateExplorerSorts([]); }, filterValue: quickCellFilter,
     }) : (data?.columns || []).map(key => ({
         title: <span className="flow-col-head"><span className="flow-col-head-label" title={key}>{key.toUpperCase()}</span><button type="button" className={`flow-col-sort-btn${appliedSort?.field === key ? ` is-active is-${appliedSort.direction}` : ''}`} aria-label={`Sort by ${key}`} title="Sort" onClick={event => { event.stopPropagation(); toggleHeaderSort(key); }}><SortDirectionIcon direction={appliedSort?.field === key ? appliedSort.direction : 'asc'} /></button></span>,
@@ -1246,6 +1258,9 @@ footer: previewPage && <ExplorerResultsFooter offset={previewPage.offset} rowCou
                         </div>}
                         {showPreview && !savedBlocked && queryScopeReady && filterOpen && <ExplorerFilterEditor
                             rules={filterRules} setRules={setFilterRules} search={filterText} onSearchChange={setFilterText}
+                            renderRuleNotice={isSchemas ? rule => activeExplorerFilters(filterRules).some(item => item.id === rule.id) ? <ExplorerFilterIndexNotice
+                                schema={selectedSchema} table={table.name} rule={rule} columnTypes={data?.columnTypes}
+                                assessable={!hasOr(explorerFilterTerms(filterRules))} /> : null : undefined}
                             sorts={[{ field: sortField, direction: sortDirection }, ...sortConditions]}
                             onSortsChange={(sorts, apply) => {
                                 setSortField(sorts[0]?.field || ''); setSortDirection(sorts[0]?.direction || 'asc'); setSortConditions(sorts.slice(1));

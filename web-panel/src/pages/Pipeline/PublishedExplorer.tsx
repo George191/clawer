@@ -15,8 +15,9 @@ import type { ExplorerPreviewRow } from './ExplorerSelection';
 import ExplorerWorkbench, { ExplorerFilterButton, ExplorerResults, ExplorerResultsFooter, explorerResultColumns } from './ExplorerWorkbench';
 import ExplorerFilterEditor, { normalizeFilterDepth, randomId } from './ExplorerFilterEditor';
 import ExplorerSearchCondition from './ExplorerSearchCondition';
+import ExplorerFilterIndexNotice from './ExplorerFilterIndexNotice';
 import { LayoutToolbar, useResultLayout } from './ExplorerResultLayout';
-import { appendAndFilters, blankExplorerFilter, cellFilterRows, countFilterTerms, exactCellValue, explorerFilterTerms, type ExplorerFilter } from './explorerFilters';
+import { activeExplorerFilters, appendAndFilters, blankExplorerFilter, cellFilterRows, countFilterTerms, exactCellValue, explorerFilterTerms, hasOr, type ExplorerFilter } from './explorerFilters';
 import { explorerResourceCapabilities } from '../../services/explorerCapabilities';
 import PublishedSourceTools from './PublishedSourceTools';
 import PublishedExplorerRelationships from './PublishedExplorerRelationships';
@@ -182,11 +183,22 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
     if (next.length > 100) { message.warning('The table supports up to 100 filter rows'); return; }
     setFilterRules(normalizeFilterDepth(next)); setFiltersOpen(true);
   }
+  function openColumnFilter(field: string) {
+    if (!canChange()) return;
+    const applied = activeExplorerFilters(activeFilters).find(rule => rule.field === field);
+    const row = filterRules.find(rule => rule.id === applied?.id) || filterRules.find(rule => rule.field === field);
+    setMode('results'); setFiltersOpen(true);
+    if (row) window.requestAnimationFrame(() => {
+      const element = document.getElementById(`explorer-filter-${row.id}`);
+      element?.scrollIntoView({ block: 'nearest' });
+      element?.querySelector<HTMLElement>('[role="button"]')?.focus();
+    });
+  }
   function openSavedItem(id: string) {
     navigate(publishedExplorerHref(entry.definitionId, { ...(entry.savedSet ? { savedSet: entry.savedSet } : { query: entry.query }), saved: id, returnTo: entry.returnTo }));
   }
   const resultLayout = useResultLayout(layoutIdentity.current, '', '', fields, sorts, updateSorts, initialLayoutSorts, entry.definitionId);
-  const dataColumns = explorerResultColumns({ layout: resultLayout, sorts, types, names, addFilter,
+  const dataColumns = explorerResultColumns({ layout: resultLayout, sorts, filters: activeFilters, openFilter: openColumnFilter, types, names, addFilter,
     setSort: (field, direction) => { if (requireDraftApplied(true)) updateSorts([{ field, direction }, ...sorts.filter(item => item.field !== field)]); },
     clearSorts: () => { if (requireDraftApplied(true)) updateSorts([]); },
     filterValue: (field, value, exclude) => { if (requireDraftApplied()) applyRules(appendAndFilters(activeFilters, cellFilterRows(field, value, exclude, randomId()), randomId())); },
@@ -244,6 +256,13 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
             removeSearch={() => { if (canChange()) changeQuery({ ...query, search: '' }); }} />}
           {query?.keys && <div className="flow-schema-applied flow-query-chips" aria-label="Object set scope"><span>{query.keys.length} object references{result ? ` · ${result.count} matching objects` : ''}</span></div>}
           {filtersOpen && query && <ExplorerFilterEditor rules={filterRules} setRules={setFilterRules} sorts={draftSorts}
+            renderRuleNotice={objectType?.definition.source.mode === 'existing' && canManage ? rule => {
+              const property = properties.find(property => property.id === rule.field);
+              if (!property?.sourceColumn || !activeExplorerFilters(filterRules).some(item => item.id === rule.id)) return null;
+              const source = objectType.definition.source;
+              return <ExplorerFilterIndexNotice schema={source.schema!} table={source.table!} rule={{ ...rule, field: property.sourceColumn }}
+                columnTypes={{ [property.sourceColumn]: types[rule.field] }} assessable={!hasOr(explorerFilterTerms(filterRules))} />;
+            } : undefined}
             onSortsChange={(next, apply) => { setDraftSorts(next); if (apply) updateSorts(next); }} fields={fields} rows={rows} formatValue={display}
             onApply={() => { if (canChange()) changeQuery({ ...query, filters: [], workbenchFilters: wireFilters(normalizeFilterDepth(filterRules)), sorts: draftSorts.filter(item => item.field) }); }} />}
         </ExplorerResults>
