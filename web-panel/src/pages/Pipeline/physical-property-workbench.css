@@ -115,19 +115,21 @@
 .physical-preview-column-name { display:inline-flex; align-items:center; gap:4px; min-width:0; max-width:320px; padding:0; overflow:hidden; border:0; background:transparent; color:var(--ontology-text); font:inherit; white-space:nowrap; cursor:pointer; }
 .physical-preview-column-name span { overflow:hidden; text-overflow:ellipsis; color:var(--ontology-muted); font-size:11px; }
 .physical-preview-column-name:hover { color:var(--ontology-link); }
-.physical-planner-trigger.ui-btn { justify-content:center; min-height:30px; border-color:var(--ontology-control-border); background:var(--ontology-panel); }
-.physical-planner-statistics-modal .ui-modal-body { padding:16px; }
-.physical-planner-context { display:flex; align-items:center; gap:9px; padding-bottom:14px; border-bottom:1px solid var(--ontology-border); }
-.physical-planner-context > .ui-icon { display:grid; place-items:center; width:32px; height:32px; border:1px solid var(--ontology-border); border-radius:3px; color:var(--ontology-muted); }
+.physical-planner-trigger.ui-btn { justify-self:start; justify-content:flex-start; gap:6px; min-height:28px; border-color:var(--ontology-control-border); background:var(--ontology-panel); }
+.physical-planner-trigger > .ui-icon { flex:none; width:16px; height:16px; font-size:16px; }
+.physical-planner-statistics-modal .ui-modal-body { padding:14px; }
+.physical-planner-context { display:flex; align-items:center; gap:8px; padding-bottom:12px; border-bottom:1px solid var(--ontology-border); }
+.physical-planner-context > .ui-icon { flex:none; width:18px; height:18px; font-size:18px; color:var(--ontology-muted); }
 .physical-planner-context > div { display:grid; min-width:0; gap:3px; }
 .physical-planner-context strong { font-size:13px; font-weight:500; }
 .physical-planner-context code { color:var(--ontology-muted); font-size:11px; overflow-wrap:anywhere; }
-.physical-planner-context > span { margin-left:auto; color:var(--ontology-muted); font-size:11px; }
-.physical-planner-metrics { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:10px; margin:14px 0; }
-.physical-planner-metrics > div { display:grid; align-content:start; gap:8px; padding:12px; border:1px solid var(--ontology-border); border-radius:3px; background:var(--ontology-bg); }
+.physical-planner-source { margin-left:auto; color:var(--ontology-muted); font-size:11px; }
+.physical-planner-metrics { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:8px; margin:12px 0; }
+.physical-planner-metrics > div { display:grid; align-content:start; gap:6px; padding:10px; border:1px solid var(--ontology-border); border-radius:3px; background:var(--ontology-bg); }
 .physical-planner-metrics dt { color:var(--ontology-muted); font-size:11px; }
 .physical-planner-metrics dd { margin:0; overflow-wrap:anywhere; font-size:13px; font-weight:500; }
-.physical-planner-state { display:flex; align-items:flex-start; gap:9px; padding:20px 0; color:var(--ontology-muted); font-size:12px; }
+.physical-planner-state { display:flex; align-items:flex-start; gap:8px; padding:16px 0; color:var(--ontology-muted); font-size:12px; }
+.physical-planner-state > .ui-icon { flex:none; width:16px; height:16px; font-size:16px; }
 .physical-planner-state strong { color:var(--ontology-text); font-weight:500; }
 .physical-planner-state p,.physical-planner-help { margin:6px 0 0; color:var(--ontology-muted); font-size:11px; line-height:1.5; }
 @container (max-width: 760px) {

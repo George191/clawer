@@ -1,7 +1,7 @@
 import PropertyTypeIcon from './PropertyTypeIcon';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { CloseOutlined, DeleteOutlined, PlusOutlined, ReloadOutlined, SaveOutlined } from '@/components/ui/icons';
+import { DeleteOutlined, PlusOutlined, ReloadOutlined, SaveOutlined } from '@/components/ui/icons';
 import type { EtlTableColumn } from '../../services/types';
 import type { ExplorerMappedProperty as Property, ExplorerPropertyMapping as Mapping } from '../../services/explorerProperties';
 import { canonColumn } from './ColumnLineageReferences';
@@ -41,7 +41,7 @@ export default function ExplorerPropertyInspector({mapping,property:p,columns,ed
                 title={title ? 'Clear the title designation first' : 'Delete property'} onClick={() => setRemoving(true)}><DeleteOutlined /></button>}
             <span className="physical-property-pending-actions" data-dirty={dirty} aria-hidden={!dirty}>
                 <button type="button" className="physical-property-save" aria-label="Save changes" title={conflict ? 'Reload the property mapping before saving' : 'Save changes'} disabled={!dirty || !editable || conflict || busy} aria-busy={busy} onClick={onSave}>{busy ? <ReloadOutlined spin/> : <SaveOutlined/>}</button>
-                <button type="button" className="physical-property-discard" aria-label={conflict ? 'Discard and reload' : 'Discard changes'} title={conflict ? 'Discard and reload' : 'Discard changes'} disabled={!dirty || busy} onClick={onDiscard}><CloseOutlined/></button>
+                <button type="button" className="physical-property-discard" aria-label={conflict ? 'Discard and reload' : 'Discard changes'} title={conflict ? 'Discard and reload' : 'Discard changes'} disabled={!dirty || busy} onClick={onDiscard}><ReloadOutlined/></button>
             </span>
         </div>
     </header>;
