@@ -203,21 +203,23 @@ class ObjectCatalogTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("col_description", session.calls[-1][0])
         self.assertEqual(result["linkedObjectTypes"], [])
 
-    async def test_linked_types_deduplicate_tables_keep_constraints_and_direction_and_column_order(self):
+    async def test_linked_types_use_logical_definitions_and_keep_direction_and_column_order(self):
         links = [foreign(columns=["owner_a", "owner_b"], referenced=["key_b", "key_a"]),
                  foreign("fk_second"), foreign("fk_incoming", "ts_rds", "owners", "ts_ods", "objects"),
                  foreign("fk_self", "ts_ods", "objects", "ts_ods", "objects")]
-        instance, _ = service(Result([summary(properties_count=0)]), Result(links), Result(scalar=True), Result([]))
+        logical = [{**row, "relationship_kind": "association", "cardinality": "many_to_many", "description": "", "provenance": "test"} for row in links]
+        instance, _ = service(Result([summary(properties_count=0)]), Result(links), Result(scalar=True), Result(logical))
         result = await instance.preview("ts_ods", "objects")
         linked = {item["id"]: item for item in result["linkedObjectTypes"]}
         self.assertEqual(len(linked), 2)
         owners = linked["ts_rds.owners"]
         self.assertEqual(owners["direction"], "both")
-        self.assertEqual(len(owners["constraints"]), 3)
-        self.assertEqual(owners["constraints"][0]["columns"], ["owner_a", "owner_b"])
-        self.assertEqual(owners["constraints"][0]["referencedColumns"], ["key_b", "key_a"])
+        self.assertEqual(owners["constraints"], [])
+        self.assertEqual(len(owners["relationships"]), 3)
+        self.assertEqual(owners["relationships"][0]["columns"], ["owner_a", "owner_b"])
+        self.assertEqual(owners["relationships"][0]["referencedColumns"], ["key_b", "key_a"])
         self.assertEqual(linked["ts_ods.objects"]["direction"], "both")
-        self.assertEqual([item["direction"] for item in linked["ts_ods.objects"]["constraints"]], ["outgoing", "incoming"])
+        self.assertEqual([item["direction"] for item in linked["ts_ods.objects"]["relationships"]], ["outgoing", "incoming"])
 
     async def test_incoming_and_outgoing_fk_never_expose_non_ts_or_metadata_schema(self):
         links = [foreign("public_in", "public", "private", "ts_ods", "objects"),
@@ -226,7 +228,7 @@ class ObjectCatalogTests(unittest.IsolatedAsyncioTestCase):
                  foreign("system_out", target_schema="pg_catalog"), foreign()]
         instance, session = service(Result([summary(properties_count=0)]), Result(links), Result(scalar=True), Result([]))
         result = await instance.preview("ts_ods", "objects")
-        self.assertEqual([item["id"] for item in result["linkedObjectTypes"]], ["ts_rds.owners"])
+        self.assertEqual(result["linkedObjectTypes"], [])
         sql = next(sql for sql, _ in session.calls if "FROM pg_constraint" in sql)
         for side, table in (("sn", "sc"), ("tn", "tc")):
             self.assertIn(f"{side}.nspname <> 'ts_meta'", sql)
@@ -288,17 +290,19 @@ class ObjectCatalogTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("not initialized", error.exception.detail)
                 self.assertTrue(all(sql.lstrip().startswith("SELECT") for sql, _ in session.calls))
 
-    async def test_fk_peers_use_persisted_data_type_in_both_directions(self):
+    async def test_logical_peers_use_persisted_data_type_in_both_directions(self):
         links = [foreign(source_data_type="organization", target_data_type="company"),
                  foreign("fk_incoming", "ts_rds", "owners", "ts_ods", "objects",
                          source_data_type="company", target_data_type="organization")]
+        logical = [{**row, "relationship_kind": "association", "cardinality": "many_to_many", "description": "", "provenance": "test"} for row in links]
         instance, session = service(Result([summary(properties_count=0, data_type="organization")]),
-                                    Result(links), Result(scalar=True), Result([]))
+                                    Result(links), Result(scalar=True), Result(logical))
         result = await instance.preview("ods", "objects")
         self.assertEqual(result["dataType"], "organization")
         self.assertEqual(result["linkedObjectTypes"][0]["dataType"], "company")
         self.assertEqual(result["linkedObjectTypes"][0]["direction"], "both")
-        self.assertEqual(len(result["linkedObjectTypes"][0]["constraints"]), 2)
+        self.assertEqual(result["linkedObjectTypes"][0]["constraints"], [])
+        self.assertEqual(len(result["linkedObjectTypes"][0]["relationships"]), 2)
         self.assertTrue(any("source_data_type" in sql and "target_data_type" in sql for sql, _ in session.calls))
 
     async def test_persisted_properties_preserve_ordinal_order_and_composite_primary_key_order(self):

@@ -12,6 +12,7 @@ from sqlalchemy.engine import make_url
 
 from app.etl.schema import ontology
 from app.etl.schema.object_relations import OBJECT_RELATIONS_DDL_STATEMENTS
+from app.etl.schema.object_links import OBJECT_LINKS_DDL_STATEMENTS
 from app.storage.postgres_client import PostgresClient
 from app.web.api.models.etl import PreviewCompositeIndexCoverageRequest, PreviewIndexCoverageRequest, PreviewSortIndexCoverageRequest
 from app.web.api.models.indexed_id_sample import IndexedCompoundSampleRequest, IndexedSampleRequest
@@ -52,8 +53,12 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
             for schema in (SCHEMA, TARGET_SCHEMA):
                 await session.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
                 await session.execute(text(f"CREATE SCHEMA {schema}"))
-            for statement in (*ontology.ONTOLOGY_DDL_STATEMENTS, *OBJECT_RELATIONS_DDL_STATEMENTS):
+            for statement in (*ontology.ONTOLOGY_DDL_STATEMENTS, *OBJECT_RELATIONS_DDL_STATEMENTS, *OBJECT_LINKS_DDL_STATEMENTS):
                 await session.execute(text(statement))
+            await session.execute(text("""DELETE FROM public.ontology_object_links WHERE relation_id IN (
+                SELECT id FROM public.ontology_object_relations
+                WHERE source_schema IN (:source, :target) OR target_schema IN (:source, :target))"""),
+                {"source": SCHEMA, "target": TARGET_SCHEMA})
             await session.execute(text("""DELETE FROM public.ontology_object_relations
                 WHERE source_schema IN (:source, :target) OR target_schema IN (:source, :target)"""),
                 {"source": SCHEMA, "target": TARGET_SCHEMA})
@@ -561,6 +566,7 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
         await self.workspace.set_object_visibility(SCHEMA, "parent", "hidden", "fixture")
         self.assertEqual((await refs("child", "a", "outgoing"))["references"], [])
         await self.workspace.set_object_visibility(SCHEMA, "parent", "normal", "fixture")
+        await self.pg.execute("DROP TABLE public.ontology_object_links")
         await self.pg.execute("DROP TABLE public.ontology_object_relations")
         self.assertEqual((await refs("child", "a", "outgoing"))["references"][0]["kinds"], ["foreign_key"])
 
@@ -590,6 +596,7 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
             await session.execute(text(f"CREATE TABLE {SCHEMA}.parent (id bigint PRIMARY KEY)"))
             await session.execute(text(f"""CREATE TABLE {SCHEMA}.child
                 (parent_id bigint REFERENCES {SCHEMA}.parent(id))"""))
+            await session.execute(text("DROP TABLE public.ontology_object_links"))
             await session.execute(text("DROP TABLE public.ontology_object_relations"))
         for root, direction, other in (("parent", "incoming", "child"), ("child", "outgoing", "parent")):
             page = await self.layers.lineage_neighbors(SCHEMA, root, direction)

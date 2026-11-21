@@ -299,7 +299,7 @@ class EtlWorkspace:
         except DBAPIError as error:
             code = getattr(error.orig, "sqlstate", None) or getattr(error.orig, "pgcode", None)
             if code == "42P01" and any(f"public.{name}" in str(error.statement) for name in (
-                "ontology_objects", "ontology_object_properties", "ontology_object_relations", "ontology_object_favorites"
+                "ontology_objects", "ontology_object_properties", "ontology_object_relations", "ontology_object_favorites", "ontology_object_links"
             )):
                 raise HTTPException(503, "Ontology metadata is not initialized") from error
             if code in {"23505", "42P07", "42P06", "42710", "2BP01", "23503", "3F000"}:
@@ -656,6 +656,10 @@ class EtlWorkspace:
             sql = f"UPDATE {qualified} AS t SET {assignments} FROM {source}, jsonb_populate_record(NULL::{qualified}, CAST(:changes AS jsonb)) AS v WHERE {predicate} RETURNING to_jsonb(t) AS row"
         async with self._session() as session:
             await session.execute(text("SET LOCAL lock_timeout='2s'"))
+            if delete or set(changes).intersection(primary):
+                from app.web.services.ontology_object_links import protect_linked_row
+
+                await protect_linked_row(session, schema, table, key)
             result = await session.execute(text(sql), {"key": _json(key), "changes": _json(changes), "version": version})
             rows = list(result.mappings())
             if not rows:

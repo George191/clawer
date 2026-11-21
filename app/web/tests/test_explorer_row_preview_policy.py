@@ -11,6 +11,8 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.etl.schema import ontology
+from app.etl.schema.object_links import OBJECT_LINKS_DDL_STATEMENTS
+from app.etl.schema.object_relations import OBJECT_RELATIONS_DDL_STATEMENTS
 from app.storage.postgres_client import PostgresClient
 from app.web.core.config import settings
 from app.web.core.config.indexed_sample import RequiredIndexedPreviewTable
@@ -43,6 +45,8 @@ class PreviewPolicyPostgreSQLTests(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(pg.close)
         schema = "ts_explorer_version_test"
         async with pg.session() as session:
+            for statement in (*ontology.ONTOLOGY_DDL_STATEMENTS, *OBJECT_RELATIONS_DDL_STATEMENTS, *OBJECT_LINKS_DDL_STATEMENTS):
+                await session.execute(text(statement))
             await session.execute(text(f"CREATE SCHEMA {schema}"))
             await session.execute(text(f"CREATE TABLE {schema}.assets (id bigint PRIMARY KEY, encode text)"))
             await session.execute(text(f"INSERT INTO {schema}.assets VALUES (1, 'original'), (2, NULL)"))

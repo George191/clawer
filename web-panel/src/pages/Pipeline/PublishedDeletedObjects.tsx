@@ -56,8 +56,8 @@ export function RecordHistory({ objectType, recordId, onChanged }: { objectType:
             {event.canUndo && <footer><Button type={event.kind === 'delete' ? 'primary' : 'default'} icon={<UndoOutlined />} disabled={undoing} size="small" onClick={async () => {
               if (!current() || undoLock.current) return;
               undoLock.current = true; setUndoing(true);
-              try { await undoOntologyEdit(objectType, recordId, event.revision); if (current()) { message.success('Edit undone.'); setVersion(value => value + 1); onChanged(); } }
-              catch (failure) { if (current()) message.error({ content: 'Unable to undo this edit', description: describe(failure, 'Unable to undo this edit.'), className: 'explorer-toast' }); }
+              try { await undoOntologyEdit(objectType, recordId, event.revision); if (current()) { message.success(event.kind === 'delete' ? 'Object restored.' : 'Edit undone.'); setVersion(value => value + 1); onChanged(); } }
+              catch (failure) { if (current()) message.error({ content: event.kind === 'delete' ? 'Unable to restore object' : 'Unable to undo this edit', description: describe(failure, 'Unable to undo this edit.'), className: 'explorer-toast' }); }
               finally { undoLock.current = false; if (current()) setUndoing(false); }
             }}>{event.kind === 'delete' ? 'Restore object' : 'Undo edit'}</Button></footer>}
             {event.changes && Object.keys(event.changes).length ? <div className="explorer-history-changes"><table><thead><tr><th>Property</th><th>Previous value</th><th>Updated value</th></tr></thead>

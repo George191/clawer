@@ -418,15 +418,11 @@ class ObjectRelationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(merged[0]["provenance"].startswith("pg_constraint; Declared SEC"))
         self.assertNotIn("source_kind", fk)
 
-    async def test_physical_constraints_remain_separate_and_unknown_fk_cardinality_is_not_guessed(self):
+    async def test_physical_constraints_do_not_create_actionable_relationships(self):
         fk = foreign()
         instance, _ = service(Result([summary(properties_count=0)]),
                               Result([fk]), Result(scalar=True), Result([]))
-        linked = (await instance.preview("ods", "objects"))["linkedObjectTypes"][0]
-        self.assertEqual(linked["constraints"][0]["name"], "fk_owner")
-        self.assertNotIn("sourceKind", linked["constraints"][0])
-        self.assertEqual(linked["relationships"][0]["sourceKind"], "foreign_key")
-        self.assertIsNone(linked["relationships"][0]["cardinality"])
+        self.assertEqual((await instance.preview("ods", "objects"))["linkedObjectTypes"], [])
 
     def test_storage_ddl_is_only_one_metadata_table_and_has_no_business_foreign_keys(self):
         self.assertEqual(OBJECT_RELATIONS_DDL.count("CREATE TABLE"), 1)

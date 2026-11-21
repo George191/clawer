@@ -21,7 +21,6 @@ from app.etl.cdc import cdc_schemas
 
 from app.etl.schema.object_relations import (
     ObjectRelationsNotInitialized,
-    merge_object_relations,
     read_object_relations,
 )
 from app.storage.postgres_client import get_pg_client
@@ -770,7 +769,7 @@ class EtlLayers:
             if not rows:
                 raise HTTPException(404, "Table does not exist in this schema")
             row = rows[0]
-            foreign_keys, logical = await self.declared_relations(session, schema, table, row["oid"])
+            _, logical = await self.declared_relations(session, schema, table, row["oid"])
             if row.get("object_id") is not None:
                 result = await session.execute(text("""
                     SELECT p.name, p.sql_type AS type, p.comment, p.is_nullable AS nullable,
@@ -803,8 +802,7 @@ class EtlLayers:
         if columns is None:
             columns = await self.columns(schema, table) if row["properties_count"] else []
         linked: dict[str, dict[str, Any]] = {}
-        for collection, relations in (("constraints", foreign_keys),
-                ("relationships", merge_object_relations(foreign_keys, logical))):
+        for collection, relations in (("relationships", logical),):
             for relation in relations:
                 if any(not relation[f"{side}_schema"].startswith("ts_") or
                        relation[f"{side}_schema"] in {"ts_meta", "ts_meta_hist", PROTECTED_SYNTHETIC_SCHEMA, PUSH_APPLY_SCHEMA, HANDOFF_PRIVATE_SCHEMA, SNAPSHOT_INTENT_PRIVATE_SCHEMA} or

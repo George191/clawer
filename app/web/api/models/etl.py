@@ -39,6 +39,29 @@ class ExplorerRowLinksQuery(ExplorerRowKey):
     limit: int = Field(default=10, ge=1, le=25)
 
 
+class ExplorerObjectLinkCreate(ExplorerRowKey):
+    relationId: StrictStr = Field(pattern=r"^[1-9][0-9]{0,18}$")
+    direction: Literal["outgoing", "incoming"]
+    targetKey: dict[str, str | int | bool | float] = Field(min_length=1, max_length=32)
+
+    @model_validator(mode="after")
+    def link_bounds(self):
+        ExplorerRowKey(key=self.targetKey)
+        if int(self.relationId) > 2**63 - 1:
+            raise ValueError("Relationship identifier is too large")
+        return self
+
+
+class ExplorerObjectLinkRemove(ExplorerObjectLinkCreate):
+    expectedVersion: StrictStr = Field(pattern=r"^[1-9][0-9]{0,18}$")
+
+    @model_validator(mode="after")
+    def version_bounds(self):
+        if int(self.expectedVersion) > 2**63 - 1:
+            raise ValueError("Relationship version is too large")
+        return self
+
+
 class DataQuery(BaseModel):
     model_config = ConfigDict(extra="forbid")
     limit: int = Field(default=50, ge=1, le=500)

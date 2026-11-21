@@ -102,6 +102,8 @@ from app.web.api.models.etl import (
     ExplorerRowKey,
     ExplorerFileQuery,
     ExplorerRowLinksQuery,
+    ExplorerObjectLinkCreate,
+    ExplorerObjectLinkRemove,
     SqlQuery,
 )
 from app.web.api.models.data_connections import (
@@ -1969,11 +1971,30 @@ async def explorer_row_by_key(layer: str, table: str, payload: ExplorerRowKey, r
 
 
 @read.post("/{layer}/{table}/row-links")
-async def explorer_row_links(layer: str, table: str, payload: ExplorerRowLinksQuery, response: Response) -> dict[str, Any]:
+async def explorer_row_links(layer: str, table: str, payload: ExplorerRowLinksQuery, response: Response,
+                             current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
     from app.web.services.explorer_rows import row_links
 
     response.headers["Cache-Control"] = "no-store"
-    return await row_links(layer, table, payload)
+    return await row_links(layer, table, payload, can_manage=current_user.is_superuser)
+
+
+@write.post("/{layer}/{table}/row-links/edges", status_code=201)
+async def create_explorer_row_link(layer: str, table: str, payload: ExplorerObjectLinkCreate, response: Response,
+                                   current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+    from app.web.services.ontology_object_links import mutate_row_link
+
+    response.headers["Cache-Control"] = "private, no-store"
+    return await mutate_row_link(layer, table, payload, current_user)
+
+
+@write.delete("/{layer}/{table}/row-links/{link_id}")
+async def remove_explorer_row_link(layer: str, table: str, link_id: UUID, payload: ExplorerObjectLinkRemove, response: Response,
+                                   current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+    from app.web.services.ontology_object_links import mutate_row_link
+
+    response.headers["Cache-Control"] = "private, no-store"
+    return await mutate_row_link(layer, table, payload, current_user, link_id=link_id)
 
 
 @write.patch("/{layer}/{table}/rows")

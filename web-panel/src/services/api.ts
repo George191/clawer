@@ -496,14 +496,21 @@ export const fetchExplorerRowByKey = (schema: string, table: string, key: Record
     .then(r => unwrap<ExplorerRecordDetails>(r.data));
 
 export type ExplorerRowLinkPage = {
-  relations: {id: string; name: string; direction: 'outgoing'|'incoming'; kind: 'foreign_key'|'logical';
+  relations: {id: string; relationId: string; name: string; direction: 'outgoing'|'incoming'; kind: 'logical'; canLink: boolean;
     schema: string; table: string; fields: string[]; targetFields: string[]}[];
+  links: {linkId: string; version: string; identity: Record<string,string>; canUnlink: boolean}[];
   selected: string | null; identities: Record<string,string>[]; hasMore: boolean; offset: number; reason?: string;
 };
 
 export const fetchExplorerRowLinks = (schema: string, table: string, key: Record<string,unknown>, relation: string | null, offset: number, signal: AbortSignal) =>
   client.post(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/row-links`, { key, relation, offset, limit: 10 }, { signal })
     .then(r => unwrap<ExplorerRowLinkPage>(r.data));
+
+export const unlinkExplorerRowLink = (schema: string, table: string, linkId: string, payload: {
+  key: Record<string, unknown>; relationId: string; direction: 'outgoing'|'incoming'; targetKey: Record<string,string>; expectedVersion: string;
+}, signal: AbortSignal): Promise<void> =>
+  client.delete(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/row-links/${encodeURIComponent(linkId)}`, { data: payload, signal })
+    .then(() => undefined);
 
 export type CdcTableCapture = ({
   state: 'observed'; topic: string; partition: number; offset: number; operation: string;
