@@ -88,7 +88,10 @@ export default function PublishedTypePreview({ id, initial, allProperties, onPro
             <section className="flow-ontology__preview-section"><header><h3>Linked object types {linked?.items && <small>({linked.items.length.toLocaleString('en-US')})</small>}</h3></header>
               {linked?.error ? <div className="flow-ontology__notice" role="alert"><span>{linked.error}</span><button type="button" onClick={() => reloadLinks(value => value + 1)}>Retry linked types</button></div>
                 : !linked?.items ? <p role="status">Loading linked object types…</p>
-                  : linked.items.length ? <div className="flow-ontology__linked-list">{linked.items.map(item => <button type="button" key={item.object.id} className="flow-ontology__linked-row" title={item.relationships.join(' · ')} onClick={() => onSelect(item.object.id)}>
+                  : linked.items.length ? <div className="flow-ontology__linked-list">{linked.items.map(item => <button type="button" key={item.object.id} className="flow-ontology__linked-row" title={item.relationships.join(' · ')} onClick={() => {
+                    setRead({ key: JSON.stringify([identity, item.object.id, version]), object: item.object });
+                    onSelect(item.object.id);
+                  }}>
                     <SemanticTypeGlyph definition={item.object.definition} /><span>{item.object.definition.name}</span>
                   </button>)}</div> : <p className="flow-ontology__muted">No relationships defined.</p>}
             </section>

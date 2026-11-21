@@ -7,7 +7,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
 import { Button, Checkbox, Dropdown, Input, Select, Table, message } from '@/components/ui';
 import type { ColumnsType, MenuItem, TableProps } from '@/components/ui';
-import { BarsOutlined, CopyOutlined, DownOutlined, LinkOutlined, ReloadOutlined, SearchOutlined } from '@/components/ui/icons';
+import { BarsOutlined, CloseOutlined, CopyOutlined, DownOutlined, LinkOutlined, ReloadOutlined, SearchOutlined } from '@/components/ui/icons';
 import {
   ExplorerFieldValue, ExplorerObjectOverview, ExplorerTypeIcon,
   explorerFields, explorerFieldValue, explorerRowTitle, propertyValue,
@@ -157,6 +157,7 @@ export default function ExplorerSelection({
 }: Props) {
   const panelId = useId();
   const results = useRef<HTMLDivElement>(null);
+  const cards = useRef<HTMLDivElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const restore = useRef<HTMLButtonElement>(null);
   const refreshState = useRef<{ from: RecordRow[]; keys: Set<string>; active: string }>();
@@ -259,6 +260,23 @@ export default function ExplorerSelection({
     setSelection(undefined);
     if (controlled) onSelectedRowsChange?.([]);
     setView('overview');
+  };
+  const removeChoice = (key: string) => {
+    if (disabled) return;
+    const removedIndex = choices.findIndex(row => row.key === key);
+    const remaining = choices.filter(row => row.key !== key);
+    const nextActive = active?.key === key ? remaining[Math.min(removedIndex, remaining.length - 1)] : active;
+    const nextPicked = picked.filter(index => rowKey(rows[index], index) !== key);
+    const index = rows.findIndex((record, index) => rowKey(record, index) === nextActive?.key);
+    const anchor = current && nextPicked.includes(current.anchor) ? current.anchor : nextPicked[0] ?? -1;
+    if (controlled) onSelectedRowsChange?.(remaining);
+    setActiveKey(nextActive?.key || '');
+    setSelection(remaining.length ? { rows, picked: nextPicked, active: index, anchor, collapsed: false } : undefined);
+    if (!remaining.length || remaining.length < 2 && view === 'compare') setView('overview');
+    requestAnimationFrame(() => {
+      if (nextActive) cards.current?.querySelector<HTMLButtonElement>(`[data-object-key="${CSS.escape(nextActive.key)}"]`)?.focus();
+      else findRow(activeIndex)?.focus({ preventScroll: true });
+    });
   };
 
   function rowKeyboard(event: KeyboardEvent<HTMLTableRowElement>, index: number) {
@@ -364,16 +382,20 @@ export default function ExplorerSelection({
           onClick={() => setView(displayView === 'compare' ? 'overview' : 'compare')}>Compare objects</Button>}
         <Button size="small" disabled={disabled} onClick={clear}>Clear selection</Button>
       </header>
-      {choices.length > 1 && <div className="flow-explorer-selection__picked">
-        <div className="flow-explorer-selection__cards" role="group" aria-label="Selected objects">
+      {choices.length > 0 && <div className="flow-explorer-selection__picked">
+        <div ref={cards} className="flow-explorer-selection__cards" role="group" aria-label="Selected objects">
           {displayed.map(row => {
-            return <button type="button" key={row.key} aria-pressed={active?.key === row.key && displayView !== 'compare'}
+            return <div key={row.key} className={`flow-explorer-selection__card${active?.key === row.key && displayView !== 'compare' ? ' is-active' : ''}`}>
+              <button type="button" className="flow-explorer-selection__card-select" data-object-key={row.key} aria-pressed={active?.key === row.key && displayView !== 'compare'}
               title={row.title} disabled={disabled} onClick={() => {
                 setActiveKey(row.key);
                 const index = rows.findIndex((record, index) => rowKey(record, index) === row.key);
                 setSelection(current => current && { ...current, active: index });
                 setView('overview');
-              }}>{glyph(true)}<span>{row.title}</span></button>;
+              }}>{glyph(true)}<span>{row.title}</span></button>
+              <button type="button" className="flow-explorer-selection__card-close" aria-label={`Remove ${row.title} from selection`}
+                title="Remove from selection" disabled={disabled} onClick={() => removeChoice(row.key)}><CloseOutlined /></button>
+            </div>;
           })}
         </div>
         {choices.length > shownCount && <p>Showing the first {shownCount} of {choices.length} selected objects.</p>}

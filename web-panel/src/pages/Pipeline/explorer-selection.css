@@ -86,24 +86,27 @@
 .flow-explorer-selection__picked { flex:none; min-width:0; max-width:100%; overflow:hidden; padding:6px 8px; border-bottom: 1px solid var(--ontology-control-border); }
 .flow-explorer-selection__picked p { margin: 5px 0 0; color: var(--ontology-muted); font-size: 11px; }
 .flow-explorer-selection__cards { display:flex; width:100%; min-width:0; max-width:100%; gap:4px; overflow:auto hidden; padding-block:1px 4px; }
-.flow-explorer-selection__cards > button {
+.flow-explorer-selection__card {
   display: flex;
   flex: none;
   align-items: center;
-  gap: 6px;
   min-width:0;
   max-width:160px;
-  padding:4px 6px;
   border: 1px solid var(--ontology-control-border);
   border-radius:2px;
   background:transparent;
   color:var(--ontology-muted);
   font:inherit;
   font-size:11px;
-  cursor: pointer;
 }
-.flow-explorer-selection__cards button[aria-pressed='true'] { border-color:var(--explorer-selection-stroke); background:var(--explorer-selection-bg); color:var(--ontology-text); }
-.flow-explorer-selection__cards button span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flow-explorer-selection__card.is-active { border-color:var(--explorer-selection-stroke); background:var(--explorer-selection-bg); color:var(--ontology-text); }
+.flow-explorer-selection__card > button { border:0; background:transparent; color:inherit; font:inherit; cursor:pointer; }
+.flow-explorer-selection__card > button:disabled { cursor:default; opacity:.5; }
+.flow-explorer-selection__card-select { display:flex; align-items:center; gap:6px; min-width:0; padding:4px 6px; }
+.flow-explorer-selection__card-select > span:last-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.flow-explorer-selection__card-close { display:grid; place-items:center; flex:none; width:18px; height:18px; margin-right:3px; padding:0; border-radius:2px; }
+.flow-explorer-selection__card-close:not(:disabled):hover { background:var(--ontology-hover); color:var(--ontology-text); }
+.flow-explorer-selection__card-close .ui-icon { font-size:10px; }
 .flow-explorer-selection__content { --explorer-detail-inset:clamp(14px, 1.6vw, 25px); display:flex; flex-direction:column; flex: 1; min-width: 0; min-height: 0; overflow: hidden; padding:var(--explorer-detail-inset); }
 .flow-explorer-selection__object { flex:none; display: flex; align-items: center; gap: 12px; min-width: 0; }
 .flow-explorer-selection__identity { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
