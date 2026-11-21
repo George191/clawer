@@ -52,7 +52,7 @@
 .wb-export.is-open .wb-export-options { grid-template-columns:1fr; opacity:1; visibility:visible; pointer-events:auto; transition-delay:0s; }
 .wb-export-choices { display:flex; align-items:center; gap:2px; min-width:0; overflow:hidden; transform:translateX(-8px); transition:transform 220ms cubic-bezier(.2,.7,.2,1); }
 .wb-export.is-open .wb-export-choices { transform:translateX(0); }
-.wb-export .wb-export-choices button { flex:none; width:28px; min-height:28px; margin-left:3px; padding:4px; border-color:transparent; font-size:17px; }
+.wb-export .wb-export-choices button { flex:none; width:28px; min-height:28px; margin-left:3px; padding:4px; border-color:transparent; font-size:16px; }
 .wb-export-choices .wb-export-csv { color:var(--ui-success); }
 .wb-export-choices .wb-export-json { color:var(--ui-warning); }
 .wb-export-toggle[aria-expanded=true] { background:var(--ontology-hover); }

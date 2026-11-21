@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { AppstoreOutlined, ArrowLeftOutlined, BarChartOutlined, CheckOutlined, CloseOutlined, CopyOutlined, DeleteOutlined, DownOutlined, ExportOutlined, FileExcelOutlined, JsonOutlined, LinkOutlined, SearchOutlined, ShareAltOutlined, TableOutlined } from '@/components/ui/icons';
+import { AppstoreOutlined, ArrowLeftOutlined, BarChartOutlined, CheckOutlined, CloseOutlined, CopyOutlined, DeleteOutlined, DownOutlined, ExportOutlined, FileExcelFilled, JsonFilled, LinkOutlined, SearchOutlined, ShareAltOutlined, TableOutlined } from '@/components/ui/icons';
 import { Button, Dropdown, Modal, message } from '@/components/ui';
 import { projectHref } from '../../services/projectDomains';
 import { createSaved, listSaved, openSaved, removeSaved, savedPath, sharing, type Exploration, type SavedDetail, type SavedKind, type SavedMeta, type WorkbenchQuery } from '../../services/explorerSaved';
@@ -232,7 +232,7 @@ export default function ExplorerWorkbenchHeader(p: Props) {
                     <div className="wb-export-options" id="explorer-export-formats" aria-hidden={!exportOpen}><div className="wb-export-choices">{(['csv', 'json'] as const).map(format => <button type="button" key={format} className={`wb-export-${format}`} aria-label={`Export ${format.toUpperCase()}`} title={`${format.toUpperCase()} · ${p.selected.length ? 'selected objects' : 'current result page'}`} tabIndex={exportOpen ? 0 : -1} disabled={!exportOpen || !p.rows.length} onClick={() => {
                         download(format, p.selected.length ? p.selected.map(r => ({ ...r.record, ...r.identity })) : p.rows, p.fields, p.table);
                         setExportOpen(false); exportControl.current?.querySelector<HTMLButtonElement>('.wb-export-toggle')?.focus();
-                    }}>{format === 'csv' ? <FileExcelOutlined /> : <JsonOutlined />}</button>)}</div></div>
+                    }}>{format === 'csv' ? <FileExcelFilled /> : <JsonFilled />}</button>)}</div></div>
                 </div>
             </div>
         </div>
