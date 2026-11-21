@@ -3,7 +3,7 @@ import type { SetQuery, SetResult } from './ontology_graph';
 import type { OntologyRecord, OntologyRecordPage } from './ontology';
 import type { PublishedExplorerQuery, PublishedIdentity } from './publishedExplorerHandoff';
 
-export type PublishedExplorerRecord = OntologyRecord & { identity: PublishedIdentity | null };
+export type PublishedExplorerRecord = OntologyRecord & { identity: PublishedIdentity | null; hasHistory: boolean };
 export type PublishedExplorerResult = Omit<SetResult, 'items'> & { items: PublishedExplorerRecord[]; actions?: OntologyRecordPage['actions'] };
 export function queryPublishedExplorer(definitionId: string, query: PublishedExplorerQuery, limit: number, offset: number, signal: AbortSignal) {
   return graphRequest<PublishedExplorerResult>('post', '/object-types/' + encodeURIComponent(definitionId) + '/explorer/query', { data: query, params: { limit, offset }, signal });

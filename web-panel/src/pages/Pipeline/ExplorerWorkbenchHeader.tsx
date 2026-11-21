@@ -267,7 +267,11 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
         {p.available && <><div className="wb-line wb-tools">
             <div className="wb-left">{p.layoutControl}{p.filterButton}
                 {saved && <div className="wb-active-saved" aria-label="Current saved item"><span className="wb-saved-kind">{saved.kind === 'list' ? <TableOutlined /> : <BarChartOutlined />}{saved.kind === 'list' ? 'List' : 'Exploration'}</span><strong title={saved.name}>{saved.name}</strong><button type="button" aria-label="Return to all rows" title="Return to all rows" onClick={p.closeSavedItem}><CloseOutlined /></button></div>}
-                {!!p.selected.length && <div className="wb-selection-tools" role="toolbar" aria-label="Selected object tools"><span>{p.selected.length} selected</span><button disabled={p.selected.some(row => !Object.keys(row.identity).length)} onClick={() => beginSave('list')}>Save list</button><button aria-label="Clear selected objects" onClick={p.clearSelection}>Clear</button></div>}
+                {!!p.selected.length && <div className="wb-selection-tools" role="toolbar" aria-label="Selected object tools">
+                    <span className="wb-selection-count" role="status" aria-live="polite" aria-atomic="true"><strong>{p.selected.length}</strong> selected</span>
+                    <button type="button" disabled={p.selected.some(row => !Object.keys(row.identity).length)} onClick={() => beginSave('list')}><TableOutlined /> Save list</button>
+                    <button type="button" className="wb-selection-clear" aria-label="Clear selected objects" title="Clear selection" onClick={p.clearSelection}><CloseOutlined /></button>
+                </div>}
             </div>
             <div className="wb-views"><button aria-pressed={p.resource === 'preview' && p.mode === 'explore'} onClick={() => selectMode('explore')}><BarChartOutlined /> Explore</button><button aria-pressed={p.resource === 'preview' && p.mode === 'results'} onClick={() => selectMode('results')}><AppstoreOutlined /> Results</button></div>
             <div className="wb-right"><Dropdown trigger={['click']} placement="bottomRight" open={menu === 'asset'} onOpenChange={next => { if (next) { openMenu('asset'); setAppSearch(''); setAppGroup('all'); } else show(current => current === 'asset' ? '' : current); }} overlayClassName="flow-menu-popup wb-open-in-popup" popupRender={() => appMenu}>

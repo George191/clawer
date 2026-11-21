@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Checkbox, Input, Modal, type MenuItem } from '@/components/ui';
-import { BranchesOutlined, CodeOutlined, DeleteOutlined, DownloadOutlined, HistoryOutlined, PlusOutlined, SyncOutlined } from '@/components/ui/icons';
+import { BranchesOutlined, CodeOutlined, DeleteOutlined, DownloadOutlined, EditOutlined, HistoryOutlined, PlusOutlined, SyncOutlined, UndoOutlined } from '@/components/ui/icons';
 import { getSessionState } from '../../services/session';
 import {
   listOntologyRecords, listOntologyRecordHistory, ontologyError as describe, submitOntologyAction, undoOntologyEdit,
@@ -15,6 +15,7 @@ import OntologyTransactions from './OntologyTransactions';
 import { parsePropertyValue } from './ontologyPropertyValue';
 import './published-tools.css';
 import './published-results.css';
+import './explorer-history.css';
 
 const pageSize = 25;
 const maxOffset = 100_000;
@@ -22,6 +23,13 @@ type ActionInputs = Record<string, { text: string; isNull: boolean }>;
 type Operation = { kind: SemanticAction['kind']; fields: string[]; record?: OntologyRecord; initialInputs: ActionInputs };
 type Props = { objectType?: PublishedOntologyType; actions: NonNullable<OntologyRecordPage['actions']>; record?: OntologyRecord; returnTo: string; onChanged: () => void; busy?: boolean };
 const title = (value: unknown) => value == null ? 'Untitled object' : typeof value === 'object' ? JSON.stringify(value) : String(value);
+
+function historyValue(delta: { before?: unknown; after?: unknown }, side: 'before' | 'after') {
+  if (!Object.prototype.hasOwnProperty.call(delta, side)) return <span className="explorer-history-unset">Not set</span>;
+  const value = delta[side];
+  return value === null ? <span className="explorer-history-unset">null</span>
+    : typeof value === 'object' ? <code>{JSON.stringify(value, null, 2)}</code> : <span>{String(value)}</span>;
+}
 
 function RecordHistory({ objectType, recordId, onChanged }: { objectType: string; recordId: string; onChanged: () => void }) {
   const [offset, setOffset] = useState(0);
@@ -42,24 +50,26 @@ function RecordHistory({ objectType, recordId, onChanged }: { objectType: string
     );
     return () => controller.abort();
   }, [objectType, recordId, offset, version, identity]);
-  return <section className="flow-published-selection-properties" aria-label="Record action history">
-    <h4>Action history</h4>
+  return <section className="explorer-history" aria-label="Record action history">
+    <header><HistoryOutlined /><h4>Edit history</h4></header>
     {error ? <p role="alert">{error} <Button size="small" onClick={() => setVersion(value => value + 1)}>Retry</Button></p>
       : !page ? <p role="status">Loading action history…</p> : <>
-        {page.items.length ? <dl>{page.items.map(event => <div key={event.revision}>
-          <dt>{{ create: 'Created', modify: 'Modified', delete: 'Deleted' }[event.kind]} · Revision {event.revision}</dt>
-          <dd><time dateTime={event.createdAt}>{new Date(event.createdAt).toLocaleString()}</time>
-            {event.changes && <ul>{Object.entries(event.changes).map(([field, delta]) => <li key={field}>
-              {field}: {Object.prototype.hasOwnProperty.call(delta, 'before') ? JSON.stringify(delta.before) : 'Absent'} → {Object.prototype.hasOwnProperty.call(delta, 'after') ? JSON.stringify(delta.after) : 'Absent'}
-            </li>)}</ul>}
-            {event.canUndo && <Button disabled={undoing} size="small" onClick={async () => {
+        {page.items.length ? <ol className="explorer-history-events">{page.items.map(event => <li key={event.revision}>
+          <span className="explorer-history-marker" aria-hidden="true">{event.kind === 'modify' ? <EditOutlined /> : event.kind === 'delete' ? <DeleteOutlined /> : <PlusOutlined />}</span>
+          <details open><summary><span><strong>{{ create: 'Created', modify: 'Modified', delete: 'Deleted' }[event.kind]}</strong><small>Revision {event.revision}</small></span>
+            <time dateTime={event.createdAt}>{new Date(event.createdAt).toLocaleString()}</time></summary>
+            {event.changes && Object.keys(event.changes).length ? <div className="explorer-history-changes"><table><thead><tr><th>Property</th><th>Previous value</th><th>Updated value</th></tr></thead>
+              <tbody>{Object.entries(event.changes).map(([field, delta]) => <tr key={field}><th scope="row">{field}</th><td>{historyValue(delta, 'before')}</td><td>{historyValue(delta, 'after')}</td></tr>)}</tbody></table></div>
+              : <p>{event.changes ? 'No readable property changes.' : 'Property changes are restricted by the current access policy.'}</p>}
+            {event.canUndo && <footer><Button icon={<UndoOutlined />} disabled={undoing} size="small" onClick={async () => {
               if (!current() || undoing) return;
               setUndoing(true);
               try { await undoOntologyEdit(objectType, recordId, event.revision); if (current()) { setVersion(value => value + 1); onChanged(); } }
               catch (failure) { if (current()) setError(describe(failure, 'Unable to undo this edit.')); }
               finally { if (current()) setUndoing(false); }
-            }}>Undo edit</Button>}</dd>
-        </div>)}</dl> : <p>No action history on this page.</p>}
+            }}>Undo edit</Button></footer>}
+          </details>
+        </li>)}</ol> : <p>No action history on this page.</p>}
         {(offset > 0 || page.hasMore) && <footer className="flow-published-results-pagination" aria-label="Action history pagination"><div>
           <Button size="small" disabled={!offset || undoing} onClick={() => setOffset(Math.max(0, offset - pageSize))}>Previous page</Button>
           <Button size="small" disabled={!page.hasMore || offset + pageSize > maxOffset || undoing} onClick={() => setOffset(offset + pageSize)}>Next page</Button>
@@ -168,6 +178,7 @@ export function usePublishedObjectTools({ objectType, actions, record, returnTo,
   const create = native ? actions.find(action => action.kind === 'create') : undefined;
   const actionsForRecord = (selected?: OntologyRecord): MenuItem[] => native && selected?.id ? actions.filter(action => action.kind !== 'create').map(action => ({
     key: action.kind, label: action.kind === 'modify' ? 'Modify' : 'Delete', danger: action.kind === 'delete',
+    icon: action.kind === 'modify' ? <EditOutlined /> : <DeleteOutlined />,
     disabled: busy || pending, onClick: () => startAction(action.kind, action.fields, selected),
   })) : [];
   const renderHistory = (selected?: OntologyRecord) => objectType && native && selected?.id

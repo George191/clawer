@@ -39,7 +39,7 @@ export function ExplorerRecordActions({ items, disabled, row }: { items: MenuIte
       message.success('JSON copied');
     } catch { message.error('Unable to copy JSON. Check clipboard permissions.'); }
   } }] : items;
-  return actions.length ? <Dropdown trigger={['click']} placement="bottomRight" menu={{ items: actions }}
+  return actions.length ? <Dropdown trigger={['click']} placement="bottomRight" overlayClassName="explorer-record-actions-menu" menu={{ items: actions }}
     getPopupContainer={(anchor: HTMLElement) => anchor.closest('.explorer-object-workspace') ?? document.body}>
     <Button size="small" disabled={disabled}>Actions <DownOutlined /></Button>
   </Dropdown> : null;
@@ -142,7 +142,7 @@ type Props = {
   selectedRows?: ExplorerPreviewRow[];
   selectionLimit?: number;
   renderGlyph?: (compact: boolean) => ReactNode;
-  extraViews?: { key: string; label: ReactNode; render: (row: ExplorerPreviewRow) => ReactNode }[];
+  extraViews?: { key: string; label: ReactNode; render: (row: ExplorerPreviewRow) => ReactNode; available?: (row: ExplorerPreviewRow) => boolean }[];
   renderPublishedRelationships?: (row: ExplorerPreviewRow) => ReactNode;
   onActiveRowChange?: (row?: ExplorerPreviewRow) => void;
 };
@@ -326,7 +326,9 @@ export default function ExplorerSelection({
   const hasLinks = Boolean(links.page) || Boolean(renderPublishedRelationships && source?.kind === 'published');
   const groups = presentation?.groups ?? [];
   const group = view.startsWith('group:') ? view.slice(6) : undefined;
-  const displayView = view === 'links' && !hasLinks || group && !groups.includes(group) ? 'overview' : view;
+  const availableViews = active ? extraViews.filter(view => !view.available || view.available(active)) : [];
+  const displayView = view === 'links' && !hasLinks || group && !groups.includes(group)
+    || view.startsWith('extra:') && !availableViews.some(item => `extra:${item.key}` === view) ? 'overview' : view;
   const shownCount = Math.min(choices.length, previewLimit);
   const actions = active && choices.length === 1 ? rowActions?.(active) ?? [] : [];
   const refresh = () => {
@@ -400,12 +402,12 @@ export default function ExplorerSelection({
                   {groups.map(name => <button type="button" key={name} aria-pressed={displayView === 'group:' + name}
                     onClick={() => setView(`group:${name}`)}>{name}</button>)}
                   {hasLinks && <button type="button" aria-pressed={displayView === 'links'} onClick={() => setView('links')}><LinkOutlined /> Links</button>}
-                  {extraViews.map(view => <button type="button" key={view.key} aria-pressed={displayView === `extra:${view.key}`} onClick={() => setView(`extra:${view.key}`)}>{view.label}</button>)}
+                  {availableViews.map(view => <button type="button" key={view.key} aria-pressed={displayView === `extra:${view.key}`} onClick={() => setView(`extra:${view.key}`)}>{view.label}</button>)}
                 </nav>
               </div>
               {links.error && <p role="alert">Unable to read relationships. <Button size="small" onClick={links.retry}>Retry</Button></p>}
               {displayView === 'links' ? renderPublishedRelationships?.(active) ?? renderRelationships?.(active, links.page)
-                : displayView.startsWith('extra:') ? extraViews.find(view => `extra:${view.key}` === displayView)?.render(active)
+                : displayView.startsWith('extra:') ? availableViews.find(view => `extra:${view.key}` === displayView)?.render(active)
                 : !metadata ? <p role="status">Loading object presentation…</p>
                 : metadata.error ? <p>Properties are unavailable until the object presentation loads.</p>
                 : displayView === 'properties'

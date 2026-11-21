@@ -221,6 +221,14 @@ async def get_record(session, user, definition_id: UUID, record_id: UUID) -> Run
     return _project_record(definition, fields, record.values, record.id, record.revision)
 
 
+def _record_history_events(definition, context, record_id, revision):
+    return select(OntologyActionEvent).where(
+        OntologyActionEvent.record_id == record_id,
+        OntologyActionEvent.revision <= revision,
+        covers(OntologyActionEvent.markings, allowed_ids(definition.projectId, [(p.kind, p.id) for p in context.principals])),
+    )
+
+
 async def record_history(
     session: AsyncSession,
     user: User,
@@ -243,11 +251,7 @@ async def record_history(
         raise HTTPException(404, "Record not found")
     events = (
         await session.scalars(
-            select(OntologyActionEvent)
-            .where(
-                OntologyActionEvent.record_id == record_id, OntologyActionEvent.revision <= revision,
-                covers(OntologyActionEvent.markings, allowed_ids(definition.projectId, [(p.kind, p.id) for p in context.principals])),
-            )
+            _record_history_events(definition, context, record_id, revision)
             .order_by(OntologyActionEvent.revision.desc())
             .offset(offset)
             .limit(limit + 1)

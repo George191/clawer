@@ -14,7 +14,7 @@ from sqlalchemy.exc import DBAPIError
 from app.web.api.models.ontology_runtime import OntologyRuntimeRecord as Record
 from app.web.services import ontology_registry as registry
 from app.web.services.etl_layers import get_etl_layers, quote_identifier
-from app.web.services.ontology_action_runtime import _available_actions, _definition_access, _project_record
+from app.web.services.ontology_action_runtime import _available_actions, _definition_access, _project_record, _record_history_events
 from app.web.services.ontology_graph import live_records
 from app.web.services.ontology_graph_sets import filters
 from app.web.services.ontology_explorer_filters import workbench_conditions
@@ -78,6 +78,7 @@ async def object_source(session, grant, query):
             Record.id,
             Record.revision,
             Record.values,
+            _record_history_events(definition, context, Record.id, Record.revision).exists().label("has_history"),
             func.jsonb_build_object("$recordId", cast(Record.id, String)).label("identity"),
             cast(Record.id, String).label("order_key"),
         ).cte("object_source")
@@ -137,7 +138,7 @@ async def object_source(session, grant, query):
         if set(definition.primaryKey).issubset(fields):
             identity = func.jsonb_build_object(*(part for key in definition.primaryKey for part in (key, cast(bound.c[mappings[key]], String))))
         order_key = func.jsonb_build_array(*(bound.c[mappings[key]] for key in definition.primaryKey))
-        statement = select(literal(None, PGUUID).label("id"), literal(None, Integer).label("revision"), type_coerce(values, JSONB).label("values"), type_coerce(identity, JSONB).label("identity"), order_key.label("order_key")).select_from(bound)
+        statement = select(literal(None, PGUUID).label("id"), literal(None, Integer).label("revision"), type_coerce(values, JSONB).label("values"), literal(False).label("has_history"), type_coerce(identity, JSONB).label("identity"), order_key.label("order_key")).select_from(bound)
         if definition.security.recordRules:
             statement = statement.where(or_(*policy) if policy else false())
         if not fields:
@@ -173,7 +174,7 @@ async def evaluate(session, user, definition_id, query, limit, offset, group_off
         count, amount, records, buckets = (await reader.execute(select(total.c["count"], total.c["sum"], rows, groups))).one()
     records, buckets = records or [], buckets or []
     return {
-        "items": [{**_project_record(definition, fields, record["values"], record["id"], record["revision"]).model_dump(mode="json"), "identity": record["identity"]} for record in records[:limit]],
+        "items": [{**_project_record(definition, fields, record["values"], record["id"], record["revision"]).model_dump(mode="json"), "identity": record["identity"], "hasHistory": record["has_history"]} for record in records[:limit]],
         "hasMore": len(records) > limit,
         "count": count,
         "sum": amount,

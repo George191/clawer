@@ -122,8 +122,8 @@ async def main():
         await expect(deleted.get_by_role("button", name=active_row["title"], exact=True)).to_have_count(0)
         await deleted.get_by_role("button", name=deleted_title, exact=True).click()
         history = deleted.get_by_role("region", name="Record action history")
-        await expect(history.get_by_role("heading", name="Action history", exact=True)).to_be_visible()
-        await expect(history.get_by_text("Deleted · Revision 2", exact=True)).to_be_visible()
+        await expect(history.get_by_role("heading", name="Edit history", exact=True)).to_be_visible()
+        await expect(history.locator("summary").filter(has_text="Deleted")).to_contain_text("Revision 2")
         await expect(deleted.get_by_text("Actions", exact=True)).to_have_count(0)
         await expect(deleted.get_by_role("complementary", name="Selection Preview")).to_have_count(0)
         if screenshots:

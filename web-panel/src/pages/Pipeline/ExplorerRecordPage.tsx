@@ -110,7 +110,7 @@ function RecordPage({ source, identity }: { source: ExplorerDetailSource; identi
     const links = useExplorerLinkAvailability(schema, table, result?.identity, revision);
     const native = objectType?.definition.source.mode === 'none';
     const hasLinks = source.kind === 'published' ? native : !!links.page;
-    const currentMode = mode === 'links' && !hasLinks ? 'overview' : mode;
+    const currentMode = mode === 'links' && !hasLinks || mode === 'history' && !publishedRecord?.hasHistory ? 'overview' : mode;
     const objectTools = usePublishedObjectTools({ objectType, actions: publishedRecord?.actions || [], record: publishedRecord,
         returnTo: '/ontology?catalog=published', busy: !result || !!error, onChanged: () => reload(value => value + 1) });
     async function mutate(remove: boolean) {
@@ -180,15 +180,15 @@ function RecordPage({ source, identity }: { source: ExplorerDetailSource; identi
                 {groups.map(name => <button type="button" key={name} disabled={locked} aria-pressed={currentMode === 'group:' + name}
                     onClick={() => setMode(`group:${name}`)}>{name}</button>)}
                 {hasLinks && <button type="button" aria-pressed={currentMode==='links'} disabled={locked} onClick={()=>setMode('links')}>Links</button>}
-                {native && publishedRecord?.id && <button type="button" aria-pressed={currentMode==='history'} disabled={locked} onClick={()=>setMode('history')}>History</button>}
+                {publishedRecord?.hasHistory && <button type="button" aria-pressed={currentMode==='history'} disabled={locked} onClick={()=>setMode('history')}>History</button>}
             </div>
             {links.error && <p role="alert">Unable to read relationships. <Button size="small" onClick={links.retry}>Retry</Button></p>}
             <div className="record-content">{draft ? <form className="record-edit" onSubmit={e=>{e.preventDefault();void mutate(false);}}>
-                {editFields.map(name=><div key={name} className="record-edit-field"><PropertyLabel type={result.columnTypes[name]}>{name}</PropertyLabel>
+                <div className="record-edit-fields">{editFields.map(name=><div key={name} className="record-edit-field"><PropertyLabel type={result.columnTypes[name]}>{name}</PropertyLabel>
                     <ExplorerFieldEditor name={name} type={result.columnTypes[name]} disabled={busy || stale} value={draft[name]}
                         onChange={value=>setDraft({...draft,[name]:value})} />
-                </div>)}<div className="record-operations"><Button disabled={busy} onClick={()=>setDraft(undefined)}>Cancel edit</Button>
-                    <Button type="primary" htmlType="submit" disabled={busy || stale}>Save changes</Button></div>
+                </div>)}</div><footer className="record-operations record-edit-tools"><Button disabled={busy} onClick={()=>setDraft(undefined)}>Cancel edit</Button>
+                    <Button type="primary" htmlType="submit" disabled={busy || stale}>Save changes</Button></footer>
             </form> : currentMode==='links' ? source.kind === 'published'
                 ? <PublishedExplorerRelationships definitionId={source.definitionId} recordId={publishedRecord!.id!} />
                 : <ExplorerRowLinks schema={schema} table={table} primaryKey={result.identity} initialPage={links.page}/> :

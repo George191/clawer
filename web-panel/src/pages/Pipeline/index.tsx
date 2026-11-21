@@ -573,10 +573,10 @@ const DataLayersWorkspace: React.FC = () => {
             {rowDetailsError && <p role="alert" className="flow-explorer-row-error">{rowDetailsError}</p>}
             {editing ? <form onSubmit={event => { event.preventDefault(); void saveRowEdit(); }}>
                 <div className="flow-explorer-row-fields">{data?.columns.filter(key => !Object.prototype.hasOwnProperty.call(row.identity, key)).map(key => <div key={key} className="flow-explorer-row-field"><PropertyLabel type={data.columnTypes?.[key] || 'string'}>{key}</PropertyLabel>{rowEditor(key)}</div>)}</div>
-                <div className="flow-explorer-row-tools">
-                    <Button htmlType="submit" type="primary" loading={mutationLoading} disabled={loading || !canEditRows || !row.version}>Save row</Button>
+                <footer className="flow-explorer-row-tools">
                     <Button disabled={mutationLoading} onClick={cancelRowEdit}>Cancel edit</Button>
-                </div>
+                    <Button htmlType="submit" type="primary" loading={mutationLoading} disabled={loading || !canEditRows || !row.version}>Save row</Button>
+                </footer>
             </form> : <>
                 <p>Delete this row from <strong>{tableDescription}</strong>?</p>
                 <code className="flow-explorer-row-key">{JSON.stringify(row.identity)}</code>

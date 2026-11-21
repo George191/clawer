@@ -6,7 +6,7 @@ import json
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -19,11 +19,13 @@ from app.web.api.dependencies.session import get_db
 from app.web.api.models import User
 from app.web.api.models.ontology_explorer import ExplorerQuery
 from app.web.api.models.ontology_registry import Definition, OntologyDefinitionRow
-from app.web.api.models.ontology_runtime import OntologyRuntimeRecord
+from app.web.api.models.ontology_markings import OntologyMarking
+from app.web.api.models.ontology_runtime import OntologyActionEvent, OntologyRuntimeRecord
 from app.web.api.routes.ontology_explorer import router
 from app.web.core.security import ALGORITHM, JWTTokenGenerator
 from app.web.services import ontology_explorer as explorer
 from app.web.services import ontology_registry as registry
+from app.web.services.ontology_action_runtime import record_history
 from app.web.tests.test_ontology_graph import graph_db
 
 
@@ -52,6 +54,47 @@ async def published(graph_db):
     headers = lambda user: {"Authorization": "Bearer " + JWTTokenGenerator({"sub": str(user.id)}, ALGORITHM).access_token}
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         yield g, client, headers(g.reader), headers(g.owner)
+
+
+@pytest.mark.asyncio
+async def test_history_availability_matches_current_event_clearances_and_record_scope(published):
+    g, client, reader, owner = published
+    async with g.sessions() as session:
+        second = await session.get(OntologyRuntimeRecord, g.r[0][1])
+        second.revision = 2
+        marking = OntologyMarking(project_id=g.p, name="Historical clearance", readers=[{"kind": "user", "id": str(g.owner.id)}])
+        session.add(marking)
+        no_events = OntologyRuntimeRecord(definition_id=g.d[0], key_digest="no-history", values={"key": "No events", "region": "EW"})
+        session.add(no_events)
+        await session.flush()
+        session.add_all([
+            OntologyActionEvent(record_id=g.r[0][0], actor_id=g.owner.id, kind="create", revision=1, changes={"amount": {"after": 10}}),
+            OntologyActionEvent(record_id=second.id, actor_id=g.owner.id, kind="modify", revision=1, changes={"amount": {"before": 0, "after": 20}}, markings=[str(marking.id)]),
+            OntologyActionEvent(record_id=second.id, actor_id=g.owner.id, kind="modify", revision=3, changes={"amount": {"before": 20, "after": 25}}),
+            OntologyActionEvent(record_id=g.r[0][2], actor_id=g.owner.id, kind="create", revision=1, changes={"amount": {"after": 90}}),
+        ])
+        await session.commit()
+    base = f"/api/ontology/v1/object-types/{g.d[0]}/explorer"
+    for actor, headers, expected in [
+        (g.reader, reader, {"First": True, "Second": False, "No events": False}),
+        (g.owner, owner, {"First": True, "Second": True, "Third": True, "No events": False}),
+    ]:
+        response = await client.post(base + "/query", headers=headers, json={})
+        assert response.status_code == 200, response.text
+        records = response.json()["items"]
+        assert {record["title"]: record["hasHistory"] for record in records} == expected
+        async with g.sessions() as session:
+            for record in records:
+                history = await record_history(session, actor, g.d[0], UUID(record["id"]), limit=1, offset=0)
+                assert record["hasHistory"] is bool(history.items)
+    detail = await client.post(base + "/record", headers=reader, json={"key": {"$recordId": str(g.r[0][1])}})
+    assert detail.status_code == 200 and detail.json()["hasHistory"] is False
+    async with g.sessions() as session:
+        clearance = await session.get(OntologyMarking, marking.id)
+        clearance.readers = []
+        await session.commit()
+    revoked = await client.post(base + "/query", headers=owner, json={"keys": [{"$recordId": str(g.r[0][1])}]})
+    assert revoked.status_code == 200 and revoked.json()["items"][0]["hasHistory"] is False
 
 
 @pytest.mark.asyncio
@@ -299,6 +342,7 @@ async def test_mapped_source_semantic_keys_server_query_policy_and_source_identi
         assert data["items"][0]["properties"]["name"] == "Object 101"
         identity = {"tenant-key": "  Tenant A  ", "object-id": "9007199254741093", "moment": "2026-11-21 01:02:03.123"}
         assert data["items"][0]["id"] is None and data["items"][0]["identity"] == identity
+        assert data["items"][0]["hasHistory"] is False
         assert data["actions"] == []
         properties = data["items"][0]["properties"]
         assert properties["moment"] == "2026-11-21T01:02:03.123000"

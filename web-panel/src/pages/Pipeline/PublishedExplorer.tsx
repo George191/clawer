@@ -218,7 +218,7 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
           renderTitleLink: row => <ExplorerRecordLink definitionId={entry.definitionId} identity={row.identity}>{row.title}</ExplorerRecordLink>,
           renderFullDetails: row => <ExplorerRecordLink definitionId={entry.definitionId} identity={row.identity} />,
           rowActions: row => objectTools.actionsForRecord(original(row)),
-          extraViews: objectType.definition.source.mode === 'none' ? [{ key: 'history', label: 'History', render: row => objectTools.renderHistory(original(row)) }] : [],
+          extraViews: [{ key: 'history', label: 'History', available: row => !!original(row)?.hasHistory, render: row => objectTools.renderHistory(original(row)) }],
           renderPublishedRelationships: objectType.definition.source.mode === 'none' ? row => <PublishedExplorerRelationships definitionId={entry.definitionId} recordId={String(row.identity.$recordId)} /> : undefined,
           footer: <>{result && query.groupBy && <section className="published-explorer-aggregation" aria-label="Object set aggregation"><h3>{names[query.groupBy] || query.groupBy}</h3>
             <p>{result.count.toLocaleString()} matching objects{query.sumField ? ` · Sum: ${display(result.sum)}` : ''}</p>

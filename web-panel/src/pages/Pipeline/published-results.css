@@ -44,13 +44,6 @@
 .flow-published-catalog-empty p { margin: 0; max-width: 42ch; color: var(--ontology-muted); }
 .flow-published-results-pagination { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 36px; padding: 5px 10px; border-top: 1px solid var(--ontology-control-border); color: var(--ontology-muted); font-size: 12px; }
 .flow-published-results-pagination > div { display: flex; flex-wrap: wrap; gap: 6px; }
-.flow-published-selection-properties dt { color: var(--ontology-muted); font-size: 11px; }
-.flow-published-selection-properties { border: 1px solid var(--ontology-control-border); border-radius: 3px; background: var(--ontology-panel); }
-.flow-published-selection-properties h4 { display: flex; align-items: center; gap: 6px; margin: 0; padding: 8px 11px; border-bottom: 1px solid var(--ontology-control-border); font-size: 13px; line-height: 1.45; }
-.flow-published-selection-properties dl { margin: 0; padding: 8px 11px; }
-.flow-published-selection-properties dl > div { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 10px; padding: 3px 0; overflow-wrap: anywhere; }
-.flow-published-selection-properties :is(dd,p) { margin: 0; }
-.flow-published-selection-properties > p { padding: 0 11px 8px; }
 .flow-published-sr-only { position: absolute; clip-path: inset(50%); width: 1px; height: 1px; overflow: hidden; white-space: nowrap; }
 @media (max-width: 760px) {
   .flow-published-catalog > .flow-ontology__published-header { gap: 8px; padding: 10px 12px; }

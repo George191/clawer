@@ -72,9 +72,14 @@
 .wb-open-in-actions button > span:not(.ui-icon) { min-width:0; overflow-wrap:anywhere; }
 .wb-open-in-actions small { display:block; margin-top:1px; color:var(--ontology-muted); font-size:12px; line-height:20px; }
 .wb-open-in-actions p { margin:10px 8px; color:var(--ontology-muted); }
-.wb-selection-tools { display:inline-flex; align-items:center; flex-wrap:wrap; gap:4px; min-width:0; max-width:100%; box-sizing:border-box; padding:2px 5px; border:1px solid var(--explorer-selection-stroke); border-radius:2px; background:var(--explorer-selection-bg); color:var(--ontology-text); font-size:11px; }
-.wb-selection-tools > span { padding-inline:3px; white-space:nowrap; }
-.wb-selection-tools > button { min-height:22px; padding:2px 5px; font-size:11px; }
+.wb-selection-tools { display:inline-flex; align-items:center; flex-wrap:nowrap; gap:3px; min-width:0; max-width:100%; box-sizing:border-box; margin-left:3px; padding-left:7px; border-left:1px solid var(--ontology-control-border); color:var(--ontology-text); font-size:11px; white-space:nowrap; }
+.wb-selection-count { display:inline-flex; align-items:center; gap:4px; min-height:24px; padding:0 6px; border-radius:2px; background:color-mix(in srgb,var(--ui-action-bg) 14%,var(--ontology-panel)); color:var(--ui-action-link); font-variant-numeric:tabular-nums; }
+.wb-selection-count strong { font-weight:600; }
+.wb-selection-tools > button { flex:none; min-height:24px; padding:2px 5px; font-size:11px; }
+.wb-selection-tools > button .ui-icon { width:12px; height:12px; font-size:12px; }
+.wb-selection-tools .wb-selection-clear { width:22px; padding:0; color:var(--ontology-muted); }
+.wb-selection-tools .wb-selection-clear:hover { color:var(--ontology-text); }
+.wb-selection-tools > button:focus-visible { outline:1px solid var(--ui-focus-ring); outline-offset:-2px; }
 .wb-popup { position:absolute; top:100%; right:12px; width:min(310px,96%); padding:8px; display:grid; gap:4px; z-index:20; box-sizing:border-box; max-height:min(52vh,450px); overflow-y:auto; background:var(--ontology-panel); color:var(--ontology-text); border:1px solid var(--ontology-control-border); border-radius:4px; box-shadow:0 5px 20px var(--ontology-border); }
 .wb-popup--search,.wb-popup--property { left:min(18%,230px); right:auto; top:51px; }
 .wb-popup button { justify-content:flex-start; text-align:left; }

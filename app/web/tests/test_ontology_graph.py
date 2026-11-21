@@ -50,6 +50,8 @@ async def graph_db():
                         "team_user_join",
                         "ontology_registry_definitions",
                         "ontology_runtime_records",
+                        "ontology_transactions",
+                        "ontology_action_events",
                         "ontology_markings",
                     )
                 ],
