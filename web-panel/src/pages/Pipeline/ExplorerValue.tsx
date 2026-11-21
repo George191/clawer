@@ -6,17 +6,22 @@ import { JsonTreeValue } from './ExplorerJsonValue';
 import './explorer-value.css';
 import scrollbarStyles from '../../styles/scrollbars.css?raw';
 import { useThemeStore } from '../../stores/settings';
+import { fetchPublishedFile, fetchPublishedHtml, fetchPublishedStorage, type ExplorerDetailSource } from '../../services/publishedExplorerDetails';
 
-const Storage = createContext<{ schema: string; table: string; config?: ExplorerStorage }>({ schema: '', table: '' });
-export function ExplorerValueProvider({ schema, table, children }: { schema: string; table: string; children: ReactNode }) {
+const Storage = createContext<{ source: ExplorerDetailSource; config?: ExplorerStorage }>({ source: { kind: 'backed', schema: '', table: '' } });
+export function ExplorerValueProvider({ schema = '', table = '', source, children }: { schema?: string; table?: string; source?: ExplorerDetailSource; children: ReactNode }) {
+  const target = source ?? { kind: 'backed' as const, schema, table };
+  const targetKey = JSON.stringify(target);
   const [config, setConfig] = useState<ExplorerStorage>();
   const [error, setError] = useState(false);
   useEffect(() => {
     const request = new AbortController();
-    fetchExplorerStorage(request.signal).then(setConfig, () => { if (!request.signal.aborted) setError(true); });
+    setConfig(undefined); setError(false);
+    const load = target.kind === 'published' ? fetchPublishedStorage(target.definitionId, request.signal) : fetchExplorerStorage(request.signal);
+    load.then(value => { if (!request.signal.aborted) setConfig(value); }, () => { if (!request.signal.aborted) setError(true); });
     return () => request.abort();
-  }, []);
-  return <Storage.Provider value={{ schema, table, config }}>{error && <p role="alert">MinIO file links are unavailable. Reload to retry.</p>}{children}</Storage.Provider>;
+  }, [targetKey]);
+  return <Storage.Provider value={{ source: target, config }}>{error && <p role="alert">MinIO file links are unavailable. Reload to retry.</p>}{children}</Storage.Provider>;
 }
 
 function fileUrl(value: string, config?: ExplorerStorage) {
@@ -41,7 +46,8 @@ function fileUrl(value: string, config?: ExplorerStorage) {
 }
 
 function HtmlPreview({ value, identity, field }: { value: string; identity: Record<string, unknown>; field?: string | null }) {
-  const { schema, table } = useContext(Storage);
+  const { source } = useContext(Storage);
+  const sourceKey = JSON.stringify(source);
   const { token } = theme.useToken();
   const dark = useThemeStore(state => state.mode === 'dark');
   const [html, setHtml] = useState<string>(), [error, setError] = useState(false);
@@ -50,11 +56,12 @@ function HtmlPreview({ value, identity, field }: { value: string; identity: Reco
     const controller = new AbortController();
     setHtml(undefined); setError(false);
     if (!field || !Object.keys(identity).length) { setError(true); return; }
-    fetchExplorerHtml(schema, table, identity, field, controller.signal).then(result => {
+    const read = source.kind === 'published' ? fetchPublishedHtml(source.definitionId, identity, field, controller.signal) : fetchExplorerHtml(source.schema, source.table, identity, field, controller.signal);
+    read.then(result => {
       if (!controller.signal.aborted) setHtml(result.html);
     }, () => { if (!controller.signal.aborted) setError(true); });
     return () => controller.abort();
-  }, [schema, table, key, field, value]);
+  }, [sourceKey, key, field, value]);
   if (error) return <div className="explorer-html explorer-html--status" role="alert">HTML preview failed. Reload to retry.</div>;
   if (html === undefined) return <div className="explorer-html explorer-html--status" role="status">Loading HTML preview…</div>;
   const scrollbarTheme = `:root{--ui-muted:${token.colorTextSecondary};--ui-panel:${token.colorBgContainer};color-scheme:${dark ? 'dark' : 'light'}}`;
@@ -67,7 +74,8 @@ export function ExplorerValue({ value, text, identity = {}, field, presentation 
   value: unknown; text?: string; identity?: Record<string, unknown>; field?: string | null;
   presentation?: 'value' | 'media'; path?: (string | number)[];
 }) {
-  const { schema, table, config } = useContext(Storage);
+  const { source: target, config } = useContext(Storage);
+  const sourceKey = JSON.stringify(target);
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [preview, setPreview] = useState<string>();
   const request = useRef<AbortController>();
@@ -106,14 +114,15 @@ export function ExplorerValue({ value, text, identity = {}, field, presentation 
       else {
         const controller = new AbortController();
         request.current = controller; setBusy(true);
-        fetchExplorerFile(schema, table, identity, field, false, controller.signal, valuePath).then(result => {
+        const read = target.kind === 'published' ? fetchPublishedFile(target.definitionId, identity, field, false, controller.signal, valuePath) : fetchExplorerFile(target.schema, target.table, identity, field, false, controller.signal, valuePath);
+        read.then(result => {
           if (!controller.signal.aborted) setPreview(result.url);
         }, () => { if (!controller.signal.aborted) setError('Unable to preview this file. Reload to retry.'); })
           .finally(() => { if (!controller.signal.aborted) setBusy(false); });
       }
     }
     return () => request.current?.abort();
-  }, [value, field, schema, table, recordKey, kind, file?.href, pathKey, media, !!config, !!local]);
+  }, [value, field, sourceKey, recordKey, kind, file?.href, pathKey, media, !!config, !!local]);
   async function openFile() {
     if (busy || !file || !field) return;
     const tab = window.open('about:blank', '_blank');
@@ -123,7 +132,7 @@ export function ExplorerValue({ value, text, identity = {}, field, presentation 
     request.current = controller;
     setBusy(true); setError('');
     try {
-      const result = await fetchExplorerFile(schema, table, identity, field, false, controller.signal, valuePath);
+      const result = target.kind === 'published' ? await fetchPublishedFile(target.definitionId, identity, field, false, controller.signal, valuePath) : await fetchExplorerFile(target.schema, target.table, identity, field, false, controller.signal, valuePath);
       if (controller.signal.aborted) { tab.close(); return; }
       tab.location.replace(result.url);
     } catch { tab.close(); if (!controller.signal.aborted) setError('Unable to open this file. Try again.'); }

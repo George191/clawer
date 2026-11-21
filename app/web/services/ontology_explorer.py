@@ -17,6 +17,7 @@ from app.web.services.etl_layers import get_etl_layers, quote_identifier
 from app.web.services.ontology_action_runtime import _available_actions, _definition_access, _project_record
 from app.web.services.ontology_graph import live_records
 from app.web.services.ontology_graph_sets import filters
+from app.web.services.ontology_explorer_filters import workbench_conditions
 from app.web.services.ontology_record_policy import property_operand
 from app.web.services.ontology_registry_policy import PropertyRecordRule
 from app.web.services.ontology_runtime_values import check_record_json, normalize_fields
@@ -44,6 +45,7 @@ def normalize_query_fields(definition, values):
 def validate_query(grant, query):
     _, definition, _, fields = grant
     filters(grant, query, normalize=normalize_query_fields)
+    workbench_conditions(grant, query, normalize_query_fields)
     props = {prop.id: prop for prop in definition.properties if prop.id in fields}
     if any(sort.field not in props for sort in query.sorts):
         raise HTTPException(403, "Sort references an unavailable property")
@@ -102,6 +104,10 @@ async def object_source(session, grant, query):
         bound = table(source.table, *(column(name) for name in catalog.columns), schema=source.schema_name).alias("bound")
         mappings = {prop.id: prop.sourceColumn for prop in definition.properties}
         prop_types = {prop.id: prop.type for prop in props}
+        workbench_conditions(grant, query, normalize_query_fields, temporal_types={
+            prop.id: catalog.columns[prop.sourceColumn].kind == "timestamptz"
+            for prop in props if prop.type == "datetime"
+        })
         for rule in query.filters:
             if prop_types.get(rule.field) == "datetime" and rule.value is not None:
                 aware = datetime.fromisoformat(rule.value.replace("Z", "+00:00")).tzinfo is not None
@@ -145,6 +151,7 @@ async def evaluate(session, user, definition_id, query, limit, offset, group_off
     _, definition, context, fields = grant
     async with object_source(session, grant, query) as (reader, source):
         conditions = filters(grant, query, source.c["values"], normalize_query_fields)
+        conditions.extend(workbench_conditions(grant, query, normalize_query_fields, source.c["values"]))
         if query.keys is not None:
             conditions.append(or_(*(source.c.identity == type_coerce(key, JSONB) for key in query.keys)) if query.keys else false())
         scoped = select(source).where(*conditions).cte("matches")

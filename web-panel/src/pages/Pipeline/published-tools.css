@@ -1,4 +1,5 @@
 .flow-ontology-tool-content {
+  flex: 0 1 auto; max-height: 64vh; overflow: auto; padding: 12px; border-bottom: 1px solid var(--ontology-control-border);
   container-type: inline-size;
   font: 400 13px/1.45 var(--foundry-font);
   color: var(--ontology-text);

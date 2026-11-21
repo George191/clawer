@@ -44,6 +44,7 @@ def main():
                 page.get_by_role("button", name="Sign in", exact=True).click()
             assert login_response.value.status == 200
             page.wait_for_url(route)
+            expect(page.get_by_role("region", name="Object results", exact=True)).to_be_visible()
             expect(page.locator(".wb-type strong")).to_have_text(name)
             return page
 

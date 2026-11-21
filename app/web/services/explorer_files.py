@@ -74,7 +74,12 @@ def signed_link(key, *, download=False, client=None):
 
 async def download_link(layer, table, identity, field, *, download=True, path=()):
     record = await row_by_key(layer, table, identity, editable=False)
-    value = record['row'].get(field)
+    return await record_file_link(record['row'], field, download=download, path=path)
+
+
+async def record_file_link(record, field, *, download=True, path=()):
+    """Sign a configured resource after the caller has authorized its record and field."""
+    value = record.get(field)
     if path and isinstance(value, str):
         try:
             value = json.loads(value)

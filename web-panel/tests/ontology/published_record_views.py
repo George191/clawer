@@ -40,7 +40,7 @@ async def main():
         await page.get_by_placeholder("Enter your password").fill(fixture["owner"]["password"])
         await page.get_by_role("button", name="Sign in", exact=True).click()
         await page.wait_for_url(target)
-        results = page.get_by_role("region", name="Published Explorer results")
+        results = page.get_by_role("region", name="Object results")
         deleted = page.get_by_role("dialog", name="Deleted objects", exact=True)
 
         async def open_deleted():
@@ -48,7 +48,7 @@ async def main():
             await page.get_by_role("menuitem", name="Deleted objects", exact=True).click()
             await expect(deleted).to_be_visible()
         preview = page.get_by_role("complementary", name="Selection Preview")
-        await expect(results.get_by_role("button", name=active_row["title"], exact=True)).to_be_visible()
+        await expect(results.get_by_role("link", name=active_row["title"], exact=True)).to_be_visible()
 
         status = await page.evaluate("""async ({resource, values}) => {
             const token = JSON.parse(localStorage.getItem('auth_session')).access_token;
@@ -62,10 +62,9 @@ async def main():
         }""", {"resource": resource, "values": {**active_row["properties"], "id": "views-" + seed_id, "name": deleted_title}})
         assert status == 200, status
         await page.reload()
-        await expect(results.get_by_role("button", name=active_row["title"], exact=True)).to_be_visible()
+        await expect(results.get_by_role("link", name=active_row["title"], exact=True)).to_be_visible()
         checkbox = results.get_by_role("checkbox", name="Select " + active_row["title"], exact=True)
         await checkbox.check()
-        await results.get_by_role("button", name=active_row["title"], exact=True).click()
         await expect(preview).to_be_visible()
         await expect(page.get_by_role("toolbar", name="Selected object tools")).to_contain_text("1 selected")
         if screenshots:
@@ -103,12 +102,12 @@ async def main():
         await expect(deleted).to_have_count(0)
         await expect(preview.get_by_role("heading", name=active_row["title"], exact=True)).to_be_visible()
         await expect(page.get_by_role("toolbar", name="Selected object tools")).to_contain_text("1 selected")
-        await expect(results.get_by_role("button", name=active_row["title"], exact=True)).to_be_visible()
+        await expect(results.get_by_role("link", name=active_row["title"], exact=True)).to_be_visible()
         release.set()
         await asyncio.wait_for(stale_finished.wait(), 20)
         await expect(deleted).to_have_count(0)
-        await expect(results.get_by_role("button", name=active_row["title"], exact=True)).to_be_visible()
-        await expect(results.get_by_role("button", name=deleted_title, exact=True)).to_have_count(0)
+        await expect(results.get_by_role("link", name=active_row["title"], exact=True)).to_be_visible()
+        await expect(results.get_by_role("link", name=deleted_title, exact=True)).to_have_count(0)
         await expect(checkbox).to_be_checked()
         await expect(preview.get_by_role("heading", name=active_row["title"], exact=True)).to_be_visible()
         await expect(preview.get_by_text(deleted_title, exact=True)).to_have_count(0)
@@ -132,13 +131,14 @@ async def main():
         await deleted.get_by_role("button", name="Close", exact=True).click()
         await expect(deleted).to_have_count(0)
         await expect(preview.get_by_role("heading", name=active_row["title"], exact=True)).to_be_visible()
-        await expect(results.get_by_role("button", name=active_row["title"], exact=True)).to_be_visible()
-        await expect(results.get_by_role("button", name=deleted_title, exact=True)).to_have_count(0)
+        await expect(results.get_by_role("link", name=active_row["title"], exact=True)).to_be_visible()
+        await expect(results.get_by_role("link", name=deleted_title, exact=True)).to_have_count(0)
         await expect(checkbox).to_be_checked()
         await expect(page.get_by_role("toolbar", name="Selected object tools")).to_contain_text("1 selected")
         await expect(preview.get_by_text(deleted_title, exact=True)).to_have_count(0)
-        await checkbox.uncheck()
-        await preview.get_by_role("button", name="Close selection preview", exact=True).click()
+        await preview.get_by_role("button", name="Clear selection", exact=True).click()
+        await expect(checkbox).not_to_be_checked()
+        await expect(preview).to_have_count(0)
         await page.set_viewport_size({"width": 390, "height": 844})
         assert await page.locator(".wb-header").evaluate("el => el.scrollWidth <= el.clientWidth")
         assert (await results.bounding_box())["height"] >= 180

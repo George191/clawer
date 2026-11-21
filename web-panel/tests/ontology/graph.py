@@ -31,9 +31,9 @@ def open_graph(page, base, typ, record):
         base.rstrip("/") + "/ontology/explorer?objectType=" + typ["id"],
         wait_until="domcontentloaded",
     )
-    page.get_by_role("region", name="Published Explorer results").get_by_role(
-        "button", name=record["title"], exact=True
-    ).click()
+    page.get_by_role("region", name="Object results").get_by_role(
+        "checkbox", name="Select " + record["title"], exact=True
+    ).check()
     page.get_by_role("button", name="Open in", exact=True).click()
     page.get_by_role("menuitem", name="Relationships and sets", exact=True).click()
     graph = page.get_by_role("region", name="Object relationships and sets")

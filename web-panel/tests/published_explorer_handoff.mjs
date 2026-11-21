@@ -17,6 +17,19 @@ const id = '463ee113-2b89-4170-977d-1309fe4b3976';
 const saved = 'af9b18fc-807f-45f8-b024-57025163228a';
 const parseHref = href => { const url = new URL(href, 'https://app.example.test'); return parsePublishedExplorerEntry(url.search, url.hash); };
 
+test('shared workbench search and nested filters roundtrip without replacing the Graph scope', () => {
+  const row = { id: 'rule-1', field: 'business-name', operator: '包含', value: '  %_literal  ', active: true, join: 'or' };
+  const boundary = { ...row, field: '', value: '', operator: '=', join: 'and' };
+  const query = { filters: [{ field: 'amount', op: 'gt', value: 5 }], keys: [{ $recordId: saved }], search: '  name  ', workbenchFilters: [
+    { ...boundary, id: 'group-open-1' }, row, { ...row, id: 'rule-2', field: 'amount', operator: '>=', value: '10' }, { ...boundary, id: 'group-close-1' },
+  ] };
+  assert.deepEqual(parseHref(publishedExplorerHref(id, { query })).query, query);
+  assert.deepEqual(parseHref(publishedExplorerHref(id, { query: { filters: [], search: 'First' } })).query, { filters: [], search: 'First' });
+  for (const patch of [{ search: 'x'.repeat(1001) }, { workbenchFilters: [{ ...row, operator: 'SQL' }] }, { workbenchFilters: [{ ...row, active: 'true' }] }, { workbenchFilters: [{ ...row, field: 'physical.column' }] }, { workbenchFilters: Array.from({ length: 101 }, () => row) }]) {
+    assert.throws(() => publishedExplorerHref(id, { query: { filters: [], ...patch } }), /Invalid published/);
+  }
+});
+
 test('catalog entry opens Explorer directly and returns to the same filters and page', () => {
   const returnTo = publishedCatalogHref('?catalog=published&publishedQ=%E5%AA%92%E4%BD%93&publishedOffset=25&view=list&publishedHidden=true&publishedDeleted=true&objectType=' + id + '&schema=ts_ods&table=assets&tab=properties');
   const entry = parseHref(publishedExplorerHref(id, { returnTo }));

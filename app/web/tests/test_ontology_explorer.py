@@ -2,6 +2,7 @@
 
 import asyncio
 import importlib
+import json
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -31,11 +32,12 @@ async def published(graph_db):
     g = graph_db
     async with g.sessions() as session:
         def migrate(conn):
-            migration = importlib.import_module("app.web.alembic.versions.87d6b142fab3_published_explorer_saved_items")
-            with Operations.context(MigrationContext.configure(conn)):
-                migration.upgrade()
-                migration.downgrade()
-                migration.upgrade()
+            for module in ("87d6b142fab3_published_explorer_saved_items", "88a471f93c62_published_explorer_result_layouts"):
+                migration = importlib.import_module("app.web.alembic.versions." + module)
+                with Operations.context(MigrationContext.configure(conn)):
+                    migration.upgrade()
+                    migration.downgrade()
+                    migration.upgrade()
         connection = await session.connection()
         await connection.run_sync(migrate)
         await session.commit()
@@ -80,6 +82,148 @@ async def test_query_uses_server_filtering_identity_sort_and_empty_scope(publish
     assert hidden.status_code == 403
     other_type = await client.post(path, headers=reader, json={"keys": [{"$recordId": str(g.r[1][0])}]})
     assert other_type.json()["count"] == 0
+
+
+def workbench_rule(field, operator, value="", **extra):
+    return {"id": "rule-1", "field": field, "operator": operator, "value": value, "active": True, "join": "and", **extra}
+
+
+@pytest.mark.asyncio
+async def test_common_workbench_filters_keep_graph_scope_keys_grouping_and_search_policy(published):
+    g, client, reader, owner = published
+    path = f"/api/ontology/v1/object-types/{g.d[0]}/explorer/query"
+    query = {"filters": [{"field": "amount", "op": "gt", "value": 5}], "workbenchFilters": [
+        workbench_rule("", "=", id="group-open-1"),
+        workbench_rule("key", "=", "First", join="or"),
+        workbench_rule("key", "=", "Third", id="rule-2"),
+        workbench_rule("", "=", id="group-close-1"),
+        workbench_rule("amount", "<=", "50", id="rule-3"),
+    ]}
+    result = await client.post(path, headers=owner, json=query)
+    assert result.status_code == 200, result.text
+    assert result.json()["count"] == 1 and result.json()["items"][0]["title"] == "First"
+    # A fixed object list is still ANDed with the workbench expression.
+    query["keys"] = [{"$recordId": str(g.r[0][1])}]
+    assert (await client.post(path, headers=owner, json=query)).json()["count"] == 0
+    scoped = await client.post(path, headers=reader, json={"search": "sec", "workbenchFilters": [workbench_rule("region", "=", "EW")]})
+    assert scoped.json()["count"] == 1 and scoped.json()["items"][0]["title"] == "Second"
+    assert (await client.post(path, headers=reader, json={"workbenchFilters": [workbench_rule("secret", "包含", "s")]})).status_code == 403
+    async with g.sessions() as session:
+        for id_ in g.r[0]:
+            record = await session.get(OntologyRuntimeRecord, id_)
+            record.values = {**record.values, "secret": "classified-only"}
+        await session.commit()
+    assert (await client.post(path, headers=reader, json={"search": "classified-only"})).json()["count"] == 0
+    assert (await client.post(path, headers=owner, json={"search": "classified-only"})).json()["count"] == 3
+    for filters in [[workbench_rule("", "=", id="group-open-x")], [workbench_rule("amount", ">", "not-number")], [workbench_rule("key", "rawSql", "x")], [workbench_rule("", "rawSql")], [workbench_rule("amount", "介于", "1,2,3")], [workbench_rule("key", "包含", "\x00")]]:
+        assert (await client.post(path, headers=reader, json={"workbenchFilters": filters})).status_code == 422
+    assert (await client.post(path, headers=reader, json={"workbenchFilters": [workbench_rule("", "是 null")]})).status_code == 403
+    saved = await client.post(path.removesuffix("/query") + "/saved-items", headers=reader, json={"kind": "exploration", "name": "Workbench", "content": {"query": {"search": "First", "workbenchFilters": [workbench_rule("amount", ">=", "10")]}}})
+    assert saved.status_code == 201, saved.text
+    opened = await client.get(path.removesuffix("/query") + "/saved-items/" + saved.json()["id"], headers=reader)
+    restored = await client.post(path, headers=reader, json=opened.json()["content"]["query"])
+    assert restored.json()["count"] == 1 and restored.json()["items"][0]["title"] == "First"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field,operator,value,count", [
+    ("amount", "=", "10", 1), ("amount", "!=", "10", 2), ("amount", "<", "20", 1),
+    ("amount", "<=", "20", 2), ("amount", ">", "20", 1), ("amount", ">=", "20", 2),
+    ("amount", "介于", "10,20", 2), ("amount", "不介于", "10,20", 1),
+    ("key", "在列表", "First,Second", 2), ("key", "不在列表", "First,Second", 1),
+    ("key", "包含", "irs", 1), ("key", "包含（不区分大小写）", "IRS", 1),
+    ("key", "不包含", "irs", 2), ("key", "不包含（不区分大小写）", "IRS", 2),
+    ("key", "开始以", "Fi", 1), ("key", "不是开始于", "Fi", 2),
+    ("key", "ends  with", "rd", 1), ("key", "不是结束于", "rd", 2),
+    ("key", "是  null", "", 0), ("key", "不是  null", "", 3),
+    ("key", "是空的", "", 0), ("key", "不是空的", "", 3), ("key", "包含", "%_' OR TRUE --", 0),
+])
+async def test_common_workbench_operator_semantics(published, field, operator, value, count):
+    g, client, _, owner = published
+    response = await client.post(f"/api/ontology/v1/object-types/{g.d[0]}/explorer/query", headers=owner, json={"workbenchFilters": [workbench_rule(field, operator, value)]})
+    assert response.status_code == 200, response.text
+    assert response.json()["count"] == count
+
+
+@pytest.mark.asyncio
+async def test_nullable_json_literal_and_boolean_filters_preserve_typed_meaning(published):
+    g, client, _, owner = published
+    async with g.sessions() as session:
+        row = await session.get(OntologyDefinitionRow, g.d[0])
+        row.published_definition = {**row.published_definition, "properties": [*row.published_definition["properties"],
+            {"id": "note", "name": "Note", "type": "string"}, {"id": "payload", "name": "Payload", "type": "json"}, {"id": "flag", "name": "Flag", "type": "boolean"}]}
+        for record_id, extra in zip(g.r[0], [
+            {"note": None, "payload": "123", "flag": True}, {"note": "", "payload": 123, "flag": False},
+            {"note": "value", "payload": {"tags": ["media", 2]}, "flag": None},
+        ]):
+            record = await session.get(OntologyRuntimeRecord, record_id)
+            record.values = {**record.values, **extra}
+        session.add(OntologyRuntimeRecord(definition_id=g.d[0], key_digest="missing-fields", values={"key": "Missing", "region": "EW"}))
+        await session.commit()
+    path = f"/api/ontology/v1/object-types/{g.d[0]}/explorer/query"
+    for field, op, value, count in [
+        ("note", "是 null", "", 2), ("note", "不是 null", "", 2), ("note", "是空的", "", 1), ("note", "不是空的", "", 1),
+        ("note", "!=", "value", 1), ("flag", "=", "true", 1), ("flag", "!=", "true", 1),
+        ("payload", "=", '"123"', 1), ("payload", "=", "123", 1), ("payload", "=", '{"tags":["media",2]}', 1),
+    ]:
+        response = await client.post(path, headers=owner, json={"workbenchFilters": [workbench_rule(field, op, value)]})
+        assert response.status_code == 200 and response.json()["count"] == count, response.text
+    for literal in ["123", 123, {"tags": ["media", 2]}, None]:
+        graph = await client.post(path, headers=owner, json={"filters": [{"field": "payload", "op": "eq", "value": literal}]})
+        common = workbench_rule("payload", "是 null") if literal is None else workbench_rule("payload", "=", json.dumps(literal))
+        workbench = await client.post(path, headers=owner, json={"workbenchFilters": [common]})
+        assert graph.status_code == workbench.status_code == 200
+        assert [item["identity"] for item in graph.json()["items"]] == [item["identity"] for item in workbench.json()["items"]]
+
+
+@pytest.mark.asyncio
+async def test_workbench_and_or_precedence_nested_groups_and_disabled_group(published):
+    g, client, _, owner = published
+    path = f"/api/ontology/v1/object-types/{g.d[0]}/explorer/query"
+    cases = [([
+        workbench_rule("key", "=", "First", join="or"), workbench_rule("key", "=", "Second", id="rule-2"), workbench_rule("amount", ">", "15", id="rule-3"),
+    ], {"First", "Second"}), ([
+        workbench_rule("", "=", id="group-open-a"), workbench_rule("key", "=", "First", join="or"),
+        workbench_rule("", "=", id="group-open-b"), workbench_rule("key", "=", "Second", id="rule-2"), workbench_rule("amount", ">", "15", id="rule-3"),
+        workbench_rule("", "=", id="group-close-b"), workbench_rule("", "=", id="group-close-a"), workbench_rule("amount", ">", "15", id="rule-4"),
+    ], {"Second"}), ([
+        workbench_rule("", "=", id="group-open-a", active=False), workbench_rule("key", "=", "First"),
+        workbench_rule("", "=", id="group-close-a", join="or"), workbench_rule("key", "=", "Second", id="rule-2"),
+    ], {"Second"})]
+    for rules, expected in cases:
+        response = await client.post(path, headers=owner, json={"workbenchFilters": rules})
+        assert response.status_code == 200, response.text
+        assert {item["title"] for item in response.json()["items"]} == expected
+
+
+@pytest.mark.asyncio
+async def test_published_layout_personal_project_permission_isolation_and_conflict(published):
+    g, client, reader, owner = published
+    path = f"/api/ontology/v1/object-types/{g.d[0]}/explorer/result-layout"
+    empty = await client.get(path, headers=reader)
+    assert empty.status_code == 200 and empty.json()["canManageDefault"] is False
+    assert empty.json()["personal"] == {"version": None, "layout": None}
+    layout = {"columns": [{"field": field, "width": 180, "visible": True, "presentation": "value"} for field in ("key", "amount", "region")], "sorts": [], "wrap": False}
+    assert (await client.put(path + "/default", headers=reader, json={"version": None, "layout": layout})).status_code == 403
+    saved = await client.put(path + "/personal", headers=reader, json={"version": None, "layout": layout})
+    assert saved.status_code == 200, saved.text
+    version = saved.json()["version"]
+    assert (await client.get(path, headers=owner)).json()["personal"]["layout"] is None
+    assert (await client.get(path.replace(str(g.d[0]), str(g.d[1])), headers=reader)).json()["personal"]["layout"] is None
+    assert (await client.put(path + "/personal", headers=reader, json={"version": None, "layout": layout})).status_code == 409
+    updated = await asyncio.gather(*(client.put(path + "/personal", headers=reader, json={"version": version, "layout": {**layout, "wrap": True}}) for _ in range(2)))
+    assert sorted(response.status_code for response in updated) == [200, 409]
+    owner_layout = {**layout, "columns": [*layout["columns"], {"field": "secret", "width": 200, "visible": False, "presentation": "value"}]}
+    default = await client.put(path + "/default", headers=owner, json={"version": None, "layout": owner_layout})
+    assert default.status_code == 200, default.text
+    reconciled = (await client.get(path, headers=reader)).json()
+    assert [col["field"] for col in reconciled["default"]["layout"]["columns"]] == ["key", "amount", "region"]
+    assert "secret" not in str(reconciled)
+    invalid = {**layout, "columns": [{**col, "presentation": "geoJson"} if col["field"] == "amount" else col for col in layout["columns"]]}
+    current = next(response.json()["version"] for response in updated if response.status_code == 200)
+    assert (await client.put(path + "/personal", headers=reader, json={"version": current, "layout": invalid})).status_code == 422
+    reset = await client.put(path + "/personal", headers=reader, json={"version": current, "layout": None})
+    assert reset.status_code == 200 and reset.json()["layout"] is None
 
 
 @pytest.mark.asyncio
@@ -162,6 +306,11 @@ async def test_mapped_source_semantic_keys_server_query_policy_and_source_identi
         for field, value in [("moment", properties["moment"]), ("instant", properties["instant"]), ("instant", "2026-11-21T09:02:03.123+08:00")]:
             equal = await client.post(base + "/query", headers=owner, json={"keys": [identity], "filters": [{"field": field, "op": "eq", "value": value}]})
             assert equal.status_code == 200 and equal.json()["count"] == 1, equal.text
+        for field, value in [("moment", properties["moment"]), ("instant", "2026-11-21T09:02:03.123+08:00")]:
+            common = await client.post(base + "/query", headers=owner, json={"keys": [identity], "workbenchFilters": [workbench_rule(field, "=", value)]})
+            assert common.status_code == 200 and common.json()["count"] == 1, common.text
+        mismatch = await client.post(base + "/query", headers=owner, json={"workbenchFilters": [workbench_rule("moment", "=", properties["instant"])]})
+        assert mismatch.status_code == 422
         for field, value in [("moment", properties["instant"]), ("instant", properties["moment"])]:
             mismatch = await client.post(base + "/query", headers=owner, json={"filters": [{"field": field, "op": "eq", "value": value}]})
             assert mismatch.status_code == 422

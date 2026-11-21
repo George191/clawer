@@ -138,4 +138,4 @@ class NewPasswordWithCode(SQLModel):
     new_password: str = Field(min_length=8, max_length=40)
 
 from .explorer_saved_items import ExplorerSavedItem
-from .ontology_explorer import OntologyExplorerSavedItem
+from .ontology_explorer import OntologyExplorerResultLayout, OntologyExplorerSavedItem

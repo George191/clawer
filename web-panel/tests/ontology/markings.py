@@ -107,6 +107,7 @@ def run():
                 page.get_by_placeholder("Enter your password").fill(person["password"])
                 page.get_by_role("button", name="Sign in", exact=True).click()
                 page.wait_for_url(href)
+                expect(page.get_by_role("region", name="Object results", exact=True)).to_be_visible()
                 return page
 
             author = tab(owner)

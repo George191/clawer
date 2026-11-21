@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, Checkbox, Input, Modal } from '@/components/ui';
+import { Button, Checkbox, Input, Modal, type MenuItem } from '@/components/ui';
 import { BranchesOutlined, CodeOutlined, DeleteOutlined, DownloadOutlined, HistoryOutlined, PlusOutlined, SyncOutlined } from '@/components/ui/icons';
 import { getSessionState } from '../../services/session';
 import {
@@ -14,6 +14,7 @@ import OntologySdkDownload from './OntologySdkDownload';
 import OntologyTransactions from './OntologyTransactions';
 import { parsePropertyValue } from './ontologyPropertyValue';
 import './published-tools.css';
+import './published-results.css';
 
 const pageSize = 25;
 const maxOffset = 100_000;
@@ -165,12 +166,16 @@ export function usePublishedObjectTools({ objectType, actions, record, returnTo,
     { key: 'sdk', label: 'TypeScript SDK', icon: <DownloadOutlined />, group: 'inspect', run: () => setSdkOpen(true) },
   ] : [];
   const create = native ? actions.find(action => action.kind === 'create') : undefined;
-  const available = native && record?.id ? actions.filter(action => action.kind !== 'create') : [];
+  const actionsForRecord = (selected?: OntologyRecord): MenuItem[] => native && selected?.id ? actions.filter(action => action.kind !== 'create').map(action => ({
+    key: action.kind, label: action.kind === 'modify' ? 'Modify' : 'Delete', danger: action.kind === 'delete',
+    disabled: busy || pending, onClick: () => startAction(action.kind, action.fields, selected),
+  })) : [];
+  const renderHistory = (selected?: OntologyRecord) => objectType && native && selected?.id
+    ? <RecordHistory key={selected.id} objectType={objectType.id} recordId={selected.id} onChanged={onChanged} /> : null;
   return {
     tools,
     createButton: create ? <Button size="small" icon={<PlusOutlined />} disabled={busy || pending} onClick={() => startAction('create', create.fields)}>Create object</Button> : null,
-    recordActions: available.length ? <details className="flow-published-record-actions"><summary>Actions</summary><div>{available.map(action => <Button key={action.kind} size="small" disabled={busy || pending} onClick={() => startAction(action.kind, action.fields, record)}>{action.kind === 'modify' ? 'Modify' : 'Delete'}</Button>)}</div></details> : null,
-    history: objectType && native && record?.id ? <RecordHistory key={record.id} objectType={objectType.id} recordId={record.id} onChanged={onChanged} /> : null,
+    actionsForRecord, renderHistory,
     dialogs: objectType ? <>
       <Modal open={!!tool} centered width={1040} className="flow-surface-modal flow-published-dialog" title={tool} onCancel={() => setTool('')} footer={<Button onClick={() => setTool('')}>Close</Button>}>
         <div className="flow-ontology-tool-content">

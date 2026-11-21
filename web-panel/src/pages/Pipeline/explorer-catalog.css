@@ -1,0 +1,20 @@
+.flow-console--ontology .flow-explorer-catalog .flow-catalog-published button {
+  display:flex; align-items:center; gap:8px; width:100%; min-height:42px; padding:6px 7px; border:1px solid transparent; border-radius:3px;
+  background:transparent; color:var(--ontology-text); font:inherit; text-align:left; cursor:pointer;
+}
+.flow-console--ontology .flow-explorer-catalog .flow-catalog-published button:hover { background:var(--ontology-hover); }
+.flow-console--ontology .flow-explorer-catalog .flow-catalog-published button[aria-current] {
+  border-color:var(--ontology-control-border); background:color-mix(in srgb,var(--ui-action-bg) 18%,var(--ontology-panel)); color:var(--ui-action-link);
+}
+.flow-catalog-published button:disabled { opacity:.5; cursor:default; }
+.flow-catalog-type-glyph { flex:none; width:22px; height:22px; font-size:15px; }
+.flow-catalog-published button > span:last-child { display:grid; gap:2px; min-width:0; }
+.flow-catalog-published :is(strong,code) { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.flow-catalog-published strong { font-size:12px; font-weight:500; }
+.flow-catalog-published code { color:var(--ontology-muted); font-size:10px; }
+.flow-catalog-published .flow-catalog-type-glyph { display:grid; place-items:center; flex:none; width:23px; height:23px; border-radius:3px; font-size:15px; }
+.flow-catalog-pagination { display:flex; flex:none; align-items:center; justify-content:space-between; gap:6px; font-size:10px; color:var(--ontology-muted); }
+.flow-catalog-pagination button { min-height:25px; padding:3px 5px; border:1px solid var(--ontology-control-border); border-radius:3px; background:transparent; color:var(--ontology-text); font:inherit; cursor:pointer; }
+.flow-catalog-pagination button:disabled { opacity:.4; cursor:default; }
+.flow-catalog-pagination button:not(:disabled):hover { background:var(--ontology-hover); }
+.flow-catalog-error { margin:0 3px; color:var(--ui-error); font-size:11px; }

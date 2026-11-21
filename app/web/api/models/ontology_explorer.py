@@ -3,8 +3,8 @@
 from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
-from pydantic import Field, StringConstraints, model_validator
-from sqlalchemy import Column
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from sqlalchemy import Column, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field as DBField
 from sqlmodel import SQLModel
@@ -20,10 +20,22 @@ class ExplorerSort(Payload):
     direction: Literal["asc", "desc"]
 
 
+class WorkbenchFilter(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(min_length=1, max_length=160)
+    field: str = Field(max_length=63)
+    operator: str = Field(min_length=1, max_length=64)
+    value: str = Field(max_length=4096)
+    active: bool = Field(strict=True)
+    join: Literal["and", "or"]
+
+
 class ExplorerQuery(SetQuery):
     # None is a dynamic query; an empty list is deliberately an empty object set.
     keys: list[Identity] | None = Field(default=None, max_length=100)
     sorts: list[ExplorerSort] = Field(default_factory=list, max_length=20)
+    workbenchFilters: list[WorkbenchFilter] = Field(default_factory=list, max_length=100)
+    search: Annotated[str, StringConstraints(max_length=1000, strip_whitespace=False)] = ""
 
     @model_validator(mode="after")
     def distinct_sorts(self):
@@ -61,3 +73,15 @@ class OntologyExplorerSavedItem(SQLModel, table=True):
     shared: bool = False
     version: UUID = DBField(default_factory=uuid4)
     content: dict = DBField(sa_column=Column(JSONB(), nullable=False))
+
+
+class OntologyExplorerResultLayout(SQLModel, table=True):
+    __tablename__ = "ontology_explorer_result_layouts"
+    __table_args__ = (
+        UniqueConstraint("definition_id", "owner_id", name="uq_ontology_explorer_layout_owner", postgresql_nulls_not_distinct=True),
+    )
+    id: UUID = DBField(default_factory=uuid4, primary_key=True)
+    definition_id: UUID = DBField(foreign_key="ontology_registry_definitions.id", ondelete="CASCADE")
+    owner_id: UUID | None = DBField(default=None, foreign_key="user.id", ondelete="CASCADE")
+    layout: dict | None = DBField(sa_column=Column(JSONB(none_as_null=True), nullable=True))
+    version: UUID = DBField(default_factory=uuid4)

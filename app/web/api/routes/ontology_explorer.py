@@ -11,8 +11,12 @@ from app.web.api.dependencies import CurrentUser, SessionDep
 from app.web.api.models.ontology_explorer import ExplorerQuery, OntologyExplorerSavedItem as Item, SaveExplorerItem, ShareExplorerItem
 from app.web.services.ontology_action_runtime import _definition_access
 from app.web.services.ontology_explorer import evaluate, validate_query
+from app.web.api.routes.ontology_explorer_details import router as details_router
+from app.web.api.routes.ontology_explorer_layouts import router as layouts_router
 
 router = APIRouter(prefix="/ontology/v1/object-types/{definition_id}/explorer", tags=["Published Explorer"])
+router.include_router(details_router)
+router.include_router(layouts_router)
 Limit = Annotated[int, Query(ge=1, le=100)]
 Offset = Annotated[int, Query(ge=0, le=100_000)]
 Kind = Literal["exploration", "list"]

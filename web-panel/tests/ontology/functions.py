@@ -89,9 +89,9 @@ def run():
         page.get_by_role("dialog", name="Functions", exact=True).get_by_role(
             "button", name="Close", exact=True
         ).click()
-        page.get_by_role("region", name="Published Explorer results").get_by_role(
-            "button", name=record["title"], exact=True
-        ).click()
+        page.get_by_role("region", name="Object results").get_by_role(
+            "checkbox", name="Select " + record["title"], exact=True
+        ).check()
         open_tool("Functions")
         panel.get_by_label("Published function").select_option("calculate_amount")
         panel.get_by_label("Argument units").fill("9")

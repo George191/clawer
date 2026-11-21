@@ -175,8 +175,8 @@ with httpx.Client(base_url=base, trust_env=False, timeout=15) as api:
         deleted = page.get_by_role("region", name="Deleted objects", exact=True)
         expect(deleted.get_by_role("button", name="Tx A " + key, exact=True)).to_be_visible()
         close_tool("Deleted objects")
-        results = page.get_by_role("region", name="Published Explorer results", exact=True)
-        results.get_by_role("button", name=srow["title"], exact=True).click()
+        results = page.get_by_role("region", name="Object results", exact=True)
+        results.get_by_role("checkbox", name="Select " + srow["title"], exact=True).check()
         page.get_by_role("button", name="History", exact=True).click()
         expect(page.get_by_role("region", name="Record action history")).to_contain_text("amount")
         checks += ["inspect deleted records", "field-level history values"]
@@ -187,14 +187,14 @@ with httpx.Client(base_url=base, trust_env=False, timeout=15) as api:
         dialog.get_by_role("textbox", name="Name", exact=True).fill(single_title)
         dialog.get_by_role("button", name="Submit action", exact=True).click()
         expect(dialog).to_have_count(0)
-        results.get_by_role("button", name=single_title, exact=True).click()
+        results.get_by_role("checkbox", name="Select " + single_title, exact=True).check()
         selection = page.get_by_role("complementary", name="Selection Preview")
-        selection.get_by_text("Actions", exact=True).click()
-        selection.get_by_role("button", name="Modify", exact=True).click()
+        selection.get_by_role("button", name="Actions", exact=True).click()
+        page.get_by_role("menuitem", name="Modify", exact=True).click()
         dialog.get_by_role("textbox", name="Amount", exact=True).fill("31")
         dialog.get_by_role("button", name="Submit action", exact=True).click()
         expect(dialog).to_have_count(0)
-        results.get_by_role("button", name=single_title, exact=True).click()
+        results.get_by_role("checkbox", name="Select " + single_title, exact=True).check()
         selection.get_by_role("button", name="History", exact=True).click()
         with page.expect_response(
             lambda r: r.request.method == "POST" and r.url.endswith("/undo")
@@ -203,9 +203,9 @@ with httpx.Client(base_url=base, trust_env=False, timeout=15) as api:
         assert inverse.value.status == 200
         saved = next(r for r in call("GET", record_path)["items"] if r["title"] == single_title)
         assert "amount" not in saved["properties"] and saved["revision"] == 3
-        results.get_by_role("button", name=single_title, exact=True).click()
-        selection.get_by_text("Actions", exact=True).click()
-        selection.get_by_role("button", name="Delete", exact=True).click()
+        results.get_by_role("checkbox", name="Select " + single_title, exact=True).check()
+        selection.get_by_role("button", name="Actions", exact=True).click()
+        page.get_by_role("menuitem", name="Delete", exact=True).click()
         dialog.get_by_role("button", name="Delete object", exact=True).click()
         expect(dialog).to_have_count(0)
         open_tool("Deleted objects")
@@ -216,7 +216,7 @@ with httpx.Client(base_url=base, trust_env=False, timeout=15) as api:
             deleted.get_by_role("button", name="Undo edit", exact=True).click()
         assert inverse.value.status == 200
         close_tool("Deleted objects")
-        expect(results.get_by_role("button", name=single_title, exact=True)).to_be_visible()
+        expect(results.get_by_role("link", name=single_title, exact=True)).to_be_visible()
         assert call("GET", record_path + "/" + saved["id"])["revision"] == 5
         checks += [
             "single create and modify",

@@ -8,7 +8,7 @@ import shutil
 from urllib.parse import urlencode, urlsplit
 from uuid import uuid4
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 
 
 def run():
@@ -144,6 +144,7 @@ def run():
                 page.get_by_placeholder("Enter your password").fill(owner["password"])
                 page.get_by_role("button", name="Sign in", exact=True).click()
                 page.wait_for_url(page_url)
+                expect(page.get_by_role("region", name="Object results", exact=True)).to_be_visible()
                 page.get_by_role("button", name="Open in", exact=True).click()
                 page.get_by_role("menuitem", name="Model revisions", exact=True).click()
                 page.get_by_role("button", name="Propose change", exact=True).click()

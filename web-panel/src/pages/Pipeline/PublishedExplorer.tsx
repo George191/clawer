@@ -1,27 +1,48 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Button } from '@/components/ui';
-import { CloseOutlined, FilterOutlined, ReloadOutlined } from '@/components/ui/icons';
+import { Button, message } from '@/components/ui';
+import { FilterOutlined, ReloadOutlined } from '@/components/ui/icons';
 import { fetchPublishedOntologyType, ontologyError, type PublishedOntologyType } from '../../services/ontology';
 import { fetchCurrentUserContext } from '../../services/api';
 import { openSaved, publishedSavedPath, type SavedDetail } from '../../services/explorerSaved';
 import { loadPublishedSavedSet, queryPublishedExplorer, type PublishedExplorerRecord, type PublishedExplorerResult } from '../../services/publishedExplorer';
 import { parsePublishedExplorerEntry, publishedExplorerHref, validatePublishedExplorerQuery, type PublishedExploration, type PublishedExplorerEntry, type PublishedExplorerQuery } from '../../services/publishedExplorerHandoff';
+import { publishedColumnTypes, publishedPresentation } from '../../services/publishedExplorerPresentation';
 import { getSessionState } from '../../services/session';
-import ExplorerWorkbenchHeader, { type ResourceView } from './ExplorerWorkbenchHeader';
+import type { ExplorerSort } from '../../services/explorerLayouts';
+import type { ResourceView } from './ExplorerWorkbenchHeader';
+import type { ExplorerPreviewRow } from './ExplorerSelection';
+import ExplorerWorkbench, { ExplorerResults, ExplorerResultsFooter, explorerResultColumns } from './ExplorerWorkbench';
+import ExplorerFilterEditor, { normalizeFilterDepth, randomId } from './ExplorerFilterEditor';
+import ExplorerAppliedConditions from './ExplorerAppliedConditions';
+import { LayoutToolbar, useResultLayout } from './ExplorerResultLayout';
+import { appendAndFilters, blankExplorerFilter, cellFilterRows, countFilterTerms, explorerFilterTerms, type ExplorerFilter } from './explorerFilters';
 import { explorerResourceCapabilities } from '../../services/explorerCapabilities';
 import PublishedSourceTools from './PublishedSourceTools';
+import PublishedExplorerRelationships from './PublishedExplorerRelationships';
 import { usePublishedObjectTools } from './PublishedObjectTools';
 import SemanticTypeGlyph from './SemanticTypeGlyph';
-import { parsePropertyValue } from './ontologyPropertyValue';
-import './published-results.css';
+import ExplorerRecordLink from './ExplorerRecordLink';
+import ExplorerCatalog from './ExplorerCatalog';
 import './published-explorer.css';
 
-const pageSize = 25;
-const labels = { eq: 'Equals', contains: 'Contains', gt: 'Greater than', lt: 'Less than' };
-const display = (value: unknown): string => value == null ? '—' : typeof value === 'object' ? JSON.stringify(value) : String(value);
-const identityKey = (row: PublishedExplorerRecord) => row.identity && JSON.stringify(Object.entries(row.identity).sort(([a], [b]) => a.localeCompare(b)));
+const display = (value: unknown): string => value == null ? 'null' : typeof value === 'object' ? JSON.stringify(value) : String(value);
+const identityKey = (row: PublishedExplorerRecord, index: number) => row.identity ? JSON.stringify(Object.entries(row.identity).sort(([a], [b]) => a.localeCompare(b))) : 'row:' + index;
 type Scope = { key: string; query: PublishedExplorerQuery; saved?: SavedDetail<PublishedExploration> };
+
+function commonFilters(query: PublishedExplorerQuery, objectType: PublishedOntologyType): ExplorerFilter[] {
+  const jsonFields = new Set(objectType.definition.properties.filter(property => property.type === 'json').map(property => property.id));
+  const inherited = query.filters.flatMap((filter, index) => {
+    const id = 'semantic-' + index;
+    if (filter.op === 'eq' && (filter.value === null || filter.value === '')) return cellFilterRows(filter.field, filter.value, false, id);
+    return [{ ...blankExplorerFilter(id), field: filter.field,
+      operator: filter.op === 'contains' && filter.value === '' ? '不是  null' : { eq: '=', contains: '包含（不区分大小写）', gt: '>', lt: '<' }[filter.op],
+      value: jsonFields.has(filter.field) && filter.op === 'eq' || typeof filter.value === 'object' ? JSON.stringify(filter.value) : String(filter.value) }];
+  });
+  return normalizeFilterDepth(appendAndFilters(query.workbenchFilters || [], inherited, 'semantic-scope'));
+}
+const wireFilters = (rules: ExplorerFilter[]) => rules.filter(rule => rule.field || /^group-(open|close)-/.test(rule.id))
+  .map(({ id, field, operator, value, active, join }) => ({ id, field, operator, value, active, join }));
 
 export default function PublishedExplorer() {
   const location = useLocation();
@@ -40,20 +61,25 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
   const [metadataError, setMetadataError] = useState('');
   const [scope, setScope] = useState<Scope>();
   const [scopeError, setScopeError] = useState('');
+  const [scopeRetry, retryScope] = useState(0);
   const [read, setRead] = useState<{ key: string; page?: PublishedExplorerResult; error?: string }>();
-  const [offset, setOffset] = useState(0);
+  const [offset, setOffset] = useState(0), [pageSize, setPageSize] = useState(20);
   const [version, retry] = useState(0);
   const [mode, setMode] = useState<'results' | 'explore'>('results');
-  const [selected, setSelected] = useState<Record<string, PublishedExplorerRecord>>({});
-  const [preview, setPreview] = useState<PublishedExplorerRecord>();
-  const [previewTab, setPreviewTab] = useState<'properties' | 'history'>('properties');
+  const [chosen, setChosen] = useState<ExplorerPreviewRow[]>([]);
+  const [activeRow, setActiveRow] = useState<ExplorerPreviewRow>();
   const [resource, setResource] = useState<ResourceView>('preview');
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [field, setField] = useState(''), [operator, setOperator] = useState<keyof typeof labels>('eq'), [raw, setRaw] = useState('');
-  const [filterError, setFilterError] = useState('');
-  const [sortField, setSortField] = useState(''), [direction, setDirection] = useState<'asc' | 'desc'>('asc');
+  const [catalogOpen, setCatalogOpen] = useState(false);
+  const [filterRules, setFilterRules] = useState<ExplorerFilter[]>([blankExplorerFilter('rule-1')]);
+  const [search, setSearch] = useState('');
+  const [draftSorts, setDraftSorts] = useState<ExplorerSort[]>([]);
+  const navigationDraft = useRef<{ route: string; mode: typeof mode; rules?: ExplorerFilter[]; search?: string }>();
+  const initialLayoutSorts = useRef(!entry.saved && !entry.savedSet && !entry.query.sorts?.length).current;
+  const originals = useRef(new Map<string, PublishedExplorerRecord>());
   const sessionIdentity = getSessionState().identity;
-  const scopeKey = JSON.stringify([routeKey, version]);
+  const scopeKey = JSON.stringify([routeKey, sessionIdentity]);
+  const definitionLoaded = objectType?.id === entry.definitionId;
   useEffect(() => {
     const controller = new AbortController();
     setMetadataError('');
@@ -63,8 +89,9 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
     return () => controller.abort();
   }, [entry.definitionId, sessionIdentity, version]);
   useEffect(() => {
+    if (!definitionLoaded) return;
     const controller = new AbortController();
-    setScopeError(''); setOffset(0); setSelected({}); setPreview(undefined); setRead(undefined);
+    setScopeError(''); setOffset(0); setChosen([]); setActiveRow(undefined); setRead(undefined); originals.current.clear();
     async function load() {
       let query = entry.query, saved: SavedDetail<PublishedExploration> | undefined;
       if (entry.saved) {
@@ -75,17 +102,23 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
         query = validatePublishedExplorerQuery(result.query);
       }
       if (!controller.signal.aborted && getSessionState().identity === sessionIdentity) {
+        const draft = navigationDraft.current?.route === routeKey ? navigationDraft.current : undefined;
+        navigationDraft.current = undefined;
         setScope({ key: scopeKey, query, saved });
-        setMode(saved?.kind === 'exploration' ? saved.content.view : 'results');
-        setSortField(query.sorts?.[0]?.field || ''); setDirection(query.sorts?.[0]?.direction || 'asc');
+        setMode(draft?.mode ?? (saved?.kind === 'exploration' ? saved.content.view : 'results'));
+        const rules = draft?.rules ?? commonFilters(query, objectType!);
+        setFilterRules(rules.length ? rules : [blankExplorerFilter('rule-1')]);
+        setSearch(draft?.search ?? query.search ?? ''); setDraftSorts(query.sorts || []);
       }
     }
     void load().catch(error => { if (!controller.signal.aborted) setScopeError(ontologyError(error, 'Unable to open this object set.')); });
     return () => controller.abort();
-  }, [entry, scopeKey, sessionIdentity]);
+  }, [entry, scopeKey, sessionIdentity, definitionLoaded, scopeRetry]);
   const activeScope = scope?.key === scopeKey ? scope : undefined;
+  const layoutIdentity = useRef('');
+  if (activeScope) layoutIdentity.current = sessionIdentity;
   const query = activeScope?.query;
-  const requestKey = JSON.stringify([routeKey, offset, version]);
+  const requestKey = JSON.stringify([scopeKey, offset, pageSize, version]);
   useEffect(() => {
     if (!query || !objectType) return;
     const controller = new AbortController();
@@ -93,84 +126,119 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
       if (!controller.signal.aborted && getSessionState().identity === sessionIdentity) setRead({ key: requestKey, page });
     }, error => { if (!controller.signal.aborted) setRead({ key: requestKey, error: ontologyError(error, 'Unable to query this object set.') }); });
     return () => controller.abort();
-  }, [entry.definitionId, query, objectType, offset, requestKey, sessionIdentity]);
+  }, [entry.definitionId, query, objectType, offset, pageSize, requestKey, sessionIdentity]);
   const currentRead = read?.key === requestKey ? read : undefined;
   const result = currentRead?.page;
-  const busy = !metadataError && !scopeError && (!objectType || !activeScope || !currentRead);
-  const rows = result?.items || [], properties = objectType?.definition.properties || [];
-  const columns = properties.filter(property => property.id !== objectType?.definition.titleKey);
-  const chosen = Object.values(selected);
-  const selectable = rows.filter(row => row.identity);
-  const currentAllSelected = selectable.length > 0 && selectable.every(row => !!selected[identityKey(row)!]);
-  const pageExceedsSelectionLimit = chosen.length + selectable.filter(row => !selected[identityKey(row)!]).length > 100;
-  const fieldType = properties.find(property => property.id === field)?.type;
-  const operators: (keyof typeof labels)[] = fieldType === 'string' ? ['eq', 'contains'] : fieldType === 'integer' || fieldType === 'number' ? ['eq', 'gt', 'lt'] : ['eq'];
-  function changeQuery(nextQuery: PublishedExplorerQuery) {
-    setFilterError('');
-    navigate(publishedExplorerHref(entry.definitionId, { query: nextQuery, returnTo: entry.returnTo }), { replace: true });
+  const fatalError = metadataError || scopeError;
+  const error = fatalError || currentRead?.error;
+  const busy = !error && (!objectType || !activeScope || !currentRead);
+  const properties = objectType?.definition.properties || [];
+  const fields = useMemo(() => properties.map(property => property.id), [objectType]);
+  const names = useMemo(() => Object.fromEntries(properties.map(property => [property.id, property.name])), [objectType]);
+  const types = useMemo(() => objectType ? publishedColumnTypes(objectType) : {}, [objectType]);
+  const metadata = useMemo(() => objectType ? { presentation: publishedPresentation(objectType) } : undefined, [objectType]);
+  const rows = useMemo(() => result?.items.map(row => row.properties) || [], [result]);
+  const previewRows = useMemo(() => result?.items.map((record, index) => {
+    const key = identityKey(record, offset + index); originals.current.set(key, record);
+    return { key, record: record.properties, identity: record.identity || {}, title: display(record.title), columnTypes: types, version: record.revision == null ? undefined : String(record.revision) };
+  }) || [], [result, types, offset]);
+  useEffect(() => {
+    if (!result) return;
+    const current = new Map(previewRows.map(row => [row.key, row]));
+    setChosen(previous => previous.map(row => current.get(row.key) || row));
+  }, [previewRows, result]);
+  const original = (row?: ExplorerPreviewRow) => row ? originals.current.get(row.key) : undefined;
+  const activeFilters = useMemo(() => query && objectType ? commonFilters(query, objectType) : [], [query, objectType]);
+  const sorts = query?.sorts || [];
+  const filterCount = countFilterTerms(explorerFilterTerms(activeFilters)) + Number(Boolean(query?.search?.trim()));
+  function changeQuery(next: PublishedExplorerQuery, keepDraft = false) {
+    let href: string;
+    try { href = publishedExplorerHref(entry.definitionId, { query: next, returnTo: entry.returnTo }); }
+    catch (error) { message.error((error as Error).message); return; }
+    const url = new URL(href, window.location.origin);
+    navigationDraft.current = { route: url.search + url.hash, mode, ...(keepDraft ? { rules: filterRules, search } : {}) };
+    navigate(href, { replace: true });
+  }
+  const canChange = () => !!query && !busy && !fatalError;
+  function requireDraftApplied(sorting = false) {
+    if (!canChange()) return false;
+    const pending = sorting ? JSON.stringify(draftSorts.filter(item => item.field)) !== JSON.stringify(sorts)
+      : JSON.stringify(wireFilters(filterRules)) !== JSON.stringify(wireFilters(activeFilters));
+    if (!pending) return true;
+    setFiltersOpen(true); message.warning(sorting ? 'Apply your pending sort edits before using this shortcut' : 'Apply your pending column filter edits before using this shortcut');
+    return false;
+  }
+  function applyRules(rules: ExplorerFilter[]) {
+    if (!canChange()) return;
+    if (rules.length > 100) { message.warning('The table supports up to 100 filter rows'); return; }
+    changeQuery({ ...query!, filters: [], workbenchFilters: wireFilters(normalizeFilterDepth(rules)) });
+  }
+  function updateSorts(next: ExplorerSort[]) {
+    if (query && !fatalError) changeQuery({ ...query, sorts: next.filter(item => item.field) }, true);
+  }
+  function addFilter(field: string) {
+    if (!canChange()) return;
+    const id = randomId(), next = appendAndFilters(wireFilters(filterRules), [{ ...blankExplorerFilter(id), field }], randomId());
+    if (next.length > 100) { message.warning('The table supports up to 100 filter rows'); return; }
+    setFilterRules(normalizeFilterDepth(next)); setFiltersOpen(true);
   }
   function openSavedItem(id: string) {
     navigate(publishedExplorerHref(entry.definitionId, { ...(entry.savedSet ? { savedSet: entry.savedSet } : { query: entry.query }), saved: id, returnTo: entry.returnTo }));
   }
-  function toggle(row: PublishedExplorerRecord, checked: boolean) {
-    const key = identityKey(row);
-    if (!key) return;
-    setSelected(previous => { if (checked && !previous[key] && Object.keys(previous).length >= 100) return previous; const next = { ...previous }; if (checked) next[key] = row; else delete next[key]; return next; });
-  }
-  function addFilter() {
-    if (!query || !field) return;
-    try {
-      const value = fieldType === 'datetime' && objectType?.definition.source.mode === 'existing' ? raw.trim() : parsePropertyValue(raw, fieldType || 'string');
-      changeQuery({ ...query, filters: [...query.filters, { field, op: operator, value }] });
-      setRaw('');
-    } catch (error) { setFilterError((error as Error).message); }
-  }
-  const error = metadataError || scopeError || currentRead?.error;
-  const objectTools = usePublishedObjectTools({ objectType, actions: result?.actions || [], record: preview, returnTo: entry.returnTo, busy: busy || !!error,
-    onChanged: () => { setPreview(undefined); setSelected({}); retry(value => value + 1); } });
-  return <section className={`published-explorer${mode === 'explore' ? ' is-exploring' : ''}`} aria-label="Published Object Explorer" aria-busy={busy}>
-    <fieldset className="wb-shell" disabled={busy || !!error}>
-      <ExplorerWorkbenchHeader<PublishedExploration> source={{ kind: 'published', definitionId: entry.definitionId }} label={objectType?.definition.name || entry.definitionId}
-        available={!!objectType} glyph={objectType && <SemanticTypeGlyph definition={objectType.definition} />}
-        fields={properties.map(property => property.id)} names={Object.fromEntries(properties.map(property => [property.id, property.name]))}
-        rows={rows.map(row => row.properties)} selected={chosen.map(row => ({ identity: row.identity!, record: row.properties, title: display(row.title) }))}
-        query={{ query: query || { filters: [] } }} resource={resource} admin={canManage} layoutControl={objectTools.createButton} selectResource={setResource}
-        availableResources={objectType ? explorerResourceCapabilities(objectType.definition.source, canManage) : []} additionalTools={objectTools.tools}
-        saved={activeScope?.saved} savedLoading={!activeScope && !scopeError} savedError={scopeError}
-        openSavedItem={openSavedItem} closeSavedItem={() => navigate(publishedExplorerHref(entry.definitionId, { ...(entry.savedSet ? { savedSet: entry.savedSet } : { query: entry.query }), returnTo: entry.returnTo }))}
-        saveCompleted={detail => openSavedItem(detail.id)} updateSavedItem={detail => setScope(previous => previous?.key === scopeKey ? { ...previous, saved: detail } : previous)}
-        addFilter={id => { setField(id); setOperator('eq'); setFiltersOpen(true); }} backToTypes={() => navigate(entry.returnTo)}
-        toggleCatalog={() => navigate('/ontology?catalog=published')} closeCatalog={() => {}} catalogOpen={false}
-        mode={mode} setMode={setMode} clearSelection={() => setSelected({})}
-        filterButton={<button type="button" aria-expanded={filtersOpen} onClick={() => setFiltersOpen(value => !value)}><FilterOutlined /> Filter &amp; sort{query && query.filters.length + (query.sorts?.length || 0) > 0 ? ` (${query.filters.length + (query.sorts?.length || 0)})` : ''}</button>} />
-    </fieldset>
-    {error && <div className="published-explorer-state" role="alert">{error}<Button size="small" icon={<ReloadOutlined />} onClick={() => retry(value => value + 1)}>Retry</Button></div>}
-    {busy && <div className="published-explorer-state" role="status">Loading published object set…</div>}
-    {filtersOpen && objectType && query && <section className="published-explorer-filters" aria-label="Published object filters">
-      <header><strong>Filter &amp; sort</strong><button type="button" aria-label="Close filters" onClick={() => setFiltersOpen(false)}><CloseOutlined /></button></header>
-      <div className="published-explorer-filter-fields"><label>Property<select aria-label="Filter property" value={field} onChange={event => { setField(event.target.value); setOperator('eq'); }}><option value="">Select property</option>{properties.map(property => <option key={property.id} value={property.id}>{property.name}</option>)}</select></label>
-        <label>Operator<select aria-label="Filter operator" value={operator} onChange={event => setOperator(event.target.value as typeof operator)}>{operators.map(op => <option key={op} value={op}>{labels[op]}</option>)}</select></label>
-        <label>Value<input aria-label="Filter value" value={raw} onChange={event => setRaw(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') addFilter(); }} /></label>
-        <Button size="small" disabled={busy || !field || query.filters.length >= 20} onClick={addFilter}>Add filter</Button>
-      </div>
-      {filterError && <p role="alert">{filterError}</p>}
-      {query.filters.length > 0 && <ul>{query.filters.map((filter, index) => <li key={index}><span>{properties.find(property => property.id === filter.field)?.name || filter.field} {labels[filter.op]} {display(filter.value)}</span><button type="button" aria-label={'Remove filter ' + (index + 1)} disabled={busy} onClick={() => changeQuery({ ...query, filters: query.filters.filter((_, item) => item !== index) })}><CloseOutlined /></button></li>)}</ul>}
-      <div className="published-explorer-filter-fields"><label>Sort property<select aria-label="Sort property" value={sortField} onChange={event => setSortField(event.target.value)}><option value="">No explicit sort</option>{properties.filter(property => property.type !== 'json').map(property => <option key={property.id} value={property.id}>{property.name}</option>)}</select></label><label>Direction<select aria-label="Sort direction" value={direction} onChange={event => setDirection(event.target.value as typeof direction)}><option value="asc">Ascending</option><option value="desc">Descending</option></select></label><Button size="small" disabled={busy} onClick={() => changeQuery({ ...query, sorts: sortField ? [{ field: sortField, direction }] : [] })}>Apply sort</Button></div>
-    </section>}
-    {objectType && query && <div className="published-explorer-scope"><span>Published · {objectType.definition.id}</span><span>{query.keys !== undefined ? `${query.keys.length} object references` : 'Dynamic object set'}{result ? ` · ${result.count.toLocaleString()} matching objects` : ''}{result && query.sumField ? ` · Sum: ${display(result.sum)}` : ''}</span></div>}
-    {mode === 'results' && result && objectType && <div className={`flow-published-results-body published-explorer-body${preview ? ' has-selection' : ''}`}>
-      <div className="flow-published-record-pane"><div className="flow-published-record-scroll" tabIndex={0} role="region" aria-label="Published Explorer results">
-        <table style={{ width: `max(100%, ${276 + columns.length * 164}px)` }}><colgroup><col className="flow-published-select-column" /><col className="flow-published-title-column" />{columns.map(property => <col key={property.id} />)}</colgroup>
-          <thead><tr><th scope="col"><input type="checkbox" aria-label="Select all objects on this page" title={pageExceedsSelectionLimit ? 'Select up to 100 objects.' : undefined} disabled={!selectable.length || (!currentAllSelected && pageExceedsSelectionLimit)} checked={currentAllSelected} onChange={event => { const checked = event.target.checked; setSelected(previous => { const next = { ...previous }; for (const row of selectable) { const key = identityKey(row)!; if (checked) next[key] = row; else delete next[key]; } return next; }); }} /></th><th scope="col">Title</th>{columns.map(property => <th scope="col" key={property.id}>{property.name}</th>)}</tr></thead>
-          <tbody>{rows.map((row, index) => <tr key={identityKey(row) || index} className={row === preview ? 'is-selected' : undefined}><td><input type="checkbox" aria-label={`Select ${display(row.title)}`} title={!row.identity ? 'A complete authorized object identity is required to save a list.' : chosen.length >= 100 && !selected[identityKey(row)!] ? 'Select up to 100 objects.' : undefined} disabled={!row.identity || (chosen.length >= 100 && !selected[identityKey(row)!])} checked={!!selected[identityKey(row) || '']} onChange={event => toggle(row, event.target.checked)} /></td><th scope="row"><button type="button" className="flow-published-record-title" onClick={() => { setPreviewTab('properties'); setPreview(row); }}><SemanticTypeGlyph definition={objectType.definition} /><span>{display(row.title)}</span></button></th>{columns.map(property => <td key={property.id} title={display(row.properties[property.id])}>{display(row.properties[property.id]).slice(0, 120)}</td>)}</tr>)}{!rows.length && <tr><td className="flow-published-results-empty" colSpan={columns.length + 2}>No objects match this set.</td></tr>}</tbody>
-        </table>
-      </div><footer className="flow-published-results-pagination"><span>{rows.length ? `${offset + 1}–${offset + rows.length} of ${result.count.toLocaleString()}` : '0 shown'}</span><div><Button size="small" disabled={busy || !offset} onClick={() => { setPreview(undefined); setOffset(value => Math.max(0, value - pageSize)); }}>Previous page</Button><Button size="small" disabled={busy || !result.hasMore || offset + pageSize > 100000} onClick={() => { setPreview(undefined); setOffset(value => value + pageSize); }}>Next page</Button></div></footer></div>
-      {preview && <aside className="flow-published-selection" aria-label="Selection Preview"><header><h3>Selection Preview</h3><Button size="small" type="text" aria-label="Close selection preview" icon={<CloseOutlined />} onClick={() => setPreview(undefined)} /></header><div className="flow-published-selection-content"><div className="flow-published-selection-title"><SemanticTypeGlyph definition={objectType.definition} size="preview" /><div><span>{objectType.definition.name}</span><h4>{display(preview.title)}</h4></div>{objectTools.recordActions}</div>
-        <nav className="flow-published-selection-tabs" aria-label="Selection view"><button type="button" aria-pressed={previewTab === 'properties'} onClick={() => setPreviewTab('properties')}>Properties</button>{objectTools.history && <button type="button" aria-pressed={previewTab === 'history'} onClick={() => setPreviewTab('history')}>History</button>}</nav>
-        {previewTab === 'history' && objectTools.history ? objectTools.history : <section className="flow-published-selection-properties"><h4>Properties</h4><dl>{properties.filter(property => Object.prototype.hasOwnProperty.call(preview.properties, property.id)).map(property => <div key={property.id}><dt>{property.name}</dt><dd>{display(preview.properties[property.id])}</dd></div>)}</dl></section>}</div></aside>}
-    </div>}
-    {mode === 'results' && result && query?.groupBy && <section className="published-explorer-aggregation" aria-label="Object set aggregation"><h3>{properties.find(property => property.id === query.groupBy)?.name || query.groupBy}</h3><table><thead><tr><th>Value</th><th>Count</th>{query.sumField && <th>Sum</th>}</tr></thead><tbody>{result.groups.map((group, index) => <tr key={index}><td>{display(group.value)}</td><td>{group.count}</td>{query.sumField && <td>{display(group.sum)}</td>}</tr>)}</tbody></table>{result.groupsHasMore && <p>Showing the first 50 groups.</p>}</section>}
+  const resultLayout = useResultLayout(layoutIdentity.current, '', '', fields, sorts, updateSorts, initialLayoutSorts, entry.definitionId);
+  const dataColumns = explorerResultColumns({ layout: resultLayout, sorts, types, names, addFilter,
+    setSort: (field, direction) => { if (requireDraftApplied(true)) updateSorts([{ field, direction }, ...sorts.filter(item => item.field !== field)]); },
+    clearSorts: () => { if (requireDraftApplied(true)) updateSorts([]); },
+    filterValue: (field, value, exclude) => { if (requireDraftApplied()) applyRules(appendAndFilters(activeFilters, cellFilterRows(field, value, exclude, randomId()), randomId())); },
+  });
+  const objectTools = usePublishedObjectTools({ objectType, actions: result?.actions || [], record: original(activeRow), returnTo: entry.returnTo, busy: busy || !!error,
+    onChanged: () => { setActiveRow(undefined); setChosen([]); retry(value => value + 1); } });
+  const selectionSource = { kind: 'published' as const, definitionId: entry.definitionId };
+  return <div className={`flow-layers flow-layers--tagged flow-schema-workbench explorer-object-workspace has-asset${catalogOpen ? ' is-catalog-open' : ''}${mode === 'explore' && resource === 'preview' ? ' is-exploring' : ''}`}>
+    <div className="flow-layer-layout"><ExplorerCatalog published={{ selectedId: entry.definitionId, onSelect: id => navigate(publishedExplorerHref(id)) }} overlayOpen={catalogOpen} onDismiss={() => setCatalogOpen(false)} /><section className="flow-layer-main">
+      <ExplorerWorkbench<PublishedExploration> locked={busy || !!fatalError} header={{ source: selectionSource,
+        label: objectType?.definition.name || entry.definitionId, available: !!objectType, glyph: objectType && <SemanticTypeGlyph definition={objectType.definition} />,
+        fields, names, rows, selected: chosen.filter(row => Object.keys(row.identity).length), query: { query: query || { filters: [] } }, resource, admin: canManage,
+        layoutControl: <><LayoutToolbar controls={resultLayout} admin={canManage} types={types} />{objectTools.createButton}</>, selectResource: setResource,
+        availableResources: objectType ? explorerResourceCapabilities(objectType.definition.source, canManage) : [], additionalTools: objectTools.tools,
+        saved: activeScope?.saved, savedLoading: !activeScope && !scopeError, savedError: scopeError, openSavedItem,
+        closeSavedItem: () => navigate(publishedExplorerHref(entry.definitionId, { ...(entry.savedSet ? { savedSet: entry.savedSet } : { query: entry.query }), returnTo: entry.returnTo })),
+        saveCompleted: detail => openSavedItem(detail.id), updateSavedItem: detail => setScope(previous => previous?.key === scopeKey ? { ...previous, saved: detail } : previous),
+        addFilter, backToTypes: () => navigate(entry.returnTo), toggleCatalog: () => setCatalogOpen(value => !value), closeCatalog: () => setCatalogOpen(false), catalogOpen,
+        mode, setMode, clearSelection: () => setChosen([]),
+        filterButton: <button type="button" aria-expanded={filtersOpen} onClick={() => setFiltersOpen(value => !value)}><FilterOutlined /> Filter &amp; sort{filterCount + sorts.length ? ` (${filterCount + sorts.length})` : ''}</button>,
+      }}>
+        <ExplorerResults results={objectType && query && !error ? { source: selectionSource, schema: '', table: objectType.definition.id, rows, columns: fields,
+          columnTypes: types, metadata, dataColumns, selectedRows: chosen, selectionLimit: 100, onSelectedRowsChange: setChosen, onActiveRowChange: setActiveRow,
+          rowKey: (record, index) => previewRows[index]?.key || 'row:' + (offset + index),
+          rowIdentity: record => previewRows[rows.indexOf(record)]?.identity || {}, rowVersion: record => previewRows[rows.indexOf(record)]?.version,
+          loading: busy, locked: false, onRefresh: () => retry(value => value + 1),
+          presentations: Object.fromEntries(resultLayout.columns.map(column => [column.field, column.presentation])),
+          renderGlyph: compact => <SemanticTypeGlyph definition={objectType.definition} size={compact ? 'row' : 'preview'} />,
+          renderTitleLink: row => <ExplorerRecordLink definitionId={entry.definitionId} identity={row.identity}>{row.title}</ExplorerRecordLink>,
+          renderFullDetails: row => <ExplorerRecordLink definitionId={entry.definitionId} identity={row.identity} />,
+          rowActions: row => objectTools.actionsForRecord(original(row)),
+          extraViews: objectType.definition.source.mode === 'none' ? [{ key: 'history', label: 'History', render: row => objectTools.renderHistory(original(row)) }] : [],
+          renderPublishedRelationships: objectType.definition.source.mode === 'none' ? row => <PublishedExplorerRelationships definitionId={entry.definitionId} recordId={String(row.identity.$recordId)} /> : undefined,
+          footer: <>{result && query.groupBy && <section className="published-explorer-aggregation" aria-label="Object set aggregation"><h3>{names[query.groupBy] || query.groupBy}</h3>
+            <p>{result.count.toLocaleString()} matching objects{query.sumField ? ` · Sum: ${display(result.sum)}` : ''}</p>
+            <table><thead><tr><th>Value</th><th>Count</th>{query.sumField && <th>Sum</th>}</tr></thead><tbody>{result.groups.map((group, index) => <tr key={index}><td>{display(group.value)}</td><td>{group.count}</td>{query.sumField && <td>{display(group.sum)}</td>}</tr>)}</tbody></table>
+          </section>}<ExplorerResultsFooter offset={offset} rowCount={rows.length} pageSize={pageSize} loading={busy} canPageFurther={!!result?.hasMore && offset + pageSize <= 100000}
+            onPageSize={size => { setPageSize(size); setOffset(0); }} onPrevious={() => setOffset(value => Math.max(0, value - pageSize))} onNext={() => setOffset(value => value + pageSize)} /></>,
+        } : undefined}>
+          {error && <div className="flow-schema-state" role="alert">{error} <Button size="small" icon={<ReloadOutlined />} onClick={() => { if (scopeError) retryScope(value => value + 1); retry(value => value + 1); }}>Retry</Button></div>}
+          {busy && !objectType && <div className="flow-schema-state" role="status">Loading published object set…</div>}
+          {query && <ExplorerAppliedConditions filters={activeFilters} search={query.search} sorts={sorts} names={names}
+            removeFilters={(start, end) => { if (requireDraftApplied()) applyRules(activeFilters.filter((_, index) => index < start || index > end)); }}
+            removeSearch={() => { if (canChange()) changeQuery({ ...query, search: '' }); }} removeSort={field => { if (requireDraftApplied(true)) updateSorts(sorts.filter(item => item.field !== field)); }} />}
+          {query?.keys && <div className="flow-schema-applied flow-query-chips" aria-label="Object set scope"><span>{query.keys.length} object references{result ? ` · ${result.count} matching objects` : ''}</span></div>}
+          {filtersOpen && query && <ExplorerFilterEditor rules={filterRules} setRules={setFilterRules} search={search} onSearchChange={setSearch} sorts={draftSorts}
+            onSortsChange={(next, apply) => { setDraftSorts(next); if (apply) updateSorts(next); }} fields={fields} rows={rows} formatValue={display}
+            onApply={() => { if (canChange()) changeQuery({ ...query, filters: [], workbenchFilters: wireFilters(normalizeFilterDepth(filterRules)), search, sorts: draftSorts.filter(item => item.field) }); }} />}
+        </ExplorerResults>
+      </ExplorerWorkbench>
+    </section></div>
     {objectType && <PublishedSourceTools objectType={objectType} resource={resource} canManage={canManage} onClose={() => setResource('preview')} />}
     {objectTools.dialogs}
-  </section>;
+  </div>;
 }

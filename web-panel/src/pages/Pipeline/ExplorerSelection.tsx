@@ -2,6 +2,7 @@ import { PropertyLabel } from './PropertyTypeIcon';
 import { ExplorerValueProvider } from './ExplorerValue';
 import { useExplorerLinkAvailability } from './ExplorerRowLinks';
 import type { ExplorerRowLinkPage } from '../../services/api';
+import type { ExplorerDetailSource } from '../../services/publishedExplorerDetails';
 import { useEffect, useId, useRef, useState } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
 import { Button, Checkbox, Dropdown, Input, Select, Table, message } from '@/components/ui';
@@ -13,6 +14,7 @@ import {
   type ExplorerOverviewPresentation, type ExplorerPresentationRead, type ExplorerPreviewRow, type ExplorerPropertyPresentation,
 } from './ExplorerObjectOverview';
 import './explorer-selection.css';
+import { selectedPageRows } from './explorerSelectionState';
 
 type RecordRow = Record<string, unknown>;
 export { ExplorerObjectOverview, ExplorerTypeIcon, explorerRowTitle, useExplorerPresentation } from './ExplorerObjectOverview';
@@ -114,6 +116,7 @@ function Comparison({ columns, choices, presentations }: { columns: readonly str
 }
 
 type Props = {
+  source?: ExplorerDetailSource;
   schema: string;
   table: string;
   dataType?: string;
@@ -136,14 +139,21 @@ type Props = {
   renderMutation?: (row: ExplorerPreviewRow) => ReactNode;
   onRefresh?: () => void;
   onSelectedRowsChange?: (rows: ExplorerPreviewRow[]) => void;
+  selectedRows?: ExplorerPreviewRow[];
+  selectionLimit?: number;
+  renderGlyph?: (compact: boolean) => ReactNode;
+  extraViews?: { key: string; label: ReactNode; render: (row: ExplorerPreviewRow) => ReactNode }[];
+  renderPublishedRelationships?: (row: ExplorerPreviewRow) => ReactNode;
+  onActiveRowChange?: (row?: ExplorerPreviewRow) => void;
 };
 
 type Selection = { rows: RecordRow[]; picked: number[]; active: number; anchor: number; collapsed: boolean };
-type View = 'overview' | 'properties' | 'links' | 'compare' | `group:${string}`;
+type View = 'overview' | 'properties' | 'links' | 'compare' | `group:${string}` | `extra:${string}`;
 
 export default function ExplorerSelection({
-  schema, table, dataType, rows, columns, columnTypes = noTypes, presentations, metadata, dataColumns, rowKey, rowIdentity, rowVersion, loading, locked, footer,
+  source, schema, table, dataType, rows, columns, columnTypes = noTypes, presentations, metadata, dataColumns, rowKey, rowIdentity, rowVersion, loading, locked, footer,
   renderTitleLink, renderFullDetails, renderRelationships, rowActions, renderMutation, onRefresh, onSelectedRowsChange,
+  selectedRows, selectionLimit = Infinity, renderGlyph, extraViews = [], renderPublishedRelationships, onActiveRowChange,
 }: Props) {
   const panelId = useId();
   const results = useRef<HTMLDivElement>(null);
@@ -154,12 +164,15 @@ export default function ExplorerSelection({
   const presentation = metadata?.presentation;
   const typeName = presentation?.displayName || table;
   const [selection, setSelection] = useState<Selection>();
+  const [activeKey, setActiveKey] = useState('');
   const [view, setView] = useState<View>('overview');
   const current = selection?.rows === rows ? selection : undefined;
-  const picked = current?.picked ?? [];
-  const displayed = picked.slice(0, previewLimit);
+  const controlled = selectedRows !== undefined;
+  const controlledKeys = new Set(selectedRows?.map(row => row.key));
+  const picked = controlled ? rows.flatMap((record, index) => controlledKeys.has(rowKey(record, index)) ? [index] : []) : current?.picked ?? [];
   const selected = new Set(picked);
-  const activeIndex = displayed.includes(current?.active ?? -1) ? current!.active : displayed[0];
+  const previewIndices = picked.slice(0, previewLimit);
+  const activeIndex = previewIndices.includes(current?.active ?? -1) ? current!.active : previewIndices[0];
   const disabled = loading || locked;
 
   function describeRow(record: RecordRow, index: number): ExplorerPreviewRow {
@@ -168,6 +181,18 @@ export default function ExplorerSelection({
       title: explorerRowTitle(record, identity, presentation?.titleProperty, presentation?.primaryKey, 'Row ' + (index + 1)),
       columnTypes, version: rowVersion(record) };
   }
+  const choices = selectedRows ?? picked.map(index => describeRow(rows[index], index));
+  const displayed = choices.slice(0, previewLimit);
+  const active = controlled ? displayed.find(row => row.key === activeKey) ?? displayed[0]
+    : activeIndex == null ? undefined : describeRow(rows[activeIndex], activeIndex);
+  const glyph = (compact = false) => renderGlyph ? renderGlyph(compact) : <ExplorerTypeIcon dataType={dataType} table={table} compact={compact} />;
+  const reportedActive = useRef<ExplorerPreviewRow>();
+  useEffect(() => {
+    const next = choices.length === 1 ? active : undefined;
+    if (reportedActive.current?.record === next?.record && reportedActive.current?.key === next?.key) return;
+    reportedActive.current = next;
+    onActiveRowChange?.(next);
+  });
   useEffect(() => {
     const snapshot = refreshState.current;
     if (!snapshot || snapshot.from === rows || loading) return;
@@ -177,7 +202,7 @@ export default function ExplorerSelection({
     setSelection(matching.length ? { rows, picked: matching, active: index, anchor: index, collapsed: false } : undefined);
   }, [rows, loading, rowKey]);
   useEffect(() => {
-    if (!onSelectedRowsChange) return;
+    if (controlled || !onSelectedRowsChange) return;
     const next = picked.map(index => describeRow(rows[index], index));
     if (reported.current.length === next.length && next.every((row, index) => {
       const previous = reported.current[index];
@@ -188,14 +213,21 @@ export default function ExplorerSelection({
     onSelectedRowsChange(next);
   });
   useEffect(() => () => {
-    if (!reported.current.length) return;
+    if (controlled || !reported.current.length) return;
     reported.current = [];
     onSelectedRowsChange?.([]);
-  }, [onSelectedRowsChange]);
+  }, [onSelectedRowsChange, controlled]);
   const findRow = (index: number) => results.current?.querySelector<HTMLTableRowElement>('[data-preview-index="' + index + '"]');
-  const select = (indices: number[], active: number, anchor = active) => {
+  const select = (indices: number[], active: number, anchor = active, preserveOtherPages = false) => {
     if (disabled) return;
     const unique = [...new Set(indices)].sort((a, b) => a - b);
+    const next = unique.map(index => describeRow(rows[index], index));
+    const pageKeys = new Set(rows.map((row, index) => rowKey(row, index)));
+    let combined: ExplorerPreviewRow[];
+    try { combined = selectedPageRows(choices, pageKeys, next, controlled && preserveOtherPages, selectionLimit); }
+    catch (error) { message.warning((error as Error).message); return; }
+    if (controlled) onSelectedRowsChange?.(combined);
+    setActiveKey(rows[active] ? rowKey(rows[active], active) : '');
     setSelection({ rows, picked: unique, active, anchor, collapsed: false });
     if (!picked.length || unique.length < 2 && view === 'compare') setView('overview');
   };
@@ -203,17 +235,17 @@ export default function ExplorerSelection({
     if (mode === 'range' && current && picked.length) {
       const start = Math.min(current.anchor, index);
       const end = Math.max(current.anchor, index);
-      select([...picked, ...Array.from({ length: end - start + 1 }, (_, offset) => start + offset)], index, current.anchor);
+      select([...picked, ...Array.from({ length: end - start + 1 }, (_, offset) => start + offset)], index, current.anchor, true);
     } else if (mode === 'toggle') {
-      select(selected.has(index) ? picked.filter(item => item !== index) : [...picked, index], index);
+      select(selected.has(index) ? picked.filter(item => item !== index) : [...picked, index], index, index, true);
     } else {
-      select(selected.has(index) ? picked : [index], index);
+      select(selected.has(index) ? picked : [index], index, index, selected.has(index));
       if (!selected.has(index)) setView('overview');
     }
   };
   const collapse = () => {
-    if (!current || disabled) return;
-    setSelection({ ...current, collapsed: true });
+    if (!active || disabled) return;
+    setSelection({ rows, picked, active: activeIndex ?? -1, anchor: current?.anchor ?? activeIndex ?? -1, collapsed: true });
     requestAnimationFrame(() => restore.current?.focus());
   };
   const show = () => {
@@ -225,6 +257,7 @@ export default function ExplorerSelection({
     if (disabled) return;
     findRow(activeIndex)?.focus({ preventScroll: true });
     setSelection(undefined);
+    if (controlled) onSelectedRowsChange?.([]);
     setView('overview');
   };
 
@@ -262,18 +295,19 @@ export default function ExplorerSelection({
     columnWidth: 36,
     selectedRowKeys: picked.map(index => rowKey(rows[index], index)),
     getCheckboxProps: (record: RecordRow) => ({
-      disabled, 'aria-label': 'Select ' + describeRow(record, rows.indexOf(record)).title,
+      disabled: disabled || (source?.kind === 'published' && Object.keys(rowIdentity(record)).length === 0) || (choices.length >= selectionLimit && !controlledKeys.has(rowKey(record, rows.indexOf(record))) && !selected.has(rows.indexOf(record))),
+      'aria-label': 'Select ' + describeRow(record, rows.indexOf(record)).title,
     }),
     onChange: (_keys: unknown[], checked: RecordRow[], info?: { type: string }) => {
       const indices = checked.map(record => rows.indexOf(record));
       const active = info?.type === 'all' ? indices[0] : indices.find(index => !selected.has(index)) ?? activeIndex;
-      select(indices, active ?? -1);
+      select(indices, active ?? -1, active ?? -1, true);
     },
   };
   const titleCell = (_value: unknown, record: RecordRow, index: number) => {
     const row = describeRow(record, index);
     return <span className="flow-explorer-selection__table-title" title={row.title}>
-      <ExplorerTypeIcon dataType={dataType} table={table} compact />
+      {glyph(true)}
       {!metadata ? <span>Loading title…</span> : Object.keys(row.identity).length > 0 && renderTitleLink ? renderTitleLink(row) : <span>{row.title}</span>}
     </span>;
   };
@@ -287,15 +321,14 @@ export default function ExplorerSelection({
   });
   tableColumns.unshift({ title: 'TITLE', key: 'explorer-result-title', className: 'flow-explorer-selection__title-column',
     width: 232, fixed: 'left', onHeaderCell: () => ({ scope: 'col' }), render: titleCell });
-  const active = activeIndex == null ? undefined : describeRow(rows[activeIndex], activeIndex);
   const panelOpen = Boolean(active && !current?.collapsed);
-  const links = useExplorerLinkAvailability(schema, table, panelOpen && renderRelationships ? active?.identity : undefined, active?.version);
-  const hasLinks = Boolean(links.page);
+  const links = useExplorerLinkAvailability(source?.kind === 'published' ? '' : schema, table, panelOpen && renderRelationships ? active?.identity : undefined, active?.version);
+  const hasLinks = Boolean(links.page) || Boolean(renderPublishedRelationships && source?.kind === 'published');
   const groups = presentation?.groups ?? [];
   const group = view.startsWith('group:') ? view.slice(6) : undefined;
   const displayView = view === 'links' && !hasLinks || group && !groups.includes(group) ? 'overview' : view;
-  const shownCount = Math.min(picked.length, previewLimit);
-  const actions = active && picked.length === 1 ? rowActions?.(active) ?? [] : [];
+  const shownCount = Math.min(choices.length, previewLimit);
+  const actions = active && choices.length === 1 ? rowActions?.(active) ?? [] : [];
   const refresh = () => {
     if (!active || !onRefresh || disabled) return;
     refreshState.current = {
@@ -319,35 +352,36 @@ export default function ExplorerSelection({
         scroll={{ x: 'max-content' }} dataSource={rows} columns={tableColumns} rowSelection={checkboxProps} onRow={rowProps} />
       {footer}
     </div>
-    {panelOpen && active && <ExplorerValueProvider schema={schema} table={table}><aside className="flow-explorer-selection__panel" id={panelId} aria-labelledby={panelId + '-heading'}
+    {panelOpen && active && <ExplorerValueProvider schema={schema} table={table} source={source}><aside className="flow-explorer-selection__panel" id={panelId} aria-labelledby={panelId + '-heading'}
       onKeyDown={event => { if (event.key === 'Escape' && !event.defaultPrevented && !disabled) { event.preventDefault(); collapse(); } }}>
       <header className="flow-explorer-selection__panel-header">
         <button className="flow-explorer-selection__control" type="button" aria-label="Collapse selection preview" aria-controls={panelId}
           aria-expanded={true} disabled={disabled} onClick={collapse}><BarsOutlined /></button>
         <h3 ref={heading} id={panelId + '-heading'} tabIndex={-1}>Selection Preview</h3>
-        {picked.length > 1 && <Button size="small" disabled={disabled} aria-pressed={displayView === 'compare'}
+        {choices.length > 1 && <Button size="small" disabled={disabled} aria-pressed={displayView === 'compare'}
           onClick={() => setView(displayView === 'compare' ? 'overview' : 'compare')}>Compare objects</Button>}
         <Button size="small" disabled={disabled} onClick={clear}>Clear selection</Button>
       </header>
-      {picked.length > 1 && <div className="flow-explorer-selection__picked">
+      {choices.length > 1 && <div className="flow-explorer-selection__picked">
         <div className="flow-explorer-selection__cards" role="group" aria-label="Selected objects">
-          {displayed.map(index => {
-            const row = describeRow(rows[index], index);
-            return <button type="button" key={row.key} aria-pressed={activeIndex === index && displayView !== 'compare'}
+          {displayed.map(row => {
+            return <button type="button" key={row.key} aria-pressed={active?.key === row.key && displayView !== 'compare'}
               title={row.title} disabled={disabled} onClick={() => {
+                setActiveKey(row.key);
+                const index = rows.findIndex((record, index) => rowKey(record, index) === row.key);
                 setSelection(current => current && { ...current, active: index });
                 setView('overview');
-              }}><ExplorerTypeIcon dataType={dataType} table={table} compact /><span>{row.title}</span></button>;
+              }}>{glyph(true)}<span>{row.title}</span></button>;
           })}
         </div>
-        {picked.length > shownCount && <p>Showing the first {shownCount} of {picked.length} selected objects.</p>}
+        {choices.length > shownCount && <p>Showing the first {shownCount} of {choices.length} selected objects.</p>}
       </div>}
       <div className="flow-explorer-selection__content">
         {displayView === 'compare' && displayed.length > 1
-          ? <Comparison columns={columns} presentations={presentations} choices={displayed.map(index => describeRow(rows[index], index))} />
+          ? <Comparison columns={columns} presentations={presentations} choices={displayed} />
           : <>
             <div className="flow-explorer-selection__object">
-              <ExplorerTypeIcon dataType={dataType} table={table} />
+              {glyph()}
               <div className="flow-explorer-selection__identity"><span>{typeName}</span><h4>{metadata ? active.title : 'Loading title…'}</h4>
                 {!!Object.keys(active.identity).length && <small>{Object.entries(active.identity).map(([field, value]) => field + ': ' + format(value)).join(' · ')}</small>}
               </div>
@@ -366,10 +400,12 @@ export default function ExplorerSelection({
                   {groups.map(name => <button type="button" key={name} aria-pressed={displayView === 'group:' + name}
                     onClick={() => setView(`group:${name}`)}>{name}</button>)}
                   {hasLinks && <button type="button" aria-pressed={displayView === 'links'} onClick={() => setView('links')}><LinkOutlined /> Links</button>}
+                  {extraViews.map(view => <button type="button" key={view.key} aria-pressed={displayView === `extra:${view.key}`} onClick={() => setView(`extra:${view.key}`)}>{view.label}</button>)}
                 </nav>
               </div>
               {links.error && <p role="alert">Unable to read relationships. <Button size="small" onClick={links.retry}>Retry</Button></p>}
-              {displayView === 'links' ? renderRelationships?.(active, links.page)
+              {displayView === 'links' ? renderPublishedRelationships?.(active) ?? renderRelationships?.(active, links.page)
+                : displayView.startsWith('extra:') ? extraViews.find(view => `extra:${view.key}` === displayView)?.render(active)
                 : !metadata ? <p role="status">Loading object presentation…</p>
                 : metadata.error ? <p>Properties are unavailable until the object presentation loads.</p>
                 : displayView === 'properties'

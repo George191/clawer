@@ -1,12 +1,13 @@
 import ExplorerFieldEditor from './ExplorerFieldEditor';
+import ExplorerFilterEditor, { normalizeFilterDepth, randomId, SortDirectionIcon, type ExplorerSort as SortCondition } from './ExplorerFilterEditor';
 import { PropertyLabel } from './PropertyTypeIcon';
 import { JsonTreeValue } from './ExplorerJsonValue';
 import { editorValue, rowChanges } from './explorerRowEditing';
-import  React,  {  useCallback,  useEffect,  useLayoutEffect,  useRef,  useState  }  from  'react';
+import  React,  {  useCallback,  useEffect,  useRef,  useState  }  from  'react';
 import  {  Link,  matchPath,  Navigate,  useLocation,  useNavigate  }  from  'react-router-dom';
 import  {  Button,  Checkbox,  ConfigProvider,  Dropdown,  Input,  InputNumber,  Modal,  Select,  Space,  Spin,  Table,  Tag,  Upload,  message  }  from  '@/components/ui';
 import  enUS  from  '@/components/ui/locale';
-import  {  AlertOutlined,  ArrowDownOutlined,  ArrowUpOutlined,  CheckOutlined,  CloseOutlined,  CodeOutlined,  DatabaseOutlined,  DeleteOutlined,  DownOutlined,  DownloadOutlined,  EditOutlined,  PlusOutlined,  ReloadOutlined,  RightOutlined,  SearchOutlined,  SettingOutlined,  TableOutlined,  UploadOutlined  }  from  '@/components/ui/icons';
+import  {  AlertOutlined,  ArrowDownOutlined,  CheckOutlined,  CloseOutlined,  CodeOutlined,  DatabaseOutlined,  DeleteOutlined,  DownOutlined,  DownloadOutlined,  EditOutlined,  PlusOutlined,  ReloadOutlined,  RightOutlined,  SearchOutlined,  SettingOutlined,  TableOutlined,  UploadOutlined  }  from  '@/components/ui/icons';
 import  '../ProductWorkspace/workspace.css';
 import CdcStatusPanel from './CdcStatusPanel';
 import OntologyExplorer, { schemaColor } from './OntologyExplorer';
@@ -17,17 +18,18 @@ import './ontology-frame.css';
 import './foundry-workbench-tokens.css';
 import './ontology-workspace.css';
 import ExplorerCatalog from './ExplorerCatalog';
-import ExplorerWorkbenchHeader from './ExplorerWorkbenchHeader';
+import ExplorerWorkbench, { ExplorerResults, ExplorerResultsFooter, explorerResultColumns } from './ExplorerWorkbench';
+import ExplorerAppliedConditions from './ExplorerAppliedConditions';
 import PublishedExplorer from './PublishedExplorer';
 import { openSaved, savedPath, type SavedDetail } from '../../services/explorerSaved';
 import { catalogReturnHref, compactExplorerSearch } from '../../services/explorerNavigation';
 import { ExplorerTypeIcon } from './ExplorerObjectOverview';
-import ExplorerSelection, { useExplorerPresentation, type ExplorerPreviewRow } from './ExplorerSelection';
+import { useExplorerPresentation, type ExplorerPreviewRow } from './ExplorerSelection';
 import ExplorerRecordLink from './ExplorerRecordLink';
 import ExplorerRowLinks from './ExplorerRowLinks';
 import NewObjectType from './NewObjectType';
 import ExplorerTableSchema from './ExplorerTableSchema';
-import { LayoutHeader, LayoutToolbar, useResultLayout } from './ExplorerResultLayout';
+import { LayoutToolbar, useResultLayout } from './ExplorerResultLayout';
 import ExplorerTableEvidence from './ExplorerTableEvidence';
 import ExplorerStreamPositions, { topicRate } from './ExplorerStreamPositions';
 import ExplorerIndexCoverage from './ExplorerIndexCoverage';
@@ -36,78 +38,17 @@ import ExplorerIndexedIdSample from './ExplorerIndexedIdSample';
 import { useSandboxIdentity } from './SandboxMarkings';
 import { getSessionState } from '../../services/session';
 import SandboxIndexPreview, { INDEX_PREVIEW_SCHEMA, INDEX_PREVIEW_TABLE } from './SandboxIndexPreview';
-import { appendAndFilters, blankExplorerFilter, cellFilterRows, countFilterTerms, exactCellValue, explorerFilterTerms, hasOr } from './explorerFilters';
+import { appendAndFilters, blankExplorerFilter, cellFilterRows, countFilterTerms, explorerFilterTerms } from './explorerFilters';
 import type { ExplorerFilter } from './explorerFilters';
 import  {  TemplateGlyph,  inferSiteKind  }  from  '../AICollect/WorkspaceDock';
 import { fetchCurrentUserContext, fetchLayers, fetchLayerTables, fetchTableData, fetchHandlerCode, queryEtlTable, queryExplorerPreview, fetchRowPreviewPolicy, fetchEtlTableColumns, fetchTableStream, fetchLayerScript, setTableOffset, validateHandlerCode, saveHandlerCode, updateEtlRow, deleteEtlRow, fetchEtlApis, createEtlApi, updateEtlApi, deleteEtlApi, fetchVulnerabilityKeywords, uploadVulnerabilityKeywords, activateVulnerabilityKeywordVersion, downloadVulnerabilityKeywordVersion, downloadCurrentVulnerabilityKeywords } from '../../services/api';
 import type { RowPreviewMode, EtlDataQuery, EtlPublishedApi, VulnerabilityKeywordConfig } from '../../services/api';
 import  type  {  LayerNode,  LayerTable,  QueryResult,  ExplorerPreviewResult,  EtlStreamState  }  from  '../../services/types';
 
-type  FilterCheckboxChange  =  {  target:  {  checked:  boolean  }  };
 type RowSnapshot = { data: QueryResult; row: Record<string, unknown>; version: string };
 const emptyPreviewRows: Record<string, unknown>[] = [];
 const emptyPreviewColumns: string[] = [];
-const  FilterCheckbox:  React.FC<{  checked:  boolean;  onChange:  (event:  FilterCheckboxChange)  =>  void;  mode?:  'single'  |  'multiple'  }>  =  ({  checked,  onChange,  mode = 'multiple'  })  =>  <span  className={`flow-filter-custom-checkbox  ${checked  ?  'is-checked'  :  ''}`}  data-mode={mode}  role="checkbox"  aria-checked={checked}  tabIndex={0}  onClick={()  =>  onChange({  target:  {  checked:  !checked  }  })}  onKeyDown={(event)  =>  {  if  (event.key  ===  'Enter'  ||  event.key  ===  ' ')  {  event.preventDefault();  onChange({  target:  {  checked:  !checked  }  });  }  }}><svg  viewBox="0 0 12 12"  aria-hidden="true"><rect  x=".5"  y=".5"  width="11"  height="11"  rx="2"  fill={checked  ?  'currentColor'  :  'none'}  opacity={checked  ?  1  :  0}  /><path  d="m3.1 6.1 1.8 1.8 4-4"  fill="none"  stroke="#151a21"  strokeWidth="1.6"  strokeLinecap="round"  strokeLinejoin="round"  opacity={checked  ?  1  :  0}  /></svg></span>;
-const  FilterAddIcon:  React.FC  =  ()  =>  <svg  className="flow-filter-mini-icon"  viewBox="0  0  18  14"  aria-hidden="true"><rect  x=".75"  y=".75"  width="16.5"  height="12.5"  rx="1"  fill="none"  stroke="currentColor"  strokeWidth="1"  /><path  d="M9  4.8v4.4M6.8  7h4.4"  fill="none"  stroke="currentColor"  strokeWidth="1"  strokeLinecap="round"  /></svg>;
-const  SortDirectionIcon:  React.FC<{  direction:  'asc'  |  'desc'  }>  =  ({  direction  })  =>  <svg  className="flow-filter-sort-direction-icon"  viewBox="0  0  16  16"  aria-hidden="true"><path  d={direction  ===  'asc'  ?  'M4 12V4m0 0L2 6m2-2 2 2M8 5h6M8 8h4M8 11h2'  :  'M4 4v8m0 0-2-2m2 2 2-2M8 5h2M8 8h4M8 11h6'}  fill="none"  stroke="currentColor"  strokeWidth="1.25"  strokeLinecap="round"  strokeLinejoin="round"  /></svg>;
-const  SortMenuChevronIcon:  React.FC  =  ()  =>  <svg  viewBox="0 0 12 12"  width="12"  height="12"  aria-hidden="true"><path  d="m3 4.5 3 3 3-3"  fill="none"  stroke="currentColor"  strokeWidth="1.2"  strokeLinecap="round"  strokeLinejoin="round"  /></svg>;
-const  flowDropdownEvent =  'flow-dropdown-open';
-const randomId = (): string => {
-    const c = globalThis.crypto as Crypto & { randomUUID?: () => string } | undefined;
-    if (typeof c?.randomUUID === 'function') return c.randomUUID();
-    const bytes = new Uint8Array(16);
-    c?.getRandomValues(bytes);
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0'));
-    return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10, 16).join('')}`;
-};
-const  useFlowDropdown =  ()  =>  {  const  id = useRef(randomId());  const  [open, setOpen] = useState(false);  useEffect(() => { const close = (event: Event) => { if ((event as CustomEvent<string>).detail !== id.current) setOpen(false); }; window.addEventListener(flowDropdownEvent, close); return () => window.removeEventListener(flowDropdownEvent, close); }, []); const setDropdownOpen = (next: boolean) => { setOpen(next); if (next) window.dispatchEvent(new CustomEvent(flowDropdownEvent, { detail: id.current })); }; return [open, setDropdownOpen] as const; };
-const SortActionMenu: React.FC<{ onDelete: () => void; onClear: () => void }> = ({ onDelete, onClear }) => {
-    const [open, setOpen] = useFlowDropdown();
-    return <Dropdown overlayClassName="flow-menu-popup" open={open} onOpenChange={setOpen} trigger={['click']} menu={{ items: [{ key: 'delete', label: 'Delete sort' }, { key: 'clear', label: 'Clear all sorts' }], onClick: ({ key }) => { (key === 'delete' ? onDelete : onClear)(); setOpen(false); } }}><button type="button" className="flow-filter-sort-menu-toggle" aria-label="Sort options" onClick={(event) => event.stopPropagation()}><SortMenuChevronIcon /></button></Dropdown>;
-};
-const  FilterFieldLink:  React.FC<{  value:  string;  onChange:  (value:  string)  =>  void  }>  =  ({  value,  onChange  })  =>  <Dropdown overlayClassName="flow-menu-popup"  trigger={['click']}  menu={{  items:  ['record_id','data_source','data_type','status','updated_at'].map((field)  =>  ({  key:  field,  label:  field  })),  onClick:  ({  key  })  =>  onChange(key)  }}><span  className="flow-filter-field-link">{value}</span></Dropdown>;
-const  FilterFieldSpan:  React.FC<{  value:  string;  onChange:  (value:  string)  =>  void  }>  =  ({  value,  onChange  })  =>  <span  className="flow-filter-field-link"  role="button"  tabIndex={0}  onClick={()  =>  {  const  next  =  window.prompt('Filter  field',  value);  if  (next)  onChange(next);  }}  onKeyDown={(event)  =>  {  if  (event.key  ===  'Enter')  {  const  next  =  window.prompt('Filter  field',  value);  if  (next)  onChange(next);  }  }}>{value}</span>;
-const  filterFields  =  ['record_id',  'data_source',  'data_type',  'raw_data',  'kafka_offset',  'kafka_partition',  'kafka_topic',  'created_at',  'updated_at'];
-const  FilterFieldPicker:  React.FC<{  value:  string;  onChange:  (value:  string)  =>  void;  className?:  string;  labelClassName?:  string;  showArrow?:  boolean;  trailing?:  React.ReactNode; fields?: string[]  }>  =  ({  value,  onChange,  className,  labelClassName,  showArrow,  trailing, fields = filterFields  })  =>  {  const  [open, setOpen] = useFlowDropdown(); const  [search,  setSearch]  =  useState('');  const  visibleFields  =  fields.filter((field)  =>  field.toLowerCase().includes(search.toLowerCase()));  return  <Dropdown open={open} onOpenChange={setOpen} overlayClassName="flow-menu-popup flow-filter-field-dropdown"  trigger={['click']}  dropdownRender={()  =>  <div  className="flow-filter-field-popup"><div  className="flow-filter-field-options">{visibleFields.map((field)  =>  <button  type="button"  className={field  ===  value  ?  'is-selected'  :  ''}  key={field}  onClick={()  =>  {  onChange(field);  setOpen(false);  }}>{field}</button>)}</div><div  className="flow-filter-field-search"><Input  size="small"  prefix={<SearchOutlined  />}  value={search}  onChange={(event)  =>  setSearch(event.target.value)}  placeholder="Search"  /></div></div>}><span  className={['flow-filter-field-link', className].filter(Boolean).join(' ')}  role="button"  tabIndex={0}><span  className={labelClassName}>{value || 'Select field'}</span>{showArrow  &&  <DownOutlined  />}{trailing}</span></Dropdown>;  };
-const  filterSuggestedValues  =  ['3486',  '3495',  '3526',  '3554',  '3573',  '3593',  '3611',  '3653',  '3714'];
-const  FilterValuePicker:  React.FC<{  value:  string;  onChange:  (value:  string)  =>  void; suggestions?: string[]  }>  =  ({  value,  onChange, suggestions = filterSuggestedValues  })  =>  {  const  [open, setOpen] = useFlowDropdown();  const  [draft,  setDraft]  =  useState(value);  const  [search,  setSearch]  =  useState('');  const  [selected,  setSelected]  =  useState(value  ?  [value]  :  []);  const  visibleValues  =  suggestions.filter((item)  =>  item.includes(search));  const  close  =  ()  =>  {  setOpen(false);  setDraft(value);  setSelected(value  ?  [value]  :  []);  setSearch('');  };  return  <Dropdown  open={open}  onOpenChange={(next)  =>  {  if  (next)  {  setDraft(value);  setSelected(value  ?  [value]  :  []);  }  setOpen(next);  }}  overlayClassName="flow-menu-popup flow-filter-value-dropdown"  trigger={['click']}  dropdownRender={()  =>  <div  className="flow-filter-value-popup"><Input  size="small"  value={draft}  onChange={(event) => { setDraft(event.target.value); setSelected([]); }} autoFocus  /><strong>Suggested values</strong><div  className="flow-filter-value-options">{visibleValues.map((item)  =>  <label  key={item}><FilterCheckbox  mode="multiple"  checked={selected.includes(item)}  onChange={(event)  =>  setSelected((items)  =>  event.target.checked  ?  [...new  Set([...items,  item])]  :  items.filter((entry)  =>  entry  !==  item))}  /><span  className="flow-filter-value-label">{item}</span></label>)}</div><div  className="flow-filter-field-search"><Input  size="small"  prefix={<SearchOutlined  />}  value={search}  onChange={(event)  =>  setSearch(event.target.value)}  placeholder="Search"  /></div><div  className="flow-filter-value-actions"><Button  size="small"  onClick={()  =>  {  onChange(selected.join(',  ')  ||  draft);  setOpen(false);  }}>Apply</Button><Button  size="small"  onClick={close}>Cancel</Button></div></div>}><span  className="flow-filter-value"  role="button"  tabIndex={0}>{value  ||  '<?>'}</span></Dropdown>;  };
-const filterOperators = [
-    { value: "=", label: "Equals" },
-    { value: "!=", label: "Does not equal" },
-    { value: "<", label: "Less than" },
-    { value: "<=", label: "Less than or equal" },
-    { value: ">", label: "Greater than" },
-    { value: ">=", label: "Greater than or equal" },
-    { value: "\u5305\u542b", label: "Contains" },
-    { value: "\u5305\u542b\uff08\u4e0d\u533a\u5206\u5927\u5c0f\u5199\uff09", label: "Contains (case insensitive)" },
-    { value: "\u4e0d\u5305\u542b", label: "Does not contain" },
-    { value: "\u4e0d\u5305\u542b\uff08\u4e0d\u533a\u5206\u5927\u5c0f\u5199\uff09", label: "Does not contain (case insensitive)" },
-    { value: "\u5f00\u59cb\u4ee5", label: "Starts with" },
-    { value: "\u4e0d\u662f\u5f00\u59cb\u4e8e", label: "Does not start with" },
-    { value: "ends  with", label: "Ends with" },
-    { value: "\u4e0d\u662f\u7ed3\u675f\u4e8e", label: "Does not end with" },
-    { value: "\u662f  null", label: "Is null" },
-    { value: "\u4e0d\u662f  null", label: "Is not null" },
-    { value: "\u662f\u7a7a\u7684", label: "Is empty" },
-    { value: "\u4e0d\u662f\u7a7a\u7684", label: "Is not empty" },
-    { value: "\u4ecb\u4e8e", label: "Between" },
-    { value: "\u4e0d\u4ecb\u4e8e", label: "Not between" },
-    { value: "\u5728\u5217\u8868", label: "In list" },
-    { value: "\u4e0d\u5728\u5217\u8868", label: "Not in list" },
-];
-const  FilterOperatorSpan:  React.FC<{  value:  string;  onChange:  (value:  string)  =>  void  }>  =  ({  value,  onChange  })  =>  { const [open, setOpen] = useFlowDropdown(); return <Dropdown open={open} onOpenChange={setOpen} overlayClassName="flow-menu-popup flow-filter-operator-dropdown" trigger={['click']} menu={{ items: filterOperators.map((operator) => ({ key: operator.value, label: operator.label })), onClick: ({ key }) => { onChange(key); setOpen(false); } }}><span className="flow-filter-op" role="button" tabIndex={0}>{filterOperators.find((operator) => operator.value === value)?.label || value}</span></Dropdown>; };
-const  filterNestingDepth  =  (id:  string)  =>  (id.match(/nested-/g)  ||  []).length;
-type SortCondition = { field: string; direction: 'asc' | 'desc' };
 type OpenApiAccess = EtlPublishedApi;
-const  filterGroupBounds  =  (rows:  Array<{  id:  string  }>,  index:  number)  =>  {  const  stack:  number[]  =  [];  const  pairs:  Array<{  start:  number;  end:  number  }>  =  [];  rows.forEach((item,  rowIndex)  =>  {  if  (item.id.startsWith('group-open-'))  stack.push(rowIndex);  else  if  (item.id.startsWith('group-close-')  &&  stack.length)  pairs.push({  start:  stack.pop()  as  number,  end:  rowIndex  });  });  return  pairs.filter((pair)  =>  pair.start  <=  index  &&  index  <=  pair.end).sort((x,  y)  =>  (x.end  -  x.start)  -  (y.end  -  y.start))[0]  ||  null;  };
-const  findContainingClose  =  (rows:  Array<{  id:  string  }>,  index:  number)  =>  {  let  depth  =  0;  for  (let  i  =  index  +  1;  i  <  rows.length;  i  +=  1)  {  if  (rows[i].id.startsWith('group-open-'))  depth  +=  1;  else  if  (rows[i].id.startsWith('group-close-'))  {  if  (depth  ===  0)  return  i;  depth  -=  1;  }  }  return  -1;  };
-const  normalizeFilterDepth  =  <T extends { id: string }>(rows: T[])  =>  {  let  depth  =  0;  return  rows.map((item)  =>  {  const  raw  =  item.id.replace(/^group-(?:open|close|filter)-/,  '').replace(/^(nested-)+/,  '');  if  (item.id.startsWith('group-open-'))  {  const  next  =  {  ...item,  id:  `group-open-${'nested-'.repeat(depth)}${raw}`  };  depth  +=  1;  return  next;  }  if  (item.id.startsWith('group-close-'))  {  depth  =  Math.max(0,  depth  -  1);  return  {  ...item,  id:  `group-close-${'nested-'.repeat(depth)}${raw}`  };  }  return  depth  >  0  ?  {  ...item,  id:  `group-filter-${'nested-'.repeat(depth)}${raw}`  }  :  {  ...item,  id:  raw  };  });  };
-function  cleanEmptyFilterGroups<T extends { id: string }>(rows: T[])  {  let  next  =  rows;  let  changed  =  true;  while  (changed)  {  changed  =  false;  for  (let  i  =  0;  i  <  next.length;  i  += 1)  {  if  (!next[i].id.startsWith('group-open-'))  continue;  const  group  =  filterGroupBounds(next,  i);  if  (!group)  continue;  const  hasCondition  =  next.slice(group.start  +  1,  group.end).some((item)  =>  !item.id.startsWith('group-open-')  &&  !item.id.startsWith('group-close-'));  if  (!hasCondition)  {  next  =  next.filter((_,  rowIndex)  =>  rowIndex  <  group.start  ||  rowIndex  >  group.end);  changed  =  true;  break;  }  }  }  return  next;  }
-function  moveFilterRows<T extends { id: string }>(rows: T[], index: number, direction: 'up' | 'down')  {  const  isGroupBoundary  =  rows[index]?.id.startsWith('group-open-')  ||  rows[index]?.id.startsWith('group-close-');  const  bounds  =  isGroupBoundary  ?  filterGroupBounds(rows,  index)  :  null;  const  start  =  bounds?.start  ??  index;  const  end  =  bounds?.end  ??  index;  const  target  =  direction  ===  'up'  ?  start  -  1  :  end  +  1;  if  (target  <  0  ||  target  >=  rows.length)  return  rows;  const  block  =  rows.slice(start,  end  +  1);  const  next  =  [...rows];  next.splice(start,  block.length);  const  insertAt  =  direction  ===  'up'  ?  start  -  1  :  start  +  1;  next.splice(insertAt,  0,  ...block);  return  cleanEmptyFilterGroups(normalizeFilterDepth(next));  };
-function  removeFilterRow<T extends { id: string }>(rows: T[], index: number)  {  const  bounds  =  filterGroupBounds(rows,  index);  if  (!bounds)  return  rows.filter((_,  rowIndex)  =>  rowIndex  !==  index);  let  next  =  rows[index].id.startsWith('group-open-')  ||  rows[index].id.startsWith('group-close-')  ?  rows.filter((_,  rowIndex)  =>  rowIndex  <  bounds.start  ||  rowIndex  >  bounds.end)  :  rows.filter((_,  rowIndex)  =>  rowIndex  !==  index);  let  changed  =  true;  while  (changed)  {  changed  =  false;  for  (let  i  =  0;  i  <  next.length;  i  +=  1)  {  if  (!next[i].id.startsWith('group-open-'))  continue;  const  group  =  filterGroupBounds(next,  i);  if  (!group)  continue;  const  hasCondition  =  next.slice(group.start  +  1,  group.end).some((item)  =>  !item.id.startsWith('group-open-')  &&  !item.id.startsWith('group-close-'));  if  (!hasCondition)  {  next  =  next.filter((_,  rowIndex)  =>  rowIndex  <  group.start  ||  rowIndex  >  group.end);  changed  =  true;  break;  }  }  }  return  next;  };
-const  FilterGroupIcon:  React.FC  =  ()  =>  <svg  className="flow-filter-mini-icon"  viewBox="0  0  18  14"  aria-hidden="true"><rect  x=".75"  y=".75"  width="16.5"  height="12.5"  rx="1"  fill="none"  stroke="currentColor"  strokeWidth="1"  /><path  d="M6.8  4.2C5.8  4.7  5.8  8.3  6.8  8.8M10.2  4.2C11.2  4.7  11.2  8.3  10.2  8.8M13.4  7.7v2.2M12.3  8.8h2.2"  fill="none"  stroke="currentColor"  strokeWidth="1"  strokeLinecap="round"  strokeLinejoin="round"  /></svg>;
 const  EditIcon:  React.FC<{  className?:  string  }>  =  ({  className  })  =>  <svg  className={className}  viewBox="0  0  24  24"  role="img"  aria-label="Edit"  fill="none"><path  d="M5.5  17.8V19h1.2l9.9-9.9-1.2-1.2-9.9  9.9Z"  stroke="currentColor"  strokeWidth="1.6"  strokeLinejoin="round"/><path  d="m14.7  7.9  1.4-1.4a1.7  1.7  0  0  1  2.4  2.4l-1.4  1.4"  stroke="currentColor"  strokeWidth="1.6"  strokeLinecap="round"/></svg>;
 const  DeleteIcon:  React.FC<{  className?:  string  }>  =  ({  className  })  =>  <svg  className={className}  viewBox="0  0  24  24"  role="img"  aria-label="Delete"  fill="none"><path  d="M6.5  7.5h11M9.5  7.5V5.8h5v1.7m-6.7  0  .7  11h5l.7-11"  stroke="currentColor"  strokeWidth="1.6"  strokeLinecap="round"  strokeLinejoin="round"/></svg>;
 const Pipeline: React.FC = () => {
@@ -317,14 +258,10 @@ const DataLayersWorkspace: React.FC = () => {
     const  tableTabsRef  =  useRef<HTMLDivElement>(null);
     const  [filterOpen,  setFilterOpen]  =  useState(false);
     const  [filterText,  setFilterText]  =  useState('');
-    const  [filterRules,  setFilterRules]  =  useState([{  id:  'rule-1',  field:  'record_id',  operator:  '=',  value:  '',  active:  true,  join:  'and'  }]);  const  [filterMoving,  setFilterMoving]  =  useState<{  id:  string;  peerId:  string;  direction:  'up'  |  'down'  }  |  null>(null);  const  [filterGroupOpen,  setFilterGroupOpen]  =  useState(false);
+    const  [filterRules,  setFilterRules]  =  useState<ExplorerFilter[]>([{  id:  'rule-1',  field:  'record_id',  operator:  '=',  value:  '',  active:  true,  join:  'and'  }]);
     const  [sortField,  setSortField]  =  useState('record_id');
     const  [sortDirection,  setSortDirection]  =  useState<'asc'  |  'desc'>('asc');
     const  [sortConditions,  setSortConditions]  =  useState<SortCondition[]>([]);
-    const  sortConditionsRef  =  useRef<HTMLDivElement>(null);
-    const  [sortConditionsOverflow,  setSortConditionsOverflow]  =  useState(false);
-    const  previousSortConditionCount  =  useRef(sortConditions.length);
-    useLayoutEffect(()  =>  {  if  (sortConditions.length  >  previousSortConditionCount.current)  sortConditionsRef.current?.scrollTo({ left: sortConditionsRef.current.scrollWidth, behavior: 'smooth' });  previousSortConditionCount.current = sortConditions.length;  },  [sortConditions.length]);
     useEffect(()  =>  {
         // Wheel over the tab strip scrolls horizontally.
         const  node  =  tableTabsRef.current;
@@ -339,7 +276,6 @@ const DataLayersWorkspace: React.FC = () => {
         node.addEventListener('wheel',  onWheel,  {  passive:  false  });
         return  ()  =>  node.removeEventListener('wheel',  onWheel);
     },  []);
-    useEffect(()  =>  {  if  (!sortConditionsOverflow)  return;  const  frame  =  window.requestAnimationFrame(()  =>  sortConditionsRef.current?.scrollTo({ left: sortConditionsRef.current.scrollWidth, behavior: 'smooth' }));  return  ()  =>  window.cancelAnimationFrame(frame);  },  [sortConditionsOverflow]);
     const  [analysisOpen,  setAnalysisOpen]  =  useState(false);
     const  activateTool  =  (tool:  'filter'  |  'script'  |  'analysis')  =>  {
         if (tool === 'script' && scriptOpen) { closeScript(); return; }
@@ -434,7 +370,6 @@ const DataLayersWorkspace: React.FC = () => {
         && (!isSchemas || !!requestedTable && requestedTable === table.name)
         && !closedTables.has(table.name) && serverTables.some((item) => item.name === table.name);
     const resourceView = isSchemas && (requestedView === 'schema' || requestedView === 'stream' || requestedView === 'api' || requestedView === 'evidence') ? requestedView : 'preview';
-    useLayoutEffect(()  =>  {  const  element  =  sortConditionsRef.current;  if  (!element)  return;  const  update  =  ()  =>  setSortConditionsOverflow(element.scrollWidth  >  element.clientWidth  +  1);  update();  const  observer  =  new  ResizeObserver(update);  observer.observe(element);  return  ()  =>  observer.disconnect();  },  [sortConditions.length, sortField, filterOpen, resourceView]);
     useEffect(() => {
         setScriptOpen(!isSchemas && selectedTableAvailable);
     }, [isSchemas, selectedSchema, table.name, selectedTableAvailable]);
@@ -721,61 +656,18 @@ const DataLayersWorkspace: React.FC = () => {
         }
         updateExplorerSorts([{ field, direction }, ...appliedQuery.sorts.filter((sort) => sort.field !== field)]);
     };
-    const describeTerm = (term: (typeof appliedTerms)[number]): string => {
-        if (term.children) return `(${describeExpression(term.children)})`;
-        const rule = term.rule!;
-        const operator = filterOperators.find((item) => item.value === rule.operator)?.label ?? rule.operator;
-        return `${rule.field} ${operator.toLowerCase()}${rule.value === '' ? '' : ` ${JSON.stringify(rule.value)}`}`;
-    };
-    const describeExpression = (terms: typeof appliedTerms): string =>
-        terms.map((term, index) => `${index ? ` ${terms[index - 1].join.toUpperCase()} ` : ''}${describeTerm(term)}`).join('');
     const removeFilterChip = (start: number, end: number) => {
         if (requireAppliedFilterDraft()) setExplorerFilters(appliedQuery.filters.filter((_, index) => index < start || index > end));
     };
-    const queryChip = (key: string, kind: string, label: string, remove: () => void) =>
-        <span className="flow-query-chip" key={key}><span title={label}>{label}</span><button type="button" aria-label={`Remove ${kind} ${label}`} title={`Remove ${kind}`} onClick={remove}><CloseOutlined /></button></span>;
-    const appliedChips = hasOr(appliedTerms) ? [
-        queryChip('root-expression', 'filter group', describeExpression(appliedTerms), () => removeFilterChip(0, appliedQuery.filters.length - 1)),
-    ] : appliedTerms.map((term) => queryChip(appliedQuery.filters[term.start].id, term.children ? 'filter group' : 'filter', describeTerm(term), () => removeFilterChip(term.start, term.end)));
 
     const resultLayout = useResultLayout(isSchemas && selectedTableAvailable && showPreview ? previewIdentity : '',
         selectedSchema, table.name, data?.columns || [], appliedQuery.sorts, updateExplorerSorts, !requestedSavedId);
-    const displayedColumns = isSchemas ? resultLayout.columns.filter(col => col.visible)
-        : (data?.columns || []).map(field => ({ field, width: 180, presentation: 'value' as const }));
-    const dataColumns: any[] = displayedColumns.map(({ field: key, width }) => {
-        const sort = appliedQuery.sorts.find((item) => item.field === key);
-        return {
-            title: isSchemas ? <LayoutHeader field={key} width={width} controls={resultLayout}><Dropdown overlayClassName="flow-menu-popup flow-explorer-menu" trigger={['click']} menu={{
-                items: [
-                    { key: 'asc', label: 'Sort ascending', icon: <ArrowUpOutlined /> },
-                    { key: 'desc', label: 'Sort descending', icon: <ArrowDownOutlined /> },
-                    { key: 'filter', label: 'Add filter', icon: <PlusOutlined /> },
-                    { key: 'hide', label: 'Hide this column', disabled: !resultLayout.ready || resultLayout.saving },
-                    { key: 'clear', label: 'Clear all sorts', disabled: !appliedQuery.sorts.length },
-                ],
-                selectedKeys: sort ? [sort.direction] : [],
-                onClick: ({ key: action }) => {
-                    if (action === 'filter') addColumnFilter(key);
-                    else if (action === 'hide') resultLayout.column(key, { visible: false });
-                    else if (action === 'clear') { if (requireAppliedSortDraft()) updateExplorerSorts([]); }
-                    else setHeaderSort(key, action === 'desc' ? 'desc' : 'asc');
-                },
-            }}><button type="button" className={`flow-column-menu${sort ? ' is-sorted' : ''}`} aria-label={`Column actions for ${key}`} title={key}><span>{key}</span><span className="flow-column-menu-end">{sort ? <><SortDirectionIcon direction={sort.direction} />{appliedQuery.sorts.indexOf(sort) + 1}</> : <DownOutlined />}</span></button></Dropdown></LayoutHeader> : <span className="flow-col-head"><span className="flow-col-head-label" title={key}>{isSchemas ? key : key.toUpperCase()}</span><button type="button" className={`flow-col-sort-btn${appliedSort?.field === key ? ` is-active is-${appliedSort.direction}` : ''}`} aria-label={`Sort by ${key}`} title="Sort" onClick={(event) => { event.stopPropagation(); toggleHeaderSort(key); }}><SortDirectionIcon direction={appliedSort?.field === key ? appliedSort.direction : 'asc'} /></button></span>,
-            dataIndex: key, key,
-            ...(isSchemas && { width, className: resultLayout.layout.wrap ? 'result-cell-wrap' : 'result-cell-clip',
-                onCell: () => ({ style: { width, minWidth: width, maxWidth: width } }) }),
-            render: (value: unknown, row: Record<string, unknown>) => {
-                if (!isSchemas && editingRowKey === rowKey(row) && editingDraft) return rowEditor(key);
-                const shown = formatCell(value);
-                const scalar = isSchemas ? exactCellValue(value, data?.columnTypes?.[key]) : undefined;
-                if (scalar === undefined) return shown;
-                return <div className="flow-explorer-value"><span title={shown}>{shown || 'Empty'}</span><Dropdown overlayClassName="flow-menu-popup flow-explorer-menu" trigger={['click']} menu={{
-                    items: [{ key: 'include', label: 'Include this value' }, { key: 'exclude', label: 'Exclude this value' }],
-                    onClick: ({ key: action }) => quickCellFilter(key, scalar, action === 'exclude'),
-                }}><button type="button" className="flow-cell-menu" aria-label={`Filter ${key} by ${shown || 'empty string'}`} title={`Filter ${key} by ${shown || 'empty string'}`}><DownOutlined /></button></Dropdown></div>;
-            },
-        };
-    });
+    const dataColumns: any[] = isSchemas ? explorerResultColumns({ layout: resultLayout, sorts: appliedQuery.sorts, types: data?.columnTypes,
+        addFilter: addColumnFilter, setSort: setHeaderSort, clearSorts: () => { if (requireAppliedSortDraft()) updateExplorerSorts([]); }, filterValue: quickCellFilter,
+    }) : (data?.columns || []).map(key => ({
+        title: <span className="flow-col-head"><span className="flow-col-head-label" title={key}>{key.toUpperCase()}</span><button type="button" className={`flow-col-sort-btn${appliedSort?.field === key ? ` is-active is-${appliedSort.direction}` : ''}`} aria-label={`Sort by ${key}`} title="Sort" onClick={event => { event.stopPropagation(); toggleHeaderSort(key); }}><SortDirectionIcon direction={appliedSort?.field === key ? appliedSort.direction : 'asc'} /></button></span>,
+        dataIndex: key, key, render: (value: unknown, row: Record<string, unknown>) => editingRowKey === rowKey(row) && editingDraft ? rowEditor(key) : formatCell(value),
+    }));
     if (!isSchemas) dataColumns.push({
         title: 'ACTION', key: 'action', fixed: 'right', width: 112,
         render: (_: unknown, row: Record<string, unknown>) => {
@@ -1184,22 +1076,36 @@ const DataLayersWorkspace: React.FC = () => {
                     {tables.map((item)  =>  {  const  active  =  table.name  ===  item.name;  return  <button  type="button"  role="tab"  aria-selected={active}  className={active  ?  'is-active'  :  ''}  key={item.name}  title={item.name} onKeyDown={(event) => { if (event.key === 'Delete') { event.preventDefault(); closeTable(item.name); } }} onClick={() => selectTable(item)}><span  className="flow-tab-favicon"><TemplateGlyph  kind={inferSiteKind(item.dataType || '', item.name)}  source={item.name}  /></span><span  className="flow-tab-label">{item.name}</span><span  className="flow-tab-close"  title={`Close ${item.name} (Delete)`} onClick={(event) => { event.stopPropagation(); closeTable(item.name); }}>&times;</span></button>;  })}
                 </div>
                 </div>}
-                {!isSchemas && !selectedTableAvailable ? <div className="flow-workspace-empty" role="status"><DatabaseOutlined /><h3>{tablesLoading || !catalogLoaded && !requestError ? 'Loading schema resources…' : selectedSchema ? serverTables.length ? 'No table selected' : 'No tables in this schema' : 'No schema selected'}</h3><p>{schemaNode?.status === 'stopped' ? 'This schema is not available in the connected database.' : serverTables.length ? 'Select a table from the catalog.' : 'Select a schema to explore its tables and data.'}</p></div> : <div className="flow-inspector">
-                    {isSchemas && requestedSchema && requestedTable && <fieldset className="wb-shell" disabled={workbenchLocked}>
-                        <ExplorerWorkbenchHeader key={JSON.stringify([previewIdentity, requestedSchema, requestedTable])} source={{ kind: 'backed', schema: requestedSchema, table: requestedTable }} available={selectedTableAvailable}
-                            backToTypes={backToTypes} label={selectedTableAvailable ? mapping?.displayName || requestedTable : requestedTable}
-                            glyph={<ExplorerTypeIcon compact dataType={selectedTableAvailable ? mapping?.dataType ?? table.dataType : undefined} table={requestedTable} />}
-                            fields={data?.columns || filterFields} names={Object.fromEntries((mapping?.properties || []).flatMap(p => p.sourceColumn ? [[p.sourceColumn, p.name]] : []))}
-                            rows={dataRows.map((row,i) => ({...row,...primaryKey(row,i)}))} selected={workbenchRows} query={{ ...appliedQuery, partition }} resource={resourceView} admin={canManage}
-                            layoutControl={showPreview && <LayoutToolbar controls={resultLayout} admin={canManage} types={data?.columnTypes} />}
-                            selectResource={selectResourceView} saved={activeSaved} savedLoading={savedLoading} savedError={savedError}
-                            openSavedItem={openSavedItem} closeSavedItem={closeSavedItem} saveCompleted={(detail: SavedDetail) => openSavedItem(detail.id)} updateSavedItem={updateSavedItem}
-                            addFilter={addColumnFilter} toggleCatalog={() => setCatalogOpen(value => !value)}
-                            catalogOpen={catalogOpen} closeCatalog={() => setCatalogOpen(false)}
-                            mode={workbenchMode} setMode={setWorkbenchMode} clearSelection={() => { setWorkbenchRows([]); setSelectionEpoch(n => n + 1); }}
-                            filterButton={showPreview && <button aria-expanded={filterOpen} onClick={() => activateTool('filter')}>Filter &amp; sort{filterCount + sortCount ? ` (${filterCount + sortCount})` : ''}</button>}
-                        />
-                    </fieldset>}
+                {!isSchemas && !selectedTableAvailable ? <div className="flow-workspace-empty" role="status"><DatabaseOutlined /><h3>{tablesLoading || !catalogLoaded && !requestError ? 'Loading schema resources…' : selectedSchema ? serverTables.length ? 'No table selected' : 'No tables in this schema' : 'No schema selected'}</h3><p>{schemaNode?.status === 'stopped' ? 'This schema is not available in the connected database.' : serverTables.length ? 'Select a table from the catalog.' : 'Select a schema to explore its tables and data.'}</p></div> : <ExplorerWorkbench locked={workbenchLocked} header={isSchemas && requestedSchema && requestedTable ? {source: { kind: 'backed', schema: requestedSchema, table: requestedTable },
+available: selectedTableAvailable,
+backToTypes: backToTypes,
+label: selectedTableAvailable ? mapping?.displayName || requestedTable : requestedTable,
+glyph: <ExplorerTypeIcon compact dataType={selectedTableAvailable ? mapping?.dataType ?? table.dataType : undefined} table={requestedTable} />,
+fields: data?.columns || filterFields,
+names: Object.fromEntries((mapping?.properties || []).flatMap(p => p.sourceColumn ? [[p.sourceColumn, p.name]] : [])),
+rows: dataRows.map((row,i) => ({...row,...primaryKey(row,i)})),
+selected: workbenchRows,
+query: { ...appliedQuery, partition },
+resource: resourceView,
+admin: canManage,
+layoutControl: showPreview && <LayoutToolbar controls={resultLayout} admin={canManage} types={data?.columnTypes} />,
+selectResource: selectResourceView,
+saved: activeSaved,
+savedLoading: savedLoading,
+savedError: savedError,
+openSavedItem: openSavedItem,
+closeSavedItem: closeSavedItem,
+saveCompleted: (detail: SavedDetail) => openSavedItem(detail.id),
+updateSavedItem: updateSavedItem,
+addFilter: addColumnFilter,
+toggleCatalog: () => setCatalogOpen(value => !value),
+catalogOpen: catalogOpen,
+closeCatalog: () => setCatalogOpen(false),
+mode: workbenchMode,
+setMode: setWorkbenchMode,
+clearSelection: () => { setWorkbenchRows([]); setSelectionEpoch(n => n + 1); },
+filterButton: showPreview && <button aria-expanded={filterOpen} onClick={() => activateTool('filter')}>Filter &amp; sort{filterCount + sortCount ? ` (${filterCount + sortCount})` : ''}</button>} : undefined}>
+
                     {!selectedTableAvailable ? <div className="flow-inspector-body" aria-busy={explorerLoading}>
                         {requestError ? <div className="flow-schema-state" role="alert">{requestError} <Button size="small" onClick={refreshWorkspace}>Retry</Button></div> : !explorerLoading && <div className="flow-schema-state" role="status">{requestedSchema && requestedTable ? 'Object type is unavailable.' : 'Choose an object type from the catalog.'}</div>}
                     </div> : <>
@@ -1239,7 +1145,34 @@ const DataLayersWorkspace: React.FC = () => {
                         <button type="button" aria-pressed={resourceView === 'evidence'} onClick={() => selectResourceView('evidence')}><AlertOutlined /> Evidence</button>
                         {canManage && <button type="button" aria-pressed={resourceView === 'api'} onClick={() => selectResourceView('api')}><CodeOutlined /> Published APIs</button>}
                     </nav>}
-                    <div className="flow-inspector-body" ref={previewViewport}>
+                    <ExplorerResults viewportRef={previewViewport} selectionKey={JSON.stringify([selectionEpoch, policyKey])} results={isSchemas && showPreview && !savedBlocked && queryScopeReady && !previewError ? {onSelectedRowsChange: setWorkbenchRows,
+schema: selectedSchema,
+table: table.name,
+dataType: mapping?.dataType ?? table.dataType,
+rows: dataRows,
+columns: data?.columns ?? emptyPreviewColumns,
+columnTypes: data?.columnTypes,
+metadata: explorerPresentation,
+dataColumns: dataColumns,
+rowKey: rowKey,
+rowIdentity: primaryKey,
+rowVersion: rowVersion,
+presentations: Object.fromEntries(resultLayout.columns.map(column => [column.field, column.presentation ?? 'value'])),
+loading: loading,
+locked: !!editingRowKey || !!deleteSnapshot || mutationLoading,
+renderTitleLink: row => <ExplorerRecordLink schema={selectedSchema} table={table.name} identity={row.identity}>{row.title}</ExplorerRecordLink>,
+renderFullDetails: row => <ExplorerRecordLink schema={selectedSchema} table={table.name} identity={row.identity} />,
+renderRelationships: (row, page) => <ExplorerRowLinks schema={selectedSchema} table={table.name} primaryKey={row.identity} initialPage={page} />,
+rowActions: rowActions,
+renderMutation: rowMutation,
+onRefresh: () => setPreviewRevision(value => value + 1),
+footer: previewPage && <ExplorerResultsFooter offset={previewPage.offset} rowCount={previewPage.result.rowCount} pageSize={pageSize} loading={loading}
+ canPageFurther={previewPage.offset === (pageNumber - 1) * pageSize && previewPage.limit === pageSize && previewPage.result.canPageFurther}
+ onPageSize={size => { if (canChangePreview()) { setPageSize(size); setPageNumber(1); } }}
+ onPrevious={() => { if (canChangePreview()) setPageNumber(pageNumber - 1); }} onNext={() => { if (canChangePreview()) setPageNumber(pageNumber + 1); }}
+ notices={(!previewPage.result.stableOrder || previewPage.result.hasMore && !previewPage.result.canPageFurther) && <>
+ {!previewPage.result.stableOrder && <span>No stable primary key. Rows may repeat or be skipped when paging.</span>}
+ {previewPage.result.hasMore && !previewPage.result.canPageFurther && <span>Interactive preview limit reached. Narrow filters to continue.</span>}</>} />} : undefined}>
                         {isSchemas && savedLoading && <div className="flow-schema-state" role="status">Loading saved item…</div>}
                         {isSchemas && savedError && <div className="flow-schema-state" role="alert"><strong>Saved item unavailable</strong><p>{savedError}</p><Button size="small" onClick={() => setSavedRetry(value => value + 1)}>Retry saved item</Button><Button size="small" onClick={closeSavedItem}>Return to table</Button></div>}
                         {showIndexPreview && !savedBlocked && (canManage ? <SandboxIndexPreview /> :
@@ -1266,18 +1199,13 @@ const DataLayersWorkspace: React.FC = () => {
                             <button type="button" className={`flow-tool ${filterOpen ? 'is-active' : ''}`} aria-expanded={filterOpen} onClick={() => activateTool('filter')}>{canManage ? 'Filter & API' : 'Filter'}</button>
                             <button type="button" className={`flow-tool ${scriptOpen ? 'is-active' : ''}`} onClick={() => activateTool('script')}>Layer script</button>
                         </div>}
-                        {isSchemas && showPreview && !savedBlocked && queryScopeReady && (filterCount > 0 || sortCount > 0) && <div className="flow-schema-applied flow-query-chips" aria-label="Applied conditions">
-                            <span>Applied: {filterCount} {filterCount === 1 ? 'filter' : 'filters'} · {sortCount} {sortCount === 1 ? 'sort' : 'sorts'}</span>
-                            {appliedQuery.search?.trim() && queryChip('search', 'search', `Search: ${appliedQuery.search}`, () => {
+                        {isSchemas && showPreview && !savedBlocked && queryScopeReady && <ExplorerAppliedConditions
+                            filters={appliedQuery.filters} search={appliedQuery.search} sorts={appliedQuery.sorts} removeFilters={removeFilterChip}
+                            removeSearch={() => {
                                 if (!canChangePreview()) return;
                                 if (filterText === appliedQuery.search) setFilterText('');
-                                setAppliedQuery((current) => ({ ...current, search: '' })); setPageNumber(1);
-                            })}
-                            {appliedChips}
-                            {appliedQuery.sorts.map((sort) => queryChip(`sort-${sort.field}`, 'sort', `${sort.field} ${sort.direction === 'asc' ? '↑' : '↓'}`, () => {
-                                if (requireAppliedSortDraft()) updateExplorerSorts(appliedQuery.sorts.filter((item) => item.field !== sort.field));
-                            }))}
-                        </div>}
+                                setAppliedQuery(current => ({ ...current, search: '' })); setPageNumber(1);
+                            }} removeSort={field => { if (requireAppliedSortDraft()) updateExplorerSorts(appliedQuery.sorts.filter(item => item.field !== field)); }} />}
                         {isSchemas && resourceView === 'schema' && <ExplorerTableSchema key={`${selectedSchema}.${table.name}`} schema={selectedSchema} table={table.name} canManage={canManage} onDirtyChange={setMappingDirty} onSaved={() => setPreviewRevision(v=>v+1)} />}
                         {isSchemas && resourceView === 'evidence' && <ExplorerTableEvidence key={tableDescription} schema={selectedSchema} table={table.name} canManage={canManage} />}
                         {isSchemas && resourceView === 'stream' && <section className="flow-schema-details flow-explorer-stream" aria-label="Stream status">
@@ -1302,53 +1230,23 @@ const DataLayersWorkspace: React.FC = () => {
                             <Button size="small" onClick={isSchemas ? () => setPreviewRevision((revision) => revision + 1) : refreshWorkspace}>Retry preview</Button>
                             {isSchemas && pageNumber > 1 && <Button size="small" onClick={() => setPageNumber(1)}>Back to first page</Button>}
                         </div>}
-                        {showPreview && !savedBlocked && queryScopeReady && filterOpen && <div className="flow-filter-card">
-                                <div className={isSchemas ? 'flow-schema-filter-search' : undefined}>
-                                    {isSchemas && <span>Search across columns</span>}
-                                    <Input.Search aria-label="Search all columns" size="small" placeholder="Search all columns" value={filterText} onChange={(event) => setFilterText(event.target.value)} onSearch={applyFilters} />
-                                </div>
-                                {isSchemas && <div className="flow-schema-filter-label">Column filters</div>}
-                                <div className="flow-filter-rules">{filterRules.map((rule,  index)  =>  <div  className={['flow-filter-rule', rule.id.startsWith('group-open-') ? 'is-group-open' : '', rule.id.startsWith('group-close-') ? 'is-group-close' : '', rule.id.startsWith('group-filter-') ? 'is-nested' : '', rule.id.includes('nested-') ? 'is-group-nested' : '', `is-group-depth-${filterNestingDepth(rule.id)}`, filterMoving?.id === rule.id ? `is-moving is-moving-${filterMoving.direction}` : filterMoving?.peerId === rule.id ? `is-moving is-moving-${filterMoving.direction === 'up' ? 'down' : 'up'}` : '', rule.active === false ? 'is-inactive' : ''].filter(Boolean).join(' ')}  style={{  '--filter-depth':  filterNestingDepth(rule.id)  }  as  React.CSSProperties}  key={rule.id} id={isSchemas ? `explorer-filter-${rule.id}` : undefined}><span  className="flow-filter-row-check">{index  ===  0  ?  <FilterCheckbox  checked={rule.active  !==  false}  onChange={(event)  =>  setFilterRules((rows)  =>  rows.map((item,  itemIndex)  =>  rule.id.startsWith('group-open-')  ?  (()  =>  {  const  ruleIndex  =  rows.findIndex((entry)  =>  entry.id  ===  rule.id);  const  bounds  =  filterGroupBounds(rows,  ruleIndex);  return  bounds  &&  ruleIndex  <=  itemIndex  &&  itemIndex  <=  bounds.end  ?  {  ...item,  active:  event.target.checked  }  :  item;  })()  :  item.id  ===  rule.id  ?  {  ...item,  active:  event.target.checked  }  :  item))}  />  :  <FilterCheckbox  checked={rule.active  !==  false}  onChange={(event)  =>  setFilterRules((rows)  =>  rows.map((item,  itemIndex)  =>  rule.id.startsWith('group-open-')  ?  (()  =>  {  const  ruleIndex  =  rows.findIndex((entry)  =>  entry.id  ===  rule.id);  const  bounds  =  filterGroupBounds(rows,  ruleIndex);  return  bounds  &&  ruleIndex  <=  itemIndex  &&  itemIndex  <=  bounds.end  ?  {  ...item,  active:  event.target.checked  }  :  item;  })()  :  item.id  ===  rule.id  ?  {  ...item,  active:  event.target.checked  }  :  item))}  />}</span><span  className="flow-filter-row-content"><FilterFieldPicker fields={filterFields} value={rule.field}  onChange={(field)  =>  setFilterRules((rows)  =>  rows.map((item)  =>  item.id  ===  rule.id  ?  {  ...item,  field  }  :  item))}  /><FilterOperatorSpan  value={rule.operator}  onChange={(operator)  =>  setFilterRules((rows)  =>  rows.map((item)  =>  item.id  ===  rule.id  ?  {  ...item,  operator  }  :  item))}  /><FilterValuePicker suggestions={[...new Set(dataRows.map((row) => formatCell(row[rule.field])))]} value={rule.value}  onChange={(value)  =>  setFilterRules((rows)  =>  rows.map((item)  =>  item.id  ===  rule.id  ?  {  ...item,  value  }  :  item))}  />{index  <  filterRules.length  -  1  &&  !filterRules[index  +  1]?.id.startsWith('group-close-')  &&  <span  className="flow-filter-join"  role="button"  tabIndex={0}  onClick={()  =>  setFilterRules((rows)  =>  rows.map((item)  =>  item.id  ===  rule.id  ?  {  ...item,  join:  item.join  ===  'or'  ?  'and'  :  'or'  }  :  item))}>{rule.join  ||  'and'}</span>}</span>{(index  ===  filterRules.length  - 1  ||  rule.id.startsWith('group-close-')  ||  filterRules[index  + 1]?.id.startsWith('group-close-'))  &&  <span  className="flow-filter-row-actions">{rule.id.startsWith('group-close-')  &&  index  <  filterRules.length  -  1  &&  !filterRules[index  + 1]?.id.startsWith('group-close-')  &&  <span  className="flow-filter-join flow-filter-close-join"  role="button"  tabIndex={0}  onClick={()  =>  setFilterRules((rows)  =>  rows.map((item)  =>  item.id  ===  rule.id  ?  {  ...item,  join:  item.join  ===  'or'  ?  'and'  :  'or'  }  :  item))}>{rule.join  ||  'and'}</span>}<button  type="button"  className="flow-filter-mini" aria-label="Add filter condition" title="Add filter condition" onClick={()  =>  setFilterRules((rows)  =>  {  const  next  =  {  id:  ((rule.id.startsWith('group-filter-')  ||  rule.id.startsWith('group-close-'))  &&  filterNestingDepth(rule.id)  >  0)  ?  `group-filter-${'nested-'.repeat(filterNestingDepth(rule.id))}${randomId()}`  :  randomId(),  field: filterFields[0] || '',  operator:  '=',  value:  '',  active:  true,  join:  'and'  };  const  cleanRows  =  rows.length  ===  1  &&  rows[0].id === 'placeholder-rule'  ?  []  :  rows;  const  closeIndex  =  rule.id.startsWith('group-close-')  ?  index  :  findContainingClose(cleanRows,  index);  if  (rule.id.startsWith('group-close-'))  return  [...cleanRows.slice(0, index  +  1), next, ...cleanRows.slice(index  +  1)];  if  (closeIndex  >= 0)  return  [...cleanRows.slice(0, closeIndex), next, ...cleanRows.slice(closeIndex)];  return  [...cleanRows, next];  })}><FilterAddIcon /></button><button  type="button"  className="flow-filter-mini"  aria-label="Add filter group" title="Add filter group" onClick={()  =>  setFilterRules((rows)  =>  {  const  groupId  =  randomId();  const  cleanRows  =  rows.length  ===  1  &&  rows[0].id  ===  'placeholder-rule'  ?  []  :  rows;  const  nested  =  rule.id.startsWith('group-filter-')  ||  rule.id.startsWith('group-close-');  const  depth  =  rule.id.match(/nested-/g)?.length  ||  0;  const  currentPrefix  =  'nested-'.repeat(depth);  const  childPrefix  =  'nested-'.repeat(depth  +  1);  const  additions  =  [{  id:  `group-open-${currentPrefix}${groupId}`,  field:  '',  operator:  '=',  value:  '',  active:  true,  join:  'and'  },  {  id:  `group-filter-${childPrefix}${groupId}`,  field: filterFields[0] || '',  operator:  '=',  value:  '',  active:  true,  join:  'and'  },  {  id:  `group-close-${currentPrefix}${groupId}`,  field:  '',  operator:  '=',  value:  '',  active:  true,  join:  'and'  }];  const  closeIndex  =  nested  ?  findContainingClose(cleanRows,  index)  :  -1;  return  closeIndex  >=  0  ?  [...cleanRows.slice(0, closeIndex), ...additions, ...cleanRows.slice(closeIndex)]  :  [...cleanRows, ...additions];  })}><FilterGroupIcon /></button>{rule.id === 'placeholder-rule' && <span className="flow-filter-placeholder">Select + to add a filter condition</span>}</span>}<span  className="flow-filter-row-end-actions"><button  type="button"  className="flow-filter-reorder"  aria-label="Move  up"  disabled={index  ===  0}  onClick={()  =>  {  if  (index  === 0)  return;  const  movingId  =  rule.id;  setFilterMoving({  id:  movingId,  peerId:  filterRules[index  -  1].id,  direction:  'up'  });  window.setTimeout(()  =>  {  setFilterRules((rows)  =>  {  const  currentIndex  =  rows.findIndex((item)  =>  item.id  ===  movingId);  if  (currentIndex  <=  0)  return  rows;  const  next  =  [...rows];  [next[currentIndex  -  1],  next[currentIndex]]  =  [next[currentIndex],  next[currentIndex  - 1]];  return  moveFilterRows(rows, currentIndex, 'up');  });  setFilterMoving(null);  },  180);  }}><ArrowUpOutlined  /></button><button  type="button"  className="flow-filter-reorder"  aria-label="Move  down"  disabled={index  ===  filterRules.length  -  1}  onClick={()  =>  {  if  (index  >=  filterRules.length  -  1)  return;  const  movingId  =  rule.id;  setFilterMoving({  id:  movingId,  peerId:  filterRules[index  +  1].id,  direction:  'down'  });  window.setTimeout(()  =>  {  setFilterRules((rows)  =>  moveFilterRows(rows, rows.findIndex((item)  =>  item.id  ===  movingId), 'down'));  setFilterMoving(null);  },  180);  }}><ArrowDownOutlined  /></button><button  type="button"  className="flow-filter-remove" aria-label="Remove filter condition" title="Remove filter condition" onClick={()  =>  setFilterRules((rows)  =>  {  if  (rows.length  ===  1)  return  [{  id:  'placeholder-rule',  field:  '',  operator:  '=',  value:  '',  active:  false,  join:  'and',  placeholder:  true  }];  const  next  =  removeFilterRow(rows, index);  return  next.length  ?  next  :  [{  id:  'placeholder-rule',  field:  '',  operator:  '=',  value:  '',  active:  false,  join:  'and',  placeholder:  true  }];  })}><CloseOutlined /></button></span></div>)}</div>
-                                <div  className="flow-filter-sort"><strong>Sort by</strong><div className="flow-sort-conditions-viewport" ref={sortConditionsRef}><div className="flow-sort-conditions-track"><span  className="flow-filter-sort-field-wrap"><FilterFieldPicker fields={filterFields} value={sortField}  onChange={(field) => { setSortField(field); setAppliedQuery((current) => ({ ...current, sorts: [...(field ? [{ field, direction: sortDirection }] : []), ...sortConditions.filter((item) => item.field)] })); setPageNumber(1); }}  className="flow-filter-sort-field"  labelClassName="flow-filter-sort-field-label"  trailing={<><button  type="button"  className="flow-filter-sort-direction-toggle"  aria-label={sortDirection  ===  'asc'  ?  'Switch to descending'  :  'Switch to ascending'}  onClick={(event)  =>  {  event.stopPropagation();  const  nextDirection:  'asc'  |  'desc'  =  sortDirection  ===  'asc'  ?  'desc'  :  'asc';  setSortDirection(nextDirection);  setAppliedQuery((current)  =>  ({  ...current,  sorts:  [...(sortField  ?  [{  field:  sortField,  direction:  nextDirection  }]  :  []),  ...sortConditions.filter((item)  =>  item.field)]  }));  setPageNumber(1);  }}><SortDirectionIcon  direction={sortDirection}  /></button><SortActionMenu onDelete={() => { setSortField(''); setAppliedQuery((current) => ({ ...current, sorts: [...sortConditions.filter((item) => item.field)] })); setPageNumber(1); }} onClear={() => { setSortField(''); setSortConditions([]); setAppliedQuery((current) => ({ ...current, sorts: [] })); setPageNumber(1); }} /></>}  /></span>{sortConditions.map((condition, index) => <span className="flow-filter-sort-field-wrap" key={`${condition.field}-${index}`}><FilterFieldPicker fields={filterFields} value={condition.field} onChange={(field) => setSortConditions((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, field } : item))} className="flow-filter-sort-field" labelClassName="flow-filter-sort-field-label" trailing={<><button type="button" className="flow-filter-sort-direction-toggle" aria-label="Toggle sort direction" onClick={(event) => { event.stopPropagation(); setSortConditions((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, direction: item.direction === 'asc' ? 'desc' : 'asc' } : item)); }}><SortDirectionIcon direction={condition.direction} /></button><SortActionMenu onDelete={() => { const next = sortConditions.filter((_, itemIndex) => itemIndex !== index); setSortConditions(next); setAppliedQuery((current) => ({ ...current, sorts: [...(sortField ? [{ field: sortField, direction: sortDirection }] : []), ...next.filter((item) => item.field)] })); setPageNumber(1); }} onClear={() => { setSortField(''); setSortConditions([]); setAppliedQuery((current) => ({ ...current, sorts: [] })); setPageNumber(1); }} /></>} /></span>)}<button type="button" className="flow-filter-mini flow-filter-sort-add" aria-label="Add sort field" onClick={() => setSortConditions((conditions) => [...conditions, { field: filterFields[0] || '', direction: 'asc' }])}><FilterAddIcon /></button></div></div>{sortConditionsOverflow && <div className="flow-sort-scroll-buttons"><button type="button" aria-label="Scroll left" onClick={() => sortConditionsRef.current?.scrollBy({ left: -140, behavior: 'smooth' })}>‹</button><button type="button" aria-label="Scroll right" onClick={() => sortConditionsRef.current?.scrollBy({ left: 140, behavior: 'smooth' })}>›</button></div>}</div>
-                                {isSchemas && !indexPreviewAsset && selectedTableAvailable && <ExplorerIndexCoverage schema={selectedSchema} table={table.name}
-                                    rules={filterRules} columnTypes={data?.columnTypes} allowSample={canManage} conflictingOptions={Boolean(filterText || partition || sortField ||
-                                        sortConditions.some(item => item.field) || appliedQuery.sorts.length)} />}
-                                <div  className="flow-filter-apply"><button type="button" className="flow-filter-apply-button" onClick={applyFilters}>Apply filters</button><span className="flow-filter-edited-hint">Apply to update filters and pending sorts</span>{!isSchemas && canManage && <span className="flow-api-count"><button type="button" className="flow-api-count-number" onClick={() => { setApiListOpen(true); setFilterOpen(true); }}>{apiCount}</button><span className="flow-api-count-label"> / APIs</span></span>}</div>
-                                {!isSchemas && canManage && apiListOpen && apiPanel}
-                            </div>}
+                        {showPreview && !savedBlocked && queryScopeReady && filterOpen && <ExplorerFilterEditor
+                            rules={filterRules} setRules={setFilterRules} search={filterText} onSearchChange={setFilterText}
+                            sorts={[{ field: sortField, direction: sortDirection }, ...sortConditions]}
+                            onSortsChange={(sorts, apply) => {
+                                setSortField(sorts[0]?.field || ''); setSortDirection(sorts[0]?.direction || 'asc'); setSortConditions(sorts.slice(1));
+                                if (apply) { setAppliedQuery(current => ({ ...current, sorts: sorts.filter(item => item.field) })); setPageNumber(1); }
+                            }}
+                            fields={filterFields} rows={dataRows} formatValue={formatCell} onApply={applyFilters} columnMode={isSchemas}
+                            coverage={isSchemas && !indexPreviewAsset && selectedTableAvailable && <ExplorerIndexCoverage schema={selectedSchema} table={table.name}
+                                rules={filterRules} columnTypes={data?.columnTypes} allowSample={canManage} conflictingOptions={Boolean(filterText || partition || sortField ||
+                                    sortConditions.some(item => item.field) || appliedQuery.sorts.length)} />}
+                            footerAccessory={!isSchemas && canManage && <span className="flow-api-count"><button type="button" className="flow-api-count-number" onClick={() => { setApiListOpen(true); setFilterOpen(true); }}>{apiCount}</button><span className="flow-api-count-label"> / APIs</span></span>}>
+                            {!isSchemas && canManage && apiListOpen && apiPanel}
+                        </ExplorerFilterEditor>}
                             {isSchemas && resourceView === 'api' && (canManage ? apiPanel : <div className="flow-schema-state" role="status">Published APIs are available to administrators only.</div>)}
-                            {showPreview && !savedBlocked && queryScopeReady && !previewError && (isSchemas ?
-                                <ExplorerSelection onSelectedRowsChange={setWorkbenchRows} key={JSON.stringify([selectionEpoch, policyKey])}
-                                    schema={selectedSchema} table={table.name} dataType={mapping?.dataType ?? table.dataType} rows={dataRows} columns={data?.columns ?? emptyPreviewColumns}
-                                    columnTypes={data?.columnTypes} metadata={explorerPresentation}
-                                    dataColumns={dataColumns} rowKey={rowKey} rowIdentity={primaryKey} rowVersion={rowVersion}
-                                    presentations={Object.fromEntries(resultLayout.columns.map(column => [column.field, column.presentation ?? 'value']))}
-                                    loading={loading} locked={!!editingRowKey || !!deleteSnapshot || mutationLoading}
-                                    renderTitleLink={row => <ExplorerRecordLink schema={selectedSchema} table={table.name} identity={row.identity}>{row.title}</ExplorerRecordLink>}
-                                    renderFullDetails={row => <ExplorerRecordLink schema={selectedSchema} table={table.name} identity={row.identity} />}
-                                    renderRelationships={(row, page) => <ExplorerRowLinks schema={selectedSchema} table={table.name} primaryKey={row.identity} initialPage={page} />}
-                                    rowActions={rowActions} renderMutation={rowMutation}
-                                    onRefresh={() => setPreviewRevision(value => value + 1)}
-                                    footer={previewPage && <footer className="flow-preview-pager">
-                                    {(!previewPage.result.stableOrder || previewPage.result.hasMore && !previewPage.result.canPageFurther) && <div className="flow-preview-pager-notices" role="status">
-                                        {!previewPage.result.stableOrder && <span>No stable primary key. Rows may repeat or be skipped when paging.</span>}
-                                        {previewPage.result.hasMore && !previewPage.result.canPageFurther && <span>Interactive preview limit reached. Narrow filters to continue.</span>}
-                                    </div>}
-                                    <nav aria-label="Preview pagination">
-                                        <span className="flow-preview-range" aria-live="polite">{loading ? 'Loading preview…' : previewPage.result.rowCount
-                                            ? `Rows ${(previewPage.offset + 1).toLocaleString('en-US')}–${(previewPage.offset + previewPage.result.rowCount).toLocaleString('en-US')}`
-                                            : 'No rows on this page'}</span>
-                                        <div className="flow-preview-page-controls">
-                                            <label>Rows per page <select aria-label="Rows per page" value={pageSize} disabled={loading} onChange={(event) => {
-                                                if (!canChangePreview()) return;
-                                                setPageSize(Number(event.target.value)); setPageNumber(1);
-                                            }}>{[10, 20, 50].map((count) => <option key={count} value={count}>{count}</option>)}</select></label>
-                                            <Button size="small" disabled={loading || pageNumber <= 1} onClick={() => { if (canChangePreview()) setPageNumber(pageNumber - 1); }}>Previous</Button>
-                                            <Button size="small" disabled={loading || previewPage.offset !== (pageNumber - 1) * pageSize || previewPage.limit !== pageSize || !previewPage.result.canPageFurther} onClick={() => { if (canChangePreview()) setPageNumber(pageNumber + 1); }}>Next</Button>
-                                        </div>
-                                    </nav>
-                                </footer>} /> : <ConfigProvider locale={enUS}><Table className="flow-data-table" size="small" loading={loading} pagination={{ current: pageNumber, pageSize, total: data?.total ?? data?.rowCount ?? 0, size: 'small', showTotal: (total: number, range: [number, number]) => `${range[0]}–${range[1]} / ${data?.totalEstimated ? '~' : ''}${total.toLocaleString('en-US')} rows${data?.totalEstimated ? ' (estimated)' : ''} · ${table.size} · ${fieldCount} fields`, showSizeChanger: true, pageSizeOptions: [10, 20, 50], onChange: (page, size) => { if (editingRowKey) { message.warning('Save or cancel the current row edit first'); return; } setPageNumber(size !== pageSize ? 1 : page); setPageSize(size); } }} rowKey={rowKey} scroll={{ x: 'max-content' }} dataSource={dataRows} columns={dataColumns} onRow={(row) => ({ onDoubleClick: () => startRowEdit(rowKey(row)), className: editingRowKey === rowKey(row) ? 'flow-row-editing' : undefined })} /></ConfigProvider>)}
-                    </div>
+                            {showPreview && !savedBlocked && queryScopeReady && !previewError && (!isSchemas && (<ConfigProvider locale={enUS}><Table className="flow-data-table" size="small" loading={loading} pagination={{ current: pageNumber, pageSize, total: data?.total ?? data?.rowCount ?? 0, size: 'small', showTotal: (total: number, range: [number, number]) => `${range[0]}–${range[1]} / ${data?.totalEstimated ? '~' : ''}${total.toLocaleString('en-US')} rows${data?.totalEstimated ? ' (estimated)' : ''} · ${table.size} · ${fieldCount} fields`, showSizeChanger: true, pageSizeOptions: [10, 20, 50], onChange: (page, size) => { if (editingRowKey) { message.warning('Save or cancel the current row edit first'); return; } setPageNumber(size !== pageSize ? 1 : page); setPageSize(size); } }} rowKey={rowKey} scroll={{ x: 'max-content' }} dataSource={dataRows} columns={dataColumns} onRow={(row) => ({ onDoubleClick: () => startRowEdit(rowKey(row)), className: editingRowKey === rowKey(row) ? 'flow-row-editing' : undefined })} /></ConfigProvider>))}
+                    </ExplorerResults>
                     <Modal  className="flow-surface-modal flow-script-modal"  title="Layer  script"  open={scriptOpen} onCancel={closeScript} keyboard={!mutationLoading} maskClosable={!mutationLoading}  footer={null}  width={720}>
                         <div  className="flow-script-editor">
                             <div  className="flow-script-note">{scriptNote}. Drafts are stored separately and are not deployed to workers.</div>
@@ -1381,7 +1279,7 @@ const DataLayersWorkspace: React.FC = () => {
                         <span>{queryCancelled ? 'Cancelled · ' : explorerLoading ? 'Running · ' : ''}Elapsed: {(queryElapsed / 1000).toFixed(1)} s</span>
                         {explorerLoading && <button type="button" onClick={cancelQuery}>Cancel</button>}
                     </div>}
-                </div>}
+                </ExplorerWorkbench>}
             </section>
         </div>
         {isSchemas && canManage && createTableSchema && creationSchemas.some((item) => item.key === createTableSchema) && <NewObjectType variant="storage" schemas={creationSchemas.filter((item) => item.key === createTableSchema)} initialSchema={createTableSchema} onCancel={() => setCreateTableSchema('')} onOpenExisting={(object) => openWizardTable(object.schema, object.table)} onCreated={(schema, created) => openWizardTable(schema, created.name)} />}

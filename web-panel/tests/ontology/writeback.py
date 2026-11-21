@@ -57,6 +57,7 @@ with httpx.Client(base_url=base, timeout=15, trust_env=False) as client:
         page.get_by_role("button", name="Sign in", exact=True).click()
         expect(page.get_by_placeholder("Enter your password")).to_have_count(0)
         page.goto(base + "/ontology/explorer?objectType=" + source["id"])
+        expect(page.get_by_role("region", name="Object results", exact=True)).to_be_visible()
         page.get_by_role("button", name="Open in", exact=True).click()
         page.get_by_role("menuitem", name="Transactions", exact=True).click()
         entry = (

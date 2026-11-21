@@ -47,23 +47,24 @@
 .wb-views button { border-radius:0; align-self:stretch; min-height:33px; }
 .wb-views button[aria-pressed=true] { background:var(--ontology-hover); color:var(--ontology-text); font-weight:600; }
 .wb-right button,.wb-left > button { border-color:var(--ontology-control-border); }
-.wb-open-in-trigger[aria-expanded=true] { background:var(--ontology-selected); color:var(--ontology-link); }
+.wb-open-in-trigger[aria-expanded=true] { background:color-mix(in srgb,var(--ui-action-bg) 18%,var(--ontology-panel)); color:var(--ui-action-link); }
 .ui-dropdown.wb-open-in-popup { width:min(440px,calc(100vw - 16px)); min-width:0; padding:0; overflow:visible; border-radius:2px; border-color:var(--ontology-control-border); background:var(--ontology-panel); box-shadow:0 2px 8px #0003; font-size:12px; }
 .wb-open-in-popup::before { content:''; position:absolute; top:-6px; right:32px; width:10px; height:10px; transform:rotate(45deg); background:var(--ontology-panel); border-top:1px solid var(--ontology-control-border); border-left:1px solid var(--ontology-control-border); }
 .wb-open-in { display:flex; flex-direction:column; max-height:inherit; color:var(--ontology-text); }
 .wb-open-in-search { display:flex; flex:none; align-items:center; gap:7px; min-width:0; margin:5px; padding:4px 6px; border:1px solid var(--ontology-control-border); border-radius:2px; background:var(--ontology-panel); color:var(--ontology-muted); }
 .wb-open-in-search > .ui-icon { flex:none; font-size:16px; }
-.wb-open-in-search:focus-within { border-color:var(--ontology-muted); }
+.wb-open-in-search:focus-within { border-color:var(--ui-focus-ring); }
 .wb-open-in-search input { width:100%; min-width:0; padding:0; outline:0; border:0; background:transparent; color:var(--ontology-text); font:inherit; line-height:20px; }
 .wb-open-in-search input::placeholder { color:var(--ontology-muted); opacity:1; }
-.wb-open-in-body { display:grid; grid-template-columns:134px minmax(0,1fr); flex-shrink:1; height:248px; min-height:0; overflow:auto; overscroll-behavior:contain; }
+.wb-open-in-body { display:grid; grid-template-columns:134px minmax(0,1fr); grid-template-rows:minmax(0,1fr); flex-shrink:1; height:248px; min-height:0; overflow:hidden; }
 .wb-open-in button { display:flex; align-items:flex-start; gap:7px; width:100%; padding:6px 8px; min-height:30px; border:0; border-radius:0; background:transparent; color:inherit; font:inherit; line-height:18px; text-align:left; cursor:pointer; }
 .wb-open-in button:hover { background:var(--ontology-hover); }
-.wb-open-in button:focus-visible { outline:1px solid var(--ontology-muted); outline-offset:-2px; }
+.wb-open-in-popup .wb-open-in button:focus-visible { outline:1px solid var(--ui-focus-ring); outline-offset:-2px; }
+.wb-open-in button:not(:disabled):active { background:color-mix(in srgb,var(--ui-action-bg) 18%,var(--ontology-panel)); }
 .wb-open-in button:disabled { opacity:.45; cursor:default; background:transparent; }
 .wb-open-in-categories { padding-top:0; border-right:1px solid var(--ontology-control-border); background:var(--ontology-bg); }
-.wb-open-in-categories button[aria-checked=true] { background:var(--ontology-selected); color:var(--ontology-link); }
-.wb-open-in-actions { min-width:0; padding:0 3px; }
+.wb-open-in-categories button[aria-checked=true] { background:color-mix(in srgb,var(--ui-action-bg) 18%,var(--ontology-panel)); color:var(--ui-action-link); }
+.wb-open-in-actions { min-width:0; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:0 3px; }
 .wb-open-in-actions button { padding-inline:5px; }
 .wb-open-in-actions .ui-icon { flex:none; width:16px; height:18px; color:var(--ontology-muted); font-size:16px; }
 .wb-open-in-actions .ui-icon svg { width:16px; height:16px; }

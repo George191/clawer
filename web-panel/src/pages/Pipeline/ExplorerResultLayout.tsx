@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Checkbox, Input, Modal, Select } from '@/components/ui';
-import { layoutPath, readLayouts, writeLayout, type ExplorerSort, type Layouts, type Presentation, type ResultColumn, type ResultLayout } from '../../services/explorerLayouts';
+import { layoutPath, publishedLayoutPath, readLayouts, writeLayout, type ExplorerSort, type Layouts, type LayoutScope, type Presentation, type ResultColumn, type ResultLayout } from '../../services/explorerLayouts';
 import './explorer-result-layout.css';
 
 const defaultColumn = (field: string): ResultColumn => ({ field, visible: true, width: 180, presentation: 'value' });
@@ -24,8 +24,8 @@ function errorMessage(error: unknown) {
 }
 
 export function useResultLayout(identity: string, schema: string, table: string, fields: string[], sorts: ExplorerSort[],
-  applySorts: (sorts: ExplorerSort[]) => void, applyInitialSorts = true) {
-  const path = layoutPath(schema, table);
+  applySorts: (sorts: ExplorerSort[]) => void, applyInitialSorts = true, definitionId?: string) {
+  const path = useMemo(() => definitionId ? publishedLayoutPath(definitionId) : { path: layoutPath(schema, table) }, [schema, table, definitionId]);
   const id = identity ? JSON.stringify([identity, path]) : '';
   const active = useRef(id);
   const epoch = useRef(0);
@@ -80,7 +80,7 @@ export function useResultLayout(identity: string, schema: string, table: string,
     next.splice(after, 0, next.splice(before, 1)[0]);
     change({ columns: next });
   }
-  async function save(scope: keyof Layouts, reset = false) {
+  async function save(scope: LayoutScope, reset = false) {
     if (!current || pending.current === id) return;
     const operation = epoch.current;
     pending.current = id;
@@ -103,6 +103,7 @@ export function useResultLayout(identity: string, schema: string, table: string,
     }
   }
   return { columns, layout, ready: !!current, saving, error, open, search, setSearch, setOpen,
+    canManageDefault: current?.slots.canManageDefault,
     change, column, move, save, reload: () => reload(v => v + 1) };
 }
 type Controls = ReturnType<typeof useResultLayout>;
@@ -174,7 +175,7 @@ export function LayoutToolbar({ controls: c, admin, types }: { controls: Control
         {error}
         <div className="result-layout-actions">
           <Button size="small" disabled={c.saving} onClick={() => c.save('personal', true)}>Restore table default</Button>
-          {admin && <Button size="small" disabled={c.saving} onClick={() => c.save('default')}>Save as table default</Button>}
+          {(c.canManageDefault ?? admin) && <Button size="small" disabled={c.saving} onClick={() => c.save('default')}>Save as table default</Button>}
           <Button size="small" type="primary" disabled={c.saving} onClick={() => c.save('personal')}>Save personal layout</Button>
         </div>
       </div>

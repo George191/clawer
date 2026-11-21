@@ -85,6 +85,7 @@ def verify():
                 button(page, "Sign in").click()
             assert request.value.status == 200
             page.wait_for_url(url)
+            expect(page.get_by_role("region", name="Object results", exact=True)).to_be_visible()
             return page
 
         def panel(page):
