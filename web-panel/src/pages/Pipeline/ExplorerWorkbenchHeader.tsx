@@ -202,7 +202,9 @@ export default function ExplorerWorkbenchHeader(p: Props) {
         } })),
     ];
     const matchingApps = apps.filter(app => (appGroup === 'all' || app.group === appGroup) && app.label.toLowerCase().includes(appSearch.toLowerCase().trim()));
-    const appMenu = <section className="wb-open-in" aria-label="Open in tools" onKeyDown={event => {
+    const appMenu = <section className="wb-open-in" aria-label="Open in tools" onBlurCapture={event => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null) && event.relatedTarget !== openInTrigger.current) show(current => current === 'asset' ? '' : current);
+    }} onKeyDown={event => {
         const target = event.target as HTMLElement, group = target.closest('[role="menu"]');
         if (!group) return;
         const buttons = Array.from(group.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')), index = buttons.indexOf(target as HTMLButtonElement);
