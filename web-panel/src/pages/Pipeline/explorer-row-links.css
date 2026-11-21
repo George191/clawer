@@ -26,12 +26,12 @@
 .explorer-row-links ul { display:grid; gap:8px; margin:0; padding:0; list-style:none; }
 .explorer-row-links li { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:10px; border:1px solid var(--ontology-control-border); border-radius:4px; background:var(--ontology-panel); }
 .explorer-row-links li > a { flex:1; min-width:0; color:var(--ontology-text); font-size:12px; overflow-wrap:anywhere; }
-.explorer-linked-object { display:grid; flex:1; grid-template-columns:26px minmax(0,1fr); gap:4px 7px; min-width:0; }
-.explorer-linked-object > :is(.flow-explorer-selection__icon,.flow-semantic-type-glyph) { grid-column:1; grid-row:1; width:26px; height:26px; border-radius:3px; font-size:16px; }
+.explorer-linked-object { display:grid; flex:1; grid-template-columns:26px minmax(0,1fr); gap:2px 7px; min-width:0; }
+.explorer-linked-object > :is(.flow-explorer-selection__icon,.flow-semantic-type-glyph) { grid-column:1; grid-row:1 / span 2; align-self:center; width:26px; height:26px; border-radius:3px; font-size:16px; }
 .explorer-linked-object > :is(.flow-explorer-selection__icon,.flow-semantic-type-glyph) > .workspace-glyph { width:16px; height:16px; font-size:16px; }
 .explorer-linked-object__identity { display:contents; }
-.explorer-linked-object__type { grid-column:2; grid-row:1; align-self:center; min-width:0; color:var(--ontology-muted); font-size:11px; overflow-wrap:anywhere; }
-.explorer-linked-object__identity > a { grid-column:1/-1; grid-row:2; min-width:0; color:var(--ontology-text); font-size:12px; font-weight:500; text-decoration:none; overflow-wrap:anywhere; }
+.explorer-linked-object__type { grid-column:2; grid-row:1; align-self:end; min-width:0; color:var(--ontology-muted); font-size:11px; line-height:14px; overflow-wrap:anywhere; }
+.explorer-linked-object__identity > a { grid-column:2; grid-row:2; align-self:start; min-width:0; color:var(--ontology-text); font-size:12px; line-height:16px; font-weight:500; text-decoration:none; overflow-wrap:anywhere; }
 .explorer-linked-object__identity > a:hover { color:var(--ui-action-link); text-decoration:underline; }
 .explorer-row-links .ui-btn.explorer-links-unlink { flex:none; width:26px; min-height:26px; height:26px; padding:0; border:0; color:var(--ui-error); background:transparent; }
 .explorer-row-links .explorer-links-unlink .ui-icon { width:14px; height:14px; font-size:14px; }
