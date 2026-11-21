@@ -563,7 +563,9 @@ const DataLayersWorkspace: React.FC = () => {
             const identity = getSessionState().identity;
             try {
                 await deleteEtlRow(selectedSchema, table.name, key, version);
-                if (selection.current === target) { setDeleteSnapshot(undefined); setRefreshVersion((value) => value + 1); message.success('Object deleted.'); }
+                const session = getSessionState();
+                if (!workspaceActive.current || selection.current !== target || !session.authenticated || session.locked || session.identity !== identity) return;
+                setDeleteSnapshot(undefined); setRefreshVersion((value) => value + 1); message.success('Object deleted.');
             } catch (error) {
                 const session = getSessionState();
                 if (!workspaceActive.current || selection.current !== target || !session.authenticated || session.locked || session.identity !== identity || (error as { code?: string })?.code === 'ERR_CANCELED') return;
