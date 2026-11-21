@@ -47,16 +47,28 @@
 .wb-views button { border-radius:0; align-self:stretch; min-height:33px; }
 .wb-views button[aria-pressed=true] { background:var(--ontology-hover); color:var(--ontology-text); font-weight:600; }
 .wb-right button,.wb-left > button { border-color:var(--ontology-control-border); }
-.wb-export { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; min-width:0; max-width:100%; }
-.wb-export-options { display:grid; grid-template-columns:0fr; opacity:0; visibility:hidden; pointer-events:none; transition:grid-template-columns 220ms cubic-bezier(.2,.7,.2,1),opacity 160ms ease,visibility 0s 220ms; }
-.wb-export.is-open .wb-export-options { grid-template-columns:1fr; opacity:1; visibility:visible; pointer-events:auto; transition-delay:0s; }
-.wb-export-choices { display:flex; align-items:center; gap:2px; min-width:0; overflow:hidden; transform:translateX(-8px); transition:transform 220ms cubic-bezier(.2,.7,.2,1); }
-.wb-export.is-open .wb-export-choices { transform:translateX(0); }
-.wb-export .wb-export-choices button { flex:none; width:28px; min-height:28px; margin-left:3px; padding:4px; border-color:transparent; font-size:16px; }
-.wb-export-choices .wb-export-csv { color:var(--ui-success); }
-.wb-export-choices .wb-export-json { color:var(--ui-warning); }
-.wb-export-toggle[aria-expanded=true] { background:var(--ontology-hover); }
-@media(prefers-reduced-motion:reduce) { .wb-export-options,.wb-export-choices { transition:none; } }
+.wb-open-in-trigger[aria-expanded=true] { background:var(--ontology-selected); color:var(--ontology-link); }
+.ui-dropdown.wb-open-in-popup { width:min(440px,calc(100vw - 16px)); min-width:0; padding:0; overflow:visible; border-radius:2px; border-color:var(--ontology-control-border); background:var(--ontology-panel); box-shadow:0 2px 8px #0003; font-size:12px; }
+.wb-open-in-popup::before { content:''; position:absolute; top:-6px; right:32px; width:10px; height:10px; transform:rotate(45deg); background:var(--ontology-panel); border-top:1px solid var(--ontology-control-border); border-left:1px solid var(--ontology-control-border); }
+.wb-open-in { display:flex; flex-direction:column; max-height:inherit; color:var(--ontology-text); }
+.wb-open-in-search { display:flex; flex:none; align-items:center; gap:7px; min-width:0; margin:5px; padding:4px 6px; border:1px solid var(--ontology-control-border); border-radius:2px; background:var(--ontology-panel); color:var(--ontology-muted); }
+.wb-open-in-search > .ui-icon { flex:none; font-size:16px; }
+.wb-open-in-search:focus-within { border-color:var(--ontology-muted); }
+.wb-open-in-search input { width:100%; min-width:0; padding:0; outline:0; border:0; background:transparent; color:var(--ontology-text); font:inherit; line-height:20px; }
+.wb-open-in-search input::placeholder { color:var(--ontology-muted); opacity:1; }
+.wb-open-in-body { display:grid; grid-template-columns:134px minmax(0,1fr); flex:1; height:248px; min-height:0; overflow:auto; overscroll-behavior:contain; }
+.wb-open-in button { display:flex; align-items:flex-start; gap:7px; width:100%; padding:6px 8px; min-height:30px; border:0; border-radius:0; background:transparent; color:inherit; font:inherit; line-height:18px; text-align:left; cursor:pointer; }
+.wb-open-in button:hover { background:var(--ontology-hover); }
+.wb-open-in button:focus-visible { outline:1px solid var(--ontology-muted); outline-offset:-2px; }
+.wb-open-in button:disabled { opacity:.45; cursor:default; background:transparent; }
+.wb-open-in-categories { padding-top:0; border-right:1px solid var(--ontology-control-border); background:var(--ontology-bg); }
+.wb-open-in-categories button[aria-checked=true] { background:var(--ontology-selected); color:var(--ontology-link); }
+.wb-open-in-actions { min-width:0; padding:0 3px; }
+.wb-open-in-actions button { padding-inline:5px; }
+.wb-open-in-actions .ui-icon { flex:none; margin-top:1px; color:var(--ontology-muted); font-size:16px; }
+.wb-open-in-actions button > span:not(.ui-icon) { min-width:0; overflow-wrap:anywhere; }
+.wb-open-in-actions small { display:block; margin-top:1px; color:var(--ontology-muted); font-size:12px; line-height:20px; }
+.wb-open-in-actions p { margin:10px 8px; color:var(--ontology-muted); }
 .wb-selection-tools { display:inline-flex; align-items:center; flex-wrap:wrap; gap:4px; min-width:0; max-width:100%; box-sizing:border-box; padding:2px 5px; border:1px solid var(--explorer-selection-stroke); border-radius:2px; background:var(--explorer-selection-bg); color:var(--ontology-text); font-size:11px; }
 .wb-selection-tools > span { padding-inline:3px; white-space:nowrap; }
 .wb-selection-tools > button { min-height:22px; padding:2px 5px; font-size:11px; }

@@ -44,6 +44,8 @@ export const DatabaseOutlined=makeIcon("DatabaseOutlined","database",false);
 export const DeleteOutlined=makeIcon("DeleteOutlined","delete",false);
 export const DeploymentUnitOutlined=makeIcon("DeploymentUnitOutlined","apartment",false);
 export const DownloadOutlined=makeIcon("DownloadOutlined","download",false);
+// Palantir Blueprint 16px circle-arrow-down; see public/blueprint-LICENSE.txt.
+export const DownloadCircleFilled=forwardRef<HTMLSpanElement,IconProps>(({className,...props},ref)=><span {...props} ref={ref} aria-hidden={props['aria-label']?props['aria-hidden']:true} className={['ui-icon','ui-icon-download-circle',className].filter(Boolean).join(' ')}><svg viewBox="0 0 16 16" fill="currentColor" focusable="false"><path d="M11 7c-.28 0-.53.11-.71.29L9 8.59V5c0-.55-.45-1-1-1s-1 .45-1 1v3.59l-1.29-1.3a1.003 1.003 0 0 0-1.42 1.42l3 3c.18.18.43.29.71.29s.53-.11.71-.29l3-3A1.003 1.003 0 0 0 11 7M8 0C3.58 0 0 3.58 0 8s3.58 8 8 8 8-3.58 8-8-3.58-8-8-8m0 14c-3.31 0-6-2.69-6-6s2.69-6 6-6 6 2.69 6 6-2.69 6-6 6"/></svg></span>);
 export const DownOutlined=makeIcon("DownOutlined","down",false);
 export const EditOutlined=makeIcon("EditOutlined","edit",false);
 export const EnvironmentOutlined=makeIcon("EnvironmentOutlined","location",false);
@@ -54,7 +56,6 @@ export const ExportOutlined=makeIcon("ExportOutlined","export",false);
 export const EyeOutlined=makeIcon("EyeOutlined","eye",false);
 export const FieldTimeOutlined=makeIcon("FieldTimeOutlined","clock",false);
 export const FileExcelOutlined=makeIcon("FileExcelOutlined","excel",false);
-export const FileExcelFilled=forwardRef<HTMLSpanElement,IconProps>(({className,...props},ref)=><span {...props} ref={ref} aria-hidden={props['aria-label']?props['aria-hidden']:true} className={['ui-icon','ui-icon-excel-filled',className].filter(Boolean).join(' ')}><svg viewBox="0 0 16 16" fill="currentColor" focusable="false"><path opacity=".35" d="M8 1h6a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H8Z"/><path d="M11 3h2v2h-2Zm0 3h2v2h-2Zm0 3h2v2h-2Zm0 3h2v1h-2Z"/><path fillRule="evenodd" d="M1 4h8a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H1a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Zm1.1 2h1.8L5 7.9 6.1 6h1.8L6 8.9 7.9 12H6.1L5 10l-1.1 2H2.1L4 8.9Z"/></svg></span>);
 export const FileSearchOutlined=makeIcon("FileSearchOutlined","file-search",false);
 export const FileTextOutlined=makeIcon("FileTextOutlined","file",false);
 export const FireOutlined=makeIcon("FireOutlined","fire",false);
@@ -65,8 +66,6 @@ export const GlobalOutlined=makeIcon("GlobalOutlined","global",false);
 export const HistoryOutlined=makeIcon("HistoryOutlined","history",false);
 export const HourglassOutlined=makeIcon("HourglassOutlined","hourglass",false);
 export const InboxOutlined=makeIcon("InboxOutlined","inbox",false);
-// Palantir Blueprint 16px curly-braces; license: /blueprint-LICENSE.txt.
-export const JsonFilled=forwardRef<HTMLSpanElement,IconProps>(({className,...props},ref)=><span {...props} ref={ref} aria-hidden={props['aria-label']?props['aria-hidden']:true} className={['ui-icon','ui-icon-json-filled',className].filter(Boolean).join(' ')}><svg viewBox="0 0 16 16" fill="currentColor" focusable="false"><path d="M3.62 3.056C4.102 2.25 5 2 6 2a1 1 0 0 1 0 2c-.44 0-.615.065-.67.097a.7.7 0 0 0-.03.17 5 5 0 0 0 .01.612l.008.118c.03.48.074 1.18-.112 1.854A3 3 0 0 1 4.61 8c.29.348.483.737.596 1.149.186.674.142 1.375.112 1.854l-.007.118a5 5 0 0 0-.01.613.7.7 0 0 0 .028.169c.056.032.23.097.671.097a1 1 0 1 1 0 2c-1 0-1.897-.25-2.38-1.056a2.4 2.4 0 0 1-.313-1.05 6.5 6.5 0 0 1 .007-.89l.002-.023c.033-.573.056-.96-.038-1.301-.072-.26-.224-.535-.725-.786a1 1 0 0 1 0-1.788c.501-.251.653-.526.725-.786.094-.34.071-.728.038-1.301l-.002-.023a6.5 6.5 0 0 1-.007-.89c.025-.313.097-.692.312-1.05m1.687 8.828.016.015q-.018-.014-.016-.015m0-7.768q-.002 0 .016-.015-.015.016-.016.015m7.074-1.06C11.898 2.25 11 2 10 2a1 1 0 0 0 0 2c.44 0 .615.065.67.097a.7.7 0 0 1 .03.17 5 5 0 0 1-.01.612l-.008.118c-.03.48-.074 1.18.112 1.854.113.412.305.801.595 1.149-.29.348-.482.737-.595 1.149-.186.674-.142 1.375-.112 1.854l.007.118c.016.27.023.46.01.613a.7.7 0 0 1-.028.169c-.056.032-.23.097-.671.097a1 1 0 1 0 0 2c1 0 1.897-.25 2.38-1.056.216-.358.288-.737.313-1.05.025-.31.008-.629-.007-.89l-.002-.023c-.033-.573-.056-.96.038-1.301.072-.26.224-.535.725-.786a1 1 0 0 0 0-1.788c-.501-.251-.653-.526-.725-.786-.094-.34-.071-.728-.038-1.301l.002-.023c.015-.261.032-.58.007-.89a2.4 2.4 0 0 0-.312-1.05m-1.687 8.828-.016.015q.018-.014.016-.015m0-7.768q.002 0-.016-.015.015.016.016.015"/></svg></span>);
 export const InfoCircleOutlined=makeIcon("InfoCircleOutlined","info",false);
 export const LineChartOutlined=makeIcon("LineChartOutlined","line-chart",false);
 export const LinkOutlined=makeIcon("LinkOutlined","link",false);

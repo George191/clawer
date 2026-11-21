@@ -1,6 +1,6 @@
-Blueprint curly-braces icon
+Blueprint circle-arrow-down icon
 Copyright Palantir Technologies Inc.
-Source: https://github.com/palantir/blueprint/blob/develop/resources/icons/16px/curly-braces.svg
+Source: https://github.com/palantir/blueprint/blob/develop/resources/icons/16px/circle-arrow-down.svg
 The SVG path is unmodified; the React wrapper uses currentColor.
 Licensed under the Apache License, Version 2.0.
 

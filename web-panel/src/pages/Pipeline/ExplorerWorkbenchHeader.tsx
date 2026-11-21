@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { AppstoreOutlined, ArrowLeftOutlined, BarChartOutlined, CheckOutlined, CloseOutlined, CopyOutlined, DeleteOutlined, DownOutlined, ExportOutlined, FileExcelFilled, JsonFilled, LinkOutlined, SearchOutlined, ShareAltOutlined, TableOutlined } from '@/components/ui/icons';
+import { ApiOutlined, AppstoreOutlined, ArrowLeftOutlined, BarChartOutlined, CheckOutlined, CloseOutlined, CopyOutlined, DeleteOutlined, DownOutlined, DownloadCircleFilled, FileSearchOutlined, LinkOutlined, ProfileOutlined, SearchOutlined, ShareAltOutlined, SyncOutlined, TableOutlined } from '@/components/ui/icons';
 import { Button, Dropdown, Modal, message } from '@/components/ui';
 import { projectHref } from '../../services/projectDomains';
 import { createSaved, listSaved, openSaved, removeSaved, savedPath, sharing, type Exploration, type SavedDetail, type SavedKind, type SavedMeta, type WorkbenchQuery } from '../../services/explorerSaved';
@@ -97,8 +97,8 @@ export default function ExplorerWorkbenchHeader(p: Props) {
     const [menu, show] = useState(''), [search, setSearch] = useState(''), [choice, choose] = useState('');
     const [chart, setChart] = useState(''), [name, setName] = useState(''), [error, setError] = useState('');
     const [busy, setBusy] = useState(false), [dialog, setDialog] = useState<'save' | 'share' | ''>('');
-    const [exportOpen, setExportOpen] = useState(false);
-    const exportControl = useRef<HTMLDivElement>(null);
+    const [appSearch, setAppSearch] = useState(''), [appGroup, setAppGroup] = useState('all');
+    const openInTrigger = useRef<HTMLButtonElement>(null);
     const [deleteTarget, setDeleteTarget] = useState<SavedMeta>();
     const [shareTarget, setShareTarget] = useState<SavedDetail>();
     const [librarySearch, setLibrarySearch] = useState(''), [access, setAccess] = useState<'all' | 'private' | 'shared'>('all');
@@ -112,14 +112,7 @@ export default function ExplorerWorkbenchHeader(p: Props) {
     const link = (id: string) => new URL(projectHref('/ontology/explorer?' + new URLSearchParams({ schema: p.schema, table: p.table, saved: id }))).href;
     useEffect(() => () => opening.current?.abort(), []);
     useEffect(() => { setChart(saved?.kind === 'exploration' ? saved.content.chart ?? '' : ''); }, [saved?.id]);
-    function openMenu(m: string) { setExportOpen(false); show(v => v === m ? '' : m); setError(''); setPage(0); setLibrarySearch(''); setAccess('all'); }
-    useEffect(() => {
-        if (!exportOpen) return;
-        const outside = (event: PointerEvent) => { if (!exportControl.current?.contains(event.target as Node)) setExportOpen(false); };
-        const key = (event: KeyboardEvent) => { if (event.key === 'Escape') { setExportOpen(false); exportControl.current?.querySelector<HTMLButtonElement>('.wb-export-toggle')?.focus(); } };
-        document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', key);
-        return () => { document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', key); };
-    }, [exportOpen]);
+    function openMenu(m: string) { show(v => v === m ? '' : m); setError(''); setPage(0); setLibrarySearch(''); setAccess('all'); }
     useEffect(() => {
         if (!library) return;
         const c = new AbortController();
@@ -130,7 +123,7 @@ export default function ExplorerWorkbenchHeader(p: Props) {
         return () => c.abort();
     }, [path, library, kind, page, generation, librarySearch, access]);
     useEffect(() => {
-        if (!menu || library) return;
+        if (!menu || library || menu === 'asset') return;
         const outside = (event: PointerEvent) => {
             const target = event.target as Node;
             const trigger = target instanceof Element ? target.closest('[data-wb-menu]') : null;
@@ -194,6 +187,40 @@ export default function ExplorerWorkbenchHeader(p: Props) {
     const field = chart && p.fields.includes(chart) ? chart : p.fields[0] ?? '';
     const find = p.fields.filter(f => [f, p.names?.[f]].join(' ').toLowerCase().includes(search.toLowerCase())).slice(0, 30);
     const changeField = (f: string) => { choose(f); setSearch(p.names?.[f] || f); show('property'); };
+    const closeOpenIn = () => { show(''); openInTrigger.current?.focus(); };
+    const openResource = (view: ResourceView) => { p.selectResource(view); p.setMode('results'); closeOpenIn(); };
+    const exportDescription = p.selected.length ? `Download ${p.selected.length} selected objects.` : `Download ${p.rows.length} objects on this results page.`;
+    const apps = [
+        { key: 'preview', group: 'analyze', label: 'Data preview', icon: <TableOutlined />, run: () => openResource('preview') },
+        { key: 'stream', group: 'analyze', label: 'Stream', icon: <SyncOutlined />, run: () => openResource('stream') },
+        { key: 'evidence', group: 'analyze', label: 'Evidence', icon: <FileSearchOutlined />, run: () => openResource('evidence') },
+        { key: 'schema', group: 'inspect', label: 'Properties & column mapping', icon: <ProfileOutlined />, run: () => openResource('schema') },
+        ...(p.admin ? [{ key: 'api', group: 'inspect', label: 'Published APIs', icon: <ApiOutlined />, run: () => openResource('api') }] : []),
+        ...(['csv', 'json'] as const).map(format => ({ key: format, group: 'export', label: `Export as ${format.toUpperCase()}`, description: exportDescription, icon: <DownloadCircleFilled />, disabled: !p.rows.length, run: () => {
+            download(format, p.selected.length ? p.selected.map(r => ({ ...r.record, ...r.identity })) : p.rows, p.fields, p.table);
+            closeOpenIn();
+        } })),
+    ];
+    const matchingApps = apps.filter(app => (appGroup === 'all' || app.group === appGroup) && app.label.toLowerCase().includes(appSearch.toLowerCase().trim()));
+    const appMenu = <section className="wb-open-in" aria-label="Open in tools" onKeyDown={event => {
+        const target = event.target as HTMLElement, group = target.closest('[role="menu"]');
+        if (!group) return;
+        const buttons = Array.from(group.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')), index = buttons.indexOf(target as HTMLButtonElement);
+        if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+            event.preventDefault();
+            buttons[event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length]?.focus();
+        }
+        if (event.key === 'ArrowRight' && group.classList.contains('wb-open-in-categories')) { event.preventDefault(); event.currentTarget.querySelector<HTMLButtonElement>('.wb-open-in-actions button:not(:disabled)')?.focus(); }
+        if (event.key === 'ArrowLeft' && group.classList.contains('wb-open-in-actions')) { event.preventDefault(); event.currentTarget.querySelector<HTMLButtonElement>('[aria-checked="true"]')?.focus(); }
+    }}>
+        <label className="wb-open-in-search"><SearchOutlined /><input autoFocus aria-label="Search Open in tools" placeholder="Search for apps…" value={appSearch} onChange={event => { setAppSearch(event.target.value); setAppGroup('all'); }} onKeyDown={event => {
+            if (event.key === 'ArrowDown') { event.preventDefault(); event.currentTarget.closest('section')?.querySelector<HTMLButtonElement>('.wb-open-in-actions button:not(:disabled)')?.focus(); }
+        }}/></label>
+        <div className="wb-open-in-body">
+            <nav className="wb-open-in-categories" role="menu" aria-label="Tool categories">{[['all', 'All'], ['analyze', 'Analyze objects'], ['inspect', 'Inspect source'], ['export', 'Export objects']].map(([key, label]) => <button type="button" role="menuitemradio" aria-checked={appGroup === key} key={key} onClick={() => setAppGroup(key)}>{label}</button>)}</nav>
+            <div className="wb-open-in-actions" role="menu" aria-label="Available tools">{matchingApps.map(app => <button type="button" role="menuitem" key={app.key} disabled={'disabled' in app && app.disabled} onClick={app.run}>{app.icon}<span>{app.label}{'description' in app && <small>{app.description}</small>}</span></button>)}{!matchingApps.length && <p role="status">No matching apps</p>}</div>
+        </div>
+    </section>;
     const libraryContent = <section className="wb-library" aria-label={`Saved ${menu}`}>
         {error && <p role="alert" className="wb-library-error">{error}</p>}
         <div className="wb-library-heading"><div><h3>{menu === 'lists' ? 'Lists' : 'Explorations'}</h3><p>{menu === 'lists' ? 'Saved object selections' : 'Saved searches and views'}</p></div><button aria-label="Close saved items" onClick={() => show('')}><CloseOutlined /></button></div>
@@ -226,21 +253,15 @@ export default function ExplorerWorkbenchHeader(p: Props) {
                 {!!p.selected.length && <div className="wb-selection-tools" role="toolbar" aria-label="Selected object tools"><span>{p.selected.length} selected</span><button disabled={p.selected.some(row => !Object.keys(row.identity).length)} onClick={() => beginSave('list')}>Save list</button><button aria-label="Clear selected objects" onClick={p.clearSelection}>Clear</button></div>}
             </div>
             <div className="wb-views"><button aria-pressed={p.resource === 'preview' && p.mode === 'explore'} onClick={() => selectMode('explore')}><BarChartOutlined /> Explore</button><button aria-pressed={p.resource === 'preview' && p.mode === 'results'} onClick={() => selectMode('results')}><AppstoreOutlined /> Results</button></div>
-            <div className="wb-right"><button data-wb-menu="asset" onClick={() => openMenu('asset')}>{p.resource === 'preview' ? 'Open in' : ({ schema: 'Schema', stream: 'Stream', evidence: 'Evidence', api: 'Published APIs' } as const)[p.resource]} <DownOutlined /></button>
-                <div className={'wb-export' + (exportOpen ? ' is-open' : '')} ref={exportControl}>
-                    <button className="wb-export-toggle" aria-expanded={exportOpen} aria-controls="explorer-export-formats" onClick={() => { show(''); setExportOpen(value => !value); }}><ExportOutlined /> Export</button>
-                    <div className="wb-export-options" id="explorer-export-formats" aria-hidden={!exportOpen}><div className="wb-export-choices">{(['csv', 'json'] as const).map(format => <button type="button" key={format} className={`wb-export-${format}`} aria-label={`Export ${format.toUpperCase()}`} title={`${format.toUpperCase()} · ${p.selected.length ? 'selected objects' : 'current result page'}`} tabIndex={exportOpen ? 0 : -1} disabled={!exportOpen || !p.rows.length} onClick={() => {
-                        download(format, p.selected.length ? p.selected.map(r => ({ ...r.record, ...r.identity })) : p.rows, p.fields, p.table);
-                        setExportOpen(false); exportControl.current?.querySelector<HTMLButtonElement>('.wb-export-toggle')?.focus();
-                    }}>{format === 'csv' ? <FileExcelFilled /> : <JsonFilled />}</button>)}</div></div>
-                </div>
+            <div className="wb-right"><Dropdown trigger={['click']} placement="bottomRight" open={menu === 'asset'} onOpenChange={next => { if (next) { openMenu('asset'); setAppSearch(''); setAppGroup('all'); } else show(current => current === 'asset' ? '' : current); }} overlayClassName="flow-menu-popup wb-open-in-popup" popupRender={() => appMenu}>
+                <button type="button" className="wb-open-in-trigger" ref={openInTrigger}>Open in <DownOutlined /></button>
+            </Dropdown>
             </div>
         </div>
-        {menu && !library && <section className={'wb-popup wb-popup--' + menu} ref={popup} aria-label="Explorer tools">
+        {menu && !library && menu !== 'asset' && <section className={'wb-popup wb-popup--' + menu} ref={popup} aria-label="Explorer tools">
             {error && <p role="alert" className="wb-library-error">{error}</p>}
             {menu === 'search' && <>{find.map(f => <button key={f} onClick={() => changeField(f)}>{p.names?.[f] || f}</button>)}{!find.length && <p>No matching properties</p>}</>}
             {menu === 'property' && <><strong>{p.names?.[choice] || choice}</strong><button onClick={() => { setChart(choice); setSearch(''); selectMode('explore'); }}>Add chart</button><button onClick={() => { setSearch(''); selectMode('results'); p.addFilter(choice); }}>Add filter</button></>}
-            {menu === 'asset' && <>{(['preview', 'schema', 'stream', 'evidence', ...(p.admin ? ['api'] : [])] as ResourceView[]).map(view => <button key={view} onClick={() => { p.selectResource(view); p.setMode('results'); show(''); }}>{{ preview: 'Data preview', schema: 'Properties & column mapping', stream: 'Stream', evidence: 'Evidence', api: 'Published APIs' }[view]}</button>)}</>}
 
         </section>}
         {p.resource === 'preview' && p.mode === 'explore' && !p.savedLoading && !p.savedError && <ExploreChart field={field} select={setChart} fields={p.fields} names={p.names} rows={p.rows} onFilter={f => { selectMode('results'); p.addFilter(f); }}/>}</>}
