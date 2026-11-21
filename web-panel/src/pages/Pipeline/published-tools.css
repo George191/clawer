@@ -1,7 +1,7 @@
 .flow-ontology-tool-content {
   flex: 0 1 auto; max-height: 64vh; overflow: auto; padding: 12px; border-bottom: 1px solid var(--ontology-control-border);
   container-type: inline-size;
-  font: 400 13px/1.45 var(--foundry-font);
+  font: 400 12px/1.5 var(--foundry-font);
   color: var(--ontology-text);
 }
 .flow-published-dialog .ui-modal-content {
@@ -10,7 +10,7 @@
 .flow-published-dialog :is(.ui-modal-header, .ui-modal-footer) { flex: none; }
 .flow-published-dialog .ui-modal-body {
   min-height: 0; overflow: auto; overscroll-behavior: contain; overflow-wrap: anywhere;
-  font-size: 13px; line-height: 1.45;
+  font-size: 12px; line-height: 1.5;
 }
 .flow-published-dialog .ui-checkbox-input:checked + .ui-checkbox-inner,
 .flow-ontology-tool-content .ui-checkbox-input:checked + .ui-checkbox-inner { background: var(--ontology-muted); border-color: var(--ontology-muted); }
@@ -32,7 +32,7 @@
 }
 .flow-tool-heading { align-items: center; justify-content: space-between; }
 .flow-tool-section :is(h3, h4), .flow-ontology-tool-content .flow-create-heading h3 {
-  margin: 0; color: var(--ontology-text); font-size: 14px; font-weight: 600; line-height: 20px;
+  margin: 0; color: var(--ontology-text); font-size: 13px; font-weight: 500; line-height: 20px;
 }
 .flow-tool-section p { margin: 0; color: var(--ontology-muted); overflow-wrap: anywhere; }
 .flow-tool-section [role="alert"] { color: var(--ui-error); }

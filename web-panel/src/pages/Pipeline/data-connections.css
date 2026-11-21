@@ -8,6 +8,7 @@
 .ontology-connectors__eyebrow { display: block; color: var(--ontology-muted, #9ca7b5); font-size: 11px; }
 .ontology-connectors :is(h1, h2, h3) { color: var(--ontology-text); font-weight: 600; }
 .ontology-connectors h2 { margin: 0; font-size: 17px; line-height: 1.35; }
+.ontology-connectors__wizard h2 { font-size: 13px; font-weight: 500; line-height: 20px; }
 .ontology-connectors :is(.ui-input, .ui-input-affix-wrapper) { background: var(--ontology-bg); color: inherit; font: inherit; }
 .ontology-connectors select {
   min-height: 32px; padding: 4px 7px; border: 1px solid var(--ontology-control-border); border-radius: 4px;

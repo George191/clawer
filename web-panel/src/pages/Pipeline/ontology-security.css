@@ -32,7 +32,7 @@
 .flow-semantic-wizard .flow-security-panel {
   min-height: min(100px, 24dvh); overflow: auto; overscroll-behavior: contain;
 }
-.flow-semantic-wizard .flow-create-section:has(> .flow-security-nav) .flow-create-heading h3 { font-size: 14px; line-height: 20px; }
+.flow-semantic-wizard .flow-create-section:has(> .flow-security-nav) .flow-create-heading h3 { font-size: 13px; line-height: 20px; }
 .flow-semantic-wizard .flow-security-panel :is(.flow-create-field, .ui-input, .ui-btn, .ui-select, select) { font-size: 12px; }
 .flow-security-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); margin: 0; gap: 6px 18px; }
 .flow-security-facts dt, .flow-security-results li > :last-child { color: var(--ontology-muted); }

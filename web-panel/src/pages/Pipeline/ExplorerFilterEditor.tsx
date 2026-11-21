@@ -204,17 +204,17 @@ export default function ExplorerFilterEditor({ rules, setRules, search, onSearch
         <div className="flow-filter-sort"><strong>Sort by</strong>
             <div className="flow-sort-conditions-viewport" ref={sortConditionsRef}><div className="flow-sort-conditions-track">
                 <span className={columnMode ? 'explorer-filter-sort-field-wrap' : 'flow-filter-sort-field-wrap'}><FilterFieldPicker explorer={columnMode} fields={columnMode ? availableExplorerSortFields(fields, sorts, 0) : fields} value={sortField}
-                    onChange={field => onSortsChange([{ field, direction: sortDirection }, ...sortConditions], true)}
+                    onChange={field => onSortsChange([{ field, direction: sortDirection }, ...sortConditions], !columnMode)}
                     className={columnMode ? `explorer-filter-sort-field${invalidSort?.index === 0 ? ' has-invalid-sort' : ''}` : 'flow-filter-sort-field'} labelClassName="flow-filter-sort-field-label" trailing={<>
                         <button type="button" className="flow-filter-sort-direction-toggle" aria-label={sortDirection === 'asc' ? 'Switch to descending' : 'Switch to ascending'} onClick={event => {
-                            event.stopPropagation(); onSortsChange([{ field: sortField, direction: sortDirection === 'asc' ? 'desc' : 'asc' }, ...sortConditions], true);
+                            event.stopPropagation(); onSortsChange([{ field: sortField, direction: sortDirection === 'asc' ? 'desc' : 'asc' }, ...sortConditions], !columnMode);
                         }}><SortDirectionIcon direction={sortDirection} /></button>
                         {columnMode ? sortField && <button type="button" className="explorer-filter-sort-remove" aria-label={'Remove sort ' + sortField} title="Remove sort" onClick={event => {
                             event.stopPropagation(); onSortsChange(sorts.slice(1), true);
                         }}><CloseOutlined /></button> : <SortActionMenu onDelete={() => onSortsChange([{ field: '', direction: sortDirection }, ...sortConditions], true)} onClear={clearSorts} />}
                     </>} />
                 </span>
-                {sortConditions.map((condition, index) => <span className={columnMode ? 'explorer-filter-sort-field-wrap' : 'flow-filter-sort-field-wrap'} key={`${condition.field}-${index}`}>
+                {sortConditions.map((condition, index) => <span className={columnMode ? 'explorer-filter-sort-field-wrap' : 'flow-filter-sort-field-wrap'} key={index}>
                     <FilterFieldPicker explorer={columnMode} fields={columnMode ? availableExplorerSortFields(fields, sorts, index + 1) : fields} value={condition.field}
                         onChange={field => onSortsChange([sorts[0], ...sortConditions.map((item, itemIndex) => itemIndex === index ? { ...item, field } : item)], false)}
                         className={columnMode ? `explorer-filter-sort-field${invalidSort?.index === index + 1 ? ' has-invalid-sort' : ''}` : 'flow-filter-sort-field'} labelClassName="flow-filter-sort-field-label" trailing={<>

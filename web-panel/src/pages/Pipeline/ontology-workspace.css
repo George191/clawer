@@ -149,11 +149,11 @@
 .flow-console--ontology .flow-td-fields-table :is(.ui-input,.ui-select-selector) { background:var(--ontology-panel)!important; color:var(--ontology-text)!important; border-color:var(--ontology-control-border)!important; font-size:12px; }
 .flow-surface-modal .ui-modal-content { border:1px solid var(--ontology-control-border); border-radius:4px; background:var(--ontology-panel); color:var(--ontology-text); box-shadow:0 3px 12px #1c21271f; }
 .flow-surface-modal .ui-modal-header { background:var(--ontology-panel); border-color:var(--ontology-border); }
-.flow-surface-modal .ui-modal-title { color:var(--ontology-text); font-size:14px; font-weight:500; }
+.flow-surface-modal .ui-modal-title { color:var(--ontology-text); font-size:14px; font-weight:500; line-height:20px; }
 .flow-surface-modal .ui-modal-footer { border-color:var(--ontology-border); }
-.flow-surface-modal .ui-modal-body { color:var(--ontology-text); font-size:14px; }
+.flow-surface-modal .ui-modal-body { color:var(--ontology-text); font-size:12px; font-weight:400; line-height:1.5; }
 .flow-surface-modal :is(.flow-resource-panel,.flow-schema-detail,.flow-offset-live>div,.flow-analysis-grid>div) { border-color:var(--ontology-border); border-radius:3px; background:var(--ontology-bg); color:var(--ontology-text); box-shadow:none; }
-.flow-surface-modal :is(.flow-resource-panel-head,.flow-schema-detail>.flow-resource-panel-head) { border-color:var(--ontology-border); color:var(--ontology-text); font-size:14px; }
+.flow-surface-modal :is(.flow-resource-panel-head,.flow-schema-detail>.flow-resource-panel-head) { border-color:var(--ontology-border); color:var(--ontology-text); font-size:13px; font-weight:500; }
 .flow-surface-modal :is(.flow-resource-panel label,.flow-schema-detail label,.flow-connector-config>label,.flow-offset-live span,.flow-analysis-grid span) { color:var(--ontology-muted); font-size:12px; }
 .flow-surface-modal :is(.flow-tree-resource-row strong,.flow-tree-resource-row button,.flow-database-option,.flow-resource-row>button) { color:var(--ontology-text); }
 .flow-surface-modal :is(.flow-tree-resource-row small,.flow-tree-resource-row em,.flow-tree-schema-row small) { color:var(--ontology-muted); }

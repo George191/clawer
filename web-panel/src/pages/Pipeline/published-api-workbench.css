@@ -25,6 +25,7 @@
 .api-document-heading > div { display:flex; flex-wrap:wrap; align-items:center; gap:5px 10px; }
 .api-eyebrow { flex-basis:100%; color:var(--ontology-muted); font-size:10px; letter-spacing:.07em; }
 .api-document-heading h3 { margin:0; font-size:15px; font-weight:500; line-height:22px; }
+.explorer-resource-dialog .api-document-heading h3 { font-size:13px; line-height:20px; }
 .api-publication-id { max-width:190px; overflow:hidden; color:var(--ontology-muted); font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
 .api-document-tabs { display:flex; flex:none; gap:20px; padding:0 16px; border-bottom:1px solid var(--ontology-border); }
 .api-document-tabs button { padding:7px 0; border:0; border-bottom:2px solid transparent; background:transparent; color:var(--ontology-muted); font:inherit; cursor:pointer; }

@@ -72,3 +72,57 @@ test('another sort cannot be added before the existing field selection is comple
   assert.equal(firstIncompleteExplorerSort([{ field:'name', direction:'asc' }, { field:'  ', direction:'desc' }]), 1);
   assert.equal(firstIncompleteExplorerSort([{ field:'name', direction:'asc' }, { field:'city', direction:'desc' }]), undefined);
 });
+
+const editorCode = ts.transpileModule(readFileSync(new URL('../src/pages/Pipeline/ExplorerFilterEditor.tsx', import.meta.url), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
+}).outputText;
+const jsx = (type, props, key) => ({ type, props, key });
+const descendants = tree => tree && typeof tree === 'object' ? [tree, ...[tree.props?.children].flat(Infinity).flatMap(descendants)] : [];
+const editor = {};
+vm.runInThisContext('(function(require,exports){' + editorCode + '\n})')(name => {
+  if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
+  if (name === 'react') return { useEffect() {}, useLayoutEffect() {}, useRef: current => ({ current }), useState: value => [value, () => {}] };
+  if (name === './explorerFilterDraft') return exports;
+  if (name === '@/components/ui') return { Button: 'Button', Dropdown: 'Dropdown', Input: 'Input' };
+  return {};
+}, editor);
+const renderSortEditor = (sorts, onSortsChange = () => {}, onApply = () => {}, columnMode = true) => editor.default({
+  rules: [], setRules() {}, sorts, onSortsChange, fields: ['id', 'name', 'city'], rows: [], formatValue: String, onApply, columnMode,
+});
+
+test('sort field and direction edits stay drafts until Apply filters is chosen', () => {
+  const sorts = [{ field: 'id', direction: 'asc' }, { field: 'name', direction: 'desc' }];
+  const calls = [];
+  let applied = 0;
+  const tree = renderSortEditor(sorts, (next, apply) => calls.push({ next, apply }), () => applied++);
+  const pickers = descendants(tree).filter(node => node.props?.labelClassName === 'flow-filter-sort-field-label');
+  pickers[0].props.onChange('city');
+  pickers[1].props.onChange('city');
+  for (const picker of pickers) {
+    descendants(picker.props.trailing).find(node => node.props?.className === 'flow-filter-sort-direction-toggle')
+      .props.onClick({ stopPropagation() {} });
+  }
+  assert.equal(calls.length, 4);
+  assert.ok(calls.every(call => call.apply === false));
+  assert.deepEqual(calls[0].next, [{ field: 'city', direction: 'asc' }, sorts[1]]);
+  assert.deepEqual(calls[1].next, [sorts[0], { field: 'city', direction: 'desc' }]);
+  assert.equal(applied, 0);
+  descendants(tree).find(node => node.props?.className === 'explorer-filter-apply-button').props.onClick();
+  assert.equal(applied, 1);
+});
+
+test('changing an additional sort field preserves its picker identity', () => {
+  const sorts = [{ field: 'id', direction: 'asc' }, { field: 'name', direction: 'desc' }];
+  const additionalKey = tree => descendants(tree).filter(node => node.props?.className === 'explorer-filter-sort-field-wrap')[1].key;
+  assert.equal(additionalKey(renderSortEditor(sorts)), additionalKey(renderSortEditor([sorts[0], { ...sorts[1], field: 'city' }])));
+});
+
+test('the shared editor keeps immediate primary sorting outside Ontology Explorer', () => {
+  const applied = [];
+  const tree = renderSortEditor([{ field: 'id', direction: 'asc' }], (_next, apply) => applied.push(apply), undefined, false);
+  const picker = descendants(tree).find(node => node.props?.labelClassName === 'flow-filter-sort-field-label');
+  picker.props.onChange('name');
+  descendants(picker.props.trailing).find(node => node.props?.className === 'flow-filter-sort-direction-toggle')
+    .props.onClick({ stopPropagation() {} });
+  assert.deepEqual(applied, [true, true]);
+});

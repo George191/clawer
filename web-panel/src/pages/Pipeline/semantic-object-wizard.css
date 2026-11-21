@@ -1,4 +1,4 @@
-.flow-semantic-wizard { --wizard-inset: clamp(14px, 1.6vw, 20px); font: 400 13px/1.4 var(--ontology-font); }
+.flow-semantic-wizard { --wizard-inset: clamp(14px, 1.6vw, 20px); font: 400 12px/1.5 var(--ontology-font); }
 .flow-source-dataset { display: grid; gap: 10px; }
 .flow-source-connection-row { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; }
 .flow-source-connection-row a { align-self: end; line-height: 30px; color: var(--ontology-link); }
@@ -9,7 +9,7 @@
 .flow-source-connection.has-selection .ui-select-selection-item .flow-source-connection-name { display: none; }
 .flow-source-connection-menu { min-width: min(240px, calc(100vw - 32px)); max-width: calc(100vw - 32px); }
 .flow-source-connection-menu .flow-source-connection-name { overflow-wrap: anywhere; }
-.flow-semantic-wizard .ui-modal-title { font: 600 15px/21px var(--ontology-font); }
+.flow-semantic-wizard .ui-modal-title { font: 500 14px/20px var(--ontology-font); }
 .flow-semantic-wizard .ui-modal-header { padding: 11px 16px; }
 .flow-semantic-wizard .ui-modal-close { top: 9px; }
 .flow-semantic-wizard .ui-modal-body { font: inherit; }
@@ -25,7 +25,7 @@
 .flow-semantic-wizard .flow-create-layout { grid-template-columns: clamp(148px, 16%, 185px) minmax(0, 1fr); }
 .flow-semantic-wizard .flow-create-steps { padding: 0; }
 .flow-semantic-wizard .flow-create-steps > li {
-  min-height: 38px; gap: 8px; padding: 5px 12px; border-bottom: 1px solid var(--ontology-border); font-size: 13px;
+  min-height: 38px; gap: 8px; padding: 5px 12px; border-bottom: 1px solid var(--ontology-border); font-size: 12px;
 }
 .flow-semantic-wizard .flow-create-steps > li > span:first-child { width: 20px; height: 20px; font-size: 11px; }
 .flow-semantic-wizard .flow-create-steps button {
@@ -36,10 +36,10 @@
 .flow-semantic-wizard .flow-create-steps > li:has(button:focus-visible) { outline: 2px solid var(--ui-focus-ring); outline-offset: -2px; }
 .flow-semantic-wizard .flow-create-kicker { margin: 14px var(--wizard-inset) 0; font: 500 11px/16px var(--ontology-font); letter-spacing: .035em; }
 .flow-semantic-wizard .flow-create-section { padding-inline: var(--wizard-inset); }
-.flow-semantic-wizard .flow-create-heading h3 { font-size: 16px; line-height: 22px; }
+.flow-semantic-wizard .flow-create-heading h3 { font-size: 13px; line-height: 20px; }
 .flow-semantic-wizard .flow-create-heading p { max-width: 78ch; }
 .flow-semantic-wizard :is(.flow-create-help, .flow-create-heading p, .flow-create-source-option small, .flow-create-field > small) { font: 400 12px/17px var(--ontology-font); }
-.flow-semantic-wizard :is(.flow-create-field, .ui-checkbox-wrapper, .ui-select, .ui-input, .ui-btn, .flow-create-source legend) { font-size: 13px; }
+.flow-semantic-wizard :is(.flow-create-field, .ui-checkbox-wrapper, .ui-select, .ui-input, .ui-btn, .flow-create-source legend) { font-size: 12px; }
 .flow-semantic-wizard .flow-create-field > span:first-child { font-weight: 500; }
 .flow-semantic-wizard :is(.ui-select, .ui-input, select) { min-width: 0; max-width: 100%; }
 .flow-semantic-wizard :is(.ui-input:not(textarea), .ui-btn, .ui-select-selector, select) { min-height: 28px; }

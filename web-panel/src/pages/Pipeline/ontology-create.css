@@ -38,7 +38,7 @@
 .flow-create-section { padding: 20px 22px; }
 .flow-create-section + .flow-create-section { border-top: 1px solid var(--ontology-border); }
 .flow-create-heading { margin-bottom: 18px; }
-.flow-create-heading h3 { margin: 0 0 5px; color: var(--ontology-text); font-size: 17px; font-weight: 600; line-height: 24px; }
+.flow-create-heading h3 { margin: 0 0 5px; color: var(--ontology-text); font-size: 13px; font-weight: 500; line-height: 20px; }
 .flow-create-heading p, .flow-create-help { margin: 5px 0 0; color: var(--ontology-muted); font-size: 12px; line-height: 18px; }
 .flow-create-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 20px; }
 .flow-create-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; color: var(--ontology-text); font-size: 12px; }
