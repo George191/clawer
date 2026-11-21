@@ -39,12 +39,12 @@
 .physical-property-pending-actions { display:inline-flex; flex:none; gap:2px; width:0; margin-left:0; overflow:hidden; opacity:0; transform:translateX(5px); pointer-events:none; transition:width .18s ease,margin-left .18s ease,opacity .18s ease,transform .18s ease; }
 .physical-property-pending-actions[data-dirty=true] { width:50px; margin-left:2px; opacity:1; transform:translateX(0); pointer-events:auto; }
 .physical-property-inspector-empty { grid-row:2 / -1; padding:12px; color:var(--ontology-muted); font-size:12px; }
-.physical-property-inspector nav,.physical-property-preview nav { display:flex; align-items:center; gap:8px; overflow-x:auto; }
+.physical-property-inspector nav { display:flex; align-items:center; gap:8px; overflow-x:auto; }
 .physical-property-inspector nav { box-sizing:border-box; height:36px; border-bottom:1px solid var(--ontology-border); padding:0 8px; }
-.physical-property-inspector nav button,.physical-property-preview nav button {
+.physical-property-inspector nav button {
   background:transparent; border:0; color:var(--ontology-muted); font:inherit; font-size:12px; padding:7px 0; cursor:pointer;
 }
-.physical-property-inspector nav [aria-pressed=true],.physical-property-preview nav [aria-pressed=true] {
+.physical-property-inspector nav [aria-pressed=true] {
   color:var(--ontology-link); box-shadow:inset 0 -2px var(--ontology-primary);
 }
 .physical-property-fields { min-height:0; overflow:auto; overscroll-behavior:contain; scrollbar-gutter:stable; padding:10px; display:grid; align-content:start; gap:8px; font-size:12px; }
@@ -90,7 +90,6 @@
 .physical-formatter-select > .ui-icon { position:absolute; inset-inline-end:5px; top:50%; width:10px; height:10px; transform:translateY(-50%); color:var(--ontology-muted); pointer-events:none; }
 .physical-property-workbench .flow-foundry-property-list tbody tr.is-selected td { background:var(--ontology-bg); }
 .physical-property-preview .flow-foundry-property-preview-tools strong { margin-right:6px; }
-.physical-property-preview .flow-foundry-property-preview-tools nav { margin-left:auto; }
 .physical-property-workbench .physical-property-toggle input,.physical-property-preview input[type=checkbox] {
   appearance:none; flex:none; width:27px; height:15px; margin:0; border:1px solid var(--ontology-border); border-radius:10px;
   background:var(--ontology-control-border); cursor:pointer; position:relative;
@@ -118,9 +117,9 @@
 .physical-planner-trigger.ui-btn { justify-self:start; justify-content:flex-start; gap:6px; min-height:28px; border-color:var(--ontology-control-border); background:var(--ontology-panel); }
 .physical-planner-trigger > .ui-icon { flex:none; width:16px; height:16px; font-size:16px; }
 .physical-planner-statistics-modal .ui-modal-body { padding:14px; }
-.physical-planner-context { display:flex; align-items:center; gap:8px; padding-bottom:12px; border-bottom:1px solid var(--ontology-border); }
-.physical-planner-context > .ui-icon { flex:none; width:18px; height:18px; font-size:18px; color:var(--ontology-muted); }
-.physical-planner-context > div { display:grid; min-width:0; gap:3px; }
+.physical-planner-context { display:grid; gap:4px; padding-bottom:12px; border-bottom:1px solid var(--ontology-border); }
+.physical-planner-heading { display:flex; align-items:center; gap:6px; min-width:0; }
+.physical-planner-heading > .ui-icon { flex:none; width:18px; height:18px; font-size:18px; color:var(--ontology-muted); }
 .physical-planner-context strong { font-size:13px; font-weight:500; }
 .physical-planner-context code { color:var(--ontology-muted); font-size:11px; overflow-wrap:anywhere; }
 .physical-planner-source { margin-left:auto; color:var(--ontology-muted); font-size:11px; }

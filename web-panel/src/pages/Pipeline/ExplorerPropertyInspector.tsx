@@ -89,8 +89,8 @@ export default function ExplorerPropertyInspector({mapping,property:p,columns,ed
                     <button type="button" aria-label="Add property group" disabled={!group.trim()} onClick={() => {onGroup(group.trim());setGroup('');}}><PlusOutlined/>Add</button></span></label>}
                 <dl><dt>Physical column</dt><dd>{col?.name || 'Unmapped'}</dd><dt>PostgreSQL type</dt><dd>{col?.type || '—'}</dd>
                     {col && <><dt>Nullable</dt><dd>{col.nullable ? 'Yes' : 'No'}</dd>{col.comment && <><dt>Column comment</dt><dd>{col.comment}</dd></>}</>}</dl>
-                {canReference && col && <Link to={'/ontology/lineage?' + new URLSearchParams({schema:mapping.schema,table:mapping.table,tableLineage:'1',column:col.name})}>Open column references</Link>}
                 {canReference && col && editable && <ExplorerColumnPlannerStatistic schema={mapping.schema} table={mapping.table} column={col.name} identity={identity}/>}
+                {canReference && col && <Link to={'/ontology/lineage?' + new URLSearchParams({schema:mapping.schema,table:mapping.table,tableLineage:'1',column:col.name})}>Open column references</Link>}
             </>}
             {tab === 'Advanced' && <>
                 <label>Property ID<input value={p.id} disabled={locked || !isNew} maxLength={63} onChange={e => onPatch({id:e.target.value})}/></label>

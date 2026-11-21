@@ -41,7 +41,7 @@ export default function ExplorerColumnPlannerStatistic({ schema, table, column, 
   return <>
     <Button size="small" className="physical-planner-trigger" icon={<BarChartOutlined/>} aria-label={`Planner statistics: ${column}`} onClick={() => void inspect()}>Planner statistics</Button>
     <Modal open={open} destroyOnHidden className="flow-surface-modal physical-planner-statistics-modal" title="Planner statistics" width={520} onCancel={cancel} footer={<Button onClick={cancel}>Done</Button>}>
-      <div className="physical-planner-context"><BarChartOutlined/><div><strong>{column}</strong><code>{schema}.{table}</code></div><span className="physical-planner-source">Stored metadata</span></div>
+      <div className="physical-planner-context"><div className="physical-planner-heading"><BarChartOutlined/><strong>{column}</strong><span className="physical-planner-source">Stored metadata</span></div><code>{schema}.{table}</code></div>
       {!result ? <div className="physical-planner-state" role="status"><ReloadOutlined spin/>Reading stored planner metadata…</div> : result.status === 'unavailable'
         ? <div className="physical-planner-state" role="status"><InfoCircleOutlined/><div><strong>Statistics unavailable</strong><p>Stored planner metadata could not be read for this column.</p></div></div>
         : <dl className="physical-planner-metrics">

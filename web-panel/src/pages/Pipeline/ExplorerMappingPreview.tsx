@@ -17,7 +17,6 @@ type Props = {
 const cell = (value: unknown) => value == null ? '—' : typeof value === 'object' ? JSON.stringify(value) : String(value);
 
 export default function ExplorerMappingPreview({schema, table, columns, mapping, selected, onSelect, onAutomap}: Props) {
-    const [view, setView] = useState<'table'|'objects'>('table');
     const [showMapped, setShowMapped] = useState(true);
     const [rows, setRows] = useState<Record<string,unknown>[]>();
     const [error, setError] = useState('');
@@ -45,25 +44,19 @@ export default function ExplorerMappingPreview({schema, table, columns, mapping,
     const mapped = new Map(mapping.properties.filter(p => p.sourceColumn).map(p => [p.sourceColumn, p]));
     // Semantic objects expose only the fields returned by their authorized records endpoint.
     const allowed = new Set(rows?.flatMap(row => Object.keys(row)));
-    const fields = view === 'table' ? columns.filter(c => (!semanticId || allowed.has(mapped.get(c.name)?.id || '')) && (showMapped || !mapped.has(c.name))).map(c => ({
+    const fields = columns.filter(c => (!semanticId || allowed.has(mapped.get(c.name)?.id || '')) && (showMapped || !mapped.has(c.name))).map(c => ({
         key: semanticId ? mapped.get(c.name)!.id : c.name, name: c.name, type: c.type, primary:c.primary, property: mapped.get(c.name),
-    })) : mapping.properties.filter(p => p.visibility !== 'hidden' && (semanticId ? allowed.has(p.id) : p.sourceColumn)).map(p => ({
-        key: semanticId ? p.id : p.sourceColumn!, name: p.id, type: p.type, primary:p.primaryKeyPosition != null, property: p,
     }));
     return <section className="flow-foundry-property-preview physical-property-preview" aria-label="Data and column mappings">
         <div className="flow-foundry-property-preview-tools">
             <strong title={`${schema}.${table}`}><TableOutlined /> {table}</strong>
-            {view === 'table' && <label><input type="checkbox" checked={showMapped} onChange={e => setShowMapped(e.target.checked)}/> Show mapped columns</label>}
+            <label><input type="checkbox" checked={showMapped} onChange={e => setShowMapped(e.target.checked)}/> Show mapped columns</label>
             {onAutomap && <Button size="small" disabled={columns.every(c => mapped.has(c.name))} onClick={onAutomap}>Automap all</Button>}
-            <nav aria-label="Data preview mode">
-                <button type="button" aria-pressed={view === 'objects'} onClick={() => setView('objects')}>Preview objects</button>
-                <button type="button" aria-pressed={view === 'table'} onClick={() => setView('table')}>Preview table</button>
-            </nav>
         </div>
         {error ? <p role="alert">{error} <Button size="small" onClick={() => setRetry(v => v + 1)}>Retry preview</Button></p>
             : restricted ? <p>This table requires an indexed preview. <Link to={'/ontology/explorer?' + new URLSearchParams({schema,table})}>Open indexed preview</Link></p>
-            : !rows ? <p role="status">Loading up to five records…</p> : !rows.length ? <p>No records in this sample.</p> : !fields.length ? <p>{view === 'table' ? 'No unmapped source columns.' : 'No mapped fields in this object sample.'}</p>
-            : <div className="flow-foundry-property-table-wrap"><table aria-label={view === 'table' ? 'Source table preview' : 'Mapped objects preview'}>
+            : !rows ? <p role="status">Loading up to five records…</p> : !rows.length ? <p>No records in this sample.</p> : !fields.length ? <p>{showMapped ? 'No preview columns available.' : 'No unmapped source columns.'}</p>
+            : <div className="flow-foundry-property-table-wrap"><table aria-label="Data preview">
                 <thead><tr><th scope="col">#</th>{fields.map(f => <th key={f.key} scope="col" className={f.property?.id === selected?.id && selected ? 'is-selected' : ''}>
                     <div className="physical-preview-column-heading"><PropertyTypeIcon type={f.type}/>
                         {f.property ? <button type="button" className="physical-preview-column-name" title={f.property.name === f.name ? f.name : `${f.name} (${f.property.name})`} onClick={() => onSelect(f.property!.id)}><code>{f.name}</code>

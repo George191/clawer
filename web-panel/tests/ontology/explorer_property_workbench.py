@@ -119,10 +119,8 @@ def run():
         button("Delete property Unmapped note", editor).click()
         button("Remove property", editor).click()
         assert all(p["id"]!="qa_note" for p in stored()["properties"])
-        button("Preview objects").click()
-        expect(preview.get_by_role("table", name="Mapped objects preview")).to_contain_text("Asset title")
+        expect(preview.get_by_role("table", name="Data preview")).to_contain_text("Asset title")
         expect(preview.get_by_role("table")).to_contain_text("Sample A")
-        button("Preview table").click()
         button("Inspect Asset title").click()
         expect(editor.get_by_label("Title key")).to_be_checked()
         if output:
@@ -133,12 +131,12 @@ def run():
         readonly.get_by_role("button", name="Inspect Asset title").click()
         expect(readonly.get_by_label("Name", exact=True)).to_be_disabled()
         expect(readonly.get_by_label("Title key")).to_be_checked()
-        expect(readonly.get_by_role("table",name="Source table preview")).to_contain_text("Sample A")
+        expect(readonly.get_by_role("table",name="Data preview")).to_contain_text("Sample A")
         reader_ctx.close()
         ctx.close()
         browser.close()
     result = {"realHttp":True,"crud":True,"allInspectorTabs":True,"casConflict":409,"unmapAndAutomap":True,
-        "mappedColumnsToggle":True,"objectAndTablePreview":True,"bigintIdentity":True,"readOnlyReader":True}
+        "mappedColumnsToggle":True,"unifiedMappingPreview":True,"bigintIdentity":True,"readOnlyReader":True}
     if output:
         (Path(output) / "physical-property-workbench.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(json.dumps(result))
