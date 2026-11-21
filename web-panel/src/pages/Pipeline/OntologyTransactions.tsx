@@ -6,6 +6,7 @@ import { applyTransaction, listOntologyRecords, listPublishedOntologyTypes, list
 import { parsePropertyValue } from './ontologyPropertyValue';
 import { newOntologyRequestId } from '../../services/ontology';
 import OntologyWriteback from './OntologyWriteback';
+import useExplorerErrorToast from './useExplorerErrorToast';
 
 type Kind = TransactionStep['kind'];
 type Entry = {label: string; step: TransactionStep};
@@ -21,6 +22,7 @@ function RecordPicker({type, label, value, aliases = [], change, version}: {
   const [loading, setLoading] = useState(true);
   const [retry, setRetry] = useState(0);
   const [error, setError] = useState('');
+  useExplorerErrorToast(error, 'Unable to load records', () => setRetry(value => value + 1));
   useEffect(() => {
     let active = true;
     setLoading(true); setPage(emptyRecords); setError('');
@@ -37,7 +39,7 @@ function RecordPicker({type, label, value, aliases = [], change, version}: {
     {records.map(r => <option key={r.id} value={r.id!}>{String(r.title ?? r.id)} · r{r.revision}</option>)}</select></label>
     {(offset > 0 || page.hasMore) && <div><Button disabled={!offset || loading} onClick={() => pageTo(offset-50)}>Previous records</Button>
       <Button disabled={!page.hasMore || loading || offset + 50 > 100_000} onClick={() => pageTo(offset+50)}>Next records</Button></div>}
-    {error && <p role="alert">{error} <Button size="small" onClick={() => setRetry(value => value + 1)}>Retry records</Button></p>}</div>;
+    </div>;
 }
 
 export default function OntologyTransactions({objectType, onCommitted}: {objectType: PublishedOntologyType; onCommitted: () => void}) {
@@ -68,6 +70,10 @@ export default function OntologyTransactions({objectType, onCommitted}: {objectT
   const [version, setVersion] = useState(0);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
+  const [requestError, setRequestError] = useState('');
+  useExplorerErrorToast(requestError, 'Unable to load transaction options', () => {
+    if (!pending) { setRequestError(''); setVersion(value => value + 1); }
+  });
   const locked = useRef(false);
   const retryIds = useRef(new Map<string, string>());
   const nextAlias = useRef(1);
@@ -75,6 +81,7 @@ export default function OntologyTransactions({objectType, onCommitted}: {objectT
   const action = actions?.find(a => a.kind === kind);
   const link = links.find(l => l.id === linkId);
   const edge = kind === 'link' || kind === 'unlink';
+  useEffect(() => setRequestError(''), [version]);
   useEffect(() => {
     let active = true;
     setTypesLoading(true);
@@ -82,13 +89,13 @@ export default function OntologyTransactions({objectType, onCommitted}: {objectT
       const writable = p.items.filter(t => t.definition.source.mode === 'none');
       setTypes(prev => Array.from(new Map([...prev, ...writable].map(item => [item.id,item])).values()));
       setMoreTypes(p.hasMore);
-    }}, e => {if (active) {setMoreTypes(false);setError(description(e));}}).finally(() => {if (active) setTypesLoading(false);});
+    }}, e => {if (active) {setMoreTypes(false);setRequestError(description(e));}}).finally(() => {if (active) setTypesLoading(false);});
     return () => {active = false;};
   }, [project, typeOffset, version]);
   useEffect(() => {
     let active = true;
     setActions([]);
-    listOntologyRecords(typeId, 1, 0).then(p => {if (active) setActions(p.actions);}, e => {if (active) setError(description(e));});
+    listOntologyRecords(typeId, 1, 0).then(p => {if (active) setActions(p.actions);}, e => {if (active) setRequestError(description(e));});
     return () => {active = false;};
   }, [typeId, version]);
   useEffect(() => {
@@ -99,13 +106,13 @@ export default function OntologyTransactions({objectType, onCommitted}: {objectT
       {params:{limit:50,offset:linkOffset}}).then(page => {if (active) {
         setLinks(prev => Array.from(new Map([...(linkOffset ? prev : []), ...page.items].map(item => [item.id, item])).values()));
         setMoreLinks(page.hasMore);
-      }}, e => {if (active) {setMoreLinks(false);setError(description(e));}}).finally(() => {if (active) setLinksLoading(false);});
+      }}, e => {if (active) {setMoreLinks(false);setRequestError(description(e));}}).finally(() => {if (active) setLinksLoading(false);});
     return () => {active = false;};
   }, [edge, typeId, linkOffset, version]);
   useEffect(() => {
     let active = true;
     setHistoryLoading(true);
-    listTransactions(project, offset).then(p => {if (active) {setHistory(p.items);setHasMore(p.hasMore);}}, e => {if (active) {setHistory([]);setHasMore(false);setError(description(e));}})
+    listTransactions(project, offset).then(p => {if (active) {setHistory(p.items);setHasMore(p.hasMore);}}, e => {if (active) {setHistory([]);setHasMore(false);setRequestError(description(e));}})
       .finally(() => {if (active) setHistoryLoading(false);});
     return () => {active = false;};
   }, [project, offset, version]);
@@ -157,7 +164,7 @@ export default function OntologyTransactions({objectType, onCommitted}: {objectT
       }
       resetStep();resetLinks();setOffset(0);setVersion(v => v+1);
       onCommitted();
-    } catch (e) {const detail = description(e);setError(detail);message.error({content:undo ? 'Unable to undo transaction' : 'Unable to commit transaction',description:detail,className:'explorer-toast'});}
+    } catch (e) {const detail = description(e);message.error({content:undo ? 'Unable to undo transaction' : 'Unable to commit transaction',description:detail,className:'explorer-toast'});}
     finally {locked.current = false;setPending(false);}
   };
   return <section aria-label="Transaction workbench" className="ontology-transaction">
@@ -193,7 +200,7 @@ export default function OntologyTransactions({objectType, onCommitted}: {objectT
     <section className="flow-tool-section" aria-label="My transactions">
       <h4>My transactions</h4>
       {historyLoading && <p role="status">Loading transactions…</p>}
-      {!historyLoading && !history.length && !error && <p>No transactions on this page.</p>}
+      {!historyLoading && !history.length && !error && !requestError && <p>No transactions on this page.</p>}
       <ul>{history.map(item => <li key={item.id}>{item.name} · {item.stepCount} steps · {new Date(item.createdAt).toLocaleString()} {' '}
         {item.undoneAt ? <span>Undone</span> : <Button size="small" disabled={pending || historyLoading} onClick={() => perform(item)}>Undo transaction</Button>}
         <Button size="small" aria-pressed={deliveryId === item.id} onClick={() => selectDelivery(deliveryId === item.id ? '' : item.id)}>Writeback</Button>

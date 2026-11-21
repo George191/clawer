@@ -59,6 +59,7 @@
 .wb-property-heading > button { flex:none; width:24px; min-height:24px; padding:3px; color:var(--ontology-muted); }
 .wb-property-actions { padding:4px; }
 .wb-header :is(.wb-query-action,.wb-open-in-trigger) { font-size:var(--wb-toolbar-font-size); }
+.wb-header .wb-create-object.ui-btn { font:inherit; }
 .wb-query > .wb-primary { min-height:26px; padding:2px 8px; }
 .wb-header .wb-primary { background:var(--ui-action-bg); color:var(--ui-action-text); border-color:var(--ui-action-bg); }
 .wb-header .wb-primary:not(:disabled):hover { background:var(--ui-action-hover); }

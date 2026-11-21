@@ -24,6 +24,7 @@ const copy = tree => typeof tree === 'string' || typeof tree === 'number' ? Stri
 
 function mount(props) {
   const state = [], effects = [], refs = [];
+  const notifications = [];
   let tree, cursor, dirty;
   const jsx = (type, props) => ({ type, props });
   const module = compile('PublishedApiWorkbench.tsx', name => {
@@ -37,13 +38,14 @@ function mount(props) {
     if (name === '@/components/ui/icons') return new Proxy({}, { get: (_, key) => String(key) });
     if (name === '../../services/endpoints') return { apiUrl: path => 'https://api.example.test' + path };
     if (name === './publishedApiPresentation') return helpers;
+    if (name === './useExplorerErrorToast') return { default: (error, title, retry) => { if (error) notifications.push({ error, title, retry }); } };
     if (name.endsWith('.css')) return {};
     throw new Error('Unexpected component dependency ' + name);
   });
   const pending = [];
   const render = () => { do { dirty = false; cursor = 0; pending.length = 0; tree = module.default(props); pending.splice(0).forEach(effect => effect()); } while (dirty); return tree; };
   render();
-  return { view: () => tree, click(label) { const button = nodes(tree).find(node => node.type === 'button' && (node.props['aria-label'] === label || copy(node).trim() === label)); assert.ok(button, 'Missing button: ' + label); button.props.onClick(); return render(); } };
+  return { view: () => tree, notifications, click(label) { const button = nodes(tree).find(node => node.type === 'button' && (node.props['aria-label'] === label || copy(node).trim() === label)); assert.ok(button, 'Missing button: ' + label); button.props.onClick(); return render(); } };
 }
 
 test('publication status distinguishes key state and the validity window', () => {
@@ -107,7 +109,20 @@ test('save, discard and delete remain controlled by the original management call
 });
 
 test('a failed API load is not presented as an empty successful catalog', () => {
-  const ui = mount({ items: [], error: 'Read failed', onReload() {} });
-  assert.ok(copy(ui.view()).includes('Unable to load published APIs'));
+  let reloads = 0;
+  const ui = mount({ items: [], error: 'Read failed', onReload() { reloads++; } });
+  assert.ok(!copy(ui.view()).includes('Read failed'));
+  assert.equal(nodes(ui.view()).some(node => node.props?.role === 'alert'), false);
   assert.ok(!copy(ui.view()).includes('No published APIs'));
+  assert.equal(ui.notifications.at(-1).error, 'Read failed');
+  ui.notifications.at(-1).retry();
+  assert.equal(reloads, 1);
+});
+
+test('API retry preserves the unsaved-change guard and inline date validation', () => {
+  let reloads = 0;
+  const ui = mount({ items: [publication('invalid', { validUntil: '' })], dirty: true, error: 'Read failed', onReload() { reloads++; } });
+  ui.notifications.at(-1).retry();
+  assert.equal(reloads, 0);
+  assert.ok(nodes(ui.view()).some(node => node.props?.role === 'alert' && copy(node).includes('valid start date')));
 });

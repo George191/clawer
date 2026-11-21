@@ -11,22 +11,23 @@ import type { ExplorerSort } from '../../services/explorerLayouts';
 type Row = Record<string, unknown>;
 type Layout = ReturnType<typeof useResultLayout>;
 
-export function explorerResultColumns({ layout, sorts, filters = [], types, names = {}, addFilter, openFilter, setSort, clearSorts, filterValue }: {
-  layout: Layout; sorts: ExplorerSort[]; filters?: ExplorerFilter[]; types?: Record<string, string>; names?: Record<string, string>;
+export function explorerResultColumns({ layout, sorts, sortFields, filters = [], types, names = {}, addFilter, openFilter, setSort, clearSorts, filterValue }: {
+  layout: Layout; sorts: ExplorerSort[]; sortFields?: string[]; filters?: ExplorerFilter[]; types?: Record<string, string>; names?: Record<string, string>;
   addFilter: (field: string) => void; openFilter: (field: string) => void; setSort: (field: string, direction: 'asc' | 'desc') => void;
   clearSorts: () => void; filterValue: (field: string, value: string | null, exclude: boolean) => void;
 }): ColumnsType<Row> {
   const filteredFields = new Set(activeExplorerFilters(filters).map(rule => rule.field));
   return layout.columns.filter(column => column.visible).map(({ field, width }) => {
     const sort = sorts.find(item => item.field === field), label = names[field] || field;
+    const canSort = !sortFields || sortFields.includes(field);
     return {
       key: field, dataIndex: field, width,
       className: layout.layout.wrap ? 'result-cell-wrap' : 'result-cell-clip',
       onCell: () => ({ style: { width, minWidth: width, maxWidth: width } }),
       title: <LayoutHeader field={field} width={width} controls={layout}><Dropdown overlayClassName="flow-menu-popup flow-explorer-menu" trigger={['click']} menu={{
         items: [
-          { key: 'asc', label: 'Sort ascending', icon: <ArrowUpOutlined /> },
-          { key: 'desc', label: 'Sort descending', icon: <ArrowDownOutlined /> },
+          { key: 'asc', label: 'Sort ascending', icon: <ArrowUpOutlined />, disabled: !canSort },
+          { key: 'desc', label: 'Sort descending', icon: <ArrowDownOutlined />, disabled: !canSort },
           { key: 'filter', label: 'Add filter', icon: <PlusOutlined /> },
           { key: 'hide', label: 'Hide this column', disabled: !layout.ready || layout.saving },
           { key: 'clear', label: 'Clear all sorts', disabled: !sorts.length },
@@ -36,7 +37,7 @@ export function explorerResultColumns({ layout, sorts, filters = [], types, name
           if (key === 'filter') addFilter(field);
           else if (key === 'hide') layout.column(field, { visible: false });
           else if (key === 'clear') clearSorts();
-          else setSort(field, key === 'desc' ? 'desc' : 'asc');
+          else if (canSort && (key === 'asc' || key === 'desc')) setSort(field, key === 'desc' ? 'desc' : 'asc');
         },
       }}><button type="button" className={`flow-column-menu${sort ? ' is-sorted' : ''}`} aria-label={`Column actions for ${field}`} title={label}>
         <span>{label}</span><span className="flow-column-menu-end" role={sort ? 'img' : undefined} aria-label={sort ? `Sorted ${sort.direction === 'asc' ? 'ascending' : 'descending'}` : undefined}>

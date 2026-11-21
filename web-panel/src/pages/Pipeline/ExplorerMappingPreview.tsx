@@ -8,6 +8,7 @@ import { listOntologyRecords } from '../../services/ontology';
 import { PropertyBadges } from './ExplorerPropertyInspector';
 import PropertyTypeIcon from './PropertyTypeIcon';
 import type { EtlTableColumn } from '../../services/types';
+import useExplorerErrorToast from './useExplorerErrorToast';
 
 type Props = {
     schema: string; table: string; columns: EtlTableColumn[]; mapping: ExplorerPropertyMapping;
@@ -41,6 +42,7 @@ export default function ExplorerMappingPreview({schema, table, columns, mapping,
             .catch(() => { if (!request.signal.aborted) setError('The authorized data preview could not be loaded.'); });
         return () => request.abort();
     }, [schema, table, semanticId, retry]);
+    useExplorerErrorToast(error, 'Unable to load data preview', () => setRetry(v => v + 1));
     const mapped = new Map(mapping.properties.filter(p => p.sourceColumn).map(p => [p.sourceColumn, p]));
     // Semantic objects expose only the fields returned by their authorized records endpoint.
     const allowed = new Set(rows?.flatMap(row => Object.keys(row)));
@@ -53,7 +55,7 @@ export default function ExplorerMappingPreview({schema, table, columns, mapping,
             <label><input type="checkbox" checked={showMapped} onChange={e => setShowMapped(e.target.checked)}/> Show mapped columns</label>
             {onAutomap && <Button size="small" disabled={columns.every(c => mapped.has(c.name))} onClick={onAutomap}>Automap all</Button>}
         </div>
-        {error ? <p role="alert">{error} <Button size="small" onClick={() => setRetry(v => v + 1)}>Retry preview</Button></p>
+        {error ? null
             : restricted ? <p>This table requires an indexed preview. <Link to={'/ontology/explorer?' + new URLSearchParams({schema,table})}>Open indexed preview</Link></p>
             : !rows ? <p role="status">Loading up to five records…</p> : !rows.length ? <p>No records in this sample.</p> : !fields.length ? <p>{showMapped ? 'No preview columns available.' : 'No unmapped source columns.'}</p>
             : <div className="flow-foundry-property-table-wrap"><table aria-label="Data preview">

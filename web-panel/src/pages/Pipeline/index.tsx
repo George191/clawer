@@ -31,6 +31,7 @@ import ExplorerRecordLink from './ExplorerRecordLink';
 import ExplorerRowLinks from './ExplorerRowLinks';
 import NewObjectType from './NewObjectType';
 import ExplorerTableSchema from './ExplorerTableSchema';
+import useExplorerErrorToast from './useExplorerErrorToast';
 import { LayoutToolbar, useResultLayout } from './ExplorerResultLayout';
 import ExplorerTableEvidence from './ExplorerTableEvidence';
 import ExplorerStreamPositions, { topicRate } from './ExplorerStreamPositions';
@@ -202,9 +203,13 @@ const DataLayersWorkspace: React.FC = () => {
         const controller = new AbortController(); catalogController.current = controller;
         setCatalogLoading(true); setRequestError('');
         const identity = getSessionState().identity;
+        const current = () => {
+            const session = getSessionState();
+            return version === catalogRequest.current && workspaceActive.current && !controller.signal.aborted && session.authenticated && !session.locked && session.identity === identity;
+        };
         try {
             const [layers, context] = await Promise.all([fetchLayers(controller.signal), fetchCurrentUserContext(controller.signal)]);
-            if (version !== catalogRequest.current || !workspaceActive.current || getSessionState().identity !== identity) return;
+            if (!current()) return;
             adminPreviewIdentity.current = context.user.is_superuser === true ? identity : '';
             setCanManage(context.user.is_superuser === true);
             const visibleLayers = layers.map((item) => ({ ...item, key: item.schemaName || (item.key.startsWith('ts_') ? item.key : `ts_${item.key}`) })).filter((item) => item.key !== 'ts_meta');
@@ -212,7 +217,7 @@ const DataLayersWorkspace: React.FC = () => {
             setSchemaAliases(Object.fromEntries(visibleLayers.map((item) => [item.key, item.alias || item.label])));
             setCatalogLoaded(true);
         } catch (error) {
-            if (version === catalogRequest.current && workspaceActive.current && !controller.signal.aborted) { controller.abort(); throw error; }
+            if (current() && (error as { code?: string })?.code !== 'ERR_CANCELED') { controller.abort(); throw error; }
         } finally { if (version === catalogRequest.current && workspaceActive.current) setCatalogLoading(false); }
     };
 
@@ -424,7 +429,7 @@ const DataLayersWorkspace: React.FC = () => {
         JSON.stringify([previewIdentity, refreshVersion, previewRevision]),
     );
     const [policyRetry, setPolicyRetry] = useState(0);
-    const [policy, setPolicy] = useState<{ key: string; mode: RowPreviewMode | 'unavailable' }>();
+    const [policy, setPolicy] = useState<{ key: string; mode: RowPreviewMode | 'unavailable'; error?: string }>();
     const previewRequested = (!isSchemas || resourceView === 'preview') && !indexPreviewAsset;
     const policyKey = previewIdentity && selectedTableAvailable && previewRequested ?
         JSON.stringify([previewIdentity, pathname, selectedSchema, table.name, refreshVersion, policyRetry]) : '';
@@ -443,7 +448,7 @@ const DataLayersWorkspace: React.FC = () => {
         };
         void fetchRowPreviewPolicy(selectedSchema, table.name, read.signal).then(value => {
             if (current()) setPolicy({ key: policyKey, mode: value?.mode === 'classic' || value?.mode === 'indexed_id_required' || value?.mode === 'indexed_projection_required' ? value.mode : 'unavailable' });
-        }).catch(() => { if (current()) setPolicy({ key: policyKey, mode: 'unavailable' }); })
+        }).catch(error => { if (current() && error?.code !== 'ERR_CANCELED') setPolicy({ key: policyKey, mode: 'unavailable', error: errorText(error) }); })
             .finally(() => { if (current()) setPolicyLoading(false); });
         return () => read.abort();
     }, [policyKey]);
@@ -524,9 +529,11 @@ const DataLayersWorkspace: React.FC = () => {
         setRowDetailsError('');
         const target = selection.current;
         const original = snapshot.row;
+        const identity = getSessionState().identity;
+        let writing = false;
         try {
             const values = rowChanges(editingDraft, exactEditorRow(original), data?.columnTypes ?? {});
-            if (Object.keys(values).length) await updateEtlRow(selectedSchema, table.name, primaryKey(original), values, snapshot.version);
+            if (Object.keys(values).length) { writing = true; await updateEtlRow(selectedSchema, table.name, primaryKey(original), values, snapshot.version); }
             if (selection.current === target) {
                 editSnapshot.current = undefined;
                 setEditingRowKey(undefined); setEditingDraft(null);
@@ -534,8 +541,11 @@ const DataLayersWorkspace: React.FC = () => {
             }
             if (Object.keys(values).length) message.success('Row saved');
         } catch (error) {
+            const session = getSessionState();
+            if (!workspaceActive.current || selection.current !== target || !session.authenticated || session.locked || session.identity !== identity || (error as { code?: string })?.code === 'ERR_CANCELED') return;
             const detail = rowMutationError(error, original);
-            if (isSchemas) setRowDetailsError(detail); else message.error(detail);
+            if (isSchemas && !writing) setRowDetailsError(detail);
+            else message.error({ content: 'Unable to save row', description: detail, className: 'explorer-toast' });
         } finally { endMutation(); }
     };
     const removeRow = (row: Record<string, unknown>) => {
@@ -548,13 +558,16 @@ const DataLayersWorkspace: React.FC = () => {
         const commit = async () => {
             if (selection.current !== target || classicPreviewScope.current !== reviewedScope || !beginMutation()) return;
             setRowDetailsError('');
+            const identity = getSessionState().identity;
             try {
                 await deleteEtlRow(selectedSchema, table.name, key, version);
                 if (selection.current === target) { setDeleteSnapshot(undefined); setRefreshVersion((value) => value + 1); }
             } catch (error) {
+                const session = getSessionState();
+                if (!workspaceActive.current || selection.current !== target || !session.authenticated || session.locked || session.identity !== identity || (error as { code?: string })?.code === 'ERR_CANCELED') return;
                 const detail = rowMutationError(error, row);
-                if (isSchemas) setRowDetailsError(detail);
-                else { message.error(detail); throw error; }
+                message.error({ content: 'Unable to delete row', description: detail, className: 'explorer-toast' });
+                if (!isSchemas) throw error;
             } finally { endMutation(); }
         };
         if (isSchemas) void commit();
@@ -714,6 +727,11 @@ const DataLayersWorkspace: React.FC = () => {
         setRefreshVersion((value) => value + 1);
         refreshCatalog().catch((error) => { if (workspaceActive.current) setRequestError(errorText(error)); });
     };
+    useExplorerErrorToast(isSchemas && requestError !== 'Loading cancelled' ? requestError : '', 'Unable to load Explorer', refreshWorkspace);
+    useExplorerErrorToast(isSchemas ? savedError : '', 'Unable to open saved item', () => setSavedRetry(value => value + 1));
+    useExplorerErrorToast(isSchemas ? previewError && (previewUnavailable ? `${previewError} For an expensive query, narrow the filters before trying again.` : previewError) : '', 'Data preview unavailable', () => setPreviewRevision(value => value + 1));
+    useExplorerErrorToast(isSchemas ? streamError : '', 'Stream status unavailable');
+    useExplorerErrorToast(isSchemas && policy?.key === policyKey ? policy.error : '', 'Unable to check preview policy', () => setPolicyRetry(value => value + 1));
     useEffect(() => {
         if (!catalogLoaded) return;
         const params = new URLSearchParams(search);
@@ -731,6 +749,11 @@ const DataLayersWorkspace: React.FC = () => {
     useEffect(() => {
         const version = ++tableRequest.current;
         const controller = new AbortController(); tablesController.current = controller;
+        const identity = getSessionState().identity;
+        const current = () => {
+            const session = getSessionState();
+            return version === tableRequest.current && !controller.signal.aborted && session.authenticated && !session.locked && session.identity === identity;
+        };
         if (!selectedSchemaAvailable) {
             loadedSchema.current = '';
             setTablesLoading(false); setTablesLoadedSchema(undefined); setServerTables([]);
@@ -743,7 +766,7 @@ const DataLayersWorkspace: React.FC = () => {
             setServerTables([]); setTable({ name: '', rowCount: 0, size: '', updatedAt: '' });
             setClosedTables(new Set()); setPartition(undefined); setPageNumber(1); setEditingRowKey(undefined); setEditingDraft(null); setData(undefined); setStream(undefined); setOffsets([]); setInputTopics([]); setScript(''); setOpenApis([]);
         }
-        fetchLayerTables(selectedSchema, 'current', controller.signal).then((items) => { if (version === tableRequest.current) { setServerTables(items); setTablesLoadedSchema(selectedSchema); } }).catch((error) => { if (version === tableRequest.current && !controller.signal.aborted) setRequestError(errorText(error)); }).finally(() => { if (version === tableRequest.current) setTablesLoading(false); });
+        fetchLayerTables(selectedSchema, 'current', controller.signal).then((items) => { if (current()) { setServerTables(items); setTablesLoadedSchema(selectedSchema); } }).catch((error) => { if (current() && error?.code !== 'ERR_CANCELED') setRequestError(errorText(error)); }).finally(() => { if (version === tableRequest.current) setTablesLoading(false); });
         return () => { tableRequest.current++; controller.abort(); };
     }, [selectedSchema, refreshVersion, selectedSchemaAvailable]);
     useEffect(() => {
@@ -815,7 +838,12 @@ const DataLayersWorkspace: React.FC = () => {
         setApisError('');
         if (!canManage || !selectedTableAvailable) { setOpenApis([]); setApisDirty(false); setApisLoading(false); return; }
         setApisLoading(true);
-        fetchEtlApis(selectedSchema, table.name).then((items) => { if (version === apiRequest.current) { setOpenApis(items); setApisDirty(false); } }).catch((error) => { if (version === apiRequest.current) { setApisError(errorText(error)); message.error(errorText(error)); } }).finally(() => { if (version === apiRequest.current) setApisLoading(false); });
+        const identity = getSessionState().identity;
+        const current = () => {
+            const session = getSessionState();
+            return version === apiRequest.current && session.authenticated && !session.locked && session.identity === identity;
+        };
+        fetchEtlApis(selectedSchema, table.name).then((items) => { if (current()) { setOpenApis(items); setApisDirty(false); } }).catch((error) => { if (current() && error?.code !== 'ERR_CANCELED') setApisError(errorText(error)); }).finally(() => { if (version === apiRequest.current) setApisLoading(false); });
         return () => { apiRequest.current++; };
     }, [selectedSchema, table.name, canManage, selectedTableAvailable, apiRevision]);
     useEffect(() => {
@@ -868,7 +896,7 @@ const DataLayersWorkspace: React.FC = () => {
         const controller = new AbortController();
         fetchEtlTableColumns(selectedSchema, table.name, controller.signal).then((columns) => {
             if (!controller.signal.aborted) setRepairFields(columns.map((column) => column.name));
-        }).catch(() => { /* The existing preview error remains visible; metadata cannot repair it. */ });
+        }).catch(() => { /* The original preview failure has already been reported. */ });
         return () => controller.abort();
     }, [isSchemas, showPreview, selectedTableAvailable, selectedSchema, table.name, previewError, filterFields.length]);
     useEffect(() => {
@@ -881,16 +909,21 @@ const DataLayersWorkspace: React.FC = () => {
         let active = true;
         let timer: number | undefined;
         let previous: EtlStreamState | undefined;
+        const identity = getSessionState().identity;
+        const current = () => {
+            const session = getSessionState();
+            return active && session.authenticated && !session.locked && session.identity === identity;
+        };
         const refresh = async () => {
             const version = ++streamRequest.current;
             try {
                 const result = await fetchTableStream(selectedSchema, table.name, inputTopics[activeTopicIndex]);
-                if (!active || version !== streamRequest.current) return;
+                if (!current() || version !== streamRequest.current) return;
                 setStream({ ...result, throughput: topicRate(previous, result) }); previous = result; setOffsets(result.offsets || []); setStreamError('');
                 setOffsetPartition((current) => result.offsets?.some((item) => item.partition === current) ? current : result.offsets?.[0]?.partition);
                 if (result.topics?.length) setInputTopics(result.topics);
-            } catch (error) { if (active && version === streamRequest.current) { setStream(undefined); setOffsets([]); setStreamError(errorText(error)); } }
-            finally { if (active) { setStreamLoading(false); timer = window.setTimeout(refresh, 5000); } }
+            } catch (error) { if (current() && version === streamRequest.current && (error as { code?: string })?.code !== 'ERR_CANCELED') { setStream(undefined); setOffsets([]); setStreamError(errorText(error)); } }
+            finally { if (current()) { setStreamLoading(false); timer = window.setTimeout(refresh, 5000); } }
         };
         void refresh();
         return () => { active = false; streamRequest.current++; window.clearTimeout(timer); };
@@ -1057,7 +1090,7 @@ const DataLayersWorkspace: React.FC = () => {
                 <div className="flow-schema-sidebar-summary">{schemas.length} schema resources</div>
             </aside>}
             <section  className="flow-layer-main">
-                {requestError && (!isSchemas || selectedTableAvailable) && <div role="alert" style={{ padding: 12, color: '#ff7875' }}>{requestError} <Button size="small" onClick={refreshWorkspace}>Retry</Button></div>}
+                {!isSchemas && requestError && <div role="alert" style={{ padding: 12, color: '#ff7875' }}>{requestError} <Button size="small" onClick={refreshWorkspace}>Retry</Button></div>}
                 {!isSchemas && <nav className="flow-asset-breadcrumb" aria-label="Breadcrumb"><button type="button" onClick={() => navigate('/ontology')}>Ontology Foundry</button><RightOutlined /><span>Transformations</span>{selectedSchema && <><RightOutlined /><strong>{selectedSchema}</strong></>}</nav>}
                 {!isSchemas && <div className="flow-layer-overview" style={{ '--schema-color': selectedSchema ? schemaColor(selectedSchema) : undefined } as React.CSSProperties}>
                     <div className="flow-layer-glyph"><PostgresIcon className="flow-layer-glyph-svg" /></div>
@@ -1150,7 +1183,7 @@ clearSelection: () => { setWorkbenchRows([]); setSelectionEpoch(n => n + 1); },
 filterButton: showPreview && <ExplorerFilterButton open={filterOpen} count={filterCount + sortCount} onClick={() => { if (workbenchMode === 'explore') { setWorkbenchMode('results'); setFilterOpen(true); } else activateTool('filter'); }} />} : undefined}>
 
                     {!selectedTableAvailable ? <div className="flow-inspector-body" aria-busy={explorerLoading}>
-                        {requestError ? <div className="flow-schema-state" role="alert">{requestError} <Button size="small" onClick={refreshWorkspace}>Retry</Button></div> : !explorerLoading && <div className="flow-schema-state" role="status">{requestedSchema && requestedTable ? 'Object type is unavailable.' : 'Choose an object type from the catalog.'}</div>}
+                        {!isSchemas && requestError ? <div className="flow-schema-state" role="alert">{requestError} <Button size="small" onClick={refreshWorkspace}>Retry</Button></div> : !requestError && !explorerLoading && <div className="flow-schema-state" role="status">{requestedSchema && requestedTable ? 'Object type is unavailable.' : 'Choose an object type from the catalog.'}</div>}
                     </div> : <>
                     <div  className="flow-table-header">
                         <div className="flow-table-header-left">
@@ -1217,7 +1250,6 @@ footer: previewPage && <ExplorerResultsFooter offset={previewPage.offset} rowCou
  {!previewPage.result.stableOrder && <span>No stable primary key. Rows may repeat or be skipped when paging.</span>}
  {previewPage.result.hasMore && !previewPage.result.canPageFurther && <span>Interactive preview limit reached. Narrow filters to continue.</span>}</>} />} : undefined}>
                         {isSchemas && savedLoading && <div className="flow-schema-state" role="status">Loading saved item…</div>}
-                        {isSchemas && savedError && <div className="flow-schema-state" role="alert"><strong>Saved item unavailable</strong><p>{savedError}</p><Button size="small" onClick={() => setSavedRetry(value => value + 1)}>Retry saved item</Button><Button size="small" onClick={closeSavedItem}>Return to table</Button></div>}
                         {showIndexPreview && !savedBlocked && (canManage ? <SandboxIndexPreview /> :
                             <div className="flow-schema-state" role="status">Index-aware sandbox preview is available to administrators only.</div>)}
                         {previewRequested && !showPreview && !savedBlocked && (policyMode === 'indexed_projection_required'
@@ -1234,7 +1266,7 @@ footer: previewPage && <ExplorerResultsFooter offset={previewPage.offset} rowCou
                                 {canManage && adminPreviewIdentity.current === previewIdentity ? <ExplorerIndexedIdSample key={policyKey} schema={selectedSchema} table={table.name}
                                     identity={previewIdentity} required /> : <p role="status">Verified-index ID sampling is unavailable. No preview query was run.</p>}
                             </section>
-                            : <div className="flow-schema-state" role="status">Preview policy unavailable.
+                            : policy?.key === policyKey && policy.error ? null : <div className="flow-schema-state" role="status">Preview policy unavailable.
                                 {policyMode === 'unavailable' ? <> <Button size="small" onClick={() => setPolicyRetry(value => value + 1)}>Retry preview policy</Button></>
                                     : ' Checking the selected table.'}
                             </div>)}
@@ -1257,13 +1289,13 @@ footer: previewPage && <ExplorerResultsFooter offset={previewPage.offset} rowCou
                                 {inputTopics.map(topic => <option key={topic} value={topic}>{topic}</option>)}
                             </select></label>}
                             {streamLoading && !stream && !streamError ? <div className="flow-schema-state" role="status">Checking stream status…</div>
-                                : streamError ? <div className="flow-schema-state" role="alert"><strong>Stream status unavailable</strong><p>{streamError}</p></div>
+                                : streamError ? null
                                 : !stream?.available ? <div className="flow-schema-state" role="status"><strong>{stream?.topic ? 'Stream unavailable' : 'No active stream'}</strong><p>{stream?.reason || 'There is no stream information for this table.'}</p></div>
                                 : <ExplorerStreamPositions stream={stream} />}
                         </section>}
                             {resourceView === 'api' && (canManage ? apiPanel : <div className="flow-schema-state" role="status">Published APIs are available to administrators only.</div>)}
                         </div>}
-                        {showPreview && !savedBlocked && queryScopeReady && previewError && <div className="flow-schema-state flow-preview-error" role="alert">
+                        {!isSchemas && showPreview && !savedBlocked && queryScopeReady && previewError && <div className="flow-schema-state flow-preview-error" role="alert">
                             <strong>Data preview unavailable</strong><p>{previewError}</p>
                             {previewUnavailable && <p>For an expensive query, narrow the filters before trying again.</p>}
                             <Button size="small" onClick={isSchemas ? () => setPreviewRevision((revision) => revision + 1) : refreshWorkspace}>Retry preview</Button>

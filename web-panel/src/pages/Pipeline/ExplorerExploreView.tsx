@@ -3,11 +3,12 @@ import { BarChartOutlined, FilterOutlined, ReloadOutlined, TableOutlined } from 
 import { explorerPropertyType } from '../../services/explorerProperties';
 import PropertyTypeIcon from './PropertyTypeIcon';
 import './explorer-explore-view.css';
+import useExplorerErrorToast from './useExplorerErrorToast';
 
 type Row = Record<string, unknown>;
 type Group = { value: unknown; count: number; sum?: number | string | null };
 export type ExplorerExploreAggregation = {
-  count?: number; groups?: Group[]; hasMore?: boolean; loading?: boolean; error?: string;
+  count?: number; groups?: Group[]; hasMore?: boolean; loading?: boolean; error?: string; limitReached?: boolean;
   onLoadMore?: () => void; onRetry?: () => void;
 };
 export type ExplorerExploreViewProps = {
@@ -72,6 +73,7 @@ export default function ExplorerExploreView({ fields, names, types, rows, field,
   const numericGroups = numeric ? groups.filter(group => group.value != null) as { value: number; count: number }[] : [];
   const numericCount = numericGroups.reduce((sum, group) => sum + group.count, 0);
   const busy = !!aggregation?.loading, error = aggregation?.error;
+  useExplorerErrorToast(aggregation?.limitReached ? undefined : error, 'Unable to load this analysis', aggregation?.onRetry);
   return <section className="explore-analysis" aria-label="Explore results" aria-busy={busy}>
     <header className="explore-analysis__header"><div><h2>Explore</h2><p>Analyze a property and select values to refine your results.</p></div>
       <label className="explore-analysis__property"><span>Property</span><div><PropertyTypeIcon type={type} /><select aria-label="Property to analyze" disabled={!fields.length} value={field} onChange={event => { setShowAll(false); select(event.target.value); }}>
@@ -91,7 +93,7 @@ export default function ExplorerExploreView({ fields, names, types, rows, field,
       <header><div><PropertyTypeIcon type={type} /><h3>{label || 'Choose a property'}</h3><span>{media ? 'Media' : ({ string: 'Text', integer: 'Number', number: 'Number', boolean: 'Boolean', date: 'Date', datetime: 'Timestamp', json: 'JSON' } as Record<string, string>)[type]}</span></div>
         <button type="button" disabled={!field} onClick={() => onFilter(field)}><FilterOutlined /> Add filter</button>
       </header>
-      {error ? <div className="explore-analysis__empty" role="alert"><strong>Unable to load this analysis</strong><p>{error}</p>{aggregation?.onRetry && <button type="button" onClick={aggregation.onRetry}>Retry</button>}</div>
+      {error ? aggregation?.limitReached ? <div className="explore-analysis__empty" role="alert"><strong>Unable to load this analysis</strong><p>{error}</p>{aggregation?.onRetry && <button type="button" onClick={aggregation.onRetry}>Retry</button>}</div> : null
         : busy && !groups.length ? <div className="explore-analysis__empty" role="status"><ReloadOutlined spin /><span>Calculating property values…</span></div>
           : !field || !fields.length ? <div className="explore-analysis__empty"><p>Choose an available property to begin.</p></div>
             : !chartable ? <div className="explore-analysis__empty"><PropertyTypeIcon type={type} /><strong>{media ? 'Media properties are explored in object details' : 'Structured properties do not have a scalar distribution'}</strong><p>Choose a text, number, date or boolean property to compare values. Use Add filter to refine this property.</p></div>

@@ -2,6 +2,7 @@ import { useEffect, useId, useState } from 'react';
 import { fetchCollectedAssetStatistics } from '../../services/api';
 import type { CollectedAssetStatistics, CollectedStatisticsSample } from '../../services/api';
 import { useSandboxIdentity } from './SandboxMarkings';
+import useExplorerErrorToast from './useExplorerErrorToast';
 
 const reasonLabels: Record<NonNullable<CollectedAssetStatistics['reason']>, string> = {
     checking_disabled: 'Scheduled collection is unavailable.',
@@ -38,13 +39,18 @@ function CollectedStatistics({ schema, table }: { schema: string; table: string 
     const title = useId();
     const [snapshot, setSnapshot] = useState<CollectedAssetStatistics>();
     const [expired, setExpired] = useState(false);
+    const [failed, setFailed] = useState(false);
+    const [retry, setRetry] = useState(0);
+    useExplorerErrorToast(failed ? 'Collected PostgreSQL statistics could not be loaded.' : undefined,
+        'Statistics unavailable', () => setRetry(value => value + 1));
     useEffect(() => {
         const request = new AbortController();
+        setFailed(false);
         void fetchCollectedAssetStatistics(schema, table, request.signal)
             .then(value => { if (!request.signal.aborted) setSnapshot(value); })
-            .catch(() => { if (!request.signal.aborted) setSnapshot(undefined); });
+            .catch(() => { if (!request.signal.aborted) { setSnapshot(undefined); setFailed(true); } });
         return () => request.abort();
-    }, [schema, table]);
+    }, [schema, table, retry]);
     const expiresAt = snapshot?.validUntil ? Date.parse(snapshot.validUntil) : NaN;
     useEffect(() => {
         if (!Number.isFinite(expiresAt)) return;

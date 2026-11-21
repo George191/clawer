@@ -4,6 +4,7 @@ import client from '../../services/api';
 import { fetchPublishedOntologyType, listOntologyRecords, ontologyError } from '../../services/ontology';
 import { generateOntologySdk, ontologySdkFilename, type OntologySdkFunction } from '../../services/ontology_sdk';
 import { getSessionState } from '../../services/session';
+import useExplorerErrorToast from './useExplorerErrorToast';
 import './explorer-resource-tools.css';
 
 type Download = { url: string; filename: string; revision: number; identity: string };
@@ -62,6 +63,7 @@ export default function OntologySdkDownload({ definitionId, open, onClose }: { d
     setError('');
     setVersion(value => value + 1);
   };
+  useExplorerErrorToast(open ? error : undefined, 'Unable to prepare the TypeScript SDK', retry);
   return <>
     <Modal open={open} centered className="flow-surface-modal flow-published-dialog explorer-resource-dialog ontology-sdk-dialog" title="TypeScript SDK" onCancel={close} footer={<>
       <Button onClick={close}>Close</Button>
@@ -75,7 +77,7 @@ export default function OntologySdkDownload({ definitionId, open, onClose }: { d
         }}>Download TypeScript SDK</a>}
     </>}>
       <p className="ontology-sdk-description">Use the generated client with your API URL and an access token for the account making requests.</p>
-      {error ? <p role="alert">{error} <Button size="small" onClick={retry}>Retry</Button></p>
+      {error ? null
         : download ? <p className="ontology-sdk-metadata">Published revision {download.revision} · <code>{download.filename}</code></p>
           : <p role="status">Preparing the TypeScript SDK…</p>}
     </Modal>

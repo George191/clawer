@@ -12,6 +12,7 @@ import ExplorerMinimumRowHealth from './ExplorerMinimumRowHealth';
 import ExplorerAssetStatistics from './ExplorerAssetStatistics';
 import ExplorerTransferTimeline from './ExplorerTransferTimeline';
 import { INDEX_PREVIEW_SCHEMA, INDEX_PREVIEW_TABLE } from './SandboxIndexPreview';
+import useExplorerErrorToast from './useExplorerErrorToast';
 import './table-evidence.css';
 
 export default function ExplorerTableEvidence({ schema, table, canManage }: { schema: string; table: string; canManage: boolean }) {
@@ -29,9 +30,11 @@ export default function ExplorerTableEvidence({ schema, table, canManage }: { sc
         setLatestCurrentReceipt(null);
         setVersion((value) => value + 1);
     };
+    useExplorerErrorToast(failed ? 'The evidence service did not return a result.' : undefined, 'Evidence unavailable', refresh);
 
     useEffect(() => {
         const request = new AbortController();
+        setSnapshot(undefined); setFailed(false);
         fetchExplorerTableEvidence(schema, table, request.signal)
             .then((value) => { if (!request.signal.aborted) setSnapshot(value); })
             .catch(() => { if (!request.signal.aborted) setFailed(true); });
@@ -47,7 +50,7 @@ export default function ExplorerTableEvidence({ schema, table, canManage }: { sc
                 <div><h3>Table evidence</h3><p>PostgreSQL catalog facts, plus run and lineage evidence where available.</p></div>
                 <Button size="small" icon={<ReloadOutlined />} disabled={!snapshot && !failed} onClick={refresh}>{failed ? 'Retry evidence' : 'Refresh evidence'}</Button>
             </header>
-            {failed ? <div className="flow-schema-state" role="alert"><strong>Evidence unavailable</strong><p>The evidence service did not return a result. Try again or return to the table preview.</p></div>
+            {failed ? null
                 : !snapshot ? <div className="flow-schema-state" role="status">Loading table evidence…</div>
                     : <div className="flow-evidence-grid">
                         <section className="flow-evidence-card" aria-labelledby="table-evidence-quality">

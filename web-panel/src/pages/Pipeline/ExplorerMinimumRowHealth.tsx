@@ -5,6 +5,7 @@ import type { AssetQualityIncident, MinimumRowHealth, MinimumRowHealthReview } f
 import { getSessionState } from '../../services/session';
 import ExplorerQualityWarnings from './ExplorerQualityWarnings';
 import { sandboxScopeDenied, useSandboxIdentity } from './SandboxMarkings';
+import useExplorerErrorToast from './useExplorerErrorToast';
 
 const labels: Record<MinimumRowHealth['state'], string> = {
   unconfigured: 'Not configured', healthy: 'Minimum verified', below_minimum: 'Below the reviewed minimum',
@@ -39,11 +40,15 @@ function Workspace({ identity }: { identity: string }) {
   const [review, setReview] = useState<MinimumRowHealthReview>();
   const [expired, setExpired] = useState<number>();
   const [error, setError] = useState('');
+  const [readFailed, setReadFailed] = useState(false);
   const [revision, setRevision] = useState(0);
   const [working, setWorking] = useState(false);
   const [loading, setLoading] = useState(true);
   const active = useRef(false);
   const pending = useRef(false);
+  useExplorerErrorToast(error, 'Minimum row check update failed');
+  useExplorerErrorToast(readFailed ? 'The minimum row policy could not be loaded.' : undefined,
+    'Minimum row check unavailable', () => setRevision(value => value + 1));
   const live = (signal?: AbortSignal) => {
     const session = getSessionState();
     return active.current && !signal?.aborted && session.authenticated && !session.locked && session.identity === identity;
@@ -51,11 +56,11 @@ function Workspace({ identity }: { identity: string }) {
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   useEffect(() => {
     const read = new AbortController();
-    setLoading(true);
+    setLoading(true); setReadFailed(false);
     void fetchMinimumRowHealth(read.signal).then(result => {
       if (!live(read.signal)) return;
       setStatus(result); setThreshold(result.minimumRows == null ? '' : String(result.minimumRows));
-    }).catch(() => { if (live(read.signal)) setStatus(undefined); })
+    }).catch(() => { if (live(read.signal)) { setStatus(undefined); setReadFailed(true); } })
       .finally(() => { if (live(read.signal)) setLoading(false); });
     return () => read.abort();
   }, [identity, revision]);
@@ -88,7 +93,7 @@ function Workspace({ identity }: { identity: string }) {
     catch (failure) {
       if (live()) {
         if (sandboxScopeDenied(failure)) setStatus(undefined);
-        else setError(failureText);
+        setError(failureText);
         setRevision(value => value + 1);
       }
     } finally {
@@ -117,7 +122,6 @@ function Workspace({ identity }: { identity: string }) {
     <strong role="status">{state === 'healthy' && status.minimumRows != null ? `Verified at least ${status.minimumRows} rows`
       : state === 'below_minimum' && status.minimumRows != null ? `Verified fewer than ${status.minimumRows} rows` : labels[state]}</strong>
     {reason && <p>{reason}</p>}
-    {error && <p role="alert">{error}</p>}
     <dl className="flow-evidence-freshness-facts">
       <div><dt>Confirmed sync recorded at</dt><dd><Time value={reportFacts ? status.receiptRecordedAt : null} empty="No verified sync shown" /></dd></div>
       <div><dt>Last checked</dt><dd><Time value={status.checkedAt} empty="Not evaluated" /></dd></div>

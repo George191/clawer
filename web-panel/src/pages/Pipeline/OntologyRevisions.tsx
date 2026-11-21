@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import useExplorerErrorToast from './useExplorerErrorToast';
 import { Button, Checkbox, Input, message } from '@/components/ui';
 import { CloseOutlined, FileSearchOutlined, HistoryOutlined, PlusOutlined, ReloadOutlined, TeamOutlined } from '@/components/ui/icons';
 import { ontologyError, type OntologyPrincipal, type SemanticDefinition } from '../../services/ontology';
@@ -61,16 +62,19 @@ export default function OntologyRevisions({ definitionId, onMerged, showTitle = 
   const [role, setRole] = useState<RevisionRole>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [requestError, setRequestError] = useState('');
   const locked = useRef(false);
   const active = useRef(true);
   const refresh = () => setVersion(value => value + 1);
+  const clearErrors = () => { setError(''); setRequestError(''); };
+  useExplorerErrorToast(requestError, 'Unable to load model revisions', () => { clearErrors(); refresh(); });
 
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   useEffect(() => {
     const controller = new AbortController();
     void readRevisionWorkspace(definitionId, controller.signal).then(
       data => { if (!controller.signal.aborted) setWorkspace(data); },
-      failure => { if (!controller.signal.aborted) setError(describe(failure)); },
+      failure => { if (!controller.signal.aborted) setRequestError(describe(failure)); },
     );
     return () => controller.abort();
   }, [definitionId, version]);
@@ -86,7 +90,7 @@ export default function OntologyRevisions({ definitionId, onMerged, showTitle = 
     };
     void load().then(
       value => { if (!signal.aborted) setListing(value); },
-      failure => { if (!signal.aborted) setError(describe(failure)); },
+      failure => { if (!signal.aborted) setRequestError(describe(failure)); },
     );
     return () => controller.abort();
   }, [definitionId, offset, tab, workspace]);
@@ -97,7 +101,7 @@ export default function OntologyRevisions({ definitionId, onMerged, showTitle = 
     setRevision(undefined);
     if (!selectedProposal && selectedRevision == null) { setDetailLoading(false); return; }
     setDetailLoading(true);
-    const settled = (failure: unknown) => { if (!signal.aborted) setError(describe(failure)); };
+    const settled = (failure: unknown) => { if (!signal.aborted) setRequestError(describe(failure)); };
     const request = selectedProposal
       ? readRevisionProposal(definitionId, selectedProposal, signal).then(data => { if (!signal.aborted) setProposal(data); }, settled)
       : readRevision(definitionId, selectedRevision!, signal).then(data => { if (!signal.aborted) setRevision(data); }, settled);
@@ -112,7 +116,7 @@ export default function OntologyRevisions({ definitionId, onMerged, showTitle = 
     const timer = window.setTimeout(() => {
       readRevisionPrincipals(definitionId, principalQuery, signal).then(
         options => { if (!signal.aborted) setPrincipals(previous => [...new Map([...options, ...previous].map(item => [item.kind + ':' + item.id, item])).values()]); },
-        failure => { if (!signal.aborted) setError(describe(failure)); },
+        failure => { if (!signal.aborted) setRequestError(describe(failure)); },
       );
     }, principalQuery ? 200 : 0);
     return () => { controller.abort(); window.clearTimeout(timer); };
@@ -120,11 +124,11 @@ export default function OntologyRevisions({ definitionId, onMerged, showTitle = 
 
   const switchTab = (next: Tab) => {
     setTab(next); setOffset(0); setSelectedProposal(''); setSelectedRevision(undefined); setComposer(undefined);
-    setRole(undefined); setError('');
+    setRole(undefined); clearErrors();
   };
   const run = async (work: () => Promise<void>) => {
     if (locked.current) return;
-    locked.current = true; setBusy(true); setError('');
+    locked.current = true; setBusy(true); clearErrors();
     try { await work(); }
     catch (failure) { if (active.current) { const detail = describe(failure); setError(detail); message.error({ content: 'Revision action failed', description: detail, className: 'explorer-toast' }); } }
     finally { locked.current = false; if (active.current) setBusy(false); }
@@ -170,9 +174,9 @@ export default function OntologyRevisions({ definitionId, onMerged, showTitle = 
     <header className="ontology-revisions__header">
       <div>{showTitle && <h3>Model revisions</h3>}{workspace && <span className="ontology-revisions__publication"><span aria-hidden="true" />Published <strong>Revision {workspace.revision}</strong></span>}</div>
       {workspace && <div className="ontology-revisions__tools">
-        <Button size="small" icon={<ReloadOutlined />} disabled={busy || !!composer} onClick={() => { setError(''); refresh(); }}>Refresh</Button>
+        <Button size="small" icon={<ReloadOutlined />} disabled={busy || !!composer} onClick={() => { clearErrors(); refresh(); }}>Refresh</Button>
         {workspace.canEdit && <Button size="small" type="primary" icon={<PlusOutlined />} disabled={busy || !!composer} onClick={() => {
-          setError(''); setPrincipalQuery('');
+          clearErrors(); setPrincipalQuery('');
           setComposer({ kind: 'revision', revision: workspace.revision, definition: workspace.definition, summary: '' });
         }}>Propose change</Button>}
       </div>}
@@ -183,8 +187,7 @@ export default function OntologyRevisions({ definitionId, onMerged, showTitle = 
       {workspace.canManageRoles && <button type="button" aria-pressed={tab === 'roles'} disabled={busy} onClick={() => switchTab('roles')}>Revision roles</button>}
     </nav>}
     <div className={`ontology-revisions__body${composer ? ' is-composing' : ''}`} role="region" aria-label="Revision workspace" tabIndex={0}>
-      {error && <div className="ontology-revisions__error" role="alert"><span>{error}</span><Button size="small" onClick={() => { setError(''); refresh(); }}>Refresh</Button></div>}
-      {!workspace && !error && <p className="ontology-revisions__loading" role="status"><ReloadOutlined spin />Loading revision workspace…</p>}
+      {!workspace && !error && !requestError && <p className="ontology-revisions__loading" role="status"><ReloadOutlined spin />Loading revision workspace…</p>}
       {workspace && <>
         {composer ? <section className="ontology-revisions__composer" aria-label={composer.kind === 'restore' ? 'Restore proposal' : 'Change proposal'}>
           <div className="ontology-revisions__form" role="region" aria-label="Proposal form" tabIndex={0}>
@@ -199,12 +202,12 @@ export default function OntologyRevisions({ definitionId, onMerged, showTitle = 
             <Button size="small" type="primary" onClick={submit} loading={busy} disabled={!composer.summary.trim()}>Submit proposal</Button>
           </footer>
         </section> : <>
-          {!listing && !error && <p className="ontology-revisions__loading" role="status"><ReloadOutlined spin />Loading revisions…</p>}
+          {!listing && !error && !requestError && <p className="ontology-revisions__loading" role="status"><ReloadOutlined spin />Loading revisions…</p>}
           {listing?.tab === 'proposals' && <section className="ontology-revisions__listing" aria-label="Revision proposals">
             {!listing.page.items.length ? <div className="ontology-revisions__empty" role="status"><FileSearchOutlined /><strong>No revision proposals</strong><p>Submitted changes will appear here for review.</p></div> : <div className="ontology-revisions__table-wrap"><table className="flow-ontology-revision-table">
               <thead><tr><th scope="col">Proposal</th><th scope="col">Base revision</th><th scope="col">Status</th></tr></thead>
               <tbody>{listing.page.items.map(item => <tr key={item.id} className={selectedProposal === item.id ? 'is-selected' : undefined}>
-                <th scope="row"><button type="button" className="ontology-revisions__row-link" disabled={busy} onClick={() => { setSelectedProposal(item.id); setReviewNote(''); setError(''); }}>{item.summary}</button></th>
+                <th scope="row"><button type="button" className="ontology-revisions__row-link" disabled={busy} onClick={() => { setSelectedProposal(item.id); setReviewNote(''); clearErrors(); }}>{item.summary}</button></th>
                 <td><code>{item.baseRevision}</code></td><td><span className={`ontology-revisions__status is-${item.stale ? 'stale' : item.status}`}>{label(item)}</span></td>
               </tr>)}</tbody>
             </table></div>}
@@ -213,7 +216,7 @@ export default function OntologyRevisions({ definitionId, onMerged, showTitle = 
             {!listing.page.items.length ? <div className="ontology-revisions__empty" role="status"><HistoryOutlined /><strong>No published revisions</strong><p>Published model changes will appear here.</p></div> : <div className="ontology-revisions__table-wrap"><table className="flow-ontology-revision-table">
               <thead><tr><th scope="col">Revision</th><th scope="col">Change</th><th scope="col">Published</th></tr></thead>
               <tbody>{listing.page.items.map(item => <tr key={item.revision} className={selectedRevision === item.revision ? 'is-selected' : undefined}>
-                <th scope="row"><button type="button" className="ontology-revisions__row-link" disabled={busy} onClick={() => { setSelectedRevision(item.revision); setError(''); }}>{'Revision ' + item.revision}</button>{item.revision === workspace.revision && <span className="ontology-revisions__current">Current</span>}</th>
+                <th scope="row"><button type="button" className="ontology-revisions__row-link" disabled={busy} onClick={() => { setSelectedRevision(item.revision); clearErrors(); }}>{'Revision ' + item.revision}</button>{item.revision === workspace.revision && <span className="ontology-revisions__current">Current</span>}</th>
                 <td>{item.restoreRevision != null ? 'Restored revision ' + item.restoreRevision : item.proposalId ? 'Merged proposal' : 'Initial publication'}</td>
                 <td><time dateTime={item.createdAt}>{when(item.createdAt)}</time></td>
               </tr>)}</tbody>
@@ -224,7 +227,7 @@ export default function OntologyRevisions({ definitionId, onMerged, showTitle = 
               <thead><tr><th scope="col">Member</th><th scope="col">Role</th><th scope="col">Manage</th></tr></thead>
               <tbody>{listing.page.items.map(item => <tr key={item.id}>
                 <th scope="row">{item.name}</th><td>{item.manager ? 'Project manager' : [item.canEdit && 'Editor', item.canReview && 'Reviewer'].filter(Boolean).join(', ') || 'No revision role'}</td>
-                <td>{!item.manager && <Button size="small" disabled={busy} aria-label={'Edit revision roles for ' + item.name} onClick={() => { setRole(item); setError(''); }}>Edit roles</Button>}</td>
+                <td>{!item.manager && <Button size="small" disabled={busy} aria-label={'Edit revision roles for ' + item.name} onClick={() => { setRole(item); clearErrors(); }}>Edit roles</Button>}</td>
               </tr>)}</tbody>
             </table></div>}
           </section>}

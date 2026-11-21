@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Button, message } from '@/components/ui';
-import { ReloadOutlined } from '@/components/ui/icons';
+import { message } from '@/components/ui';
 import { fetchPublishedOntologyType, ontologyError, type PublishedOntologyType } from '../../services/ontology';
 import { fetchCurrentUserContext } from '../../services/api';
 import { openSaved, publishedSavedPath, type SavedDetail } from '../../services/explorerSaved';
@@ -26,6 +25,7 @@ import SemanticTypeGlyph from './SemanticTypeGlyph';
 import ExplorerRecordLink from './ExplorerRecordLink';
 import ExplorerCatalog from './ExplorerCatalog';
 import './published-explorer.css';
+import useExplorerErrorToast from './useExplorerErrorToast';
 
 const display = (value: unknown): string => value == null ? 'null' : typeof value === 'object' ? JSON.stringify(value) : String(value);
 const identityKey = (row: PublishedExplorerRecord, index: number) => row.identity ? JSON.stringify(Object.entries(row.identity).sort(([a], [b]) => a.localeCompare(b))) : 'row:' + index;
@@ -51,7 +51,8 @@ export default function PublishedExplorer() {
     try { return { entry: parsePublishedExplorerEntry(location.search, location.hash), error: '' }; }
     catch (error) { return { entry: undefined, error: (error as Error).message }; }
   }, [location.search, location.hash]);
-  if (!parsed.entry) return <section className="flow-exploration-empty" aria-label="Invalid published exploration"><h2>Cannot open this object set</h2><p role="alert">{parsed.error}</p><Link to="/ontology?catalog=published">Browse Published object types</Link></section>;
+  useExplorerErrorToast(parsed.error, 'Cannot open this object set');
+  if (!parsed.entry) return <section className="flow-exploration-empty" aria-label="Invalid published exploration"><h2>Cannot open this object set</h2><Link to="/ontology?catalog=published">Browse Published object types</Link></section>;
   return <Workspace key={parsed.entry.definitionId} entry={parsed.entry} routeKey={location.search + location.hash} />;
 }
 
@@ -80,14 +81,20 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
   const initialLayoutSorts = useRef(!entry.saved && !entry.savedSet && !entry.query.sorts?.length).current;
   const originals = useRef(new Map<string, PublishedExplorerRecord>());
   const sessionIdentity = getSessionState().identity;
+  const current = (signal?: AbortSignal) => {
+    const session = getSessionState();
+    return !signal?.aborted && session.authenticated && !session.locked && session.identity === sessionIdentity;
+  };
   const scopeKey = JSON.stringify([routeKey, sessionIdentity]);
   const definitionLoaded = objectType?.id === entry.definitionId;
   useEffect(() => {
     const controller = new AbortController();
     setMetadataError('');
     Promise.all([fetchPublishedOntologyType(entry.definitionId, controller.signal), fetchCurrentUserContext(controller.signal)]).then(([result, context]) => {
-      if (!controller.signal.aborted && getSessionState().identity === sessionIdentity) { setObjectType(result); setCanManage(!!context.user.is_superuser); }
-    }, error => { if (!controller.signal.aborted) setMetadataError(ontologyError(error, 'Unable to load this published object type.')); });
+      if (current(controller.signal)) { setObjectType(result); setCanManage(!!context.user.is_superuser); }
+    }, error => { if (current(controller.signal) && error?.code !== 'ERR_CANCELED') {
+      const detail = ontologyError(error, 'Unable to load this published object type.'); setMetadataError(detail);
+    } });
     return () => controller.abort();
   }, [entry.definitionId, sessionIdentity, version]);
   useEffect(() => {
@@ -103,7 +110,7 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
         const result = await loadPublishedSavedSet(entry.definitionId, entry.savedSet, controller.signal);
         query = validatePublishedExplorerQuery(result.query);
       }
-      if (!controller.signal.aborted && getSessionState().identity === sessionIdentity) {
+      if (current(controller.signal)) {
         const draft = navigationDraft.current?.route === routeKey ? navigationDraft.current : undefined;
         navigationDraft.current = undefined;
         setScope({ key: scopeKey, query, saved });
@@ -113,7 +120,9 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
         setDraftSorts(query.sorts || []);
       }
     }
-    void load().catch(error => { if (!controller.signal.aborted) setScopeError(ontologyError(error, 'Unable to open this object set.')); });
+    void load().catch(error => { if (current(controller.signal) && error?.code !== 'ERR_CANCELED') {
+      const detail = ontologyError(error, 'Unable to open this object set.'); setScopeError(detail);
+    } });
     return () => controller.abort();
   }, [entry, scopeKey, sessionIdentity, definitionLoaded, scopeRetry]);
   const activeScope = scope?.key === scopeKey ? scope : undefined;
@@ -125,17 +134,23 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
     if (!query || !objectType) return;
     const controller = new AbortController();
     queryPublishedExplorer(entry.definitionId, query, pageSize, offset, controller.signal).then(page => {
-      if (!controller.signal.aborted && getSessionState().identity === sessionIdentity) setRead({ key: requestKey, page });
-    }, error => { if (!controller.signal.aborted) setRead({ key: requestKey, error: ontologyError(error, 'Unable to query this object set.') }); });
+      if (current(controller.signal)) setRead({ key: requestKey, page });
+    }, error => { if (current(controller.signal) && error?.code !== 'ERR_CANCELED') {
+      const detail = ontologyError(error, 'Unable to query this object set.'); setRead({ key: requestKey, error: detail });
+    } });
     return () => controller.abort();
   }, [entry.definitionId, query, objectType, offset, pageSize, requestKey, sessionIdentity]);
   const currentRead = read?.key === requestKey ? read : undefined;
   const result = currentRead?.page;
   const fatalError = metadataError || scopeError;
   const error = fatalError || currentRead?.error;
+  useExplorerErrorToast(metadataError, 'Unable to load object type', () => retry(value => value + 1));
+  useExplorerErrorToast(scopeError, 'Unable to open object set', () => { retryScope(value => value + 1); retry(value => value + 1); });
+  useExplorerErrorToast(currentRead?.error, 'Unable to query object set', () => retry(value => value + 1));
   const busy = !error && (!objectType || !activeScope || !currentRead);
   const properties = objectType?.definition.properties || [];
   const fields = useMemo(() => properties.map(property => property.id), [objectType]);
+  const sortFields = useMemo(() => properties.filter(property => property.type !== 'json').map(property => property.id), [objectType]);
   const names = useMemo(() => Object.fromEntries(properties.map(property => [property.id, property.name])), [objectType]);
   const types = useMemo(() => objectType ? publishedColumnTypes(objectType) : {}, [objectType]);
   const metadata = useMemo(() => objectType ? { presentation: publishedPresentation(objectType) } : undefined, [objectType]);
@@ -205,7 +220,7 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
     navigate(publishedExplorerHref(entry.definitionId, { ...(entry.savedSet ? { savedSet: entry.savedSet } : { query: entry.query }), saved: id, returnTo: entry.returnTo }));
   }
   const resultLayout = useResultLayout(layoutIdentity.current, '', '', fields, sorts, updateSorts, initialLayoutSorts, entry.definitionId);
-  const dataColumns = explorerResultColumns({ layout: resultLayout, sorts, filters: activeFilters, openFilter: openColumnFilter, types, names, addFilter,
+  const dataColumns = explorerResultColumns({ layout: resultLayout, sorts, sortFields, filters: activeFilters, openFilter: openColumnFilter, types, names, addFilter,
     setSort: (field, direction) => { if (requireDraftApplied(true)) updateSorts([{ field, direction }, ...sorts.filter(item => item.field !== field)]); },
     clearSorts: () => { if (requireDraftApplied(true)) updateSorts([]); },
     filterValue: (field, value, exclude) => { if (canChange() && canAppendFilter() && requireDraftApplied()) applyRules(appendAndFilters(activeFilters, cellFilterRows(field, value, exclude, randomId()), randomId())); },
@@ -231,7 +246,7 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
         analysisRevision: version,
         aggregate: query ? (field, offset, signal) => queryPublishedExplorer(entry.definitionId, { ...query, groupBy: field, sumField: undefined }, 1, 0, signal, offset) : undefined,
         selected: chosen.filter(row => Object.keys(row.identity).length), query: { query: query || { filters: [] } }, resource, admin: canManage,
-        layoutControl: <><LayoutToolbar controls={resultLayout} admin={canManage} types={types} />{objectTools.createButton}</>, selectResource: setResource,
+        layoutControl: <LayoutToolbar controls={resultLayout} admin={canManage} types={types} />, createControl: objectTools.createButton, selectResource: setResource,
         availableResources: objectType ? explorerResourceCapabilities(objectType.definition.source, canManage) : [], additionalTools: objectTools.tools,
         saved: activeScope?.saved, savedLoading: !activeScope && !scopeError, savedError: scopeError, openSavedItem,
         closeSavedItem: () => navigate(publishedExplorerHref(entry.definitionId, { ...(entry.savedSet ? { savedSet: entry.savedSet } : { query: entry.query }), returnTo: entry.returnTo })),
@@ -258,7 +273,6 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
           </section>}<ExplorerResultsFooter offset={offset} rowCount={rows.length} pageSize={pageSize} loading={busy} canPageFurther={!!result?.hasMore && offset + pageSize <= 100000}
             onPageSize={size => { setPageSize(size); setOffset(0); }} onPrevious={() => setOffset(value => Math.max(0, value - pageSize))} onNext={() => setOffset(value => value + pageSize)} /></>,
         } : undefined}>
-          {error && <div className="flow-schema-state" role="alert">{error} <Button size="small" icon={<ReloadOutlined />} onClick={() => { if (scopeError) retryScope(value => value + 1); retry(value => value + 1); }}>Retry</Button></div>}
           {busy && !objectType && <div className="flow-schema-state" role="status">Loading published object set…</div>}
           {query?.keys && <div className="flow-schema-applied flow-query-chips" aria-label="Object set scope"><span>{query.keys.length} object references{result ? ` · ${result.count} matching objects` : ''}</span></div>}
           {filtersOpen && query && <ExplorerFilterEditor rules={filterRules} setRules={setFilterRules} sorts={draftSorts}
@@ -276,7 +290,7 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
               if (mapped.some(sort => !sort.field)) return <span className="explorer-filter-index-notice" role="status">Index not assessed</span>;
               return <ExplorerSortIndexNotice schema={source.schema!} table={source.table!} sorts={mapped} />;
             } : undefined}
-            onSortsChange={(next, apply) => { setDraftSorts(next); if (apply) updateSorts(next); }} fields={fields} rows={rows} formatValue={display}
+            onSortsChange={(next, apply) => { setDraftSorts(next); if (apply) updateSorts(next); }} fields={fields} sortFields={sortFields} rows={rows} formatValue={display}
             onApply={() => { if (canChange()) changeQuery({ ...query, filters: [], workbenchFilters: wireFilters(normalizeFilterDepth(filterRules)), sorts: draftSorts.filter(item => item.field) }); }} />}
         </ExplorerResults>
       </ExplorerWorkbench>

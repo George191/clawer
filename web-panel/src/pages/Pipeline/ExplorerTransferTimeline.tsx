@@ -7,6 +7,7 @@ import type { TransferRunReceipt, TransferTimelineDetail, TransferTimelineEntry,
 import { isUtcMonthDay, isoWeekdayName } from '../../services/scheduleTime';
 import { sandboxScopeDenied, useSandboxIdentity } from './SandboxMarkings';
 import { recordedUpstreamRule } from './upstreamRules';
+import useExplorerErrorToast from './useExplorerErrorToast';
 
 const physicalLabels: Record<TransferTimelineEntry['physicalScope'], string> = {
   current: 'Current table identity',
@@ -198,6 +199,14 @@ function TimelineWorkspace({ schema, table, onLatestCurrentReceipt }: Props) {
   const exactDetail = focused?.id === focusId ? focused : undefined;
   const showSelected = !focusId && Boolean(selected);
   const shownDetail = showSelected ? detail : exactDetail;
+  useExplorerErrorToast(failed ? 'The transfer timeline could not be loaded.' : undefined,
+    'Transfer timeline unavailable', () => setRevision(value => value + 1));
+  useExplorerErrorToast(moreFailed ? 'Older timeline entries could not be loaded.' : undefined,
+    'Timeline page unavailable', () => void loadOlder());
+  useExplorerErrorToast(showSelected && detailFailed ? 'This scoped entry could not be verified.' : undefined,
+    'Timeline detail unavailable', () => { if (selected) setSelected({ ...selected }); });
+  useExplorerErrorToast(focusId && focusError === focusId ? 'The requested receipt could not be verified. Dismiss the receipt focus to inspect other entries.' : undefined,
+    'Requested receipt unavailable');
   return <section className="flow-evidence-card flow-evidence-timeline" aria-label="Transfer timeline">
     <header><h4>Transfer timeline</h4><span>Sandbox destination · newest first</span></header>
     <p>Attempts and dispatches do not prove a write. Receipts record committed transfers and identify whether the physical destination matches this table.</p>
@@ -213,12 +222,12 @@ function TimelineWorkspace({ schema, table, onLatestCurrentReceipt }: Props) {
       <div className="flow-evidence-freshness-actions">
         <Button size="small" htmlType="submit">Apply timeline filters</Button>
         <Button size="small" onClick={reset}>Reset timeline filters</Button>
+        {focusId && <Button size="small" onClick={closeFocus}>Dismiss receipt focus</Button>}
       </div>
       {filtered && <p role="status">Showing filtered timeline entries.</p>}
     </form>
     {focusId && focusLoading === focusId && <p role="status">Verifying the requested receipt…</p>}
-    {focusId && focusError === focusId && <p role="status">The requested receipt is unavailable. <Button size="small" onClick={closeFocus}>Dismiss receipt focus</Button></p>}
-    {failed ? <><p role="alert">Transfer timeline unavailable.</p><Button size="small" onClick={() => setRevision(value => value + 1)}>Retry timeline</Button></>
+    {failed ? null
       : !entries ? <p role="status">Loading transfer timeline…</p> : entries.length ? <>
         <ol className="flow-evidence-receipts" aria-label="Transfer timeline entries">
           {entries.map(entry => <li key={keyFor(entry)}>
@@ -226,12 +235,11 @@ function TimelineWorkspace({ schema, table, onLatestCurrentReceipt }: Props) {
             <Button size="small" disabled={Boolean(focusId)} onClick={() => { setDetail(undefined); setDetailFailed(false); setSelected(entry); }}>Inspect timeline entry</Button>
           </li>)}
         </ol>
-        {moreFailed && <p role="alert">Older entries could not be loaded.</p>}
-        {cursor && <Button size="small" loading={loadingMore} onClick={loadOlder}>{moreFailed ? 'Retry older entries' : 'Load older entries'}</Button>}
+        {cursor && <Button size="small" loading={loadingMore} onClick={loadOlder}>Load older entries</Button>}
       </> : <p>{filtered ? 'No scoped transfer activity matches these filters.' : 'No scoped transfer activity recorded for this destination.'}</p>}
     <Modal open={Boolean(showSelected || exactDetail)} destroyOnHidden className="flow-surface-modal" title="Transfer timeline detail"
       onCancel={() => { if (focusId) closeFocus(); else if (showSelected) setSelected(undefined); }} footer={null}>
-      {showSelected && detailFailed ? <p role="alert">This scoped entry could not be verified. Close the detail and refresh Evidence.</p>
+      {showSelected && detailFailed ? null
         : !shownDetail ? <p role="status">Loading timeline detail…</p> : <div className="flow-evidence-timeline-detail">
           <TimelineEntryFacts entry={shownDetail} />
           <div><span>Plan ID</span> <code>{shownDetail.planId}</code></div>

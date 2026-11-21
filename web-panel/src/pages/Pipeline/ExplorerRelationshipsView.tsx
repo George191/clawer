@@ -9,7 +9,6 @@ type Relationship = {
   id: string;
   name: string;
   direction: 'incoming' | 'outgoing';
-  target: string;
   fieldMapping?: { label: string; fields: { source: string; target: string }[] };
 };
 
@@ -35,17 +34,15 @@ export default function ExplorerRelationshipsView({ relations, selectedId, recor
   return <section className="explorer-row-links" aria-label="Related records" aria-busy={loading}>
     <header className="explorer-links-heading"><LinkOutlined /><label><span>Relationships</span>
       <select aria-label="Relationship" value={selected.id} disabled={loading} onChange={event => onSelect(event.target.value)}>
-        {relations.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+        {relations.map(item => <option key={item.id} value={item.id}>{item.name} · {item.direction}</option>)}
       </select></label>
     </header>
-    <div className="explorer-links-mapping">
-      <div><span className="explorer-links-badge">{selected.direction === 'outgoing' ? 'Outgoing' : 'Incoming'}</span>
-        <strong>{selected.target}</strong></div>
-      {selected.fieldMapping && <div className="explorer-links-field-mapping">
+    {selected.fieldMapping && <div className="explorer-links-mapping">
+      <div className="explorer-links-field-mapping">
         <span className="explorer-links-badge">{selected.fieldMapping.label}</span>
         <div className="explorer-links-fields">{selected.fieldMapping.fields.map(field => <span key={field.source}><code>{field.source}</code><span aria-hidden="true">→</span><code>{field.target}</code></span>)}</div>
-      </div>}
-    </div>
+      </div>
+    </div>}
     {emptyReason || !records.length ? <div className="explorer-links-empty" role="status"><LinkOutlined /><strong>No matching records</strong><p>{emptyReason || 'No objects match this relationship for the selected record.'}</p></div> :
       <ul>{records.map(record => <li key={record.key}>
         {record.link}

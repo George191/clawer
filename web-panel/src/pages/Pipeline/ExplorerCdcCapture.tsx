@@ -1,21 +1,26 @@
 import { useEffect, useState } from 'react';
 import { fetchTableCapture, type CdcTableCapture } from '../../services/api';
+import useExplorerErrorToast from './useExplorerErrorToast';
 
 export default function ExplorerCdcCapture({ schema, table, version = 0 }: { schema: string; table: string; version?: number }) {
     const [capture, setCapture] = useState<CdcTableCapture>();
+    const [failed, setFailed] = useState(false);
+    const [retry, setRetry] = useState(0);
+    useExplorerErrorToast(failed ? 'The CDC evidence request failed.' : undefined,
+        'Change capture unavailable', () => setRetry(value => value + 1));
     useEffect(() => {
         const controller = new AbortController();
-        setCapture(undefined);
+        setCapture(undefined); setFailed(false);
         fetchTableCapture(schema, table, controller.signal).then(result => {
             if (!controller.signal.aborted) setCapture(result);
         }).catch(() => {
-            if (!controller.signal.aborted) setCapture({ state: 'unavailable', reason: 'The CDC evidence request failed.' });
+            if (!controller.signal.aborted) setFailed(true);
         });
         return () => controller.abort();
-    }, [schema, table, version]);
+    }, [schema, table, version, retry]);
     return <section className="flow-evidence-card" aria-label="Change capture evidence">
         <header><h4>Change capture</h4><span>{capture?.state === 'observed' ? 'Observed in Kafka' : 'Kafka observation'}</span></header>
-        {!capture ? <p role="status">Inspecting retained changes…</p> : capture.state === 'observed' ? <>
+        {failed ? null : !capture ? <p role="status">Inspecting retained changes…</p> : capture.state === 'observed' ? <>
             <div className="flow-evidence-path">
                 <div className="flow-evidence-node"><span>PostgreSQL table</span><code>{schema}.{table}</code></div>
                 <span className="flow-evidence-arrow" aria-hidden="true">→</span>

@@ -126,3 +126,22 @@ test('the shared editor keeps immediate primary sorting outside Ontology Explore
     .props.onClick({ stopPropagation() {} });
   assert.deepEqual(applied, [true, true]);
 });
+
+test('Published sorting uses scalar fields while structured fields remain available for filters', () => {
+  const fields = ['tags', 'id', 'media_url'];
+  const sorts = [{ field: 'id', direction: 'asc' }];
+  const calls = [];
+  const props = { rules: [rule('tags', { field: 'tags' })], setRules() {}, sorts, onSortsChange: next => calls.push(next),
+    fields, sortFields: ['id', 'media_url'], rows: [], formatValue: String, onApply() {} };
+  const tree = editor.default(props);
+  const filter = descendants(tree).find(node => node.props?.value === 'tags' && node.props?.fields);
+  assert.deepEqual(filter.props.fields, fields);
+  const picker = descendants(tree).find(node => node.props?.labelClassName === 'flow-filter-sort-field-label');
+  assert.deepEqual(picker.props.fields, ['id', 'media_url']);
+  descendants(tree).find(node => node.props?.['aria-label'] === 'Add sort field').props.onClick();
+  assert.deepEqual(calls, [[sorts[0], { field: 'media_url', direction: 'asc' }]]);
+  const full = editor.default({ ...props, sorts: calls[0] });
+  assert.ok(descendants(full).find(node => node.props?.['aria-label'] === 'Add sort field').props.disabled);
+  const pickers = descendants(full).filter(node => node.props?.labelClassName === 'flow-filter-sort-field-label');
+  assert.deepEqual(pickers.map(item => item.props.fields), [['id'], ['media_url']]);
+});

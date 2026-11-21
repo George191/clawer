@@ -4,6 +4,7 @@ import { ApiOutlined, CopyOutlined, DeleteOutlined, PlusOutlined, ReloadOutlined
 import type { EtlPublishedApi } from '../../services/api';
 import { apiUrl } from '../../services/endpoints';
 import { publicationDateInput, publicationDateValue, publicationPredicate, publicationRequest, publicationState } from './publishedApiPresentation';
+import useExplorerErrorToast from './useExplorerErrorToast';
 import './published-api-workbench.css';
 
 export interface PublishedApiWorkbenchProps {
@@ -19,6 +20,7 @@ const parameters = [
   ['filters', 'JSON array', '[]', 'URL-encoded filter rows. These further narrow the published range.'],
 ];
 export default function PublishedApiWorkbench({ items, title = 'Published APIs', loading, busy, dirty, error, onReload, onAdd, onUpdate, onSave, onDiscard, onDelete, dataTypes = [], dataSources = [] }: PublishedApiWorkbenchProps) {
+  useExplorerErrorToast(error, 'Unable to load published APIs', onReload ? () => { if (!loading && !busy && !dirty) onReload(); } : undefined);
   const [selected, select] = useState(''), [search, setSearch] = useState('');
   const [tab, setTab] = useState<'overview' | 'request' | 'range'>('overview');
   const [language, setLanguage] = useState<'curl' | 'http'>('curl');
@@ -47,9 +49,8 @@ export default function PublishedApiWorkbench({ items, title = 'Published APIs',
       {onSave && <Button size="small" type="primary" loading={busy} disabled={loading || !dirty || invalid} onClick={onSave}>Save changes</Button>}
       {onAdd && <Button size="small" icon={<PlusOutlined />} disabled={disabled || dirty} onClick={onAdd}>Publish API</Button>}
     </div></header>
-    {error && <p className="api-workbench-error" role="alert">{error}</p>}
     {dirty && invalid && <p className="api-workbench-error" role="alert">Each publication needs a valid start date and a later expiry date.</p>}
-    {error && !items.length ? <div className="api-workbench-empty"><ApiOutlined /><strong>Unable to load published APIs</strong>{onReload && <Button size="small" disabled={disabled} onClick={onReload}>Retry</Button>}</div>
+    {error && !items.length ? null
       : loading && !items.length ? <div className="api-workbench-empty" role="status"><ReloadOutlined spin /><strong>Loading published APIs…</strong></div> : !items.length ? <div className="api-workbench-empty" role="status">
       <ApiOutlined /><strong>No published APIs</strong><p>{onAdd ? 'Publish the current data range to provide a read-only endpoint.' : 'This source has no published read endpoints.'}</p>
       {onAdd && <Button type="primary" size="small" icon={<PlusOutlined />} disabled={disabled} onClick={onAdd}>Publish API</Button>}

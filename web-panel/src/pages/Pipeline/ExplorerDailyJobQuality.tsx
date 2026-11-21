@@ -7,6 +7,7 @@ import { getSessionState } from '../../services/session';
 import ExplorerWeeklyRunEvidence from './ExplorerWeeklyRunEvidence';
 import ExplorerQualityWarnings from './ExplorerQualityWarnings';
 import { sandboxScopeDenied, useSandboxIdentity } from './SandboxMarkings';
+import useExplorerErrorToast from './useExplorerErrorToast';
 
 const labels: Record<DailyJobQuality['state'], string> = {
   disabled: 'Unavailable',
@@ -75,11 +76,15 @@ function DailyJobQualityCard({ schema, table, identity, cadence = 'daily' }: Pro
   const [loading, setLoading] = useState(true);
   const [expiredAt, setExpiredAt] = useState<number>();
   const [error, setError] = useState('');
+  const [readFailed, setReadFailed] = useState(false);
   const [review, setReview] = useState<{ candidate: DailyJobQualityCandidate; request: DailyJobQualityReview }>();
   const [busy, setBusy] = useState(false);
   const [revision, setRevision] = useState(0);
   const active = useRef(false);
   const pending = useRef(false);
+  useExplorerErrorToast(error, 'Scheduled quality update failed');
+  useExplorerErrorToast(readFailed ? 'The scheduled outcome check could not be loaded.' : undefined,
+    'Scheduled quality unavailable', () => setRevision(value => value + 1));
   const live = (signal?: AbortSignal) => {
     const session = getSessionState();
     return active.current && !signal?.aborted && session.authenticated && !session.locked && session.identity === identity;
@@ -88,10 +93,10 @@ function DailyJobQualityCard({ schema, table, identity, cadence = 'daily' }: Pro
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   useEffect(() => {
     const read = new AbortController();
-    setLoading(true);
+    setLoading(true); setReadFailed(false);
     void fetchQuality(schema, table, read.signal).then(value => {
       if (live(read.signal)) setSnapshot(value);
-    }).catch(() => { if (live(read.signal)) setSnapshot(undefined); })
+    }).catch(() => { if (live(read.signal)) { setSnapshot(undefined); setReadFailed(true); } })
       .finally(() => { if (live(read.signal)) setLoading(false); });
     return () => read.abort();
   }, [schema, table, identity, revision, fetchQuality]);
@@ -135,7 +140,7 @@ function DailyJobQualityCard({ schema, table, identity, cadence = 'daily' }: Pro
     } catch (failure) {
       if (live()) {
         if (sandboxScopeDenied(failure)) setSnapshot(undefined);
-        else setError('The outcome check could not be reviewed. Recheck the current schedule before retrying.');
+        setError('The outcome check could not be reviewed. Recheck the current schedule before retrying.');
         if (weekly) setLoading(true);
         setRevision(value => value + 1);
       }
@@ -155,7 +160,7 @@ function DailyJobQualityCard({ schema, table, identity, cadence = 'daily' }: Pro
     } catch (failure) {
       if (live()) {
         if (sandboxScopeDenied(failure)) setSnapshot(undefined);
-        else setError('Acknowledgment could not be verified. Review the current warnings before retrying.');
+        setError('Acknowledgment could not be verified. Review the current warnings before retrying.');
         if (weekly) setLoading(true);
         setRevision(value => value + 1);
       }
@@ -171,7 +176,6 @@ function DailyJobQualityCard({ schema, table, identity, cadence = 'daily' }: Pro
   return <section className="flow-evidence-card flow-evidence-freshness" aria-labelledby={title} aria-busy={loading || busy}>
     <header><h4 id={title}>{weekly ? 'Weekly UTC job health' : 'Scheduled transfer health'}</h4><span>Reviewed {weekly ? 'Weekly' : 'Daily'} UTC schedule</span></header>
     <p>Checks the outcome of a reviewed schedule slot for this exact table. It does not start, pause, or change the schedule.</p>
-    {error && <p role="alert">{error}</p>}
     <strong role="status">{labels[state]}</strong>
     {reason && <p>{reason}</p>}
     <dl className="flow-evidence-freshness-facts">

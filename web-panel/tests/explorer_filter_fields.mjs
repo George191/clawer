@@ -38,3 +38,35 @@ test('default field-only rows do not mark the query dirty but entered and unary 
   assert.equal(hasExplorerFilterInput(rule('range-draft', { field: 'employees', operator: '介于', value: '10,' })), true);
   assert.equal(hasExplorerFilterInput(rule('missing-field', { value: '10' })), false);
 });
+
+const workbenchCode = ts.transpileModule(readFileSync(new URL('../src/pages/Pipeline/ExplorerWorkbench.tsx', import.meta.url), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
+}).outputText;
+const jsx = (type, props) => ({ type, props });
+const descendants = tree => tree && typeof tree === 'object' ? [tree, ...[tree.props?.children].flat(Infinity).flatMap(descendants)] : [];
+const workbench = {};
+vm.runInThisContext('(function(require,exports){' + workbenchCode + '\n})')(name => {
+  if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
+  if (name === './explorerFilters') return exports;
+  if (name === '@/components/ui') return { Dropdown: 'Dropdown', Button: 'Button' };
+  if (name === './ExplorerResultLayout') return { LayoutHeader: 'LayoutHeader' };
+  return {};
+}, workbench);
+
+test('Published JSON column actions cannot sort but scalar media URLs remain sortable', () => {
+  const sorted = [], filtered = [];
+  const columns = workbench.explorerResultColumns({
+    layout: { columns: ['tags', 'media_url'].map(field => ({ field, visible: true, width: 100 })), layout: { wrap: false }, ready: true },
+    sorts: [], sortFields: ['media_url'], addFilter: field => filtered.push(field), openFilter() {},
+    setSort: (field, direction) => sorted.push({ field, direction }), clearSorts() {}, filterValue() {},
+  });
+  const menus = columns.map(column => descendants(column.title).find(node => node.props?.menu).props.menu);
+  assert.ok(menus[0].items.filter(item => ['asc', 'desc'].includes(item.key)).every(item => item.disabled));
+  assert.ok(menus[1].items.filter(item => ['asc', 'desc'].includes(item.key)).every(item => !item.disabled));
+  menus[0].onClick({ key: 'asc' });
+  menus[0].onClick({ key: 'filter' });
+  assert.deepEqual(sorted, []);
+  assert.deepEqual(filtered, ['tags']);
+  menus[1].onClick({ key: 'desc' });
+  assert.deepEqual(sorted, [{ field: 'media_url', direction: 'desc' }]);
+});

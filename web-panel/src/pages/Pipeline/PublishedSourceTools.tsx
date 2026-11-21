@@ -9,6 +9,7 @@ import type { EtlStreamState } from '../../services/types';
 import type { ResourceView } from './ExplorerWorkbenchHeader';
 import ExplorerStreamPositions, { topicRate } from './ExplorerStreamPositions';
 import ExplorerTableEvidence from './ExplorerTableEvidence';
+import useExplorerErrorToast from './useExplorerErrorToast';
 import './published-source-tools.css';
 import './explorer-resource-tools.css';
 
@@ -16,6 +17,7 @@ function SourceStream({ schema, table }: { schema: string; table: string }) {
   const [result, setResult] = useState<EtlStreamState>();
   const [error, setError] = useState('');
   const [version, refresh] = useState(0);
+  useExplorerErrorToast(error, 'Unable to read the source stream', () => refresh(value => value + 1));
   useEffect(() => {
     let active = true, timer: number | undefined, previous: EtlStreamState | undefined;
     setResult(undefined); setError('');
@@ -31,7 +33,7 @@ function SourceStream({ schema, table }: { schema: string; table: string }) {
   }, [schema, table, version]);
   return <section className="flow-schema-details flow-explorer-stream" aria-label="Source stream">
     <header><div><h3>Source stream</h3><p>Kafka topic and consumer positions for the physical source. Shared topics may include other tables.</p></div><Button size="small" icon={<ReloadOutlined />} onClick={() => refresh(value => value + 1)}>Refresh</Button></header>
-    {error ? <p role="alert">{error}</p> : !result ? <p role="status">Checking source stream…</p> : !result.available ? <div role="status"><strong>{result.topic ? 'Source stream unavailable' : 'No active source stream'}</strong><p>{result.reason}</p></div> : <><p>Topic <code>{result.topic}</code></p><ExplorerStreamPositions stream={result} /></>}
+    {error ? null : !result ? <p role="status">Checking source stream…</p> : !result.available ? <div role="status"><strong>{result.topic ? 'Source stream unavailable' : 'No active source stream'}</strong><p>{result.reason}</p></div> : <><p>Topic <code>{result.topic}</code></p><ExplorerStreamPositions stream={result} /></>}
   </section>;
 }
 

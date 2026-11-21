@@ -211,9 +211,6 @@
 .flow-explorer-selection__comparison .is-different small { color:var(--ontology-muted); }
 .flow-explorer-selection pre { max-width: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .flow-explorer-selection .flow-json-tree { border-color: var(--ontology-control-border); }
-.flow-explorer-selection__mapping-error {
-  padding: 6px 9px; border-bottom: 1px solid var(--ontology-border); color: var(--ui-error);
-}
 .flow-explorer-overview { display: grid; gap: 15px; }
 .flow-explorer-overview__summary {
   display: grid;

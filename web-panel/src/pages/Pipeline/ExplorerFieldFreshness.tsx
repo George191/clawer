@@ -5,6 +5,7 @@ import type { AssetQualityIncident, FieldFreshness, FieldFreshnessReview } from 
 import { getSessionState } from '../../services/session';
 import ExplorerQualityWarnings from './ExplorerQualityWarnings';
 import { sandboxScopeDenied, useSandboxIdentity } from './SandboxMarkings';
+import useExplorerErrorToast from './useExplorerErrorToast';
 
 const labels: Record<FieldFreshness['state'], string> = {
   unconfigured: 'Not configured', fresh: 'Within field lag threshold', stale: 'Field lag exceeds threshold',
@@ -38,11 +39,15 @@ function Workspace({ identity }: { identity: string }) {
   const [review, setReview] = useState<FieldFreshnessReview>();
   const [expired, setExpired] = useState<number>();
   const [error, setError] = useState('');
+  const [readFailed, setReadFailed] = useState(false);
   const [revision, setRevision] = useState(0);
   const [working, setWorking] = useState(false);
   const [loading, setLoading] = useState(true);
   const active = useRef(false);
   const pending = useRef(false);
+  useExplorerErrorToast(error, 'Field freshness update failed');
+  useExplorerErrorToast(readFailed ? 'The field freshness policy could not be loaded.' : undefined,
+    'Field freshness unavailable', () => setRevision(value => value + 1));
   const live = (signal?: AbortSignal) => {
     const session = getSessionState();
     return active.current && !signal?.aborted && session.authenticated && !session.locked && session.identity === identity;
@@ -50,11 +55,11 @@ function Workspace({ identity }: { identity: string }) {
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   useEffect(() => {
     const read = new AbortController();
-    setLoading(true);
+    setLoading(true); setReadFailed(false);
     void fetchFieldFreshness(read.signal).then(result => {
       if (!live(read.signal)) return;
       setStatus(result); setLag(result.maxLagSeconds == null ? '' : String(result.maxLagSeconds));
-    }).catch(() => { if (live(read.signal)) setStatus(undefined); })
+    }).catch(() => { if (live(read.signal)) { setStatus(undefined); setReadFailed(true); } })
       .finally(() => { if (live(read.signal)) setLoading(false); });
     return () => read.abort();
   }, [identity, revision]);
@@ -87,7 +92,7 @@ function Workspace({ identity }: { identity: string }) {
     catch (failure) {
       if (live()) {
         if (sandboxScopeDenied(failure)) setStatus(undefined);
-        else setError(failureText);
+        setError(failureText);
         setRevision(value => value + 1);
       }
     } finally {
@@ -115,7 +120,6 @@ function Workspace({ identity }: { identity: string }) {
     <p>Compares a field timestamp with the recorded time of a verified sync. It does not show that the field caused the sync.</p>
     <strong role="status">{labels[state]}</strong>
     {reason && <p>{reason}</p>}
-    {error && <p role="alert">{error}</p>}
     <dl className="flow-evidence-freshness-facts">
       <div><dt>Data-field timestamp</dt><dd><Time value={reportFacts ? status.fieldRecordedAt : null} empty="Not verified" /></dd></div>
       <div><dt>Confirmed sync recorded at</dt><dd><Time value={reportFacts ? status.receiptRecordedAt : null} empty="No verified sync shown" /></dd></div>

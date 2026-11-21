@@ -41,6 +41,7 @@ type Props<Q extends object = WorkbenchQuery> = {
     additionalTools?: ExplorerToolAction[];
     admin: boolean;
     layoutControl: ReactNode;
+    createControl?: ReactNode;
     selectResource: (v: ResourceView) => void;
     saved?: SavedDetail<Q>;
     savedLoading: boolean;
@@ -349,6 +350,7 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
             <div className="wb-right"><Dropdown trigger={['click']} placement="bottomRight" open={menu === 'asset'} onOpenChange={next => { if (next) { openMenu('asset'); setAppSearch(''); setAppGroup('all'); } else show(current => current === 'asset' ? '' : current); }} overlayClassName="flow-menu-popup wb-open-in-popup" popupRender={() => appMenu}>
                 <button type="button" className="wb-open-in-trigger" ref={openInTrigger}>Open in <DownOutlined /></button>
             </Dropdown>
+            {p.createControl}
             </div>
         </div>
         {p.resource === 'preview' && p.mode === 'explore' && !p.savedLoading && !p.savedError && <ExplorerExploreView field={field} select={setChart} fields={p.fields} names={p.names} types={p.types} rows={p.rows} aggregation={aggregation}

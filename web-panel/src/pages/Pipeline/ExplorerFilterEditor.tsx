@@ -75,6 +75,7 @@ export interface ExplorerFilterEditorProps {
     sorts: ExplorerSort[];
     onSortsChange: (sorts: ExplorerSort[], apply: boolean) => void;
     fields: string[];
+    sortFields?: string[];
     rows: Record<string, unknown>[];
     formatValue: (value: unknown) => string;
     onApply: () => void;
@@ -86,7 +87,7 @@ export interface ExplorerFilterEditorProps {
     children?: React.ReactNode;
 }
 
-export default function ExplorerFilterEditor({ rules, setRules, search, onSearchChange, sorts, onSortsChange, fields, rows, formatValue, onApply, columnMode = true, validationRequest, renderRuleNotice, renderSortNotice, footerAccessory, children }: ExplorerFilterEditorProps) {
+export default function ExplorerFilterEditor({ rules, setRules, search, onSearchChange, sorts, onSortsChange, fields, sortFields = fields, rows, formatValue, onApply, columnMode = true, validationRequest, renderRuleNotice, renderSortNotice, footerAccessory, children }: ExplorerFilterEditorProps) {
     const [filterMoving, setFilterMoving] = useState<{ id: string; peerId: string; direction: 'up' | 'down' } | null>(null);
     const rulesRef = useRef<HTMLDivElement>(null);
     const [invalidFilter, setInvalidFilter] = useState<{ id: string; parts: ExplorerFilterPart[] }>();
@@ -176,7 +177,7 @@ export default function ExplorerFilterEditor({ rules, setRules, search, onSearch
             return closeIndex >= 0 ? [...cleanRows.slice(0, closeIndex), ...additions, ...cleanRows.slice(closeIndex)] : [...cleanRows, ...additions];
         });
     };
-    const nextSortField = nextUnusedExplorerField(fields, sorts.map(sort => sort.field));
+    const nextSortField = nextUnusedExplorerField(sortFields, sorts.map(sort => sort.field));
     const incompleteSort = firstIncompleteExplorerSort(sorts);
     useEffect(() => setInvalidSort(undefined), [sorts]);
     useEffect(() => {
@@ -193,7 +194,7 @@ export default function ExplorerFilterEditor({ rules, setRules, search, onSearch
         if (columnMode) {
             if (incompleteSort !== undefined) { setInvalidSort({ index:incompleteSort }); return; }
             if (nextSortField) onSortsChange([...sorts.filter(sort => sort.field), { field: nextSortField, direction: 'asc' }], false);
-        } else onSortsChange([{ field: sortField, direction: sortDirection }, ...sortConditions, { field: fields[0] || '', direction: 'asc' }], false);
+        } else onSortsChange([{ field: sortField, direction: sortDirection }, ...sortConditions, { field: sortFields[0] || '', direction: 'asc' }], false);
     };
     const clearSorts = () => onSortsChange([{ field: '', direction: sortDirection }], true);
     return <div className={`flow-filter-card${columnMode ? ' explorer-filter-editor' : ''}`}>
@@ -203,7 +204,7 @@ export default function ExplorerFilterEditor({ rules, setRules, search, onSearch
 
         <div className="flow-filter-sort"><strong>Sort by</strong>
             <div className="flow-sort-conditions-viewport" ref={sortConditionsRef}><div className="flow-sort-conditions-track">
-                <span className={columnMode ? 'explorer-filter-sort-field-wrap' : 'flow-filter-sort-field-wrap'}><FilterFieldPicker explorer={columnMode} fields={columnMode ? availableExplorerSortFields(fields, sorts, 0) : fields} value={sortField}
+                <span className={columnMode ? 'explorer-filter-sort-field-wrap' : 'flow-filter-sort-field-wrap'}><FilterFieldPicker explorer={columnMode} fields={columnMode ? availableExplorerSortFields(sortFields, sorts, 0) : sortFields} value={sortField}
                     onChange={field => onSortsChange([{ field, direction: sortDirection }, ...sortConditions], !columnMode)}
                     className={columnMode ? `explorer-filter-sort-field${invalidSort?.index === 0 ? ' has-invalid-sort' : ''}` : 'flow-filter-sort-field'} labelClassName="flow-filter-sort-field-label" trailing={<>
                         <button type="button" className="flow-filter-sort-direction-toggle" aria-label={sortDirection === 'asc' ? 'Switch to descending' : 'Switch to ascending'} onClick={event => {
@@ -215,7 +216,7 @@ export default function ExplorerFilterEditor({ rules, setRules, search, onSearch
                     </>} />
                 </span>
                 {sortConditions.map((condition, index) => <span className={columnMode ? 'explorer-filter-sort-field-wrap' : 'flow-filter-sort-field-wrap'} key={index}>
-                    <FilterFieldPicker explorer={columnMode} fields={columnMode ? availableExplorerSortFields(fields, sorts, index + 1) : fields} value={condition.field}
+                    <FilterFieldPicker explorer={columnMode} fields={columnMode ? availableExplorerSortFields(sortFields, sorts, index + 1) : sortFields} value={condition.field}
                         onChange={field => onSortsChange([sorts[0], ...sortConditions.map((item, itemIndex) => itemIndex === index ? { ...item, field } : item)], false)}
                         className={columnMode ? `explorer-filter-sort-field${invalidSort?.index === index + 1 ? ' has-invalid-sort' : ''}` : 'flow-filter-sort-field'} labelClassName="flow-filter-sort-field-label" trailing={<>
                             <button type="button" className="flow-filter-sort-direction-toggle" aria-label="Toggle sort direction" onClick={event => {

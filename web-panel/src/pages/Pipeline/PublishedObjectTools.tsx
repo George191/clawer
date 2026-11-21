@@ -13,6 +13,7 @@ import OntologyRevisions from './OntologyRevisions';
 import OntologySdkDownload from './OntologySdkDownload';
 import OntologyTransactions from './OntologyTransactions';
 import { parsePropertyValue } from './ontologyPropertyValue';
+import useExplorerErrorToast from './useExplorerErrorToast';
 import './published-tools.css';
 import './explorer-resource-tools.css';
 import './published-results.css';
@@ -41,6 +42,7 @@ function RecordHistory({ objectType, recordId, onChanged }: { objectType: string
   const active = useRef(true);
   const identity = useRef(getSessionState().identity).current;
   const current = () => active.current && identity === getSessionState().identity;
+  useExplorerErrorToast(error, 'Unable to load action history', () => setVersion(value => value + 1));
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   useEffect(() => {
     const controller = new AbortController();
@@ -53,7 +55,7 @@ function RecordHistory({ objectType, recordId, onChanged }: { objectType: string
   }, [objectType, recordId, offset, version, identity]);
   return <section className="explorer-history" aria-label="Record action history">
     <header><HistoryOutlined /><h4>Edit history</h4></header>
-    {error ? <p role="alert">{error} <Button size="small" onClick={() => setVersion(value => value + 1)}>Retry</Button></p>
+    {error ? null
       : !page ? <p role="status">Loading action history…</p> : <>
         {page.items.length ? <ol className="explorer-history-events">{page.items.map(event => <li key={event.revision}>
           <span className="explorer-history-marker" aria-hidden="true">{event.kind === 'modify' ? <EditOutlined /> : event.kind === 'delete' ? <DeleteOutlined /> : <PlusOutlined />}</span>
@@ -66,7 +68,7 @@ function RecordHistory({ objectType, recordId, onChanged }: { objectType: string
               if (!current() || undoing) return;
               setUndoing(true);
               try { await undoOntologyEdit(objectType, recordId, event.revision); if (current()) { message.success('Edit undone.'); setVersion(value => value + 1); onChanged(); } }
-              catch (failure) { if (current()) message.error(describe(failure, 'Unable to undo this edit.')); }
+              catch (failure) { if (current()) message.error({ content: 'Unable to undo this edit', description: describe(failure, 'Unable to undo this edit.'), className: 'explorer-toast' }); }
               finally { if (current()) setUndoing(false); }
             }}>Undo edit</Button></footer>}
           </details>
@@ -85,6 +87,7 @@ function DeletedObjects({ objectType, onChanged }: { objectType: PublishedOntolo
   const [page, setPage] = useState<OntologyRecordPage>();
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<OntologyRecord>();
+  useExplorerErrorToast(error, 'Unable to load deleted objects', () => setVersion(value => value + 1));
   useEffect(() => {
     const controller = new AbortController();
     const identity = getSessionState().identity;
@@ -97,7 +100,7 @@ function DeletedObjects({ objectType, onChanged }: { objectType: PublishedOntolo
     return () => controller.abort();
   }, [objectType.id, offset, version]);
   return <section className="flow-tool-section" aria-label="Deleted objects">
-    {error ? <p role="alert">{error} <Button size="small" onClick={() => setVersion(value => value + 1)}>Retry</Button></p>
+    {error ? null
       : !page ? <p role="status">Loading deleted objects…</p>
         : page.items.length ? <ul className="flow-published-deleted-objects">{page.items.map(record => <li key={record.id}>
           <Button size="small" type="text" aria-pressed={selected?.id === record.id} onClick={() => setSelected(record)}>{title(record.title)}</Button>
@@ -142,6 +145,7 @@ export function usePublishedObjectTools({ objectType, actions, record, returnTo,
     if (!objectType || !current() || !operation || locked.current) return;
     const definitionId = objectType.id;
     locked.current = true; setPending(true); setError('');
+    let submitted = false;
     try {
       const values: Record<string, unknown> = {};
       for (const id of operation.fields) {
@@ -157,6 +161,7 @@ export function usePublishedObjectTools({ objectType, actions, record, returnTo,
       const selected = operation.record;
       if (operation.kind !== 'create' && (!selected?.id || selected.revision == null)) throw new Error('This record cannot be changed.');
       if (operation.kind === 'modify' && !Object.keys(values).length) throw new Error('Change at least one property.');
+      submitted = true;
       await submitOntologyAction(objectType.id, operation.kind,
         operation.kind === 'create' ? { values } : operation.kind === 'modify'
           ? { recordId: selected!.id!, expectedRevision: selected!.revision!, values }
@@ -167,7 +172,8 @@ export function usePublishedObjectTools({ objectType, actions, record, returnTo,
       }
     } catch (failure) { if (current()) {
       const detail = describe(failure, failure instanceof Error ? failure.message : 'The action failed.');
-      setError(detail); message.error(detail);
+      if (!submitted) setError(detail);
+      message.error({ content: 'Object action failed', description: detail, className: 'explorer-toast' });
     } }
     finally { locked.current = false; if (current()) setPending(false); }
   };
@@ -182,6 +188,7 @@ export function usePublishedObjectTools({ objectType, actions, record, returnTo,
     { key: 'sdk', label: 'TypeScript SDK', icon: <DownloadOutlined />, group: 'inspect', run: () => setSdkOpen(true) },
   ] : [];
   const create = native ? actions.find(action => action.kind === 'create') : undefined;
+  const creating = operation?.kind === 'create';
   const actionsForRecord = (selected?: OntologyRecord): MenuItem[] => native && selected?.id ? actions.filter(action => action.kind !== 'create').map(action => ({
     key: action.kind, label: action.kind === 'modify' ? 'Modify' : 'Delete', danger: action.kind === 'delete',
     icon: action.kind === 'modify' ? <EditOutlined /> : <DeleteOutlined />,
@@ -191,7 +198,7 @@ export function usePublishedObjectTools({ objectType, actions, record, returnTo,
     ? <RecordHistory key={selected.id} objectType={objectType.id} recordId={selected.id} onChanged={onChanged} /> : null;
   return {
     tools,
-    createButton: create ? <Button size="small" icon={<PlusOutlined />} disabled={busy || pending} onClick={() => startAction('create', create.fields)}>Create object</Button> : null,
+    createButton: create ? <Button size="small" className="wb-create-object" icon={<PlusOutlined />} disabled={busy || pending} onClick={() => startAction('create', create.fields)}>Create object</Button> : null,
     actionsForRecord, renderHistory,
     dialogs: objectType ? <>
       <Modal open={!!tool} centered width={1040} className="flow-surface-modal flow-published-dialog explorer-resource-dialog" title={tool} onCancel={() => setTool('')} footer={<Button onClick={() => setTool('')}>Close</Button>}>
@@ -205,7 +212,27 @@ export function usePublishedObjectTools({ objectType, actions, record, returnTo,
         </div>
       </Modal>
       <OntologySdkDownload key={objectType.id} definitionId={objectType.id} open={sdkOpen} onClose={() => setSdkOpen(false)} />
-      {operation && <Modal open centered width={520} className="flow-surface-modal flow-published-dialog" title={operation.kind === 'create' ? 'Create object' : operation.kind === 'modify' ? 'Modify object' : 'Delete object'} okText={operation.kind === 'delete' ? 'Delete object' : 'Submit action'} onOk={applyAction} onCancel={() => { if (!locked.current) setOperation(undefined); }} confirmLoading={pending} maskClosable={!pending} closable={!pending} keyboard={!pending}>
+      {operation && <Modal open centered width={creating ? 560 : 520} className={`flow-surface-modal flow-published-dialog${creating ? ' published-create-object-dialog' : ''}`} title={operation.kind === 'create' ? 'Create object' : operation.kind === 'modify' ? 'Modify object' : 'Delete object'} okText={operation.kind === 'create' ? 'Create object' : operation.kind === 'delete' ? 'Delete object' : 'Submit action'} onOk={applyAction} onCancel={() => { if (!locked.current) setOperation(undefined); }} confirmLoading={pending} maskClosable={!pending} closable={!pending} keyboard={!pending}>
+        {creating ? <>
+          <div className="published-create-object-context"><strong>{objectType.definition.name}</strong><p>Enter the property values for the new object.</p></div>
+          {error && <p role="alert" className="flow-create-error">{error}</p>}
+          <div className="published-create-object-fields" role="group" aria-label="Object properties">
+            {operation.fields.map(id => {
+              const property = objectType.definition.properties.find(item => item.id === id);
+              const input = inputs[id];
+              return <div key={id} className="published-create-object-field">
+                <label><span className="published-create-object-label"><span>{property?.name || id}</span><span className="published-create-object-type">{property?.type === 'json' ? 'JSON' : property?.type || 'value'}</span>{property?.required && <span className="published-create-object-required">Required</span>}</span>
+                  {property?.type === 'json'
+                    ? <Input.TextArea aria-label={property.name} aria-required={property.required || undefined} rows={4} spellCheck={false} placeholder={'{"key": "value"}'} value={input?.text || ''} disabled={pending || input?.isNull} onChange={event => { const text = event.target.value; setInputs(previous => ({ ...previous, [id]: { text, isNull: false } })); }} />
+                    : <Input aria-label={property?.name || id} aria-required={property?.required || undefined} value={input?.text || ''} disabled={pending || input?.isNull} onChange={event => { const text = event.target.value; setInputs(previous => ({ ...previous, [id]: { text, isNull: false } })); }} />}
+                </label>
+                <div className="published-create-object-field-help">{property?.type === 'json' && <p>Enter valid JSON, such as an object or array.</p>}
+                  {!property?.required && <Checkbox aria-label={'Set ' + (property?.name || id) + ' to null'} checked={!!input?.isNull} disabled={pending} onChange={event => { const isNull = event.target.checked; setInputs(previous => ({ ...previous, [id]: { text: previous[id]?.text || '', isNull } })); }}>Set to null</Checkbox>}
+                </div>
+              </div>;
+            })}
+          </div>
+        </> : <>
         {error && <p role="alert" className="flow-create-error">{error}</p>}
         {operation.kind === 'delete' && <p>Delete this object record? The source table, if any, is not modified.</p>}
         {operation.fields.map(id => {
@@ -214,6 +241,7 @@ export function usePublishedObjectTools({ objectType, actions, record, returnTo,
           return <div key={id} className="flow-semantic-config"><label className="flow-create-field"><span>{property?.name || id} ({property?.type || 'value'})</span><Input aria-label={property?.name || id} value={input?.text || ''} disabled={pending || input?.isNull} onChange={event => { const text = event.target.value; setInputs(previous => ({ ...previous, [id]: { text, isNull: false } })); }} /></label>
             {!property?.required && <Checkbox checked={!!input?.isNull} disabled={pending} onChange={event => { const isNull = event.target.checked; setInputs(previous => ({ ...previous, [id]: { text: previous[id]?.text || '', isNull } })); }}>Set to null</Checkbox>}</div>;
         })}
+        </>}
       </Modal>}
     </> : null,
   };

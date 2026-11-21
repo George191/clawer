@@ -4,6 +4,7 @@ import { acknowledgeAssetQualityIncident, captureAssetSchemaBaseline, fetchAsset
 import type { AssetFreshness, AssetFreshnessCandidate, AssetFreshnessChange, AssetQualityIncident, AssetSchemaPreview } from '../../services/api';
 import ExplorerAssetQualityChecks, { AssetSchemaColumns, qualityBounds, readQualityDraft } from './ExplorerAssetQualityChecks';
 import ExplorerQualityWarnings from './ExplorerQualityWarnings';
+import useExplorerErrorToast from './useExplorerErrorToast';
 
 const stateLabels: Record<AssetFreshness['assessment']['state'], string> = {
   not_configured: 'Not configured',
@@ -43,6 +44,11 @@ export default function ExplorerAssetFreshness({ schema, table, version }: { sch
   const [expiredAssessment, setExpiredAssessment] = useState<AssetFreshness['assessment']>();
   const mounted = useRef(false);
   const pending = useRef(false);
+  useExplorerErrorToast(error, 'Freshness update failed');
+  useExplorerErrorToast(failed ? 'The freshness check could not be loaded.' : undefined,
+    'Freshness check unavailable', () => setRevision(value => value + 1));
+  useExplorerErrorToast(candidateFailed && snapshot?.available ? 'Transfer candidates could not be loaded.' : undefined,
+    'Transfer candidates unavailable', () => setRevision(value => value + 1));
 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => {
@@ -176,8 +182,7 @@ export default function ExplorerAssetFreshness({ schema, table, version }: { sch
   return <section className="flow-evidence-card flow-evidence-freshness" aria-label="Transfer freshness">
     <header><h4>Transfer freshness</h4><span>Sandbox · confirmed writes</span></header>
     <p>Checks when the selected transfer last recorded a positive write for this table. This does not measure source data freshness.</p>
-    {error && <p role="alert">{error}</p>}
-    {failed ? <><p role="alert">Freshness check unavailable.</p><Button size="small" onClick={() => setRevision(value => value + 1)}>Retry freshness check</Button></>
+    {failed ? null
       : !snapshot ? <p role="status">Loading freshness check…</p> : <>
         <strong role="status">{stateLabels[evaluationExpired ? 'unknown' : snapshot.assessment.state]}</strong>
         {evaluationExpired ? <p>{reasonLabels.evaluation_stale}</p>
@@ -208,7 +213,7 @@ export default function ExplorerAssetFreshness({ schema, table, version }: { sch
             {policy?.enabled && <Button size="small" disabled={busy} onClick={() => choose(false)}>Pause freshness check</Button>}
           </div>
         </div>
-        {snapshot.available && (candidateFailed ? <p role="alert">Transfer candidates could not be loaded. Refresh evidence to retry.</p>
+        {snapshot.available && (candidateFailed ? null
           : !candidates ? <p role="status">Loading transfer candidates…</p>
             : !candidates.length && <p>No eligible saved transfer writes to this table.</p>)}
         <details>

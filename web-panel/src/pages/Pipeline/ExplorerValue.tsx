@@ -7,21 +7,30 @@ import './explorer-value.css';
 import scrollbarStyles from '../../styles/scrollbars.css?raw';
 import { useThemeStore } from '../../stores/settings';
 import { fetchPublishedFile, fetchPublishedHtml, fetchPublishedStorage, type ExplorerDetailSource } from '../../services/publishedExplorerDetails';
+import { getSessionState } from '../../services/session';
+import useExplorerErrorToast from './useExplorerErrorToast';
 
-const Storage = createContext<{ source: ExplorerDetailSource; config?: ExplorerStorage }>({ source: { kind: 'backed', schema: '', table: '' } });
+const live = (signal: AbortSignal, identity: string) => {
+  const session = getSessionState();
+  return !signal.aborted && session.authenticated && !session.locked && session.identity === identity;
+};
+const Storage = createContext<{ source: ExplorerDetailSource; config?: ExplorerStorage; failed?: boolean }>({ source: { kind: 'backed', schema: '', table: '' } });
 export function ExplorerValueProvider({ schema = '', table = '', source, children }: { schema?: string; table?: string; source?: ExplorerDetailSource; children: ReactNode }) {
   const target = source ?? { kind: 'backed' as const, schema, table };
   const targetKey = JSON.stringify(target);
   const [config, setConfig] = useState<ExplorerStorage>();
   const [error, setError] = useState(false);
+  const [retry, reload] = useState(0);
+  const identity = getSessionState().identity;
   useEffect(() => {
     const request = new AbortController();
     setConfig(undefined); setError(false);
     const load = target.kind === 'published' ? fetchPublishedStorage(target.definitionId, request.signal) : fetchExplorerStorage(request.signal);
-    load.then(value => { if (!request.signal.aborted) setConfig(value); }, () => { if (!request.signal.aborted) setError(true); });
+    load.then(value => { if (live(request.signal, identity)) setConfig(value); }, error => { if (live(request.signal, identity) && error?.code !== 'ERR_CANCELED') setError(true); });
     return () => request.abort();
-  }, [targetKey]);
-  return <Storage.Provider value={{ source: target, config }}>{error && <p role="alert">MinIO file links are unavailable. Reload to retry.</p>}{children}</Storage.Provider>;
+  }, [targetKey, identity, retry]);
+  useExplorerErrorToast(error ? 'MinIO file links are unavailable.' : undefined, 'File links unavailable', () => reload(value => value + 1));
+  return <Storage.Provider value={{ source: target, config, failed: error }}>{children}</Storage.Provider>;
 }
 
 function fileUrl(value: string, config?: ExplorerStorage) {
@@ -51,18 +60,22 @@ function HtmlPreview({ value, identity, field }: { value: string; identity: Reco
   const { token } = theme.useToken();
   const dark = useThemeStore(state => state.mode === 'dark');
   const [html, setHtml] = useState<string>(), [error, setError] = useState(false);
+  const [retry, reload] = useState(0);
+  const sessionIdentity = getSessionState().identity;
   const key = JSON.stringify(identity);
+  const invalid = !field || !Object.keys(identity).length;
   useEffect(() => {
     const controller = new AbortController();
     setHtml(undefined); setError(false);
-    if (!field || !Object.keys(identity).length) { setError(true); return; }
+    if (invalid) { setError(true); return; }
     const read = source.kind === 'published' ? fetchPublishedHtml(source.definitionId, identity, field, controller.signal) : fetchExplorerHtml(source.schema, source.table, identity, field, controller.signal);
     read.then(result => {
-      if (!controller.signal.aborted) setHtml(result.html);
-    }, () => { if (!controller.signal.aborted) setError(true); });
+      if (live(controller.signal, sessionIdentity)) setHtml(result.html);
+    }, error => { if (live(controller.signal, sessionIdentity) && error?.code !== 'ERR_CANCELED') setError(true); });
     return () => controller.abort();
-  }, [sourceKey, key, field, value]);
-  if (error) return <div className="explorer-html explorer-html--status" role="alert">HTML preview failed. Reload to retry.</div>;
+  }, [sourceKey, key, field, value, sessionIdentity, retry]);
+  useExplorerErrorToast(error && !invalid ? 'HTML preview failed.' : undefined, 'HTML preview unavailable', () => reload(value => value + 1));
+  if (error) return invalid ? <div className="explorer-html explorer-html--status" role="alert">HTML preview failed. Reload to retry.</div> : null;
   if (html === undefined) return <div className="explorer-html explorer-html--status" role="status">Loading HTML preview…</div>;
   const scrollbarTheme = `:root{--ui-muted:${token.colorTextSecondary};--ui-panel:${token.colorBgContainer};color-scheme:${dark ? 'dark' : 'light'}}`;
   const style = `body{margin:16px;font:13px/1.65 system-ui;overflow-wrap:anywhere;color:${dark ? '#d8dee9' : '#263244'};background:${dark ? '#242936' : '#fff'}}img,video{display:block;max-width:100%;height:auto;margin:12px auto}audio{width:100%}a{color:${dark ? '#80bfff' : '#176bb5'}}table{border-collapse:collapse;max-width:100%}td,th{border:1px solid #687080;padding:6px}pre{white-space:pre-wrap}blockquote{margin:12px 0;padding-left:16px;border-left:3px solid #687080}`;
@@ -74,9 +87,11 @@ export function ExplorerValue({ value, text, identity = {}, field, presentation 
   value: unknown; text?: string; identity?: Record<string, unknown>; field?: string | null;
   presentation?: 'value' | 'media'; path?: (string | number)[];
 }) {
-  const { source: target, config } = useContext(Storage);
+  const { source: target, config, failed } = useContext(Storage);
   const sourceKey = JSON.stringify(target);
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const [requestError, setRequestError] = useState(''), [retry, reload] = useState(0);
+  const sessionIdentity = getSessionState().identity;
   const [preview, setPreview] = useState<string>();
   const request = useRef<AbortController>();
   const recordKey = JSON.stringify(identity);
@@ -107,7 +122,7 @@ export function ExplorerValue({ value, text, identity = {}, field, presentation 
       : mime.startsWith('audio/') || /^(mp3|wav|m4a|ogg|flac)$/.test(extension || '') ? 'audio' : mime === 'application/pdf' || extension === 'pdf' ? 'pdf'
         : mime === 'text/html' || /^(html?|xhtml)$/.test(extension || '') ? 'html' : undefined;
   useEffect(() => {
-    setPreview(undefined); setError(''); setBusy(false);
+    setPreview(undefined); setError(''); setRequestError(''); setBusy(false);
     if (kind && config) {
       if (external) setPreview(external.href);
       else if (!field || !Object.keys(identity).length) setError('A primary key is required to preview this file.');
@@ -116,13 +131,14 @@ export function ExplorerValue({ value, text, identity = {}, field, presentation 
         request.current = controller; setBusy(true);
         const read = target.kind === 'published' ? fetchPublishedFile(target.definitionId, identity, field, false, controller.signal, valuePath) : fetchExplorerFile(target.schema, target.table, identity, field, false, controller.signal, valuePath);
         read.then(result => {
-          if (!controller.signal.aborted) setPreview(result.url);
-        }, () => { if (!controller.signal.aborted) setError('Unable to preview this file. Reload to retry.'); })
-          .finally(() => { if (!controller.signal.aborted) setBusy(false); });
+          if (live(controller.signal, sessionIdentity)) setPreview(result.url);
+        }, error => { if (live(controller.signal, sessionIdentity) && error?.code !== 'ERR_CANCELED') setRequestError('Unable to preview this file.'); })
+          .finally(() => { if (live(controller.signal, sessionIdentity)) setBusy(false); });
       }
     }
     return () => request.current?.abort();
-  }, [value, field, sourceKey, recordKey, kind, file?.href, pathKey, media, !!config, !!local]);
+  }, [value, field, sourceKey, recordKey, kind, file?.href, pathKey, media, !!config, !!local, sessionIdentity, retry]);
+  useExplorerErrorToast(requestError, 'File preview unavailable', kind ? () => reload(value => value + 1) : undefined);
   async function openFile() {
     if (busy || !file || !field) return;
     const tab = window.open('about:blank', '_blank');
@@ -130,15 +146,15 @@ export function ExplorerValue({ value, text, identity = {}, field, presentation 
     tab.opener = null;
     const controller = new AbortController();
     request.current = controller;
-    setBusy(true); setError('');
+    setBusy(true); setError(''); setRequestError('');
     try {
       const result = target.kind === 'published' ? await fetchPublishedFile(target.definitionId, identity, field, false, controller.signal, valuePath) : await fetchExplorerFile(target.schema, target.table, identity, field, false, controller.signal, valuePath);
-      if (controller.signal.aborted) { tab.close(); return; }
+      if (!live(controller.signal, sessionIdentity)) { tab.close(); return; }
       tab.location.replace(result.url);
-    } catch { tab.close(); if (!controller.signal.aborted) setError('Unable to open this file. Try again.'); }
-    finally { if (!controller.signal.aborted) setBusy(false); }
+    } catch (error) { tab.close(); if (live(controller.signal, sessionIdentity) && (error as { code?: string })?.code !== 'ERR_CANCELED') setRequestError('Unable to open this file. Try again.'); }
+    finally { if (live(controller.signal, sessionIdentity)) setBusy(false); }
   }
-  if (media && !config) return <span role="status">Loading media configuration…</span>;
+  if (media && !config) return failed ? null : <span role="status">Loading media configuration…</span>;
   if (media && Array.isArray(parsed)) return <div className="explorer-media-list">{parsed.length ? parsed.map((item, index) =>
     <ExplorerValue key={index} value={item} identity={identity} field={field} presentation="media" path={[...path, index]} />) : <span>No media resources.</span>}</div>;
   if (media && typeof value === 'string' && (field?.endsWith('_html') || /<\/?(?:html|body|head|div|p|span|a|img|table|ul|ol|li|section|article|h[1-6]|br|strong|em)\b[^>]*>/i.test(value))) {
@@ -153,10 +169,10 @@ export function ExplorerValue({ value, text, identity = {}, field, presentation 
     {media && !kind && <span role="status">This file type has no inline preview.</span>}
     {!kind && error && <span role="alert">{error}</span>}
     {kind && <span className={`explorer-file-media explorer-file-media--${kind}`} onContextMenu={event => event.stopPropagation()}>
-      {busy ? <span role="status">Loading file preview…</span> : error ? <span role="alert">{error}</span> : !preview ? null
-        : kind === 'image' ? <img src={preview} alt={file.name} loading="lazy" referrerPolicy="no-referrer" onError={() => { setPreview(undefined); setError('Image preview failed.'); }} />
-        : kind === 'video' ? <video src={preview} controls playsInline preload="metadata" aria-label={file.name} onError={() => { setPreview(undefined); setError('Video preview failed.'); }} />
-          : kind === 'audio' ? <audio src={preview} controls preload="metadata" aria-label={file.name} onError={() => { setPreview(undefined); setError('Audio preview failed.'); }} />
+      {busy ? <span role="status">Loading file preview…</span> : error ? <span role="alert">{error}</span> : requestError || !preview ? null
+        : kind === 'image' ? <img src={preview} alt={file.name} loading="lazy" referrerPolicy="no-referrer" onError={() => { setPreview(undefined); setRequestError('Image preview failed.'); }} />
+        : kind === 'video' ? <video src={preview} controls playsInline preload="metadata" aria-label={file.name} onError={() => { setPreview(undefined); setRequestError('Video preview failed.'); }} />
+          : kind === 'audio' ? <audio src={preview} controls preload="metadata" aria-label={file.name} onError={() => { setPreview(undefined); setRequestError('Audio preview failed.'); }} />
             : <iframe src={preview} title={(kind === 'pdf' ? 'PDF' : 'HTML file') + ' preview: ' + file.name} sandbox={kind === 'html' ? 'allow-popups allow-downloads' : undefined} referrerPolicy="no-referrer" />}
     </span>}
   </span>;

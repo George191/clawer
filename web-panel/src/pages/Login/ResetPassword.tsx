@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Alert, App, Button, Form, Input, Typography } from '@/components/ui';
+import React, { useEffect, useRef, useState } from 'react';
+import { App, Button, Form, Input, Typography } from '@/components/ui';
 import {
   ArrowLeftOutlined,
   LockOutlined,
@@ -8,6 +8,7 @@ import {
 } from '@/components/ui/icons';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { apiUrl } from '../../services/endpoints';
+import { getSessionState } from '../../services/session';
 import './login.css';
 
 type RecoveryStep = 'email' | 'code' | 'password';
@@ -33,7 +34,8 @@ const ResetPassword: React.FC = () => {
   const [resetToken, setResetToken] = useState('');
   const [countdown, setCountdown] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const pending = useRef<AbortController>();
+  useEffect(() => () => pending.current?.abort(), []);
 
   useEffect(() => {
     if (countdown <= 0) return;
@@ -42,53 +44,67 @@ const ResetPassword: React.FC = () => {
   }, [countdown]);
 
   const sendCode = async (targetEmail: string) => {
+    if (pending.current) return;
+    const request = new AbortController(); pending.current = request;
+    const identity = getSessionState().identity;
+    const current = () => !request.signal.aborted && getSessionState().identity === identity;
     setLoading(true);
-    setError('');
     try {
       const response = await fetch(apiUrl('/api/v1/password-recovery/code'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: targetEmail }),
+        signal: request.signal,
       });
       if (!response.ok) throw new Error(await readError(response, 'Unable to send the verification code.'));
       const data = await response.json() as { challenge_token: string; expires_in?: number };
+      if (!current()) return;
       setEmail(targetEmail);
       setChallengeToken(data.challenge_token);
       setCountdown(60);
       setStep('code');
       form.setFieldsValue({ code: '' });
-      message.success('If the account exists, a verification code has been sent.');
+      message.success({ content: 'If the account exists, a verification code has been sent.', className: 'explorer-toast' });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to send the verification code.');
+      if (current()) message.error({ content: 'Unable to send verification code', description: err instanceof Error ? err.message : 'Unable to send the verification code.', className: 'explorer-toast' });
     } finally {
-      setLoading(false);
+      if (pending.current === request) pending.current = undefined;
+      if (!request.signal.aborted) setLoading(false);
     }
   };
 
   const verifyCode = async (values: { code: string }) => {
+    if (pending.current) return;
+    const request = new AbortController(); pending.current = request;
+    const identity = getSessionState().identity;
+    const current = () => !request.signal.aborted && getSessionState().identity === identity;
     setLoading(true);
-    setError('');
     try {
       const response = await fetch(apiUrl('/api/v1/password-recovery/code/verify'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ challenge_token: challengeToken, code: values.code }),
+        signal: request.signal,
       });
       if (!response.ok) throw new Error(await readError(response, 'Invalid or expired verification code.'));
       const data = await response.json() as { reset_token: string };
+      if (!current()) return;
       setResetToken(data.reset_token);
       setStep('password');
-      setError('');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Invalid or expired verification code.');
+      if (current()) message.error({ content: 'Unable to verify code', description: err instanceof Error ? err.message : 'Invalid or expired verification code.', className: 'explorer-toast' });
     } finally {
-      setLoading(false);
+      if (pending.current === request) pending.current = undefined;
+      if (!request.signal.aborted) setLoading(false);
     }
   };
 
   const updatePassword = async (values: { password: string }) => {
+    if (pending.current) return;
+    const request = new AbortController(); pending.current = request;
+    const identity = getSessionState().identity;
+    const current = () => !request.signal.aborted && getSessionState().identity === identity;
     setLoading(true);
-    setError('');
     try {
       const response = await fetch(apiUrl(legacyToken ? '/api/v1/reset-password/' : '/api/v1/reset-password/code'), {
         method: 'POST',
@@ -96,14 +112,17 @@ const ResetPassword: React.FC = () => {
         body: JSON.stringify(legacyToken
           ? { token: legacyToken, new_password: values.password }
           : { reset_token: resetToken, new_password: values.password }),
+        signal: request.signal,
       });
       if (!response.ok) throw new Error(await readError(response, 'Unable to update your password.'));
-      message.success('Password updated. Sign in with your new password.');
+      if (!current()) return;
+      message.success({ content: 'Password updated. Sign in with your new password.', className: 'explorer-toast' });
       navigate('/login', { replace: true });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to update your password.');
+      if (current()) message.error({ content: 'Unable to update password', description: err instanceof Error ? err.message : 'Unable to update your password.', className: 'explorer-toast' });
     } finally {
-      setLoading(false);
+      if (pending.current === request) pending.current = undefined;
+      if (!request.signal.aborted) setLoading(false);
     }
   };
 
@@ -124,7 +143,6 @@ const ResetPassword: React.FC = () => {
           </div>
           <Typography.Title level={2}>{stepCopy[0]}</Typography.Title>
           <Typography.Paragraph type="secondary" className="sp-login-form-subtitle">{stepCopy[1]}</Typography.Paragraph>
-          {error && <Alert message={error} type="error" showIcon style={{ marginBottom: 18 }} />}
 
           {step === 'email' && (
             <Form name="recovery" form={form} layout="vertical" onFinish={(values: { email: string }) => sendCode(values.email)}>

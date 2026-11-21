@@ -114,10 +114,12 @@ async def main():
 
         fail = True
         await open_deleted()
-        await expect(deleted.get_by_role("alert")).to_contain_text("Temporary records failure")
+        failure_toast = page.locator(".explorer-toast").filter(has_text="Temporary records failure")
+        await expect(failure_toast).to_be_visible()
+        await expect(deleted.get_by_role("alert")).to_have_count(0)
         await expect(deleted.get_by_role("button", name="Close", exact=True)).to_be_enabled()
         fail = False
-        await deleted.get_by_role("button", name="Retry", exact=True).click()
+        await failure_toast.get_by_role("link", name="Retry", exact=True).click()
         await expect(deleted.get_by_role("button", name=deleted_title, exact=True)).to_be_visible()
         await expect(deleted.get_by_role("button", name=active_row["title"], exact=True)).to_have_count(0)
         await deleted.get_by_role("button", name=deleted_title, exact=True).click()

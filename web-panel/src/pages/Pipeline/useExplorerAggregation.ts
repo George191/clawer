@@ -6,7 +6,7 @@ import type { ExplorerExploreAggregation } from './ExplorerExploreView';
 export type ExplorerAggregationLoader = (field: string, offset: number, signal: AbortSignal) => Promise<{
   count: number; groups: { value: unknown; count: number; sum?: number | string | null }[]; groupsHasMore: boolean;
 }>;
-type Read = { key: string; count?: number; groups: Awaited<ReturnType<ExplorerAggregationLoader>>['groups']; hasMore: boolean; loading: boolean; error?: string };
+type Read = { key: string; count?: number; groups: Awaited<ReturnType<ExplorerAggregationLoader>>['groups']; hasMore: boolean; loading: boolean; error?: string; limitReached?: boolean };
 
 export default function useExplorerAggregation(loader: ExplorerAggregationLoader | undefined, requestKey: string, field: string, enabled: boolean): ExplorerExploreAggregation | undefined {
   const load = useRef(loader); load.current = loader;
@@ -48,10 +48,11 @@ export default function useExplorerAggregation(loader: ExplorerAggregationLoader
   return { count: enabled && field ? current?.count : undefined, groups: enabled && field ? current?.groups ?? [] : [],
     hasMore: enabled && field ? current?.hasMore ?? false : false, loading: !!(enabled && field && (!current || current.loading)),
     error: enabled && field ? current?.error : undefined,
+    limitReached: enabled && field ? current?.limitReached : undefined,
     onLoadMore: () => {
       if (!enabled || !field || !current?.hasMore || current.loading || pending.current || current.error) return;
       if (current.groups.length > 100_000) {
-        setRead({ ...current, error: 'The inspection limit of 100,000 value offsets has been reached. Narrow the object set to continue.' });
+        setRead({ ...current, limitReached: true, error: 'The inspection limit of 100,000 value offsets has been reached. Narrow the object set to continue.' });
         return;
       }
       pending.current = true;

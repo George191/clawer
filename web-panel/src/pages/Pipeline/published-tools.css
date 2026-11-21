@@ -12,6 +12,27 @@
   min-height: 0; overflow: auto; overscroll-behavior: contain; overflow-wrap: anywhere;
   font-size: 12px; line-height: 1.5;
 }
+.published-create-object-dialog .ui-modal-content { max-height:calc(100dvh - 48px); }
+.published-create-object-dialog .ui-modal-header { padding:13px 16px; }
+.published-create-object-dialog .ui-modal-title { font-size:14px; font-weight:500; line-height:20px; }
+.published-create-object-dialog .ui-modal-body { display:flex; flex-direction:column; gap:14px; padding:14px 16px; overflow:hidden; font-size:12px; }
+.published-create-object-dialog .ui-modal-footer { padding:10px 16px; background:var(--ontology-bg); }
+.published-create-object-context { flex:none; display:grid; gap:3px; }
+.published-create-object-context strong { font-size:13px; font-weight:500; }
+.published-create-object-context p { margin:0; color:var(--ontology-muted); font-size:11px; line-height:16px; }
+.published-create-object-fields { display:grid; flex:1; align-content:start; gap:13px; min-height:0; max-height:min(54dvh,420px); padding-right:6px; overflow:auto; overscroll-behavior:contain; scrollbar-gutter:stable; }
+.published-create-object-field { display:grid; gap:5px; min-width:0; }
+.published-create-object-field > label { display:grid; gap:5px; min-width:0; }
+.published-create-object-label { display:flex; align-items:center; gap:7px; color:var(--ontology-text); font-size:12px; font-weight:500; line-height:18px; }
+.published-create-object-type { color:var(--ontology-muted); font-size:11px; font-weight:400; }
+.published-create-object-required { margin-left:auto; color:var(--ontology-muted); font-size:11px; font-weight:400; }
+.published-create-object-field .ui-input { min-height:30px; padding:5px 8px; border-radius:3px; font-size:12px; }
+.published-create-object-field textarea.ui-input { min-height:84px; resize:vertical; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; line-height:18px; }
+.published-create-object-field-help { display:flex; align-items:flex-start; justify-content:space-between; gap:6px 12px; flex-wrap:wrap; }
+.published-create-object-field-help:empty { display:none; }
+.published-create-object-field-help p { flex:1; min-width:0; margin:0; color:var(--ontology-muted); font-size:11px; line-height:18px; }
+.published-create-object-field-help .ui-checkbox-wrapper { margin-left:auto; color:var(--ontology-muted); font-size:11px; line-height:18px; }
+.published-create-object-dialog .flow-create-error { flex:none; margin:0; font-size:12px; }
 .flow-published-dialog .ui-checkbox-input:checked + .ui-checkbox-inner,
 .flow-ontology-tool-content .ui-checkbox-input:checked + .ui-checkbox-inner { background: var(--ontology-muted); border-color: var(--ontology-muted); }
 .flow-tool-section {

@@ -164,7 +164,7 @@ with httpx.Client(base_url=base, trust_env=False, timeout=15) as api:
         panel.get_by_role("listitem").filter(has_text=name3).get_by_role(
             "button", name="Undo transaction"
         ).click()
-        expect(panel.get_by_role("alert")).to_contain_text("removed or replaced")
+        expect(page.locator(".explorer-toast").filter(has_text="removed or replaced")).to_be_visible()
         checks += [
             "unlink existing objects",
             "undo unlink",
@@ -185,7 +185,7 @@ with httpx.Client(base_url=base, trust_env=False, timeout=15) as api:
         dialog = page.get_by_role("dialog")
         dialog.get_by_role("textbox", name="Id", exact=True).fill("single-" + key)
         dialog.get_by_role("textbox", name="Name", exact=True).fill(single_title)
-        dialog.get_by_role("button", name="Submit action", exact=True).click()
+        dialog.get_by_role("button", name="Create object", exact=True).click()
         expect(dialog).to_have_count(0)
         results.get_by_role("checkbox", name="Select " + single_title, exact=True).check()
         selection = page.get_by_role("complementary", name="Selection Preview")

@@ -18,6 +18,7 @@ import {
 } from '../../services/ontology_graph';
 import { getSessionState } from '../../services/session';
 import { publishedExplorerHref } from '../../services/publishedExplorerHandoff';
+import useExplorerErrorToast from './useExplorerErrorToast';
 
 const size = 20;
 const operatorLabels = { eq: 'Equals', contains: 'Contains', gt: 'Greater than', lt: 'Less than' };
@@ -59,7 +60,8 @@ function Pages({ offset, more, change }: { offset: number; more?: boolean; chang
   ) : null;
 }
 function Message({ text }: { text?: string }) {
-  return text ? <p role="alert">{text}</p> : null;
+  useExplorerErrorToast(text, 'Graph request failed');
+  return null;
 }
 
 function NewType({ object, onSaved }: { object: PublishedOntologyType; onSaved: () => void }) {
@@ -379,6 +381,7 @@ function ObjectSets({ object, returnTo, onOpenExplorer }: { object: PublishedOnt
     [busy, pending] = useState(false);
   const [active, run] = useState<{ query: SetQuery; id?: string; nonce: number }>(),
     [error, fail] = useState('');
+  const [validationError, setValidationError] = useState('');
   const path = objectPath(object.id) + '/sets';
   const saved = usePage('sets:' + version + ':' + off, (signal) =>
     api<Page<NamedSet>>('get', path, { params: { limit: size, offset: off }, signal }),
@@ -400,14 +403,15 @@ function ObjectSets({ object, returnTo, onOpenExplorer }: { object: PublishedOnt
       if (p.type === 'number' || p.type === 'integer' || p.type === 'boolean' || p.type === 'json')
         value = JSON.parse(raw);
       if (typeof value === 'number' && (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value)))) {
-        fail('Enter a number that can be represented exactly by this browser.');
+        setValidationError('Enter a number that can be represented exactly by this browser.');
         return;
       }
       change((f) => [...f, { field, op, value }]);
       setRaw('');
+      setValidationError('');
       fail('');
     } catch {
-      fail('Enter a valid value for this property.');
+      setValidationError('Enter a valid value for this property.');
     }
   }
   function execute(id?: string) {
@@ -418,6 +422,7 @@ function ObjectSets({ object, returnTo, onOpenExplorer }: { object: PublishedOnt
   async function mutate(remove = false) {
     pending(true);
     fail('');
+    setValidationError('');
     try {
       if (remove) {
         await api('delete', path + '/' + chosen);
@@ -603,6 +608,7 @@ function ObjectSets({ object, returnTo, onOpenExplorer }: { object: PublishedOnt
           )}
         </div>
       )}
+      {validationError && <p role="alert">{validationError}</p>}
       <Message text={error || saved?.error || result?.error} />
     </section>
   );

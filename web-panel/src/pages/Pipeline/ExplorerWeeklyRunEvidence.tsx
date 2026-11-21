@@ -5,6 +5,7 @@ import { fetchWeeklyJobEvidence } from '../../services/api';
 import type { WeeklyJobEvidence, WeeklyJobQuality } from '../../services/api';
 import { getSessionState } from '../../services/session';
 import { canonicalTransferReceipt } from './transferReceiptFocus';
+import useExplorerErrorToast from './useExplorerErrorToast';
 
 type Outcome = 'healthy' | 'unhealthy';
 type Props = {
@@ -30,6 +31,7 @@ function RunEvidence({ schema, table, identity, generation, validUntil, outcome,
   const [evidence, setEvidence] = useState<WeeklyJobEvidence>();
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [readFailed, setReadFailed] = useState(false);
   useEffect(() => () => pending.current?.abort(), []);
 
   const live = (signal?: AbortSignal) => {
@@ -41,7 +43,7 @@ function RunEvidence({ schema, table, identity, generation, validUntil, outcome,
     if (pending.current || !live()) return;
     const read = new AbortController();
     pending.current = read;
-    setEvidence(undefined); setFailed(false); setBusy(true);
+    setEvidence(undefined); setFailed(false); setReadFailed(false); setBusy(true);
     try {
       const result = await fetchWeeklyJobEvidence(schema, table, generation, observation.slot, read.signal);
       if (!live(read.signal)) return;
@@ -54,12 +56,14 @@ function RunEvidence({ schema, table, identity, generation, validUntil, outcome,
       if (!sameSlot || !matches) { setFailed(true); return; }
       setEvidence(result);
     } catch {
-      if (live(read.signal)) setFailed(true);
+      if (live(read.signal)) setReadFailed(true);
     } finally {
       if (pending.current === read) pending.current = undefined;
       if (live(read.signal)) setBusy(false);
     }
   };
+  useExplorerErrorToast(readFailed ? 'Verified run evidence could not be loaded.' : undefined,
+    'Run evidence unavailable', () => void query());
 
   return <section aria-label="Verified weekly run evidence">
     <Button size="small" loading={busy} onClick={() => void query()}>Verify run evidence</Button>

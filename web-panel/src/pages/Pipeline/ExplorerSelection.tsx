@@ -15,6 +15,7 @@ import {
 } from './ExplorerObjectOverview';
 import './explorer-selection.css';
 import { selectedPageRows } from './explorerSelectionState';
+import useExplorerErrorToast from './useExplorerErrorToast';
 
 type RecordRow = Record<string, unknown>;
 export { ExplorerObjectOverview, ExplorerTypeIcon, explorerRowTitle, useExplorerPresentation } from './ExplorerObjectOverview';
@@ -163,6 +164,7 @@ export default function ExplorerSelection({
   const refreshState = useRef<{ from: RecordRow[]; keys: Set<string>; active: string }>();
   const reported = useRef<ExplorerPreviewRow[]>([]);
   const presentation = metadata?.presentation;
+  useExplorerErrorToast(metadata?.error ? 'Unable to load object presentation.' : undefined, 'Object presentation unavailable', onRefresh);
   const typeName = presentation?.displayName || table;
   const [selection, setSelection] = useState<Selection>();
   const [activeKey, setActiveKey] = useState('');
@@ -365,9 +367,6 @@ export default function ExplorerSelection({
             aria-controls={panelId} aria-expanded={false} onClick={show}>Show selection preview</button>
           <Button size="small" disabled={disabled} onClick={clear}>Clear selection</Button>
       </header>}
-      {metadata?.error && <div role="alert" className="flow-explorer-selection__mapping-error">
-        Unable to load object presentation. {onRefresh && <Button size="small" onClick={onRefresh}>Retry</Button>}
-      </div>}
       <Table<RecordRow> className="flow-data-table" size="small" loading={loading && !columns.length} pagination={false} rowKey={(record, index = 0) => rowKey(record, index)}
         scroll={{ x: 'max-content' }} dataSource={rows} columns={tableColumns} rowSelection={checkboxProps} onRow={rowProps} />
       {footer}
@@ -427,7 +426,6 @@ export default function ExplorerSelection({
                   {availableViews.map(view => <button type="button" key={view.key} aria-pressed={displayView === `extra:${view.key}`} onClick={() => setView(`extra:${view.key}`)}>{view.label}</button>)}
                 </nav>
               </div>
-              {links.error && <p role="alert">Unable to read relationships. <Button size="small" onClick={links.retry}>Retry</Button></p>}
               {displayView === 'links' ? renderPublishedRelationships?.(active) ?? renderRelationships?.(active, links.page)
                 : displayView.startsWith('extra:') ? availableViews.find(view => `extra:${view.key}` === displayView)?.render(active)
                 : !metadata ? <p role="status">Loading object presentation…</p>

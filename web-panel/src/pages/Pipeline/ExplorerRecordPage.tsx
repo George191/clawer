@@ -1,7 +1,7 @@
 import ExplorerFieldEditor from './ExplorerFieldEditor';
 import { PropertyLabel } from './PropertyTypeIcon';
 import { ExplorerValueProvider } from './ExplorerValue';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Button, message } from '@/components/ui';
 import { DeleteOutlined, EditOutlined, ReloadOutlined } from '@/components/ui/icons';
@@ -21,11 +21,17 @@ import {
     ExplorerObjectOverview, ExplorerProperties, ExplorerRecordActions, ExplorerTypeIcon, explorerRowTitle, useExplorerPresentation,
 } from './ExplorerSelection';
 import ExplorerRowLinks, { useExplorerLinkAvailability } from './ExplorerRowLinks';
+import useExplorerErrorToast from './useExplorerErrorToast';
+import { getSessionState } from '../../services/session';
 import './ontology-frame.css';
 import './explorer-record.css';
 
 type Identity = Record<string, string | number | boolean>;
 type RecordResult = Awaited<ReturnType<typeof fetchExplorerRowByKey>>;
+const live = (identity: string, signal?: AbortSignal) => {
+    const session = getSessionState();
+    return !signal?.aborted && session.authenticated && !session.locked && session.identity === identity;
+};
 
 function parseIdentity(value: string | null, published: boolean): Identity | undefined {
     if (!value || value.length > 16000) return;
@@ -60,6 +66,8 @@ function RecordPage({ source, identity }: { source: ExplorerDetailSource; identi
     const [layouts, setLayouts] = useState<Layouts>();
     const [layoutError, setLayoutError] = useState('');
     const [error, setError] = useState('');
+    const [mutationError, setMutationError] = useState('');
+    const [validationError, setValidationError] = useState('');
     const [revision, reload] = useState(0);
     const [mode, setMode] = useState<'overview'|'properties'|'links'|'history'|`group:${string}`>('overview');
     const [draft, setDraft] = useState<RowDraft>();
@@ -68,30 +76,38 @@ function RecordPage({ source, identity }: { source: ExplorerDetailSource; identi
     const [stale, setStale] = useState(false);
     const tablePath = source.kind === 'published' ? publishedExplorerHref(source.definitionId) : '/ontology/explorer?' + new URLSearchParams({ schema, table });
     const [key] = useState(identity);
+    const sessionIdentity = getSessionState().identity;
+    const alive = useRef(true);
+    useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
     useEffect(() => {
         const controller = new AbortController();
         setResult(undefined); setError(''); setStale(false); setConfirmDelete(false); setDraft(undefined);
+        setMutationError(''); setValidationError('');
         setObjectType(undefined); setPublishedRecord(undefined);
         setLayouts(undefined); setLayoutError('');
         readLayouts(source.kind === 'published' ? publishedLayoutPath(source.definitionId) : layoutPath(schema,table),controller.signal)
-            .then(value => { if (!controller.signal.aborted) setLayouts(value); })
-            .catch(err => { if (!controller.signal.aborted) setLayoutError(requestError(err)); });
+            .then(value => { if (live(sessionIdentity, controller.signal)) setLayouts(value); })
+            .catch(err => { if (live(sessionIdentity, controller.signal) && err?.code !== 'ERR_CANCELED') setLayoutError(requestError(err)); });
         if (source.kind === 'published') {
             Promise.all([fetchPublishedRecord(source.definitionId, key, controller.signal), fetchPublishedOntologyType(source.definitionId, controller.signal)])
-                .then(([record, type]) => { if (!controller.signal.aborted) {
+                .then(([record, type]) => { if (live(sessionIdentity, controller.signal)) {
                     setObjectType(type); setPublishedRecord(record);
                     setResult({ row: record.properties, identity: record.identity!, primaryKey: type.definition.primaryKey, columnTypes: publishedColumnTypes(type) });
                 } })
-                .catch(err => { if (!controller.signal.aborted) setError(requestError(err)); });
+                .catch(err => { if (live(sessionIdentity, controller.signal) && err?.code !== 'ERR_CANCELED') setError(requestError(err)); });
         } else {
             fetchExplorerRowByKey(schema, table, key, controller.signal)
-                .then(value => { if (!controller.signal.aborted) setResult(value); })
-                .catch(err => { if (!controller.signal.aborted) setError(requestError(err)); });
+                .then(value => { if (live(sessionIdentity, controller.signal)) setResult(value); })
+                .catch(err => { if (live(sessionIdentity, controller.signal) && err?.code !== 'ERR_CANCELED') setError(requestError(err)); });
         }
         return () => controller.abort();
-    }, [sourceKey,schema,table,key,revision]);
+    }, [sourceKey,schema,table,key,revision,sessionIdentity]);
     const physicalMetadata = useExplorerPresentation(schema, table, revision);
     const metadata: ExplorerPresentationRead | undefined = source.kind === 'published' ? objectType ? { presentation: publishedPresentation(objectType) } : undefined : physicalMetadata;
+    useExplorerErrorToast(error, 'Unable to read object', () => reload(value => value + 1));
+    useExplorerErrorToast(layoutError, 'Property layout unavailable');
+    useExplorerErrorToast(metadata?.error ? 'Unable to read object presentation.' : undefined, 'Object presentation unavailable');
+    useExplorerErrorToast(mutationError, 'Unable to update object');
     const presentation = metadata?.presentation;
     const typeName = presentation?.displayName || table;
     const title = result ? (metadata
@@ -113,26 +129,32 @@ function RecordPage({ source, identity }: { source: ExplorerDetailSource; identi
         returnTo: '/ontology?catalog=published', busy: !result || !!error, onChanged: () => reload(value => value + 1) });
     async function mutate(remove: boolean) {
         if (source.kind !== 'backed' || !result?.rowVersion || busy || stale) return;
-        setError(''); setBusy(true);
+        setMutationError(''); setValidationError(''); setBusy(true);
+        const identity = getSessionState().identity;
+        let requesting = remove;
         try {
             if (remove) {
                 await deleteEtlRow(schema,table,result.identity,result.rowVersion);
+                if (!alive.current || !live(identity)) return;
                 message.success('Row deleted.');
                 navigate(tablePath,{replace:true});
             } else if (draft) {
                 const values=rowChanges(draft,result.row,result.columnTypes);
                 if (Object.keys(values).length) {
+                    requesting = true;
                     await updateEtlRow(schema,table,result.identity,values,result.rowVersion);
+                    if (!alive.current || !live(identity)) return;
                     message.success('Changes saved.');
                 } else message.info('No changes to save.');
                 setDraft(undefined);reload(n=>n+1);
             }
         } catch (err) {
+            if (!alive.current || !live(identity) || (err as { code?: string })?.code === 'ERR_CANCELED') return;
             const response=(err as {response?:{status:number;data?:{errors?:{code?:string};detail?:{code?:string}}}})?.response;
             if ((response?.data?.errors?.code ?? response?.data?.detail?.code)==='row_version_conflict') setStale(true);
             const detail = requestError(err);
-            setError(detail); message.error(detail);
-        } finally {setBusy(false);}
+            if (requesting) setMutationError(detail); else setValidationError(detail);
+        } finally { if (alive.current) setBusy(false); }
     }
     const showLink = async () => {
         try {
@@ -143,27 +165,24 @@ function RecordPage({ source, identity }: { source: ExplorerDetailSource; identi
     };
     const actions = source.kind === 'published' && publishedRecord ? objectTools.actionsForRecord(publishedRecord) : [
         ...(result?.rowActions?.edit && editFields.length > 0 ? [{key:'edit',label:'Edit row',icon:<EditOutlined />,onClick:()=>{
-            setMode('properties');setError('');
+            setMode('properties');setMutationError('');setValidationError('');
             setDraft(Object.fromEntries(editFields.map(name=>[name,editorValue(result.columnTypes[name],result.row[name])])));
         }}] : []),
         ...(result?.rowActions?.delete ? [{key:'delete',label:'Delete row',icon:<DeleteOutlined />,danger:true,onClick:()=>{
-            setError('');setConfirmDelete(true);
+            setMutationError('');setValidationError('');setConfirmDelete(true);
         }}] : []),
     ];
     return <article className="flow-console--ontology explorer-object-workspace explorer-full-record">
-        <nav aria-label="Object location"><Link to="/ontology/explorer">Explorer</Link><span>/</span>
+        <nav aria-label="Object location"><Link to="/ontology">Ontology</Link><span>/</span>
             <Link to={tablePath}>{source.kind === 'published' ? typeName : `${schema}.${table}`}</Link></nav>
-        <header>{objectType ? <SemanticTypeGlyph definition={objectType.definition} /> : <ExplorerTypeIcon dataType={presentation?.dataType} table={table} />}<div className="record-heading">
-            <span>{typeName}</span><h1>{title}</h1>
+        <header><div className="record-heading">
+            <div className="record-type">{objectType ? <SemanticTypeGlyph definition={objectType.definition} /> : <ExplorerTypeIcon dataType={presentation?.dataType} table={table} />}<span>{typeName}</span></div>
+            <h1>{title}</h1>
         </div><div className="record-operations">
             <Button onClick={showLink} disabled={!result}>Share link</Button>
             <Button icon={<ReloadOutlined />} disabled={busy || (!!draft && !stale)} onClick={()=>reload(n=>n+1)}>Refresh</Button>
             <ExplorerRecordActions items={actions} row={row || undefined} disabled={locked || stale} />
         </div></header>
-        {error && <div className="record-error" role="alert">{error}
-            {stale && <Button onClick={()=>reload(n=>n+1)}>Reload current object</Button>}</div>}
-        {layoutError && <p role="alert">Property layout unavailable. {layoutError}</p>}
-        {metadata?.error && <p role="alert">Object presentation unavailable. <Button size="small" onClick={() => reload(n => n + 1)}>Retry</Button></p>}
         {!result && !error && <p role="status">Loading object…</p>}
         {result && row && <>
             <dl className="record-identity">{Object.entries(result.identity).map(([name,value])=>
@@ -181,8 +200,8 @@ function RecordPage({ source, identity }: { source: ExplorerDetailSource; identi
                 {hasLinks && <button type="button" aria-pressed={currentMode==='links'} disabled={locked} onClick={()=>setMode('links')}>Links</button>}
                 {publishedRecord?.hasHistory && <button type="button" aria-pressed={currentMode==='history'} disabled={locked} onClick={()=>setMode('history')}>History</button>}
             </div>
-            {links.error && <p role="alert">Unable to read relationships. <Button size="small" onClick={links.retry}>Retry</Button></p>}
             <div className="record-content">{draft ? <form className="record-edit" onSubmit={e=>{e.preventDefault();void mutate(false);}}>
+                {validationError && <p className="record-error" role="alert">{validationError}</p>}
                 <div className="record-edit-fields">{editFields.map(name=><div key={name} className="record-edit-field"><PropertyLabel type={result.columnTypes[name]}>{name}</PropertyLabel>
                     <ExplorerFieldEditor name={name} type={result.columnTypes[name]} disabled={busy || stale} value={draft[name]}
                         onChange={value=>setDraft({...draft,[name]:value})} />
@@ -193,9 +212,9 @@ function RecordPage({ source, identity }: { source: ExplorerDetailSource; identi
                 : <ExplorerRowLinks schema={schema} table={table} primaryKey={result.identity} initialPage={links.page}/> :
                 currentMode === 'history' && publishedRecord ? objectTools.renderHistory(publishedRecord) :
                 !layouts && !layoutError ? <p role="status">Loading property layout…</p> :
-                layoutError ? <p>Properties are unavailable until the layout loads.</p> :
+                layoutError ? null :
                 !metadata ? <p role="status">Loading object presentation…</p> :
-                metadata.error ? <p>Properties are unavailable until the object presentation loads.</p> :
+                metadata.error ? null :
                 currentMode==='properties' ? <ExplorerProperties presentation={presentation} presentations={presentations} row={row}/> :
                 <ExplorerObjectOverview row={row} presentation={presentation} presentations={presentations} typeName={typeName} group={currentGroup}/>}</div>
         </>}
@@ -216,5 +235,5 @@ export default function ExplorerRecordPage() {
         return <article className="flow-console--ontology explorer-full-record"><h1>Invalid object link</h1><Link to="/ontology/explorer">Return to Explorer</Link></article>;
     }
     const source: ExplorerDetailSource = published ? { kind: 'published', definitionId } : { kind: 'backed', schema, table };
-    return <ExplorerValueProvider source={source}><RecordPage key={location.search} source={source} identity={identity}/></ExplorerValueProvider>;
+    return <ExplorerValueProvider source={source}><RecordPage key={JSON.stringify([location.search, getSessionState().identity])} source={source} identity={identity}/></ExplorerValueProvider>;
 }

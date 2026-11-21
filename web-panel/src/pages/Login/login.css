@@ -33,9 +33,6 @@
 .sp-login-form-wrap .ui-typography-secondary { color: #94a3b8; }
 .sp-login-form-wrap > .ui-typography { line-height: 1.65; }
 .sp-login-form-wrap > .sp-login-form-subtitle { margin-bottom: 18px; font-size: 11px; line-height: 1.45; letter-spacing: -.01em; }
-.sp-login-form-wrap .sp-login-error .ui-alert-content { min-width: 0; }
-.sp-login-form-wrap .sp-login-error .ui-alert-message { font-size: 11px; line-height: 1.5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sp-login-form-wrap .sp-login-error .ui-alert-icon { font-size: 12px; }
 .sp-login-form-wrap .ui-form-item { margin-bottom: 18px; }
 .sp-login-form-wrap .ui-form-item-label { padding-bottom: 6px; }
 .sp-login-form-wrap .ui-form-item-label > label { color: #c4cbda; font-size: 12px; font-weight: 600; letter-spacing: .02em; }
