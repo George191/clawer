@@ -18,7 +18,7 @@ import './ontology-frame.css';
 import './foundry-workbench-tokens.css';
 import './ontology-workspace.css';
 import ExplorerCatalog from './ExplorerCatalog';
-import ExplorerWorkbench, { ExplorerResults, ExplorerResultsFooter, explorerResultColumns } from './ExplorerWorkbench';
+import ExplorerWorkbench, { ExplorerFilterButton, ExplorerResults, ExplorerResultsFooter, explorerResultColumns } from './ExplorerWorkbench';
 import ExplorerAppliedConditions from './ExplorerAppliedConditions';
 import PublishedExplorer from './PublishedExplorer';
 import { openSaved, savedPath, type SavedDetail } from '../../services/explorerSaved';
@@ -37,6 +37,7 @@ import ExplorerIndexedProjection from './ExplorerIndexedProjection';
 import ExplorerIndexedIdSample from './ExplorerIndexedIdSample';
 import { useSandboxIdentity } from './SandboxMarkings';
 import { getSessionState } from '../../services/session';
+import { explorerResourceCapabilities } from '../../services/explorerCapabilities';
 import SandboxIndexPreview, { INDEX_PREVIEW_SCHEMA, INDEX_PREVIEW_TABLE } from './SandboxIndexPreview';
 import { appendAndFilters, blankExplorerFilter, cellFilterRows, countFilterTerms, explorerFilterTerms } from './explorerFilters';
 import type { ExplorerFilter } from './explorerFilters';
@@ -1087,6 +1088,7 @@ rows: dataRows.map((row,i) => ({...row,...primaryKey(row,i)})),
 selected: workbenchRows,
 query: { ...appliedQuery, partition },
 resource: resourceView,
+availableResources: explorerResourceCapabilities({ mode: 'existing', schema: requestedSchema, table: requestedTable }, canManage),
 admin: canManage,
 layoutControl: showPreview && <LayoutToolbar controls={resultLayout} admin={canManage} types={data?.columnTypes} />,
 selectResource: selectResourceView,
@@ -1104,7 +1106,7 @@ closeCatalog: () => setCatalogOpen(false),
 mode: workbenchMode,
 setMode: setWorkbenchMode,
 clearSelection: () => { setWorkbenchRows([]); setSelectionEpoch(n => n + 1); },
-filterButton: showPreview && <button aria-expanded={filterOpen} onClick={() => activateTool('filter')}>Filter &amp; sort{filterCount + sortCount ? ` (${filterCount + sortCount})` : ''}</button>} : undefined}>
+filterButton: showPreview && <ExplorerFilterButton open={filterOpen} count={filterCount + sortCount} onClick={() => activateTool('filter')} />} : undefined}>
 
                     {!selectedTableAvailable ? <div className="flow-inspector-body" aria-busy={explorerLoading}>
                         {requestError ? <div className="flow-schema-state" role="alert">{requestError} <Button size="small" onClick={refreshWorkspace}>Retry</Button></div> : !explorerLoading && <div className="flow-schema-state" role="status">{requestedSchema && requestedTable ? 'Object type is unavailable.' : 'Choose an object type from the catalog.'}</div>}

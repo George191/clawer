@@ -25,7 +25,7 @@ type Props<Q extends object = WorkbenchQuery> = {
     selected: Selection[];
     query: Q;
     resource: ResourceView;
-    availableResources?: ResourceView[];
+    availableResources: ResourceView[];
     additionalTools?: ExplorerToolAction[];
     admin: boolean;
     layoutControl: ReactNode;
@@ -207,7 +207,7 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
     const closeOpenIn = () => { show(''); openInTrigger.current?.focus(); };
     const openResource = (view: ResourceView) => { p.selectResource(view); if (p.source.kind === 'backed' || view === 'preview') p.setMode('results'); closeOpenIn(); };
     const exportDescription = p.selected.length ? `Download ${p.selected.length} selected object${p.selected.length === 1 ? '' : 's'}.` : `Download ${p.rows.length} object${p.rows.length === 1 ? '' : 's'} on this results page.`;
-    const resources = p.availableResources ?? (p.source.kind === 'backed' ? ['preview', 'stream', 'evidence', 'schema', ...(p.admin ? ['api'] : [])] : ['preview']);
+    const resources = p.availableResources;
     const sourceTool = p.source.kind === 'published';
     const apps = [
         ...(resources.includes('preview') ? [{ key: 'preview', group: 'analyze', label: 'Data preview', icon: <TableOutlined />, run: () => openResource('preview') }] : []),

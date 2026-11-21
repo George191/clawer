@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Button, message } from '@/components/ui';
-import { FilterOutlined, ReloadOutlined } from '@/components/ui/icons';
+import { ReloadOutlined } from '@/components/ui/icons';
 import { fetchPublishedOntologyType, ontologyError, type PublishedOntologyType } from '../../services/ontology';
 import { fetchCurrentUserContext } from '../../services/api';
 import { openSaved, publishedSavedPath, type SavedDetail } from '../../services/explorerSaved';
@@ -12,7 +12,7 @@ import { getSessionState } from '../../services/session';
 import type { ExplorerSort } from '../../services/explorerLayouts';
 import type { ResourceView } from './ExplorerWorkbenchHeader';
 import type { ExplorerPreviewRow } from './ExplorerSelection';
-import ExplorerWorkbench, { ExplorerResults, ExplorerResultsFooter, explorerResultColumns } from './ExplorerWorkbench';
+import ExplorerWorkbench, { ExplorerFilterButton, ExplorerResults, ExplorerResultsFooter, explorerResultColumns } from './ExplorerWorkbench';
 import ExplorerFilterEditor, { normalizeFilterDepth, randomId } from './ExplorerFilterEditor';
 import ExplorerAppliedConditions from './ExplorerAppliedConditions';
 import { LayoutToolbar, useResultLayout } from './ExplorerResultLayout';
@@ -206,7 +206,7 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
         saveCompleted: detail => openSavedItem(detail.id), updateSavedItem: detail => setScope(previous => previous?.key === scopeKey ? { ...previous, saved: detail } : previous),
         addFilter, backToTypes: () => navigate(entry.returnTo), toggleCatalog: () => setCatalogOpen(value => !value), closeCatalog: () => setCatalogOpen(false), catalogOpen,
         mode, setMode, clearSelection: () => setChosen([]),
-        filterButton: <button type="button" aria-expanded={filtersOpen} onClick={() => setFiltersOpen(value => !value)}><FilterOutlined /> Filter &amp; sort{filterCount + sorts.length ? ` (${filterCount + sorts.length})` : ''}</button>,
+        filterButton: <ExplorerFilterButton open={filtersOpen} count={filterCount + sorts.length} onClick={() => setFiltersOpen(value => !value)} />,
       }}>
         <ExplorerResults results={objectType && query && !error ? { source: selectionSource, schema: '', table: objectType.definition.id, rows, columns: fields,
           columnTypes: types, metadata, dataColumns, selectedRows: chosen, selectionLimit: 100, onSelectedRowsChange: setChosen, onActiveRowChange: setActiveRow,

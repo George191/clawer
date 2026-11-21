@@ -1,13 +1,11 @@
 import { useEffect, useState } from 'react';
-import { LinkOutlined } from '@/components/ui/icons';
-import { PropertyLabel } from './PropertyTypeIcon';
-import { ExplorerFieldValue, explorerFields } from './ExplorerObjectOverview';
+import { explorerFields } from './ExplorerObjectOverview';
 import { ExplorerValueProvider } from './ExplorerValue';
 import { Button } from '@/components/ui';
 import { fetchExplorerRowByKey, fetchExplorerRowLinks, type ExplorerRowLinkPage } from '../../services/api';
 import { ExplorerRecordLink } from './ExplorerRecordLink';
 import { layoutPath, readLayouts, type ResultLayout } from '../../services/explorerLayouts';
-import './explorer-row-links.css';
+import ExplorerRelationshipsView, { ExplorerLinkedProperties } from './ExplorerRelationshipsView';
 
 type Props = { schema: string; table: string; primaryKey: Record<string,unknown>; initialPage?: ExplorerRowLinkPage };
 
@@ -54,11 +52,9 @@ function LinkedProperties({ schema, table, identity }: {schema: string; table: s
     if (!row) return <p role="status">Loading record properties…</p>;
     const previewRow = { record: row.row, identity: row.identity, key: identity, title: '', columnTypes: row.columnTypes };
     const presentations = Object.fromEntries((layout?.columns ?? []).map(column => [column.field, column.presentation ?? 'value']));
-    return <ExplorerValueProvider schema={schema} table={table}><dl className="explorer-linked-properties" aria-label="Related record properties">
-        {explorerFields(previewRow, Object.keys(row.row), undefined, presentations).map(field => <div key={field.key}>
-            <dt><PropertyLabel type={field.type}>{field.label}</PropertyLabel></dt><dd><ExplorerFieldValue row={previewRow} field={field} /></dd>
-        </div>)}
-    </dl></ExplorerValueProvider>;
+    return <ExplorerValueProvider schema={schema} table={table}>
+        <ExplorerLinkedProperties row={previewRow} fields={explorerFields(previewRow, Object.keys(row.row), undefined, presentations)} />
+    </ExplorerValueProvider>;
 }
 
 function LinkPage({ schema, table, primaryKey, initialPage }: Props) {
@@ -83,42 +79,23 @@ function LinkPage({ schema, table, primaryKey, initialPage }: Props) {
     }, [schema, table, key, relation, offset, retry, initialPage]);
     if (error) return <p role="alert">{error} <Button onClick={() => setRetry(v => v + 1)}>Retry</Button></p>;
     if (!page) return <p role="status">Looking up related records…</p>;
-    if (!page.relations.length) return <section className="explorer-row-links explorer-links-empty" role="status"><LinkOutlined /><strong>No relationships</strong><p>No declared relationships are available for this record.</p></section>;
     const selected = page.relations.find(item => item.id === page.selected);
-    if (!selected) return null;
-    return <section className="explorer-row-links" aria-label="Related records" aria-busy={loading}>
-        <header className="explorer-links-heading"><LinkOutlined /><label><span>Relationships</span>
-            <select aria-label="Relationship" value={selected.id} disabled={loading} onChange={event => { setOffset(0); setRelation(event.target.value); }}>
-                {page.relations.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-            </select></label>
-        </header>
-        <div className="explorer-links-mapping">
-            <div><span className="explorer-links-badge">{selected.direction === 'outgoing' ? 'Outgoing' : 'Incoming'}</span>
-                <strong>{selected.schema}.{selected.table}</strong></div>
-            <div className="explorer-links-field-mapping">
-                <span className="explorer-links-badge">{selected.kind === 'foreign_key' ? 'Foreign key' : 'Field mapping'}</span>
-                <div className="explorer-links-fields">{selected.fields.map((field, index) => <span key={field}><code>{field}</code><span aria-hidden="true">→</span><code>{selected.targetFields[index]}</code></span>)}</div>
-            </div>
-        </div>
-        {page.reason || !page.identities.length ? <div className="explorer-links-empty" role="status"><LinkOutlined /><strong>No matching records</strong><p>{page.reason || 'No objects match this relationship for the selected record.'}</p></div> :
-            <ul>{page.identities.map(identity => <li key={JSON.stringify(identity)}>
-                <ExplorerRecordLink schema={selected.schema} table={selected.table} identity={identity}>
+    if (page.relations.length && !selected) return null;
+    return <ExplorerRelationshipsView loading={loading} selectedId={page.selected}
+        relations={page.relations.map(item => ({ id: item.id, name: item.name, direction: item.direction, target: `${item.schema}.${item.table}`,
+            fieldMapping: { label: item.kind === 'foreign_key' ? 'Foreign key' : 'Field mapping',
+                fields: item.fields.map((field, index) => ({ source: field, target: item.targetFields[index] })) } }))}
+        records={selected ? page.identities.map(identity => {
+            const identityKey = JSON.stringify(identity);
+            return { key: identityKey,
+                link: <ExplorerRecordLink schema={selected.schema} table={selected.table} identity={identity}>
                     {Object.entries(identity).map(([name, value]) => `${name} = ${value}`).join(' · ')}
-                </ExplorerRecordLink>
-                <Button size="small" disabled={loading} aria-expanded={expanded === JSON.stringify(identity)}
-                    onClick={() => setExpanded(current => current === JSON.stringify(identity) ? '' : JSON.stringify(identity))}>
-                    {expanded === JSON.stringify(identity) ? 'Hide properties' : 'Show properties'}
-                </Button>
-                {expanded === JSON.stringify(identity) && <LinkedProperties key={expanded}
-                    schema={selected.schema} table={selected.table} identity={expanded} />}
-            </li>)}</ul>}
-        {(offset > 0 || page.hasMore) && <nav aria-label="Related records pages">
-            <Button disabled={loading || offset === 0} onClick={() => { setRelation(selected.id); setOffset(v => v - 10); }}>Previous</Button>
-            <span>Page {1 + offset / 10}</span>
-            <Button disabled={loading || !page.hasMore || offset >= 500} onClick={() => { setRelation(selected.id); setOffset(v => v + 10); }}>Next</Button>
-            {page.hasMore && offset >= 500 && <span>Inspection limit reached</span>}
-        </nav>}
-    </section>;
+                </ExplorerRecordLink>,
+                properties: <LinkedProperties key={identityKey} schema={selected.schema} table={selected.table} identity={identityKey} /> };
+        }) : []}
+        emptyReason={page.reason} expanded={expanded} onToggle={key => setExpanded(current => current === key ? '' : key)}
+        onSelect={id => { setOffset(0); setRelation(id); }} offset={offset} hasMore={page.hasMore} pageLimit={500}
+        onPage={offset => { setRelation(page.selected); setOffset(offset); }} />;
 }
 
 export default function ExplorerRowLinks(props: Props) {

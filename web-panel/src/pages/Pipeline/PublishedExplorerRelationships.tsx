@@ -1,15 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui';
-import { LinkOutlined } from '@/components/ui/icons';
 import { fetchPublishedRelationships, type PublishedRelationships } from '../../services/publishedExplorerDetails';
 import { fetchPublishedOntologyType, ontologyError, type OntologyRecord, type PublishedOntologyType } from '../../services/ontology';
 import { publishedLayoutPath, readLayouts, type Layouts } from '../../services/explorerLayouts';
 import { publishedColumnTypes, publishedPresentation } from '../../services/publishedExplorerPresentation';
-import { PropertyLabel } from './PropertyTypeIcon';
-import { ExplorerFieldValue, explorerFields } from './ExplorerObjectOverview';
+import { explorerFields } from './ExplorerObjectOverview';
 import ExplorerRecordLink from './ExplorerRecordLink';
 import { ExplorerValueProvider } from './ExplorerValue';
-import './explorer-row-links.css';
+import ExplorerRelationshipsView, { ExplorerLinkedProperties } from './ExplorerRelationshipsView';
 
 function LinkedProperties({ definitionId, record }: { definitionId: string; record: OntologyRecord }) {
   const [read, setRead] = useState<{ type?: PublishedOntologyType; layouts?: Layouts; error?: string }>();
@@ -26,11 +24,9 @@ function LinkedProperties({ definitionId, record }: { definitionId: string; reco
   const row = { key: record.id!, record: record.properties, identity: { $recordId: record.id! }, title: String(record.title ?? 'Untitled object'), columnTypes: publishedColumnTypes(read.type) };
   const layout = read.layouts.personal.layout ?? read.layouts.default.layout;
   const presentations = Object.fromEntries((layout?.columns ?? []).map(column => [column.field, column.presentation ?? 'value']));
-  return <ExplorerValueProvider source={{ kind: 'published', definitionId }}><dl className="explorer-linked-properties" aria-label="Related record properties">
-    {explorerFields(row, Object.keys(record.properties), publishedPresentation(read.type), presentations).map(field => <div key={field.key}>
-      <dt><PropertyLabel type={field.type}>{field.label}</PropertyLabel></dt><dd><ExplorerFieldValue row={row} field={field} /></dd>
-    </div>)}
-  </dl></ExplorerValueProvider>;
+  return <ExplorerValueProvider source={{ kind: 'published', definitionId }}>
+    <ExplorerLinkedProperties row={row} fields={explorerFields(row, Object.keys(record.properties), publishedPresentation(read.type), presentations)} />
+  </ExplorerValueProvider>;
 }
 
 type Props = { definitionId: string; recordId: string };
@@ -56,24 +52,15 @@ function RelationshipPage({ definitionId, recordId }: Props) {
   const selected = page?.relations.find(item => item.id + ':' + item.direction === page.selected);
   if (current?.error) return <p role="alert">{current.error} <Button size="small" onClick={() => reload(value => value + 1)}>Retry</Button></p>;
   if (!page) return <p role="status">Loading relationships…</p>;
-  if (!selected) return <section className="explorer-row-links explorer-links-empty" role="status"><LinkOutlined /><strong>No relationships</strong><p>No declared relationships are available for this object.</p></section>;
-  return <section className="explorer-row-links" aria-label="Related records" aria-busy={loading}>
-    <header className="explorer-links-heading"><LinkOutlined /><label><span>Relationships</span>
-      <select aria-label="Relationship" value={page.selected} disabled={loading} onChange={event => { setRelation(event.target.value); setOffset(0); }}>
-        {page.relations.map(item => <option key={item.id + ':' + item.direction} value={item.id + ':' + item.direction}>{item.name} · {item.direction === 'incoming' ? 'Incoming' : 'Outgoing'}</option>)}
-      </select>
-    </label></header>
-    <div className="explorer-links-mapping"><div><span className="explorer-links-badge">{selected.direction === 'incoming' ? 'Incoming' : 'Outgoing'}</span><strong>{selected.name}</strong></div></div>
-    {page.items.length ? <ul>{page.items.map(record => <li key={record.id}>
-      <ExplorerRecordLink definitionId={selected.targetDefinitionId} identity={{ $recordId: record.id! }}>{String(record.title ?? 'Untitled object')}</ExplorerRecordLink>
-      <Button size="small" disabled={loading} aria-expanded={expanded === record.id} onClick={() => setExpanded(value => value === record.id ? '' : record.id!)}>{expanded === record.id ? 'Hide properties' : 'Show properties'}</Button>
-      {expanded === record.id && <LinkedProperties definitionId={selected.targetDefinitionId} record={record} />}
-    </li>)}</ul> : <div className="explorer-links-empty" role="status"><strong>No matching objects</strong><p>No visible objects match this relationship.</p></div>}
-    {(offset > 0 || page.hasMore) && <nav aria-label="Related records pages">
-      <Button size="small" disabled={loading || !offset} onClick={() => { setRelation(page.selected); setOffset(value => value - 10); }}>Previous</Button><span>Page {1 + offset / 10}</span>
-      <Button size="small" disabled={loading || !page.hasMore || offset >= 100_000} onClick={() => { setRelation(page.selected); setOffset(value => value + 10); }}>Next</Button>
-    </nav>}
-  </section>;
+  return <ExplorerRelationshipsView loading={loading} selectedId={page.selected}
+    relations={page.relations.map(item => ({ id: item.id + ':' + item.direction,
+      name: item.name + ' · ' + (item.direction === 'incoming' ? 'Incoming' : 'Outgoing'), direction: item.direction, target: item.name }))}
+    records={selected ? page.items.map(record => ({ key: record.id!,
+      link: <ExplorerRecordLink definitionId={selected.targetDefinitionId} identity={{ $recordId: record.id! }}>{String(record.title ?? 'Untitled object')}</ExplorerRecordLink>,
+      properties: <LinkedProperties definitionId={selected.targetDefinitionId} record={record} /> })) : []}
+    expanded={expanded} onToggle={key => setExpanded(value => value === key ? '' : key)}
+    onSelect={id => { setRelation(id); setOffset(0); }} offset={offset} hasMore={page.hasMore} pageLimit={100_000}
+    onPage={offset => { setRelation(page.selected); setOffset(offset); }} />;
 }
 
 export default function PublishedExplorerRelationships(props: Props) {

@@ -1,7 +1,7 @@
 import type { ComponentProps, ReactNode, Ref } from 'react';
 import { Button, Dropdown } from '@/components/ui';
 import type { ColumnsType } from '@/components/ui';
-import { ArrowDownOutlined, ArrowUpOutlined, DownOutlined, PlusOutlined } from '@/components/ui/icons';
+import { ArrowDownOutlined, ArrowUpOutlined, DownOutlined, FilterOutlined, PlusOutlined } from '@/components/ui/icons';
 import ExplorerWorkbenchHeader from './ExplorerWorkbenchHeader';
 import ExplorerSelection from './ExplorerSelection';
 import { LayoutHeader, type useResultLayout } from './ExplorerResultLayout';
@@ -51,6 +51,10 @@ export function explorerResultColumns({ layout, sorts, types, names = {}, addFil
       },
     };
   });
+}
+
+export function ExplorerFilterButton({ open, count, onClick }: { open: boolean; count: number; onClick: () => void }) {
+  return <button type="button" aria-expanded={open} onClick={onClick}><FilterOutlined /> Filter &amp; sort{count ? ` (${count})` : ''}</button>;
 }
 
 export function ExplorerResults({ results, children, viewportRef, selectionKey }: {

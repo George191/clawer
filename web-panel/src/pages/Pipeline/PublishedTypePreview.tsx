@@ -1,11 +1,9 @@
-import { useEffect, useId, useState } from 'react';
-import { Drawer } from '@/components/ui';
-import { ArrowRightOutlined, CloseOutlined, ReloadOutlined, RightOutlined } from '@/components/ui/icons';
+import { useEffect, useState } from 'react';
 import { fetchPublishedOntologyType, ontologyError, type PublishedCatalogItem, type PublishedOntologyType } from '../../services/ontology';
 import { graphRequest, type LinkType, type Page } from '../../services/ontology_graph';
 import { getSessionState } from '../../services/session';
-import PropertyTypeIcon from './PropertyTypeIcon';
 import SemanticTypeGlyph from './SemanticTypeGlyph';
+import ObjectTypePreview from './ObjectTypePreview';
 
 type Props = {
   id: string; initial?: PublishedCatalogItem; allProperties: boolean;
@@ -32,7 +30,6 @@ export default function PublishedTypePreview({ id, initial, allProperties, onPro
   const [linkedVersion, reloadLinks] = useState(0);
   const [read, setRead] = useState<{ key: string; object?: PublishedOntologyType; error?: string }>();
   const [linkedRead, setLinkedRead] = useState<{ key: string; items?: LinkedType[]; error?: string }>();
-  const propertiesId = useId();
   const identity = getSessionState().identity;
   const key = JSON.stringify([identity, id, version]);
   const current = read?.key === key ? read : undefined;
@@ -60,44 +57,25 @@ export default function PublishedTypePreview({ id, initial, allProperties, onPro
   }, [current?.object, linkedKey, identity]);
   const definition = object?.definition;
   const properties = definition?.properties ?? [];
-  const visibleProperties = allProperties ? properties : properties.slice(0, 6);
-  return <Drawer open onClose={onClose} width="100%" title={`${definition?.name || id} Object type preview`} closable={false} destroyOnHidden rootClassName="flow-ontology flow-ontology__drawer"
-    styles={{ header: { display: 'none' }, body: { display: 'flex', padding: 0, overflow: 'hidden' } }}>
-    <aside className="flow-ontology__inspector" data-testid="published-type-inspector" data-object-id={id}>
-      <header className="flow-ontology__inspector-toolbar">
-        {definition && <SemanticTypeGlyph definition={definition} />}
-        <div className="flow-ontology__preview-identity"><h2 title={definition?.name || id}>{definition?.name || 'Object type preview'}</h2><span>Object Type</span></div>
-        <button type="button" className="flow-ontology__icon-button" aria-label="Close asset preview" onClick={onClose}><CloseOutlined /></button>
-      </header>
-      <div className="flow-ontology__inspector-content" aria-busy={!current}>
-        {current?.error ? <div className="flow-ontology__notice" role="alert"><span>{current.error}</span><button type="button" onClick={() => reload(value => value + 1)}>Retry</button></div>
-          : !definition ? <div className="flow-ontology__empty is-compact" role="status"><ReloadOutlined spin /><span>Loading object type</span></div> : <>
-            <section className="flow-ontology__preview-section"><h3>Description</h3><p className="flow-ontology__muted">{definition.description || 'No description provided.'}</p></section>
-            <section className="flow-ontology__preview-section" aria-label="Object type summary">
-              <h3>API ID</h3><p>{definition.id}</p><h3>Datasource</h3><p>{definition.source.mode === 'existing' ? `${definition.source.schema}.${definition.source.table}` : 'Object-managed records'}</p><h3>Published revision</h3><p>{object!.revision}</p>
-            </section>
-            <section className="flow-ontology__preview-section"><header><h3>Properties <small>({properties.length.toLocaleString('en-US')})</small></h3>
-              {properties.length > 6 && <button type="button" className="flow-ontology__properties-toggle" aria-expanded={allProperties} aria-controls={propertiesId} onClick={onPropertiesToggle}>{allProperties ? <><RightOutlined rotate={180} /><span>Back</span></> : <><span>View</span><RightOutlined /></>}</button>}
-            </header><div id={propertiesId} className="flow-ontology__property-list" role="region" aria-label="Properties" tabIndex={allProperties && properties.length > 6 ? 0 : undefined}>
-              {visibleProperties.map(property => <div className="flow-ontology__property-row" key={property.id} title={`${property.id} · ${property.type}${property.required ? ' · Required' : ' · Nullable'}`}>
-                <PropertyTypeIcon type={property.type} /><span className="flow-ontology__property-name">{property.name}</span>
-                {definition.titleKey === property.id && <span className="flow-ontology__property-badge is-title">Title</span>}
-                {definition.primaryKey.includes(property.id) && <span className="flow-ontology__property-badge is-primary">Primary key</span>}
-              </div>)}
-            </div>{!properties.length && <p className="flow-ontology__muted">No properties defined.</p>}</section>
-            <section className="flow-ontology__preview-section"><header><h3>Linked object types {linked?.items && <small>({linked.items.length.toLocaleString('en-US')})</small>}</h3></header>
-              {linked?.error ? <div className="flow-ontology__notice" role="alert"><span>{linked.error}</span><button type="button" onClick={() => reloadLinks(value => value + 1)}>Retry linked types</button></div>
-                : !linked?.items ? <p role="status">Loading linked object types…</p>
-                  : linked.items.length ? <div className="flow-ontology__linked-list">{linked.items.map(item => <button type="button" key={item.object.id} className="flow-ontology__linked-row" title={item.relationships.join(' · ')} onClick={() => {
-                    setRead({ key: JSON.stringify([identity, item.object.id, version]), object: item.object });
-                    onSelect(item.object.id);
-                  }}>
-                    <SemanticTypeGlyph definition={item.object.definition} /><span>{item.object.definition.name}</span>
-                  </button>)}</div> : <p className="flow-ontology__muted">No relationships defined.</p>}
-            </section>
-          </>}
-      </div>
-      <footer className="flow-ontology__inspector-footer"><button type="button" className="flow-ontology__button flow-ontology__button--primary" disabled={!verified} onClick={onExplore}>Start exploring <ArrowRightOutlined /></button></footer>
-    </aside>
-  </Drawer>;
+  return <ObjectTypePreview open id={id} name={definition?.name || 'Object type preview'}
+    icon={definition && <SemanticTypeGlyph definition={definition} />} testId="published-type-inspector"
+    loading={!definition && !current?.error} busy={!current} error={current?.error} onRetry={() => reload(value => value + 1)}
+    onClose={onClose} onExplore={onExplore} exploreDisabled={!verified} description={definition?.description}
+    summary={definition && [
+      { label: 'API ID', value: definition.id },
+      { label: 'Datasource', value: definition.source.mode === 'existing' ? `${definition.source.schema}.${definition.source.table}` : 'Object-managed records' },
+      { label: 'Published revision', value: object!.revision },
+    ]}
+    properties={properties.map(property => ({
+      id: property.id, name: property.name, type: property.type, required: property.required,
+      primaryKey: definition!.primaryKey.includes(property.id), title: definition!.titleKey === property.id,
+    }))} allProperties={allProperties} onPropertiesToggle={onPropertiesToggle}
+    linkedTypes={{ loading: !linked, error: linked?.error, onRetry: () => reloadLinks(value => value + 1), items: linked?.items?.map(item => ({
+      id: item.object.id, name: item.object.definition.name, tooltip: item.relationships.join(' · '),
+      icon: <SemanticTypeGlyph definition={item.object.definition} />, iconStyle: { background: 'transparent' },
+      onSelect: () => {
+        setRead({ key: JSON.stringify([identity, item.object.id, version]), object: item.object });
+        onSelect(item.object.id);
+      },
+    })) }} />;
 }

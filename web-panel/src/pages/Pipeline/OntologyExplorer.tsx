@@ -1,11 +1,9 @@
-import PropertyTypeIcon from './PropertyTypeIcon';
-import { explorerPropertyType } from '../../services/explorerProperties';
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Checkbox, Drawer, Select, Tooltip } from '@/components/ui';
+import { Checkbox } from '@/components/ui';
 import {
   ApartmentOutlined, AppstoreOutlined, ArrowRightOutlined, BarsOutlined,
-  CloseOutlined, DatabaseOutlined, EyeOutlined, InfoCircleOutlined,
+  CloseOutlined, DatabaseOutlined, InfoCircleOutlined,
   PlusOutlined, ReloadOutlined, RightOutlined, SearchOutlined, StarFilled, StarOutlined,
 } from '@/components/ui/icons';
 import { fetchCurrentUserContext, fetchEtlObjectFavorites, fetchEtlObjectPreview, fetchEtlObjectTypes, fetchLayers, importEtlObjectFavorites, updateEtlObjectFavorite, updateEtlObjectVisibility } from '../../services/api';
@@ -16,6 +14,7 @@ import { inferSiteKind, TemplateGlyph } from '../AICollect/WorkspaceDock';
 import SemanticObjectWizard from './SemanticObjectWizard';
 import PublishedOntology, { type PublishedCatalogPage } from './PublishedOntology';
 import PublishedTypePreview from './PublishedTypePreview';
+import ObjectTypePreview from './ObjectTypePreview';
 import OntologyCatalogSkeleton from './OntologyCatalogSkeleton';
 import { listOntologyProjects } from '../../services/ontology';
 import { publishedCatalogHref, publishedExplorerHref } from '../../services/publishedExplorerHandoff';
@@ -130,7 +129,6 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const searchRef = useRef<HTMLInputElement>(null);
   const inspectorRef = useRef<HTMLElement>(null);
   const cardRefs = useRef<Record<string, HTMLButtonElement | null>>({});
-  const [mobilePreview, setMobilePreview] = useState(() => window.matchMedia('(max-width: 1150px)').matches);
   const [inspectedObject, setInspectedObject] = useState({ schema: selectedSchema, table: selectedTable, allProperties });
   const inspectorSchema = selectedId ? selectedSchema : inspectedObject.schema;
   const inspectorTable = selectedId ? selectedTable : inspectedObject.table;
@@ -467,12 +465,6 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     setCreateOpen(true);
   };
   useEffect(() => {
-    const query = window.matchMedia('(max-width: 1150px)');
-    const resize = () => setMobilePreview(query.matches);
-    query.addEventListener('change', resize);
-    return () => query.removeEventListener('change', resize);
-  }, []);
-  useEffect(() => {
     if (inspectorId) inspectorRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
   }, [inspectorId]);
   useEffect(() => {
@@ -529,7 +521,6 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     cardRefs.current[renderedObjects[next]?.id]?.focus();
   };
   const data = preview.id === inspectorId ? preview.data : undefined;
-  const visibleProperties = data ? inspectorAllProperties ? data.properties : data.properties.slice(0, 6) : [];
   const identity = data || catalog.items.find((object) => object.id === inspectorId);
   const selectedColor = identity ? accentStyle(identity.dataType) : undefined;
   const matchingPublishedCount = publishedPage?.identity === sessionIdentity ? publishedPage.total : null;
@@ -614,31 +605,32 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
         </main>
         </>}
       </div>
-      {publishedCatalog && <footer className="flow-published-nav-footer">{lineageLink}</footer>}
     </div>
-    <Drawer open={inspectorOpen} onClose={closeInspector} width="100%" title={`${inspectorId} Object type preview`} closable={false} destroyOnHidden rootClassName={`flow-ontology flow-ontology__drawer${inspectorClosing ? ' is-closing' : ''}`} styles={{ header: { display: 'none' }, body: { display: 'flex', padding: 0, overflow: 'hidden' } }}>
-    <aside ref={inspectorRef} className="flow-ontology__inspector" data-testid="ontology-inspector" data-object-id={inspectorId} style={selectedColor}>
-      <header className="flow-ontology__inspector-toolbar"><span className="flow-ontology__asset-icon"><TemplateGlyph kind={inferSiteKind(identity?.dataType || '', inspectorTable)} source={inspectorTable} /></span><div className="flow-ontology__preview-identity"><h2 title={inspectorId}>{identity?.displayName || inspectorTable}</h2><span>Object Type</span></div><button type="button" className="flow-ontology__icon-button" aria-label="Close asset preview" onClick={closeInspector}><CloseOutlined /></button></header>
-      <div className="flow-ontology__inspector-content" aria-busy={preview.loading}>
-        {preview.loading || preview.id !== inspectorId ? <div className="flow-ontology__empty is-compact" role="status"><ReloadOutlined spin /><span>Loading object type</span></div> : preview.error ? <div className="flow-ontology__notice" role="alert"><span>{preview.error}</span><button type="button" onClick={() => setPreviewVersion((value) => value + 1)}>Retry</button>{canManage && !includeHidden && <button type="button" onClick={() => setShowHidden(true)}>Show hidden object types</button>}</div> : data && <>
-          <section className="flow-ontology__preview-section"><h3>Description</h3><p className="flow-ontology__muted">{data.description || 'No description provided.'}</p></section>
-          <section className="flow-ontology__preview-section"><div className="flow-ontology__visibility"><h3>Visibility</h3><span className={`flow-ontology__visibility-badge is-${data.visibility}`} title={visibilityDescriptions[data.visibility]}><EyeOutlined />{visibilityLabels[data.visibility]}</span></div>
-            {canManage && <div className="flow-ontology__visibility-editor"><Select className="flow-ontology__select" popupClassName="flow-ontology__select-popup" aria-label="Object type visibility" value={visibilityDraft} disabled={!!visibilitySaving || !!linkedLoading || inspectorClosing} onChange={(value: EtlObjectVisibility) => { setVisibilityDraft(value); setVisibilityError(''); setVisibilityNotice(''); }} options={(Object.keys(visibilityLabels) as EtlObjectVisibility[]).map((value) => ({ value, label: visibilityLabels[value] }))} /><button type="button" className="flow-ontology__button" aria-label="Save visibility" disabled={!!visibilitySaving || !!linkedLoading || visibilityDraft === data.visibility || inspectorClosing} aria-busy={visibilitySaving === inspectorId} onClick={() => void saveVisibility()}>{visibilitySaving === inspectorId ? <><ReloadOutlined spin />Saving…</> : 'Save'}</button></div>}
-            <p className="flow-ontology__visibility-help">{visibilityDescriptions[canManage ? visibilityDraft : data.visibility]} {canManage && visibilityDraft !== data.visibility ? 'Changes take effect after saving. ' : ''}Access permissions are managed separately.</p>
-            {visibilityError && <p className="flow-ontology__visibility-feedback is-error" role="alert">{visibilityError}</p>}
-            {visibilityNotice && <p className="flow-ontology__visibility-feedback" role="status">{visibilityNotice}</p>}
-          </section>
-          <section className="flow-ontology__preview-section"><header><h3>Properties <small>({number(data.properties.length)})</small></h3>{data.properties.length > 6 && <button type="button" className="flow-ontology__properties-toggle" aria-expanded={inspectorAllProperties} aria-controls="ontology-properties" onClick={() => updateQuery({ tab: inspectorAllProperties ? null : 'properties' })}>{inspectorAllProperties ? <><RightOutlined rotate={180} /><span>Back</span></> : <><span>View</span><RightOutlined /></>}</button>}</header>
-            <div id="ontology-properties" className="flow-ontology__property-list" role="region" aria-label="Properties" tabIndex={inspectorAllProperties && data.properties.length > 6 ? 0 : undefined}>{visibleProperties.map((property) => <div className="flow-ontology__property-row" key={property.name} title={`${property.type}${property.nullable ? ' · Nullable' : ' · Required'}${property.comment ? ` · ${property.comment}` : ''}`}><PropertyTypeIcon type={explorerPropertyType(property.type)} /><span className="flow-ontology__property-name">{property.displayName}</span>{data.titleProperty === property.name && <span className="flow-ontology__property-badge is-title">Title</span>}{property.primaryKey && <span className="flow-ontology__property-badge is-primary">Primary key</span>}</div>)}</div>
-            {!data.properties.length && <p className="flow-ontology__muted">No properties defined.</p>}
-          </section>
-          <section className="flow-ontology__preview-section"><header><h3>Linked object types <small>({number(data.linkedObjectTypes.length)})</small></h3></header><div className="flow-ontology__linked-list">{data.linkedObjectTypes.map((linked) => <Tooltip key={linked.id} placement={mobilePreview ? 'top' : 'left'} overlayClassName="flow-ontology__relation-tooltip" title={`${linked.id} · ${linked.direction} · ${visibilityLabels[linked.visibility]}\n${linked.relationships.map((relation) => `${relation.sourceKind === 'logical' ? 'Logical relationship' : 'Foreign key'}: ${relation.sourceSchema}.${relation.sourceTable} (${relation.columns.join(', ')}) → ${relation.targetSchema}.${relation.targetTable} (${relation.referencedColumns.join(', ')})${relation.cardinality ? ` · ${relation.cardinality.replace(/_/g, ' ')}` : ''}${relation.description ? ` · ${relation.description}` : ''}`).join('\n')}`}><button type="button" className="flow-ontology__linked-row" style={accentStyle(linked.dataType)} aria-busy={linkedLoading === linked.id} disabled={!!visibilitySaving || linkedLoading === linked.id} onClick={() => void selectLinkedObject(linked)}><span className="flow-ontology__linked-icon">{linkedLoading === linked.id ? <ReloadOutlined spin /> : <TemplateGlyph kind={inferSiteKind(linked.dataType, linked.table)} source={linked.table} />}</span><span>{linked.displayName}</span></button></Tooltip>)}</div>{!data.linkedObjectTypes.length && <p className="flow-ontology__muted">No relationships defined.</p>}
-            {linkedError && <p className="flow-ontology__visibility-feedback is-error" role="alert">{linkedError}</p>}
-          </section>
-        </>}
-      </div>
-      <footer className="flow-ontology__inspector-footer"><button type="button" className="flow-ontology__button flow-ontology__button--primary" disabled={!data || preview.loading || !!linkedLoading} onClick={openWorkspace}>Start exploring <ArrowRightOutlined /></button></footer>
-    </aside></Drawer>
+    <ObjectTypePreview open={inspectorOpen} closing={inspectorClosing} id={inspectorId}
+      name={identity?.displayName || inspectorTable} icon={<TemplateGlyph kind={inferSiteKind(identity?.dataType || '', inspectorTable)} source={inspectorTable} />}
+      asideRef={inspectorRef} style={selectedColor} loading={preview.loading || preview.id !== inspectorId} error={preview.error}
+      onRetry={() => setPreviewVersion(value => value + 1)}
+      errorAction={canManage && !includeHidden ? { label: 'Show hidden object types', onClick: () => setShowHidden(true) } : undefined}
+      onClose={closeInspector} onExplore={openWorkspace} exploreDisabled={!data || preview.loading || !!linkedLoading}
+      description={data?.description} properties={data?.properties.map(property => ({
+        id: property.name, name: property.displayName, type: property.type, required: !property.nullable,
+        primaryKey: property.primaryKey, title: data.titleProperty === property.name, description: property.comment,
+      })) ?? []} allProperties={inspectorAllProperties} propertiesId="ontology-properties"
+      onPropertiesToggle={() => updateQuery({ tab: inspectorAllProperties ? null : 'properties' })}
+      visibility={data && {
+        value: data.visibility, label: visibilityLabels[data.visibility], description: visibilityDescriptions[data.visibility],
+        help: `${visibilityDescriptions[canManage ? visibilityDraft : data.visibility]} ${canManage && visibilityDraft !== data.visibility ? 'Changes take effect after saving. ' : ''}Access permissions are managed separately.`,
+        writable: canManage, draft: visibilityDraft, options: (Object.keys(visibilityLabels) as EtlObjectVisibility[]).map(value => ({ value, label: visibilityLabels[value] })),
+        disabled: !!visibilitySaving || !!linkedLoading, saving: visibilitySaving === inspectorId, saveDisabled: visibilityDraft === data.visibility,
+        error: visibilityError, feedback: visibilityNotice,
+        onChange: value => { setVisibilityDraft(value); setVisibilityError(''); setVisibilityNotice(''); }, onSave: () => void saveVisibility(),
+      }}
+      linkedTypes={{ pendingId: linkedLoading, disabled: !!visibilitySaving, error: linkedError, items: data?.linkedObjectTypes.map(linked => ({
+        id: linked.id, name: linked.displayName, style: accentStyle(linked.dataType),
+        icon: <TemplateGlyph kind={inferSiteKind(linked.dataType, linked.table)} source={linked.table} />,
+        tooltip: `${linked.id} · ${linked.direction} · ${visibilityLabels[linked.visibility]}\n${linked.relationships.map(relation => `${relation.sourceKind === 'logical' ? 'Logical relationship' : 'Foreign key'}: ${relation.sourceSchema}.${relation.sourceTable} (${relation.columns.join(', ')}) → ${relation.targetSchema}.${relation.targetTable} (${relation.referencedColumns.join(', ')})${relation.cardinality ? ` · ${relation.cardinality.replace(/_/g, ' ')}` : ''}${relation.description ? ` · ${relation.description}` : ''}`).join('\n')}`,
+        onSelect: () => void selectLinkedObject(linked),
+      })) }} />
     {publishedId && <PublishedTypePreview id={publishedId} initial={publishedPage?.identity === sessionIdentity ? publishedPage.items.find(item => item.id === publishedId) : undefined}
       allProperties={allProperties} onPropertiesToggle={() => updateQuery({ tab: allProperties ? null : 'properties' })}
       onClose={() => updateQuery({ objectType: null, tab: null }, true)} onSelect={selectPublished}
