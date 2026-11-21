@@ -271,8 +271,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const [isMobile, setIsMobile] = useState(false);
   const [settledCollapsed, setSettledCollapsed] = useState(false);
   const [projectTextReady, setProjectTextReady] = useState(true);
-  const [currentTenant, setCurrentTenant] = useState<string | null>(null);
-  const [currentTeam, setCurrentTeam] = useState<string | null>(null);
   const [currentUserContext, setCurrentUserContext] = useState<CurrentUserContext | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
@@ -347,24 +345,15 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
       .then((context) => {
         if (cancelled) return;
         setCurrentUserContext(context);
-        const firstTenant = context.tenants[0]?.id ?? null;
-        setCurrentTenant(firstTenant);
-        setCurrentTeam(context.teams.find((team) => team.tenant_id === firstTenant)?.id ?? null);
       })
       .catch(() => {
         if (!cancelled) {
           setCurrentUserContext(null);
-          setCurrentTenant(null);
-          setCurrentTeam(null);
         }
       });
     return () => { cancelled = true; };
   }, []);
 
-  const currentTenantOptions = currentUserContext?.tenants ?? [];
-  const currentTeamOptions = currentUserContext?.teams.filter((team) => team.tenant_id === currentTenant) ?? [];
-  const currentTenantName = currentTenantOptions.find((tenant) => tenant.id === currentTenant)?.name ?? 'No tenant';
-  const currentTeamName = currentTeamOptions.find((team) => team.id === currentTeam)?.name ?? 'No team';
   const currentUserName = currentUserContext?.user.full_name?.trim()
     || currentUserContext?.user.email.split('@')[0]
     || 'Account';
@@ -725,44 +714,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           </button>
           {!isMobile && (
             <div className="header-context-group" style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0 }}>
-              <Dropdown
-                disabled={currentTenantOptions.length <= 1}
-                menu={{
-                  selectedKeys: currentTenant ? [currentTenant] : [],
-                  onClick: ({ key }) => {
-                    const tenantId = String(key);
-                    setCurrentTenant(tenantId);
-                    setCurrentTeam(currentUserContext?.teams.find((team) => team.tenant_id === tenantId)?.id ?? null);
-                  },
-                  items: currentTenantOptions.map((tenant) => ({ key: tenant.id, label: tenant.name })),
-                }}
-              >
-                <Button
-                  type="text"
-                  size="small"
-                  className={currentTenantOptions.length > 1 ? 'header-context-button is-enabled' : 'header-context-button'}
-                  style={{ color: palette.secondary, border: 'none', cursor: currentTenantOptions.length > 1 ? 'pointer' : 'default', display: 'inline-flex', alignItems: 'center', lineHeight: 1, gap: 0 }}
-                >
-                  <span className="header-context-label" style={{ color: palette.muted }}>TENANT:</span><span className="header-context-value" title={currentTenantName}>{currentTenantName}</span><DownOutlined className="header-context-arrow" style={{ color: currentTenantOptions.length > 1 ? palette.secondary : palette.muted }} />
-                </Button>
-              </Dropdown>
-              <Dropdown
-                disabled={currentTeamOptions.length <= 1}
-                menu={{
-                  selectedKeys: currentTeam ? [currentTeam] : [],
-                  onClick: ({ key }) => setCurrentTeam(String(key)),
-                  items: currentTeamOptions.map((team) => ({ key: team.id, label: team.name })),
-                }}
-              >
-                <Button
-                  type="text"
-                  size="small"
-                  className={currentTeamOptions.length > 1 ? 'header-context-button is-enabled' : 'header-context-button'}
-                  style={{ color: palette.secondary, border: 'none', cursor: currentTeamOptions.length > 1 ? 'pointer' : 'default', display: 'inline-flex', alignItems: 'center', lineHeight: 1, gap: 0 }}
-                >
-                  <span className="header-context-label" style={{ color: palette.muted }}>TEAM:</span><span className="header-context-value" title={currentTeamName}>{currentTeamName}</span><DownOutlined className="header-context-arrow" style={{ color: currentTeamOptions.length > 1 ? palette.secondary : palette.muted }} />
-                </Button>
-              </Dropdown>
               <Dropdown
                 trigger={['click']}
                 open={projectMenuOpen}

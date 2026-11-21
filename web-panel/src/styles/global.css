@@ -96,10 +96,6 @@ body {
   color: #e4e7eb !important;
 }
 
-.header-context-button:not(.is-enabled):hover {
-  background: transparent !important;
-}
-
 .header-context-button:hover,
 .header-context-button:focus,
 .header-context-button:active,
@@ -158,8 +154,6 @@ body {
 .header-shortcut-button > span:last-child { font-size: 12px; }
 @media (min-width: 768px) and (max-width: 1100px) {
   .header-context-group { gap: 8px !important; }
-  .header-context-button:not(.project-domain-switch) .header-context-label { display: none; }
-  .header-context-button:not(.project-domain-switch) .header-context-value { max-width: 100px; }
 }
 @media (max-width: 1100px) {
   .header-shortcut-label { display: none !important; }
@@ -171,11 +165,6 @@ body {
   display: inline-flex;
   align-items: center;
 }
-.header-context-arrow {
-  margin-left: 0 !important;
-  font-size: 9px;
-}
-
 .glass-card {
   background: rgba(36, 40, 54, 0.8) !important;
   backdrop-filter: blur(12px);
