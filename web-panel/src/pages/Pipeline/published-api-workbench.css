@@ -1,0 +1,63 @@
+.published-api-workbench { display:flex; flex-direction:column; box-sizing:border-box; width:100%; height:min(640px,calc(100dvh - 210px)); min-height:340px; color:var(--ontology-text); background:var(--ontology-panel); font-size:12px; line-height:1.5; }
+.api-workbench-toolbar { display:flex; flex:none; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px 16px; min-height:36px; padding:0 0 10px; border-bottom:1px solid var(--ontology-border); }
+.api-workbench-toolbar > div { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+.api-workbench-toolbar strong { font-weight:500; }
+.api-workbench-toolbar > div > span:not(.ui-icon) { color:var(--ontology-muted); font-size:11px; }
+.api-workbench-toolbar .api-unsaved { color:var(--ui-warning); }
+.api-workbench-layout { display:grid; grid-template-columns:220px minmax(0,1fr); flex:1; min-height:0; overflow:hidden; }
+.api-workbench-catalog { display:flex; flex-direction:column; min-height:0; border-right:1px solid var(--ontology-border); }
+.api-catalog-search { display:flex; flex:none; align-items:center; gap:6px; margin:10px 10px 8px 0; padding:5px 7px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-bg); color:var(--ontology-muted); }
+.api-catalog-search:focus-within { border-color:var(--ontology-muted); }
+.api-catalog-search input { width:100%; min-width:0; padding:0; border:0; outline:0; background:transparent; color:var(--ontology-text); font:inherit; }
+.api-workbench-catalog nav { flex:1; min-height:0; overflow:auto; padding:0 8px 8px 0; }
+.api-workbench-catalog nav > button { display:flex; align-items:flex-start; gap:8px; box-sizing:border-box; width:100%; padding:10px 9px; border:1px solid transparent; border-radius:3px; background:transparent; color:var(--ontology-text); font:inherit; text-align:left; cursor:pointer; }
+.api-workbench-catalog nav > button:hover { background:var(--ontology-hover); }
+.api-workbench-catalog nav > button[aria-current=true] { border-color:var(--ontology-control-border); background:var(--ontology-hover); box-shadow:inset 2px 0 var(--ui-action-bg); }
+.api-workbench-catalog nav > button > span:last-child { display:flex; flex:1; min-width:0; flex-direction:column; gap:3px; }
+.api-workbench-catalog strong { font-size:12px; font-weight:500; }
+.api-workbench-catalog code { color:var(--ontology-muted); font-size:11px; }
+.published-api-workbench .api-method { display:inline-flex; flex:none; align-items:center; height:20px; color:var(--ui-action-link); font-family:var(--font-mono,monospace); font-size:10px; font-weight:600; }
+.api-status { display:inline-flex; align-items:center; gap:5px; width:fit-content; color:var(--ontology-muted); font-size:11px; font-weight:400; }
+.api-status::before { content:''; display:block; width:5px; height:5px; border-radius:50%; background:currentColor; }
+.api-status.is-active { color:var(--ui-action-link); }.api-status.is-warning { color:var(--ui-warning); }
+.api-workbench-detail { display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden; }
+.api-document-heading { display:flex; flex:none; align-items:flex-start; justify-content:space-between; gap:12px; padding:14px 16px 10px; }
+.api-document-heading > div { display:flex; flex-wrap:wrap; align-items:center; gap:5px 10px; }
+.api-eyebrow { flex-basis:100%; color:var(--ontology-muted); font-size:10px; letter-spacing:.07em; }
+.api-document-heading h3 { margin:0; font-size:15px; font-weight:500; line-height:22px; }
+.api-publication-id { max-width:190px; overflow:hidden; color:var(--ontology-muted); font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
+.api-document-tabs { display:flex; flex:none; gap:20px; padding:0 16px; border-bottom:1px solid var(--ontology-border); }
+.api-document-tabs button { padding:7px 0; border:0; border-bottom:2px solid transparent; background:transparent; color:var(--ontology-muted); font:inherit; cursor:pointer; }
+.api-document-tabs button[aria-pressed=true] { border-color:var(--ui-action-bg); color:var(--ontology-text); }
+.api-document-body { flex:1; min-height:0; overflow:auto; padding:14px 16px 18px; overscroll-behavior:contain; }
+.api-endpoint { display:flex; align-items:center; gap:10px; min-width:0; padding:9px 10px; border:1px solid var(--ontology-border); border-radius:3px; background:var(--ontology-bg); }
+.api-endpoint > code { flex:1; min-width:0; font-size:11px; overflow-wrap:anywhere; }
+.published-api-workbench :is(.api-endpoint,.api-code-example header) > button { display:inline-flex; flex:none; align-items:center; justify-content:center; gap:5px; min-width:24px; height:24px; padding:2px 5px; border:0; border-radius:3px; background:transparent; color:var(--ontology-muted); font:inherit; cursor:pointer; }
+.published-api-workbench :is(.api-endpoint,.api-code-example header) > button:hover { background:var(--ontology-hover); color:var(--ontology-text); }
+.api-document-section { margin:20px 0 0; padding:0; }
+.api-document-section h4 { display:flex; align-items:center; gap:8px; margin:0 0 9px; color:var(--ontology-text); font-size:12px; font-weight:500; }
+.api-document-section h4 small { color:var(--ontology-muted); font-size:10px; font-weight:400; }
+.published-api-workbench .api-document-section p { margin:7px 0; color:var(--ontology-muted); font-size:12px; line-height:1.6; overflow-wrap:anywhere; }
+.api-access-summary { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+.api-access-summary > div { display:flex; flex-direction:column; gap:4px; }.api-access-summary span { color:var(--ontology-muted); font-size:11px; }.api-access-summary strong { font-size:12px; font-weight:400; }
+.api-key-link { display:inline-block; margin-top:12px; color:var(--ui-action-link); font-size:11px; }
+.api-validity-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin-top:8px; }
+.api-validity-fields label { display:flex; flex-direction:column; gap:5px; min-width:0; color:var(--ontology-muted); font-size:11px; }.api-validity-fields label strong { color:var(--ontology-text); font-size:12px; font-weight:400; }
+.api-validity-fields :is(.ui-input,.ui-select) { width:100%; min-width:0; font-size:12px; }
+.api-text-button { padding:0; border:0; background:transparent; color:var(--ui-action-link); font:inherit; font-size:11px; cursor:pointer; }
+.api-code-example { overflow:hidden; border:1px solid var(--ontology-border); border-radius:3px; background:var(--ontology-bg); }
+.api-code-example header { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:5px 8px; border-bottom:1px solid var(--ontology-border); }
+.api-code-example header > div { display:flex; gap:4px; }.api-code-example header > div button { padding:3px 8px; border:0; border-radius:2px; background:transparent; color:var(--ontology-muted); font:inherit; font-size:11px; cursor:pointer; }.api-code-example header > div button[aria-pressed=true] { background:var(--ontology-hover); color:var(--ontology-text); }
+.api-code-example pre,.api-published-definition pre { max-height:300px; margin:0; overflow:auto; padding:12px; color:var(--ontology-text); font-size:11px; line-height:1.8; tab-size:2; }
+.published-api-workbench .api-parameter-table { width:100%; border-collapse:collapse; font-size:11px; text-align:left; }.published-api-workbench .api-parameter-table :is(th,td) { padding:8px 9px 8px 0; border-bottom:1px solid var(--ontology-border); vertical-align:top; font-weight:400; }.published-api-workbench .api-parameter-table thead th { color:var(--ontology-muted); }
+.api-scope-facts { display:grid; gap:8px; margin:0 0 14px; }.api-scope-facts > div { display:grid; grid-template-columns:80px minmax(0,1fr); gap:8px; }.api-scope-facts dt { color:var(--ontology-muted); font-size:11px; }.api-scope-facts dd { margin:0; overflow-wrap:anywhere; }
+.published-api-workbench .api-range-predicate { padding:10px; border:1px solid var(--ontology-border); border-radius:3px; background:var(--ontology-bg); color:var(--ontology-text); font-family:var(--font-mono,monospace); font-size:11px; white-space:pre-wrap; }
+.api-published-definition { margin-top:20px; border-top:1px solid var(--ontology-border); padding-top:10px; color:var(--ontology-muted); font-size:11px; }.api-published-definition summary { cursor:pointer; }.api-published-definition pre { margin-top:8px; background:var(--ontology-bg); }
+.published-api-workbench .api-range-note { margin-top:15px; color:var(--ontology-muted); font-size:11px; }
+.api-document-footer { display:flex; flex:none; align-items:center; justify-content:space-between; gap:8px; padding:10px 16px; border-top:1px solid var(--ontology-border); color:var(--ontology-muted); font-size:11px; }
+.api-document-footer button { display:inline-flex; flex:none; align-items:center; gap:5px; padding:4px 7px; border:1px solid var(--ontology-control-border); border-radius:3px; background:transparent; color:var(--ontology-text); font:inherit; cursor:pointer; }.api-document-footer button:hover { color:var(--ui-error); border-color:var(--ui-error); }.api-document-footer button:disabled { opacity:.4; cursor:default; }
+.api-workbench-empty { display:flex; flex:1; flex-direction:column; align-items:center; justify-content:center; gap:10px; min-height:260px; padding:24px; text-align:center; }.api-workbench-empty > .ui-icon { color:var(--ontology-muted); font-size:26px; }.api-workbench-empty strong { font-size:13px; font-weight:500; }.api-workbench-empty p { max-width:370px; margin:0; color:var(--ontology-muted); font-size:12px; }.api-no-match { padding:10px; color:var(--ontology-muted); font-size:11px; }
+.published-api-workbench .api-workbench-error { margin:8px 0; color:var(--ui-error); font-size:12px; }
+.published-source-tools:has(.published-api-workbench) .explorer-resource-dialog-body { overflow:hidden; }
+.published-source-tools .published-api-workbench { height:min(580px,calc(100dvh - 260px)); min-height:300px; }
+@media (max-width:760px) { .api-workbench-layout { grid-template-columns:170px minmax(0,1fr); }.api-document-heading { flex-direction:column; gap:4px; }.api-publication-id { max-width:100%; }.api-access-summary,.api-validity-fields { grid-template-columns:1fr; }.api-document-footer > span { display:none; } }

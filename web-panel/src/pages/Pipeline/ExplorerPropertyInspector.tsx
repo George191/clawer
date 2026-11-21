@@ -1,7 +1,7 @@
 import PropertyTypeIcon from './PropertyTypeIcon';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { DeleteOutlined } from '@/components/ui/icons';
+import { DeleteOutlined, PlusOutlined } from '@/components/ui/icons';
 import type { EtlTableColumn } from '../../services/types';
 import type { ExplorerMappedProperty as Property, ExplorerPropertyMapping as Mapping } from '../../services/explorerProperties';
 import { canonColumn } from './ColumnLineageReferences';
@@ -76,8 +76,8 @@ export default function ExplorerPropertyInspector({mapping,property:p,columns,ed
             {tab === 'Details' && <>
                 <label>Property group<select aria-label="Property group" value={p.group || ''} disabled={!editable} onChange={e => onGroup(e.target.value || null)}>
                     <option value="">Ungrouped</option>{mapping.groups.map(g => <option key={g}>{g}</option>)}</select></label>
-                {editable && <label>New group<span className="physical-property-group"><input value={group} maxLength={120} onChange={e => setGroup(e.target.value)}/>
-                    <button type="button" disabled={!group.trim()} onClick={() => {onGroup(group.trim());setGroup('');}}>Add</button></span></label>}
+                {editable && <label>New group<span className="physical-property-group"><input aria-label="New group" value={group} maxLength={120} onChange={e => setGroup(e.target.value)}/>
+                    <button type="button" aria-label="Add property group" disabled={!group.trim()} onClick={() => {onGroup(group.trim());setGroup('');}}><PlusOutlined/>Add</button></span></label>}
                 <dl><dt>Physical column</dt><dd>{col?.name || 'Unmapped'}</dd><dt>PostgreSQL type</dt><dd>{col?.type || '—'}</dd>
                     {col && <><dt>Nullable</dt><dd>{col.nullable ? 'Yes' : 'No'}</dd>{col.comment && <><dt>Column comment</dt><dd>{col.comment}</dd></>}</>}</dl>
                 {canReference && col && <Link to={'/ontology/lineage?' + new URLSearchParams({schema:mapping.schema,table:mapping.table,tableLineage:'1',column:col.name})}>Open column references</Link>}

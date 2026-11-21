@@ -1,0 +1,13 @@
+/* Ontology text fields share a neutral focus border, including body portals. */
+body:has(.flow-console--ontology) :is(
+  input:not([type='checkbox'],[type='radio'],[type='range'],[type='color'],[type='file'],[type='button'],[type='submit'],[type='reset'],[type='image']),
+  textarea,select,.ui-input,.ui-input-affix-wrapper,.ui-input-number,.ui-picker,.ui-input-surface,.ui-select-selector
+) {
+  --ui-focus-ring:var(--ui-border);
+  --ui-focus-shadow:none;
+}
+body:has(.flow-console--ontology) :is(.ui-input-status-error,[aria-invalid='true']),
+body:has(.flow-console--ontology) .ui-form-item-has-error :is(input,textarea,select,.ui-input-affix-wrapper,.ui-input-number,.ui-picker,.ui-input-surface,.ui-select-selector) {
+  --ui-focus-ring:var(--ui-error);
+}
+body:has(.flow-console--ontology) .ui-input-status-warning { --ui-focus-ring:var(--ui-warning); }

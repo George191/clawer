@@ -383,20 +383,8 @@
   max-height: 104px; overflow: auto; overscroll-behavior: contain;
 }
 .flow-query-chips > span:first-child { padding-right: 2px; }
-.flow-query-chip {
-  display: inline-flex; align-items: center; gap: 5px; max-width: 290px; min-height: 26px;
-  padding: 1px 3px 1px 7px; border: 1px solid var(--ontology-control-border); border-radius: 4px;
-  color: var(--ontology-link); background: var(--ontology-selected);
-}
-.flow-query-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.flow-query-chip > button {
-  flex: none; display: inline-grid; place-items: center; width: 20px; height: 20px; padding: 0;
-  border: 0; border-radius: 3px; background: transparent; color: inherit; cursor: pointer;
-}
-.flow-query-chip > button:hover { background: var(--ontology-hover); color: var(--ontology-text); }
 @media (pointer: coarse) {
   .flow-console--ontology .flow-schema-workbench .flow-data-table :is(.flow-column-menu,.flow-cell-menu) { min-height: 35px; }
-  .flow-query-chip > button { width: 34px; height: 34px; }
   .flow-explorer-menu.ui-dropdown .ui-dropdown-menu-item { min-height: 40px; }
 }
 

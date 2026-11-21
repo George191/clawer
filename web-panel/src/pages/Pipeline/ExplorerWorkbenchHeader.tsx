@@ -5,6 +5,7 @@ import type { SheetData } from 'write-excel-file/browser';
 import { projectHref } from '../../services/projectDomains';
 import { createSaved, listSaved, openSaved, publishedSavedPath, removeSaved, savedPath, sharing, type Exploration, type SavedDetail, type SavedKind, type SavedMeta, type WorkbenchQuery } from '../../services/explorerSaved';
 import PropertyTypeIcon from './PropertyTypeIcon';
+import ExplorerSearchCondition from './ExplorerSearchCondition';
 import ExplorerExploreView, { chooseExploreField } from './ExplorerExploreView';
 import useExplorerAggregation, { type ExplorerAggregationLoader } from './useExplorerAggregation';
 import { explorerPropertyType } from '../../services/explorerProperties';
@@ -28,6 +29,7 @@ type Props<Q extends object = WorkbenchQuery> = {
     types?: Record<string, string>;
     appliedSearch?: string;
     onSearchValues: (value: string) => boolean;
+    onClearSearch: () => void;
     onExploreFilterValue: (field: string, value: unknown) => void;
     aggregate?: ExplorerAggregationLoader;
     analysisRevision?: number;
@@ -286,7 +288,7 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
             <button type="button" className="wb-back" onClick={p.backToTypes}><ArrowLeftOutlined /> Back to object types</button>
             <span className="wb-type">{p.available && <button type="button" className="wb-catalog-toggle wb-type-icon" onClick={p.toggleCatalog} aria-label="Browse object types" title="Browse object types" aria-expanded={p.catalogOpen}><i>{p.glyph ?? <TableOutlined />}</i></button>}<strong title={sourceLabel}>{p.label}</strong></span>
             {p.available && <><div className="wb-search" ref={propertySearch}>
-                <label className="wb-property-search ui-input-surface"><SearchOutlined /><input role="combobox" aria-autocomplete="list" aria-expanded={menu === 'search'} aria-controls={suggestionsId}
+                <div className="wb-property-search ui-input-surface" onClick={event => event.currentTarget.querySelector('input')?.focus()}><SearchOutlined /><ExplorerSearchCondition search={p.appliedSearch} removeSearch={p.onClearSearch} /><input role="combobox" aria-autocomplete="list" aria-expanded={menu === 'search'} aria-controls={suggestionsId}
                     aria-activedescendant={menu === 'search' && activeSuggestion >= 0 ? `${suggestionsId}-${activeSuggestion}` : undefined}
                     aria-label="Search objects or properties" placeholder="Search objects or properties…" value={search}
                     onFocus={() => { setActiveSuggestion(-1); show('search'); }} onClick={() => show('search')} onChange={event => { setSearch(event.target.value); setActiveSuggestion(-1); show('search'); }}
@@ -298,7 +300,7 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
                         } else if (event.key === 'Enter') {
                             event.preventDefault(); selectSuggestion(activeSuggestion < 0 ? 0 : activeSuggestion);
                         } else if (event.key === 'Escape' || event.key === 'Tab') { setActiveSuggestion(-1); show(''); }
-                    }} /></label>
+                    }} /></div>
                 {(menu === 'search' || menu === 'property') && <section className="wb-property-popup" ref={popup} aria-label="Search and property tools">
                     {menu === 'search' ? <>
                         <div className="wb-suggestions" id={suggestionsId} role="listbox" aria-label="Search suggestions">

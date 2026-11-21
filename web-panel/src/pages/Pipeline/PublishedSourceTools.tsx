@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Button, Modal } from '@/components/ui';
 import { ReloadOutlined } from '@/components/ui/icons';
 import { fetchEtlApis, fetchTableStream, type EtlPublishedApi } from '../../services/api';
+import PublishedApiWorkbench from './PublishedApiWorkbench';
 import { explorerResourceCapabilities } from '../../services/explorerCapabilities';
 import { ontologyError, type PublishedOntologyType } from '../../services/ontology';
 import type { EtlStreamState } from '../../services/types';
@@ -44,14 +45,8 @@ function SourceApis({ schema, table }: { schema: string; table: string }) {
     fetchEtlApis(schema, table).then(result => { if (active) setItems(result); }, failure => { if (active) setError(ontologyError(failure, 'Unable to read source APIs.')); });
     return () => { active = false; };
   }, [schema, table, version]);
-  return <section className="flow-schema-details" aria-label="Source APIs">
-    <header><div><h3>Source APIs</h3><p>Existing publications expose their own physical table ranges. Explorer filters and selections are separate.</p></div><Button size="small" icon={<ReloadOutlined />} onClick={() => refresh(value => value + 1)}>Refresh</Button></header>
-    {error ? <p role="alert">{error}</p> : !items ? <p role="status">Loading source APIs…</p> : !items.length ? <p role="status">No published source APIs.</p> : <div className="published-source-api-list">{items.map((item, index) => <article key={item.id}>
-      <h4>API {index + 1}<span>{item.keyStatus}</span></h4><code>GET {item.url}</code>
-      <dl><div><dt>Valid from</dt><dd>{new Date(item.validFrom).toLocaleString()}</dd></div><div><dt>Expires</dt><dd>{new Date(item.validUntil).toLocaleString()}</dd></div></dl>
-      <details><summary>Published data range</summary><pre>{JSON.stringify({ filters: item.filters ?? [], sorts: item.sorts ?? [], search: item.search ?? '', partition: item.partition ?? null, filterType: item.filterType, filterSource: item.filterSource }, null, 2)}</pre></details>
-    </article>)}</div>}
-  </section>;
+  return <PublishedApiWorkbench title="Source APIs" items={items || []} loading={!items && !error} error={error}
+    onReload={() => refresh(value => value + 1)} />;
 }
 
 const titles = { preview: '', stream: 'Source stream', evidence: 'Source evidence', schema: 'Source column mapping', api: 'Source APIs' };

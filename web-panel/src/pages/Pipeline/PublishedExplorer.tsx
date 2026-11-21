@@ -15,7 +15,6 @@ import type { ExplorerPreviewRow } from './ExplorerSelection';
 import ExplorerWorkbench, { ExplorerFilterButton, ExplorerResults, ExplorerResultsFooter, explorerResultColumns } from './ExplorerWorkbench';
 import ExplorerFilterEditor, { normalizeFilterDepth, randomId } from './ExplorerFilterEditor';
 import { firstIncompleteExplorerFilter } from './explorerFilterDraft';
-import ExplorerSearchCondition from './ExplorerSearchCondition';
 import ExplorerFilterIndexNotice, { ExplorerSortIndexNotice } from './ExplorerFilterIndexNotice';
 import { LayoutToolbar, useResultLayout } from './ExplorerResultLayout';
 import { activeExplorerFilters, appendAndFilters, blankExplorerFilter, cellFilterRows, countFilterTerms, exactCellValue, explorerFilterTerms, hasExplorerFilterInput, type ExplorerFilter } from './explorerFilters';
@@ -219,6 +218,7 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
       <ExplorerWorkbench<PublishedExploration> locked={busy || !!fatalError} header={{ source: selectionSource,
         label: objectType?.definition.name || entry.definitionId, available: !!objectType, glyph: objectType && <SemanticTypeGlyph definition={objectType.definition} />,
         fields, names, types, rows, appliedSearch: query?.search,
+        onClearSearch: () => { if (query && canChange()) changeQuery({ ...query, search: '' }); },
         onSearchValues: value => {
           if (!query || !requireDraftApplied() || !requireDraftApplied(true)) return false;
           return changeQuery({ ...query, search: value.trim() }, true);
@@ -260,8 +260,6 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
         } : undefined}>
           {error && <div className="flow-schema-state" role="alert">{error} <Button size="small" icon={<ReloadOutlined />} onClick={() => { if (scopeError) retryScope(value => value + 1); retry(value => value + 1); }}>Retry</Button></div>}
           {busy && !objectType && <div className="flow-schema-state" role="status">Loading published object set…</div>}
-          {query && <ExplorerSearchCondition search={query.search}
-            removeSearch={() => { if (canChange()) changeQuery({ ...query, search: '' }); }} />}
           {query?.keys && <div className="flow-schema-applied flow-query-chips" aria-label="Object set scope"><span>{query.keys.length} object references{result ? ` · ${result.count} matching objects` : ''}</span></div>}
           {filtersOpen && query && <ExplorerFilterEditor rules={filterRules} setRules={setFilterRules} sorts={draftSorts}
             validationRequest={filterValidationRequest}

@@ -1,6 +1,9 @@
 .flow-console--ontology .explorer-filter-editor.flow-filter-card { flex:none; max-height:43vh; margin:0 0 8px; padding:0; overflow:auto; border:1px solid var(--ontology-border); border-radius:3px; }
 .explorer-filter-editor .flow-schema-filter-label { padding:7px 6px 3px; color:var(--ontology-text); font-size:12px; font-weight:500; }
 .flow-console--ontology .explorer-filter-editor .flow-filter-rules { min-height:0; max-height:180px; padding:3px 6px 6px; overflow:auto; }
+.flow-console--ontology .explorer-filter-editor :is(.flow-filter-rules,.flow-sort-conditions-viewport) { scrollbar-width:thin; scrollbar-color:var(--ontology-control-border) transparent; }
+.flow-console--ontology .explorer-filter-editor :is(.flow-filter-rules,.flow-sort-conditions-viewport)::-webkit-scrollbar { width:5px; height:5px; background:transparent; }
+.flow-console--ontology .explorer-filter-editor :is(.flow-filter-rules,.flow-sort-conditions-viewport)::-webkit-scrollbar-thumb { border-radius:3px; background:var(--ontology-control-border); }
 .flow-console--ontology .explorer-filter-editor .flow-filter-rule { min-height:28px; min-width:max-content; gap:4px; margin:0; }
 .explorer-filter-editor .flow-filter-row-content { display:inline-flex; align-items:center; gap:3px; }
 .explorer-filter-editor .flow-filter-row-check { display:inline-flex; align-items:center; height:26px; }
@@ -22,6 +25,7 @@
 .explorer-filter-editor .flow-sort-conditions-track { gap:6px; }
 .explorer-filter-editor .explorer-filter-sort-field-wrap { display:inline-flex; flex:none; align-items:center; }
 .explorer-filter-editor .explorer-filter-sort-field { display:inline-flex; align-items:center; gap:4px; min-width:0; max-width:280px; border-color:var(--ontology-control-border); background:var(--ontology-panel); }
+.explorer-filter-editor .explorer-filter-sort-field.has-invalid-sort { border-color:var(--ui-warning); background:color-mix(in srgb,var(--ui-warning) 8%,var(--ontology-panel)); }
 .flow-console--ontology .explorer-filter-editor .flow-filter-sort button { display:inline-flex; flex:none; align-items:center; justify-content:center; width:20px; min-width:20px; height:22px; padding:0; border:0; border-radius:2px; background:transparent; color:var(--ontology-muted); }
 .flow-console--ontology .explorer-filter-editor .flow-filter-sort button:hover { background:var(--ontology-hover); color:var(--ontology-text); }
 .flow-console--ontology .explorer-filter-editor .flow-filter-sort button:disabled { opacity:.35; cursor:default; background:transparent; }
@@ -54,8 +58,9 @@
 .explorer-filter-popup.explorer-filter-operator-dropdown .ui-dropdown-menu { min-width:208px; max-height:300px; overflow:auto; }
 .explorer-filter-popup.explorer-filter-operator-dropdown .ui-dropdown-menu-item { min-height:28px; padding:4px 8px; font-size:12px; }
 
-.explorer-filter-editor .flow-filter-rule > :is(.explorer-filter-index-notice,.ui-tooltip-trigger:has(> .explorer-filter-index-notice)) { order:5; margin-left:0; }
-.explorer-filter-editor .flow-filter-rule > .flow-filter-row-end-actions { order:4; flex:none; width:0; margin-left:auto; margin-right:-4px; overflow:hidden; opacity:0; transform:translateX(5px); pointer-events:none; transition:width .18s ease,margin-right .18s ease,opacity .18s ease,transform .18s ease; }
+.explorer-filter-editor .flow-filter-rule > :is(.explorer-filter-index-notice,.ui-tooltip-trigger:has(> .explorer-filter-index-notice)) { order:4; margin-left:auto; }
+.explorer-filter-editor .flow-filter-rule > .flow-filter-row-end-actions { order:5; flex:none; width:0; margin-left:auto; margin-right:-4px; overflow:hidden; opacity:0; transform:translateX(5px); pointer-events:none; transition:width .18s ease,margin-right .18s ease,opacity .18s ease,transform .18s ease; }
+.explorer-filter-editor .flow-filter-rule:has(.explorer-filter-index-notice) > .flow-filter-row-end-actions { margin-left:0; }
 .explorer-filter-editor .flow-filter-row-end-actions > button { flex:0 0 15px; opacity:1; }
 .explorer-filter-editor .flow-filter-rule:is(:hover,:focus-within) > .flow-filter-row-end-actions { width:51px; margin-right:0; opacity:1; transform:translateX(0); pointer-events:auto; }
 @media (hover:none), (pointer:coarse) {

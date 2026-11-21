@@ -39,3 +39,9 @@ export function nextUnusedExplorerField(fields: string[], usedFields: string[], 
 export function availableExplorerSortFields(fields: string[], sorts: ExplorerSort[], index: number): string[] {
     return fields.filter(field => !sorts.some((sort, sortIndex) => sortIndex !== index && sort.field === field));
 }
+
+export function firstIncompleteExplorerSort(sorts: ExplorerSort[]): number | undefined {
+    if (!sorts.length) return 0;
+    const index = sorts.findIndex(sort => !sort.field.trim());
+    return index < 0 ? undefined : index;
+}

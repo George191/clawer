@@ -8,7 +8,7 @@ const source = readFileSync(new URL('../src/pages/Pipeline/explorerFilterDraft.t
 const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 const exports = {};
 vm.runInThisContext('(function(exports){' + code + '\n})')(exports);
-const { missingExplorerFilterParts, firstIncompleteExplorerFilter, nextUnusedExplorerField, availableExplorerSortFields } = exports;
+const { missingExplorerFilterParts, firstIncompleteExplorerFilter, nextUnusedExplorerField, availableExplorerSortFields, firstIncompleteExplorerSort } = exports;
 const rule = (id, patch = {}) => ({ id, field: 'name', operator: '=', value: 'Acme', active: true, join: 'and', ...patch });
 
 test('adding another condition identifies only the controls still needing input', () => {
@@ -64,4 +64,11 @@ test('sort selectors omit fields used by other entries while retaining their own
   assert.deepEqual(availableExplorerSortFields(fields, sorts, 1), ['name', 'city']);
   assert.equal(nextUnusedExplorerField(fields, sorts.map(sort => sort.field)), 'name');
   assert.equal(nextUnusedExplorerField(fields, [...sorts.map(sort => sort.field), 'name']), '');
+});
+
+test('another sort cannot be added before the existing field selection is complete', () => {
+  assert.equal(firstIncompleteExplorerSort([]), 0, 'the visible first placeholder also needs a selection');
+  assert.equal(firstIncompleteExplorerSort([{ field:'', direction:'asc' }]), 0);
+  assert.equal(firstIncompleteExplorerSort([{ field:'name', direction:'asc' }, { field:'  ', direction:'desc' }]), 1);
+  assert.equal(firstIncompleteExplorerSort([{ field:'name', direction:'asc' }, { field:'city', direction:'desc' }]), undefined);
 });

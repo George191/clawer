@@ -127,7 +127,7 @@ function Workbench({schema,table,canManage,identity,onSaved,onDirtyChange}: Prop
         </div>}
         <div className={'flow-foundry-property-workspace'+(p?' has-inspector':'')}>
             <div className="flow-foundry-property-main">
-                <header className="flow-foundry-property-header"><div><h3>Properties</h3><span>{columns.filter(c=>mapped.has(c.name)).length} of {columns.length} columns mapped</span></div>
+                <header className="flow-foundry-property-header">
                     <nav aria-label="Property views"><button type="button" aria-pressed={mode==='properties'} onClick={()=>switchMode('properties')}>Properties ({draft.properties.length})</button>
                         <button type="button" aria-pressed={mode==='mapping'} onClick={()=>switchMode('mapping')}>Column mapping</button></nav>
                 </header>
@@ -139,15 +139,15 @@ function Workbench({schema,table,canManage,identity,onSaved,onDirtyChange}: Prop
                         onClick={()=>{setSearching(!searching);if(searching)setTerm('');}}/>
                     <Button size="small" aria-label="Filter properties and columns" aria-expanded={filterOpen} icon={<FilterOutlined/>}
                         onClick={()=>{setFilterOpen(!filterOpen);if(filterOpen)setFilter('');}}/>
-                </div>
                 {(searching||filterOpen) && <div className="physical-property-search">{searching && <input aria-label="Search properties or source columns" autoFocus placeholder="Search properties or source columns" value={term} onChange={e=>setTerm(e.target.value)}/>}
                     {filterOpen && <select aria-label="Filter properties" value={filter} onChange={e=>setFilter(e.target.value)}><option value="">All properties</option>
                         {['mapped','unmapped','active','experimental','deprecated','normal','prominent','hidden'].map(v=><option key={v} value={v}>{readable(v)}</option>)}</select>}</div>}
+                </div>
                 <div className="flow-foundry-property-table-wrap"><table aria-label={mode==='properties'?'Registered properties':'Physical column mappings'}>
                     {mode==='properties'?<><thead><tr>{['Property name','Status','Visibility','Base formatter','Column'].map(s=><th key={s} scope="col">{s}</th>)}</tr></thead><tbody>
                         {items.map(({item,index})=><tr key={index} className={index===selected?'is-selected':''} onClick={()=>choose(index)}>
                             <td><button type="button" className="flow-foundry-property-select" aria-label={'Inspect '+item.name} aria-pressed={index===selected} onClick={()=>choose(index)}>
-                                <span className="physical-selection" aria-hidden="true"/><PropertyTypeIcon type={item.type} />{item.name || item.id}
+                                <span className="physical-selection" aria-hidden="true"/><PropertyTypeIcon type={item.type} /><span className="physical-property-name" title={item.name || item.id}>{item.name || item.id}</span>
                                 <PropertyBadges property={item} title={draft.titleProperty}/></button></td>
                             <td><span className={'physical-chip status-'+item.status}>{readable(item.status)}</span></td>
                             <td>{editable ? <select className="physical-chip visibility" aria-label={'Visibility for '+item.name} value={item.visibility}

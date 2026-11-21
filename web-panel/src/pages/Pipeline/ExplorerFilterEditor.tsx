@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Button, Dropdown, Input } from '@/components/ui';
 import { ArrowDownOutlined, ArrowUpOutlined, CloseOutlined, DownOutlined, SearchOutlined } from '@/components/ui/icons';
 import type { ExplorerFilter } from './explorerFilters';
-import { availableExplorerSortFields, firstIncompleteExplorerFilter, nextUnusedExplorerField, type ExplorerFilterPart } from './explorerFilterDraft';
+import { availableExplorerSortFields, firstIncompleteExplorerFilter, firstIncompleteExplorerSort, nextUnusedExplorerField, type ExplorerFilterPart } from './explorerFilterDraft';
 import './explorer-filter-editor.css';
 
 type  FilterCheckboxChange  =  {  target:  {  checked:  boolean  }  };
@@ -90,6 +90,7 @@ export default function ExplorerFilterEditor({ rules, setRules, search, onSearch
     const [filterMoving, setFilterMoving] = useState<{ id: string; peerId: string; direction: 'up' | 'down' } | null>(null);
     const rulesRef = useRef<HTMLDivElement>(null);
     const [invalidFilter, setInvalidFilter] = useState<{ id: string; parts: ExplorerFilterPart[] }>();
+    const [invalidSort, setInvalidSort] = useState<{ index: number }>();
     const sortConditionsRef = useRef<HTMLDivElement>(null);
     const [sortConditionsOverflow, setSortConditionsOverflow] = useState(false);
     const sortField = sorts[0]?.field || '';
@@ -176,8 +177,21 @@ export default function ExplorerFilterEditor({ rules, setRules, search, onSearch
         });
     };
     const nextSortField = nextUnusedExplorerField(fields, sorts.map(sort => sort.field));
+    const incompleteSort = firstIncompleteExplorerSort(sorts);
+    useEffect(() => setInvalidSort(undefined), [sorts]);
+    useEffect(() => {
+        if (!invalidSort) return;
+        const target = sortConditionsRef.current?.querySelectorAll<HTMLElement>('.explorer-filter-sort-field')[invalidSort.index];
+        target?.scrollIntoView({ block:'nearest', inline:'nearest' });
+        target?.focus({ preventScroll:true });
+        if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) target?.animate([
+            { transform:'translateX(0)' }, { transform:'translateX(-4px)' }, { transform:'translateX(4px)' },
+            { transform:'translateX(-3px)' }, { transform:'translateX(3px)' }, { transform:'translateX(0)' },
+        ], { duration:320, easing:'ease-in-out' });
+    }, [invalidSort]);
     const addSortField = () => {
         if (columnMode) {
+            if (incompleteSort !== undefined) { setInvalidSort({ index:incompleteSort }); return; }
             if (nextSortField) onSortsChange([...sorts.filter(sort => sort.field), { field: nextSortField, direction: 'asc' }], false);
         } else onSortsChange([{ field: sortField, direction: sortDirection }, ...sortConditions, { field: fields[0] || '', direction: 'asc' }], false);
     };
@@ -191,7 +205,7 @@ export default function ExplorerFilterEditor({ rules, setRules, search, onSearch
             <div className="flow-sort-conditions-viewport" ref={sortConditionsRef}><div className="flow-sort-conditions-track">
                 <span className={columnMode ? 'explorer-filter-sort-field-wrap' : 'flow-filter-sort-field-wrap'}><FilterFieldPicker explorer={columnMode} fields={columnMode ? availableExplorerSortFields(fields, sorts, 0) : fields} value={sortField}
                     onChange={field => onSortsChange([{ field, direction: sortDirection }, ...sortConditions], true)}
-                    className={columnMode ? 'explorer-filter-sort-field' : 'flow-filter-sort-field'} labelClassName="flow-filter-sort-field-label" trailing={<>
+                    className={columnMode ? `explorer-filter-sort-field${invalidSort?.index === 0 ? ' has-invalid-sort' : ''}` : 'flow-filter-sort-field'} labelClassName="flow-filter-sort-field-label" trailing={<>
                         <button type="button" className="flow-filter-sort-direction-toggle" aria-label={sortDirection === 'asc' ? 'Switch to descending' : 'Switch to ascending'} onClick={event => {
                             event.stopPropagation(); onSortsChange([{ field: sortField, direction: sortDirection === 'asc' ? 'desc' : 'asc' }, ...sortConditions], true);
                         }}><SortDirectionIcon direction={sortDirection} /></button>
@@ -203,7 +217,7 @@ export default function ExplorerFilterEditor({ rules, setRules, search, onSearch
                 {sortConditions.map((condition, index) => <span className={columnMode ? 'explorer-filter-sort-field-wrap' : 'flow-filter-sort-field-wrap'} key={`${condition.field}-${index}`}>
                     <FilterFieldPicker explorer={columnMode} fields={columnMode ? availableExplorerSortFields(fields, sorts, index + 1) : fields} value={condition.field}
                         onChange={field => onSortsChange([sorts[0], ...sortConditions.map((item, itemIndex) => itemIndex === index ? { ...item, field } : item)], false)}
-                        className={columnMode ? 'explorer-filter-sort-field' : 'flow-filter-sort-field'} labelClassName="flow-filter-sort-field-label" trailing={<>
+                        className={columnMode ? `explorer-filter-sort-field${invalidSort?.index === index + 1 ? ' has-invalid-sort' : ''}` : 'flow-filter-sort-field'} labelClassName="flow-filter-sort-field-label" trailing={<>
                             <button type="button" className="flow-filter-sort-direction-toggle" aria-label="Toggle sort direction" onClick={event => {
                                 event.stopPropagation(); onSortsChange([sorts[0], ...sortConditions.map<ExplorerSort>((item, itemIndex) => itemIndex === index ? { ...item, direction: item.direction === 'asc' ? 'desc' : 'asc' } : item)], false);
                             }}><SortDirectionIcon direction={condition.direction} /></button>
@@ -212,7 +226,7 @@ export default function ExplorerFilterEditor({ rules, setRules, search, onSearch
                             }}><CloseOutlined /></button> : <SortActionMenu onDelete={() => onSortsChange([sorts[0], ...sortConditions.filter((_, itemIndex) => itemIndex !== index)], true)} onClear={clearSorts} />}
                         </>} />
                 </span>)}
-                <button type="button" className={columnMode ? 'explorer-filter-mini explorer-filter-sort-add' : 'flow-filter-mini flow-filter-sort-add'} aria-label="Add sort field" disabled={columnMode && !nextSortField} onClick={addSortField}><FilterAddIcon /></button>
+                <button type="button" className={columnMode ? 'explorer-filter-mini explorer-filter-sort-add' : 'flow-filter-mini flow-filter-sort-add'} aria-label="Add sort field" disabled={columnMode && !nextSortField && incompleteSort === undefined} onClick={addSortField}><FilterAddIcon /></button>
             </div></div>
             {sortConditionsOverflow && <div className={columnMode ? 'explorer-sort-scroll-buttons' : 'flow-sort-scroll-buttons'}>
                 <button type="button" aria-label="Scroll left" onClick={() => sortConditionsRef.current?.scrollBy({ left: -140, behavior: 'smooth' })}>‹</button>

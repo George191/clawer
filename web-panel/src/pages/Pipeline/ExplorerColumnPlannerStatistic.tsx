@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Modal } from '@/components/ui';
+import { BarChartOutlined, InfoCircleOutlined, ReloadOutlined } from '@/components/ui/icons';
 import { fetchColumnPlannerStatistic } from '../../services/api';
 import type { ColumnPlannerStatistic } from '../../services/api';
 import { getSessionState } from '../../services/session';
@@ -38,19 +39,19 @@ export default function ExplorerColumnPlannerStatistic({ schema, table, column, 
     }
   };
   return <>
-    <Button size="small" aria-label={`Planner statistics: ${column}`} onClick={() => void inspect()}>Planner statistics</Button>
-    <Modal open={open} destroyOnHidden className="flow-surface-modal" title="Stored planner statistic" onCancel={cancel} footer={null}>
-      <p><code>{schema}.{table}.{column}</code></p>
-      <p>Stored planner estimate; may be outdated. It is not an exact measurement, and opening this view does not recompute statistics.</p>
-      {!result ? <p role="status">Reading stored planner metadata…</p> : result.status === 'unavailable'
-        ? <p role="status">Stored planner statistic is unavailable.</p>
-        : <dl className="flow-evidence-freshness-facts">
+    <Button size="small" className="physical-planner-trigger" icon={<BarChartOutlined/>} aria-label={`Planner statistics: ${column}`} onClick={() => void inspect()}>Planner statistics</Button>
+    <Modal open={open} destroyOnHidden className="flow-surface-modal physical-planner-statistics-modal" title="Planner statistics" width={520} onCancel={cancel} footer={<Button onClick={cancel}>Done</Button>}>
+      <div className="physical-planner-context"><BarChartOutlined/><div><strong>{column}</strong><code>{schema}.{table}</code></div><span>Stored metadata</span></div>
+      {!result ? <div className="physical-planner-state" role="status"><ReloadOutlined spin/>Reading stored planner metadata…</div> : result.status === 'unavailable'
+        ? <div className="physical-planner-state" role="status"><InfoCircleOutlined/><div><strong>Statistics unavailable</strong><p>Stored planner metadata could not be read for this column.</p></div></div>
+        : <dl className="physical-planner-metrics">
           <div><dt>Estimated null fraction</dt><dd>{percent.format(result.nullFraction)}</dd></div>
           <div><dt>Observed at (UTC)</dt><dd><time dateTime={result.observedAt}>
             {new Date(result.observedAt).toLocaleString(undefined, { timeZone: 'UTC', timeZoneName: 'short' })}
           </time></dd></div>
         </dl>}
-      {result?.status === 'observed' && <p>The observation time records when this metadata was read, not when PostgreSQL analyzed the column.</p>}
+      <p className="physical-planner-help">Planner estimates may be outdated and are not exact measurements. Opening this view does not recompute statistics.</p>
+      {result?.status === 'observed' && <p className="physical-planner-help">Observed at records when this metadata was read, not when PostgreSQL analyzed the column.</p>}
     </Modal>
   </>;
 }

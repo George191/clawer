@@ -20,8 +20,8 @@ import './ontology-workspace.css';
 import './explorer-resource-tools.css';
 import ExplorerCatalog from './ExplorerCatalog';
 import ExplorerWorkbench, { ExplorerFilterButton, ExplorerResults, ExplorerResultsFooter, explorerResultColumns } from './ExplorerWorkbench';
-import ExplorerSearchCondition from './ExplorerSearchCondition';
 import ExplorerFilterIndexNotice, { ExplorerSortIndexNotice } from './ExplorerFilterIndexNotice';
+import PublishedApiWorkbench from './PublishedApiWorkbench';
 import PublishedExplorer from './PublishedExplorer';
 import { openSaved, savedPath, type SavedDetail } from '../../services/explorerSaved';
 import { catalogReturnHref, compactExplorerSearch } from '../../services/explorerNavigation';
@@ -289,6 +289,8 @@ const DataLayersWorkspace: React.FC = () => {
     const [openApis, setOpenApis] = useState<OpenApiAccess[]>([]);
     const [apisDirty, setApisDirty] = useState(false);
     const [apisLoading, setApisLoading] = useState(false);
+    const [apisError, setApisError] = useState('');
+    const [apiRevision, setApiRevision] = useState(0);
     const  apiCount  =  openApis.length;
     const  [apiListOpen,  setApiListOpen]  =  useState(false);
     const addApi = async () => {
@@ -810,12 +812,12 @@ const DataLayersWorkspace: React.FC = () => {
     }, [keywordsOpen]);
     useEffect(() => {
         const version = ++apiRequest.current;
-        setApisDirty(false);
-        if (!canManage || !selectedTableAvailable) { setOpenApis([]); setApisLoading(false); return; }
+        setApisError('');
+        if (!canManage || !selectedTableAvailable) { setOpenApis([]); setApisDirty(false); setApisLoading(false); return; }
         setApisLoading(true);
-        fetchEtlApis(selectedSchema, table.name).then((items) => { if (version === apiRequest.current) setOpenApis(items); }).catch((error) => { if (version === apiRequest.current) message.error(errorText(error)); }).finally(() => { if (version === apiRequest.current) setApisLoading(false); });
+        fetchEtlApis(selectedSchema, table.name).then((items) => { if (version === apiRequest.current) { setOpenApis(items); setApisDirty(false); } }).catch((error) => { if (version === apiRequest.current) { setApisError(errorText(error)); message.error(errorText(error)); } }).finally(() => { if (version === apiRequest.current) setApisLoading(false); });
         return () => { apiRequest.current++; };
-    }, [selectedSchema, table.name, canManage, selectedTableAvailable]);
+    }, [selectedSchema, table.name, canManage, selectedTableAvailable, apiRevision]);
     useEffect(() => {
         const version = ++dataRequest.current;
         if (!selectedTableAvailable || !showPreview || savedBlocked || !queryScopeReady) { setLoading(false); return; }
@@ -986,7 +988,12 @@ const DataLayersWorkspace: React.FC = () => {
         catch (error) { message.error(errorText(error)); } finally { endMutation(); }
     };
 
-    const apiPanel = (
+    const apiPanel = isSchemas ? <PublishedApiWorkbench items={openApis} loading={apisLoading} busy={mutationLoading || !selectedTableAvailable}
+        dirty={apisDirty} error={apisError} onReload={() => { if (!apisDirty && !mutationLoading) setApiRevision(value => value + 1); }}
+        onAdd={() => void addApi()} onUpdate={updateApi} onSave={() => void saveApis()} onDelete={removeApi}
+        onDiscard={() => { if (!mutationLoading && !apisLoading) setApiRevision(value => value + 1); }}
+        dataTypes={[...new Set(dataRows.map(row => String(row.data_type || '')).filter(Boolean))]}
+        dataSources={[...new Set(dataRows.map(row => String(row.source || row.data_source || '')).filter(Boolean))]} /> : (
         <section className={`flow-filter-api-section${isSchemas ? ' is-docked' : ''}`}>
             <div className="flow-filter-api-title"><strong>{isSchemas ? 'Published APIs' : 'Open APIs'}</strong><span className="flow-api-status flow-api-status--enabled">Token required · Validity window enforced</span>{!isSchemas && <button type="button" className="flow-filter-api-close" aria-label="Close APIs" onClick={() => setApiListOpen(false)}><CloseOutlined /></button>}</div>
             {apiCount === 0 ? <div className="flow-filter-api-empty"><span>{apisLoading ? 'Loading published APIs…' : 'No published APIs'}</span><button type="button" className={isSchemas ? 'explorer-resource-add' : 'flow-filter-api-add'} disabled={mutationLoading || apisLoading} onClick={addApi}><PlusOutlined /> Add API</button></div> : <>
@@ -1102,6 +1109,11 @@ glyph: <ExplorerTypeIcon compact dataType={selectedTableAvailable ? mapping?.dat
 fields: data?.columns || filterFields,
 types: data?.columnTypes,
 appliedSearch: appliedQuery.search,
+onClearSearch: () => {
+    if (!canChangePreview()) return;
+    if (filterText === appliedQuery.search) setFilterText('');
+    setAppliedQuery(current => ({ ...current, search: '' })); setPageNumber(1);
+},
 onSearchValues: value => {
     if (!requireAppliedFilterDraft() || !requireAppliedSortDraft()) return false;
     const search = value.trim();
@@ -1230,12 +1242,6 @@ footer: previewPage && <ExplorerResultsFooter offset={previewPage.offset} rowCou
                             <button type="button" className={`flow-tool ${filterOpen ? 'is-active' : ''}`} aria-expanded={filterOpen} onClick={() => activateTool('filter')}>{canManage ? 'Filter & API' : 'Filter'}</button>
                             <button type="button" className={`flow-tool ${scriptOpen ? 'is-active' : ''}`} onClick={() => activateTool('script')}>Layer script</button>
                         </div>}
-                        {isSchemas && showPreview && !savedBlocked && queryScopeReady && <ExplorerSearchCondition search={appliedQuery.search}
-                            removeSearch={() => {
-                                if (!canChangePreview()) return;
-                                if (filterText === appliedQuery.search) setFilterText('');
-                                setAppliedQuery(current => ({ ...current, search: '' })); setPageNumber(1);
-                            }} />}
                         {isSchemas && resourceView !== 'preview' && <div className={`explorer-resource-view explorer-resource-view--${resourceView}`} role="region" aria-label="Object inspection tool" tabIndex={0}>
                         {isSchemas && resourceView === 'schema' && <ExplorerTableSchema key={`${selectedSchema}.${table.name}`} schema={selectedSchema} table={table.name} canManage={canManage} onDirtyChange={setMappingDirty} onSaved={() => setPreviewRevision(v=>v+1)} />}
                         {isSchemas && resourceView === 'evidence' && <ExplorerTableEvidence key={tableDescription} schema={selectedSchema} table={table.name} canManage={canManage} />}

@@ -1,3 +1,4 @@
+@import './ontology-input-focus.css';
 /* Reference workspace layout inherits the application theme, including body portals. */
 .flow-console--ontology,
 .flow-surface-modal,

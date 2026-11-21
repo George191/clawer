@@ -6,6 +6,7 @@ import { fetchRowPreviewPolicy, queryExplorerPreview } from '../../services/api'
 import type { ExplorerMappedProperty, ExplorerPropertyMapping } from '../../services/explorerProperties';
 import { listOntologyRecords } from '../../services/ontology';
 import { PropertyBadges } from './ExplorerPropertyInspector';
+import PropertyTypeIcon from './PropertyTypeIcon';
 import type { EtlTableColumn } from '../../services/types';
 
 type Props = {
@@ -45,9 +46,9 @@ export default function ExplorerMappingPreview({schema, table, columns, mapping,
     // Semantic objects expose only the fields returned by their authorized records endpoint.
     const allowed = new Set(rows?.flatMap(row => Object.keys(row)));
     const fields = view === 'table' ? columns.filter(c => (!semanticId || allowed.has(mapped.get(c.name)?.id || '')) && (showMapped || !mapped.has(c.name))).map(c => ({
-        key: semanticId ? mapped.get(c.name)!.id : c.name, name: c.name, type: c.type, property: mapped.get(c.name),
+        key: semanticId ? mapped.get(c.name)!.id : c.name, name: c.name, type: c.type, primary:c.primary, property: mapped.get(c.name),
     })) : mapping.properties.filter(p => p.visibility !== 'hidden' && (semanticId ? allowed.has(p.id) : p.sourceColumn)).map(p => ({
-        key: semanticId ? p.id : p.sourceColumn!, name: p.name, type: p.type, property: p,
+        key: semanticId ? p.id : p.sourceColumn!, name: p.id, type: p.type, primary:p.primaryKeyPosition != null, property: p,
     }));
     return <section className="flow-foundry-property-preview physical-property-preview" aria-label="Data and column mappings">
         <div className="flow-foundry-property-preview-tools">
@@ -64,7 +65,12 @@ export default function ExplorerMappingPreview({schema, table, columns, mapping,
             : !rows ? <p role="status">Loading up to five records…</p> : !rows.length ? <p>No records in this sample.</p> : !fields.length ? <p>{view === 'table' ? 'No unmapped source columns.' : 'No mapped fields in this object sample.'}</p>
             : <div className="flow-foundry-property-table-wrap"><table aria-label={view === 'table' ? 'Source table preview' : 'Mapped objects preview'}>
                 <thead><tr><th scope="col">#</th>{fields.map(f => <th key={f.key} scope="col" className={f.property?.id === selected?.id && selected ? 'is-selected' : ''}>
-                    <code>{f.name}</code><small>{f.type}</small>{f.property && <button type="button" className="flow-foundry-property-link" onClick={() => onSelect(f.property!.id)}>{view === 'table' ? f.property.name : f.property.sourceColumn} <PropertyBadges property={f.property} title={mapping.titleProperty}/></button>}
+                    <div className="physical-preview-column-heading"><PropertyTypeIcon type={f.type}/>
+                        {f.property ? <button type="button" className="physical-preview-column-name" title={f.property.name === f.name ? f.name : `${f.name} (${f.property.name})`} onClick={() => onSelect(f.property!.id)}><code>{f.name}</code>
+                            {f.property.name !== f.name && <span>({f.property.name})</span>}</button> : <code>{f.name}</code>}
+                        {f.property ? <PropertyBadges property={f.property} title={mapping.titleProperty}/>
+                            : f.primary && <span className="flow-foundry-property-tag is-key">Primary key</span>}
+                    </div>
                 </th>)}</tr></thead><tbody>{rows.map((r, i) => <tr key={i}><th scope="row">{i+1}</th>
                     {fields.map(f => { const value = cell(r[f.key]); return <td key={f.key} title={value.slice(0,300)}>{value.slice(0,160)}</td>; })}
                 </tr>)}</tbody>
