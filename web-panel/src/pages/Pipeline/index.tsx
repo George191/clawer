@@ -20,7 +20,7 @@ import './ontology-workspace.css';
 import './explorer-resource-tools.css';
 import ExplorerCatalog from './ExplorerCatalog';
 import ExplorerWorkbench, { ExplorerFilterButton, ExplorerResults, ExplorerResultsFooter, explorerResultColumns } from './ExplorerWorkbench';
-import ExplorerAppliedConditions from './ExplorerAppliedConditions';
+import ExplorerSearchCondition from './ExplorerSearchCondition';
 import PublishedExplorer from './PublishedExplorer';
 import { openSaved, savedPath, type SavedDetail } from '../../services/explorerSaved';
 import { catalogReturnHref, compactExplorerSearch } from '../../services/explorerNavigation';
@@ -658,9 +658,6 @@ const DataLayersWorkspace: React.FC = () => {
         }
         updateExplorerSorts([{ field, direction }, ...appliedQuery.sorts.filter((sort) => sort.field !== field)]);
     };
-    const removeFilterChip = (start: number, end: number) => {
-        if (requireAppliedFilterDraft()) setExplorerFilters(appliedQuery.filters.filter((_, index) => index < start || index > end));
-    };
 
     const resultLayout = useResultLayout(isSchemas && selectedTableAvailable && showPreview ? previewIdentity : '',
         selectedSchema, table.name, data?.columns || [], appliedQuery.sorts, updateExplorerSorts, !requestedSavedId);
@@ -1214,8 +1211,7 @@ footer: previewPage && <ExplorerResultsFooter offset={previewPage.offset} rowCou
                             <button type="button" className={`flow-tool ${filterOpen ? 'is-active' : ''}`} aria-expanded={filterOpen} onClick={() => activateTool('filter')}>{canManage ? 'Filter & API' : 'Filter'}</button>
                             <button type="button" className={`flow-tool ${scriptOpen ? 'is-active' : ''}`} onClick={() => activateTool('script')}>Layer script</button>
                         </div>}
-                        {isSchemas && showPreview && !savedBlocked && queryScopeReady && <ExplorerAppliedConditions
-                            filters={appliedQuery.filters} search={appliedQuery.search} removeFilters={removeFilterChip}
+                        {isSchemas && showPreview && !savedBlocked && queryScopeReady && <ExplorerSearchCondition search={appliedQuery.search}
                             removeSearch={() => {
                                 if (!canChangePreview()) return;
                                 if (filterText === appliedQuery.search) setFilterText('');
