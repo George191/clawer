@@ -134,15 +134,15 @@ function inspector(patch = {}) {
 test('header controls remain icon-only, ordered and accessible across dirty and conflict states', () => {
   const actions = tree => descendants(tree).filter(node => node.type === 'button' && /Delete property|Save changes|Discard/.test(node.props?.['aria-label']));
   const visible = actions(inspector());
-  assert.deepEqual(visible.map(button => button.props['aria-label']), ['Delete property ID', 'Save changes', 'Discard changes']);
+  assert.deepEqual(visible.map(button => button.props['aria-label']), ['Discard changes', 'Save changes', 'Delete property ID']);
   assert.ok(visible.every(button => typeof button.props.children !== 'string'));
   const pristine = actions(inspector({ dirty: false }));
   assert.equal(pristine[1].props.disabled, true);
-  assert.equal(pristine[2].props.disabled, true);
+  assert.equal(pristine[0].props.disabled, true);
   assert.ok(descendants(inspector({ dirty: false })).some(node => node.props?.className === 'physical-property-pending-actions' && node.props['aria-hidden']));
   const conflict = actions(inspector({ conflict: true }));
   assert.equal(conflict[1].props.disabled, true);
-  assert.equal(conflict[2].props['aria-label'], 'Discard and reload');
-  assert.equal(conflict[2].props.disabled, false);
-  assert.deepEqual(actions(inspector({ property: undefined })).map(button => button.props['aria-label']), ['Save changes', 'Discard changes']);
+  assert.equal(conflict[0].props['aria-label'], 'Discard and reload');
+  assert.equal(conflict[0].props.disabled, false);
+  assert.deepEqual(actions(inspector({ property: undefined })).map(button => button.props['aria-label']), ['Discard changes', 'Save changes']);
 });

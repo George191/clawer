@@ -70,6 +70,7 @@
 .wb-views button { border-radius:0; align-self:stretch; min-height:33px; }
 .wb-views button[aria-pressed=true] { background:var(--ontology-hover); color:var(--ontology-text); font-weight:600; }
 .wb-right button,.wb-left > button { border-color:var(--ontology-control-border); }
+.flow-console--ontology .wb-tools .flow-tool { font:inherit; }
 .wb-open-in-trigger[aria-expanded=true] { background:color-mix(in srgb,var(--ui-action-bg) 18%,var(--ontology-panel)); color:var(--ui-action-link); }
 .ui-dropdown.wb-open-in-popup { width:min(440px,calc(100vw - 16px)); min-width:0; padding:0; overflow:visible; border-radius:2px; border-color:var(--ontology-control-border); background:var(--ontology-panel); box-shadow:0 2px 8px #0003; font-size:12px; }
 .wb-open-in-popup::before { content:''; position:absolute; top:-6px; right:32px; width:10px; height:10px; transform:rotate(45deg); background:var(--ontology-panel); border-top:1px solid var(--ontology-control-border); border-left:1px solid var(--ontology-control-border); }

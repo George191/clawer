@@ -37,12 +37,12 @@ export default function ExplorerPropertyInspector({mapping,property:p,columns,ed
     const header = <header>{p && <PropertyTypeIcon type={p.type} />}<strong>{p?.name || p?.id || 'Properties'}</strong>
         {p && <PropertyBadges property={p} title={mapping.titleProperty}/>}
         <div className="physical-property-actions" role="group" aria-label="Property changes">
+            <span className="physical-property-pending-actions" data-dirty={dirty} aria-hidden={!dirty}>
+                <button type="button" className="physical-property-discard" aria-label={conflict ? 'Discard and reload' : 'Discard changes'} title={conflict ? 'Discard and reload' : 'Discard changes'} disabled={!dirty || busy} onClick={onDiscard}><ReloadOutlined/></button>
+                <button type="button" className="physical-property-save" aria-label="Save changes" title={conflict ? 'Reload the property mapping before saving' : 'Save changes'} disabled={!dirty || !editable || conflict || busy} aria-busy={busy} onClick={onSave}>{busy ? <ReloadOutlined spin/> : <SaveOutlined/>}</button>
+            </span>
             {p && (editable || busy) && !bound && <button type="button" className="physical-property-delete" aria-label={`Delete property ${p.name}`} disabled={busy || title}
                 title={title ? 'Clear the title designation first' : 'Delete property'} onClick={() => setRemoving(true)}><DeleteOutlined /></button>}
-            <span className="physical-property-pending-actions" data-dirty={dirty} aria-hidden={!dirty}>
-                <button type="button" className="physical-property-save" aria-label="Save changes" title={conflict ? 'Reload the property mapping before saving' : 'Save changes'} disabled={!dirty || !editable || conflict || busy} aria-busy={busy} onClick={onSave}>{busy ? <ReloadOutlined spin/> : <SaveOutlined/>}</button>
-                <button type="button" className="physical-property-discard" aria-label={conflict ? 'Discard and reload' : 'Discard changes'} title={conflict ? 'Discard and reload' : 'Discard changes'} disabled={!dirty || busy} onClick={onDiscard}><ReloadOutlined/></button>
-            </span>
         </div>
     </header>;
     if (!p) return <aside className="flow-foundry-property-inspector physical-property-inspector" aria-label="Property editor">{header}<div className="physical-property-inspector-empty">No property selected.</div></aside>;

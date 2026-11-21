@@ -36,8 +36,8 @@
 .physical-property-inspector > header .physical-property-actions button.physical-property-save { color:#8abbff; }
 .physical-property-inspector > header .physical-property-actions button.physical-property-discard { color:var(--ui-warning); }
 .physical-property-inspector > header .physical-property-actions button:disabled { opacity:.4; cursor:default; }
-.physical-property-pending-actions { display:inline-flex; flex:none; gap:2px; width:0; margin-left:0; overflow:hidden; opacity:0; transform:translateX(5px); pointer-events:none; transition:width .18s ease,margin-left .18s ease,opacity .18s ease,transform .18s ease; }
-.physical-property-pending-actions[data-dirty=true] { width:50px; margin-left:2px; opacity:1; transform:translateX(0); pointer-events:auto; }
+.physical-property-pending-actions { display:inline-flex; flex:none; gap:2px; width:0; margin-right:0; overflow:hidden; opacity:0; transform:translateX(5px); pointer-events:none; transition:width .18s ease,margin-right .18s ease,opacity .18s ease,transform .18s ease; }
+.physical-property-pending-actions[data-dirty=true] { width:50px; margin-right:2px; opacity:1; transform:translateX(0); pointer-events:auto; }
 .physical-property-inspector-empty { grid-row:2 / -1; padding:12px; color:var(--ontology-muted); font-size:12px; }
 .physical-property-inspector nav { display:flex; align-items:center; gap:8px; overflow-x:auto; }
 .physical-property-inspector nav { box-sizing:border-box; height:36px; border-bottom:1px solid var(--ontology-border); padding:0 8px; }
