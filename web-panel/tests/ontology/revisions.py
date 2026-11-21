@@ -111,7 +111,7 @@ def verify():
                 roles.get_by_role("checkbox", name="Reviewer", exact=True).check()
                 roles.get_by_role("checkbox", name="Editor", exact=True).uncheck()
                 button(roles, "Save revision roles").click()
-                expect(pane.get_by_text("Revision roles saved.", exact=True)).to_be_visible()
+                expect(manager.get_by_role("status").get_by_text("Revision roles saved.", exact=True).last).to_be_visible()
 
                 stage = "submit metadata proposal and verify the structured diff"
                 button(pane, "Propose change").click()
@@ -139,7 +139,7 @@ def verify():
                     "Checked independently in browser"
                 )
                 button(review, "Approve proposal").click()
-                expect(review_pane.get_by_text("Proposal approved.", exact=True)).to_be_visible()
+                expect(reviewer.get_by_role("status").get_by_text("Proposal approved.", exact=True).last).to_be_visible()
                 expect(button(review, "Merge proposal")).to_have_count(0)
 
                 stage = "send the approved merge request"
@@ -174,7 +174,7 @@ def verify():
                 button(review_pane, "Refresh revisions").click()
                 review = select_proposal(review_pane, restore_title)
                 button(review, "Approve proposal").click()
-                expect(review_pane.get_by_text("Proposal approved.", exact=True)).to_be_visible()
+                expect(reviewer.get_by_role("status").get_by_text("Proposal approved.", exact=True).last).to_be_visible()
                 stage = "send the approved restore merge request"
                 button(pane, "Refresh revisions").click()
                 merge_from_browser(manager, pane.get_by_role("region", name="Proposal details"), "restore")

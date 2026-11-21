@@ -160,7 +160,10 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
             setDialog(''); show(''); refresh(n => n + 1);
             p.saveCompleted({ ...item, content: content as SavedDetail<Q>['content'], owned: true });
             notify(`${saveKind === 'list' ? 'List' : 'Exploration'} saved`, item.name);
-        } catch (e) { setError(fail(e)); } finally { setBusy(false); }
+        } catch (e) {
+            const detail = fail(e); setError(detail);
+            message.error({ content: `Unable to save ${saveKind}`, description: detail, className: 'explorer-toast' });
+        } finally { setBusy(false); }
     }
     async function openShare(item?: SavedMeta) {
         show(''); setError(''); setDialog('share'); setShareTarget(undefined);
@@ -178,7 +181,11 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
         try {
             const item = await sharing(path, shareTarget, enabled), detail = { ...shareTarget, ...item };
             setShareTarget(detail); if (saved?.id === item.id) p.updateSavedItem(detail); refresh(n => n + 1);
-        } catch (e) { setError(fail(e)); } finally { setBusy(false); }
+            notify(enabled ? 'Link sharing enabled' : 'Link sharing disabled', detail.name);
+        } catch (e) {
+            const detail = fail(e); setError(detail);
+            message.error({ content: 'Unable to update link sharing', description: detail, className: 'explorer-toast' });
+        } finally { setBusy(false); }
     }
     async function deleteSaved() {
         if (!deleteTarget || busy) return;
@@ -188,7 +195,10 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
             if (saved?.id === deleteTarget.id) p.closeSavedItem();
             setDeleteTarget(undefined); setDialog(''); show(''); refresh(n => n + 1);
             notify(`${deleteTarget.kind === 'list' ? 'List' : 'Exploration'} deleted`, deleteTarget.name);
-        } catch (e) { setError(fail(e)); } finally { setBusy(false); }
+        } catch (e) {
+            const detail = fail(e); setError(detail);
+            message.error({ content: `Unable to delete ${deleteTarget.kind}`, description: detail, className: 'explorer-toast' });
+        } finally { setBusy(false); }
     }
     function selectMode(mode: 'results' | 'explore') { p.selectResource('preview'); p.setMode(mode); show(''); }
     const field = chart && p.fields.includes(chart) ? chart : p.fields[0] ?? '';
@@ -298,7 +308,7 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
                 <p className="wb-dialog-help">{shareTarget.kind === 'list' ? 'This link opens the saved object selection.' : 'This link opens the saved exploration. Save current changes as a new exploration to share them.'}</p>
                 <p className="wb-dialog-help">People with this link must sign in and have access to the underlying {p.source.kind === 'published' ? 'object type' : 'table'}. Sharing does not grant data access.</p>
                 <div className="wb-share-access"><LinkOutlined /><div><strong>{shareTarget.shared ? 'Link sharing enabled' : 'Private'}</strong><span>{shareTarget.shared ? 'People with data access can open this saved item.' : 'Only you can open this saved item.'}</span></div>{shareTarget.owned && <Button size="small" loading={busy} onClick={() => void setSharing(!shareTarget.shared)}>{shareTarget.shared ? 'Disable link' : 'Enable link'}</Button>}</div>
-                {shareTarget.shared && <label className="wb-dialog-field">Share link<div className="wb-share-link"><input readOnly value={link(shareTarget.id)} onFocus={e => e.currentTarget.select()}/><Button icon={<CopyOutlined />} aria-label="Copy share link" onClick={async () => { try { await navigator.clipboard.writeText(link(shareTarget.id)); notify('Share link copied'); } catch { setError('Unable to copy. Select and copy the link above.'); } }}>Copy</Button></div></label>}
+                {shareTarget.shared && <label className="wb-dialog-field">Share link<div className="wb-share-link"><input readOnly value={link(shareTarget.id)} onFocus={e => e.currentTarget.select()}/><Button icon={<CopyOutlined />} aria-label="Copy share link" onClick={async () => { try { await navigator.clipboard.writeText(link(shareTarget.id)); notify('Share link copied'); } catch { const detail = 'Select and copy the link above.'; setError('Unable to copy. ' + detail); message.error({ content: 'Unable to copy share link', description: detail, className: 'explorer-toast' }); } }}>Copy</Button></div></label>}
             </> : !error && <div className="wb-share-empty"><ShareAltOutlined /><strong>Save this result before sharing</strong><p>Choose a saved exploration or list, or save the current result.</p><Button type="primary" onClick={() => beginSave('exploration')}>Save exploration</Button></div>}
             {error && <p role="alert" className="wb-dialog-error">{error}</p>}
         </Modal>

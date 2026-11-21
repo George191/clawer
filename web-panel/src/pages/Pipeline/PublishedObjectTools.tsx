@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, Checkbox, Input, Modal, type MenuItem } from '@/components/ui';
+import { Button, Checkbox, Input, Modal, message, type MenuItem } from '@/components/ui';
 import { BranchesOutlined, CodeOutlined, DeleteOutlined, DownloadOutlined, EditOutlined, HistoryOutlined, PlusOutlined, SyncOutlined, UndoOutlined } from '@/components/ui/icons';
 import { getSessionState } from '../../services/session';
 import {
@@ -64,8 +64,8 @@ function RecordHistory({ objectType, recordId, onChanged }: { objectType: string
             {event.canUndo && <footer><Button icon={<UndoOutlined />} disabled={undoing} size="small" onClick={async () => {
               if (!current() || undoing) return;
               setUndoing(true);
-              try { await undoOntologyEdit(objectType, recordId, event.revision); if (current()) { setVersion(value => value + 1); onChanged(); } }
-              catch (failure) { if (current()) setError(describe(failure, 'Unable to undo this edit.')); }
+              try { await undoOntologyEdit(objectType, recordId, event.revision); if (current()) { message.success('Edit undone.'); setVersion(value => value + 1); onChanged(); } }
+              catch (failure) { if (current()) message.error(describe(failure, 'Unable to undo this edit.')); }
               finally { if (current()) setUndoing(false); }
             }}>Undo edit</Button></footer>}
           </details>
@@ -115,7 +115,6 @@ function DeletedObjects({ objectType, onChanged }: { objectType: PublishedOntolo
 export function usePublishedObjectTools({ objectType, actions, record, returnTo, onChanged, busy = false }: Props) {
   const [tool, setTool] = useState('');
   const [sdkOpen, setSdkOpen] = useState(false);
-  const [functionResult, setFunctionResult] = useState('');
   const [operation, setOperation] = useState<Operation>();
   const [inputs, setInputs] = useState<ActionInputs>({});
   const [pending, setPending] = useState(false);
@@ -161,15 +160,21 @@ export function usePublishedObjectTools({ objectType, actions, record, returnTo,
         operation.kind === 'create' ? { values } : operation.kind === 'modify'
           ? { recordId: selected!.id!, expectedRevision: selected!.revision!, values }
           : { recordId: selected!.id!, expectedRevision: selected!.revision! });
-      if (current() && typeId.current === definitionId) { setOperation(undefined); onChanged(); }
-    } catch (failure) { if (current()) setError(describe(failure, failure instanceof Error ? failure.message : 'The action failed.')); }
+      if (current() && typeId.current === definitionId) {
+        message.success({ create: 'Object created.', modify: 'Object updated.', delete: 'Object deleted.' }[operation.kind]);
+        setOperation(undefined); onChanged();
+      }
+    } catch (failure) { if (current()) {
+      const detail = describe(failure, failure instanceof Error ? failure.message : 'The action failed.');
+      setError(detail); message.error(detail);
+    } }
     finally { locked.current = false; if (current()) setPending(false); }
   };
   const tools: ExplorerToolAction[] = objectType ? [
     ...(native ? [
       { key: 'relationships', label: 'Relationships and sets', icon: <BranchesOutlined />, group: 'analyze' as const, run: () => setTool('Relationships and sets') },
       { key: 'transactions', label: 'Transactions', icon: <SyncOutlined />, group: 'analyze' as const, run: () => setTool('Transactions') },
-      { key: 'functions', label: 'Functions', icon: <CodeOutlined />, group: 'analyze' as const, run: () => { setFunctionResult(''); setTool('Functions'); } },
+      { key: 'functions', label: 'Functions', icon: <CodeOutlined />, group: 'analyze' as const, run: () => setTool('Functions') },
       { key: 'deleted', label: 'Deleted objects', icon: <DeleteOutlined />, group: 'inspect' as const, run: () => setTool('Deleted objects') },
     ] : []),
     { key: 'revisions', label: 'Model revisions', icon: <HistoryOutlined />, group: 'inspect', run: () => setTool('Model revisions') },
@@ -192,7 +197,7 @@ export function usePublishedObjectTools({ objectType, actions, record, returnTo,
         <div className="flow-ontology-tool-content">
           {tool === 'Relationships and sets' && <OntologyGraph key={objectType.id} objectType={objectType} recordId={record?.id || undefined} returnTo={returnTo} onOpenExplorer={() => setTool('')} />}
           {tool === 'Transactions' && <OntologyTransactions key={objectType.id} objectType={objectType} onCommitted={onChanged} />}
-          {tool === 'Functions' && <>{functionResult && <p role="status">{functionResult}</p>}<OntologyFunctions key={objectType.id} id={objectType.id} record={record} onStarted={() => setFunctionResult('')} onCommitted={name => { setFunctionResult('Committed: ' + name); onChanged(); }} /></>}
+          {tool === 'Functions' && <OntologyFunctions key={objectType.id} id={objectType.id} record={record} onCommitted={name => { message.success('Committed: ' + name); onChanged(); }} />}
           {tool === 'Model revisions' && <OntologyRevisions key={objectType.id} definitionId={objectType.id} onMerged={onChanged} />}
           {tool === 'Deleted objects' && <DeletedObjects key={objectType.id} objectType={objectType} onChanged={onChanged} />}
         </div>

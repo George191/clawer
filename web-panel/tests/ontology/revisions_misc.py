@@ -106,7 +106,7 @@ def verify():
             with response(manager, "PUT", api + "/revision-roles/" + member) as request:
                 button(form, "Save revision roles").click()
             assert request.value.status == 204
-            expect(workspace.get_by_text("Revision roles saved.", exact=True)).to_be_visible()
+            expect(manager.get_by_role("status").get_by_text("Revision roles saved.", exact=True).last).to_be_visible()
 
         def proposal(workspace, title):
             button(workspace, "Proposals").click()
@@ -158,7 +158,7 @@ def verify():
                 ) as request:
                     button(details, "Reject proposal").click()
                 assert request.value.status == 200 and request.value.json()["status"] == "rejected"
-                expect(reviewer_panel.get_by_text("Proposal rejected.", exact=True)).to_be_visible()
+                expect(reviewer.get_by_role("status").get_by_text("Proposal rejected.", exact=True).last).to_be_visible()
                 button(manager_panel, "Refresh revisions").click()
                 details = proposal(manager_panel, rejected)
                 expect(
@@ -198,7 +198,7 @@ def verify():
                 ) as request:
                     button(details, "Approve proposal").click()
                 assert request.value.status == 200
-                expect(reviewer_panel.get_by_text("Proposal approved.", exact=True)).to_be_visible()
+                expect(reviewer.get_by_role("status").get_by_text("Proposal approved.", exact=True).last).to_be_visible()
                 pending_details = proposal(reviewer_panel, pending)
                 expect(button(pending_details, "Approve proposal")).to_be_visible()
 

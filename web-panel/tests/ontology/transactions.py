@@ -100,12 +100,12 @@ with httpx.Client(base_url=base, trust_env=False, timeout=15) as api:
         def commit(name):
             label("Transaction name").fill(name)
             btn("Commit transaction").click()
-            expect(panel.get_by_text("Committed: " + name, exact=True)).to_be_visible()
+            expect(page.get_by_role("status").filter(has_text="Transaction committed").filter(has_text=name)).to_be_visible()
 
         def undo(name):
             item = panel.get_by_role("listitem").filter(has_text=name)
             item.get_by_role("button", name="Undo transaction").click()
-            expect(panel.get_by_text("Undone: " + name, exact=True)).to_be_visible()
+            expect(page.get_by_role("status").filter(has_text="Transaction undone").filter(has_text=name)).to_be_visible()
 
         name1 = "QA create and link " + key
         add_create(source, "tx-a-" + key, "Tx A " + key)

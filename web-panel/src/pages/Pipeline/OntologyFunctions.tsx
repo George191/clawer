@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button } from '@/components/ui';
+import { Button, message } from '@/components/ui';
 import { newOntologyRequestId, ontologyError, type OntologyRecord, type TransactionReceipt } from '../../services/ontology';
 import { graphRequest } from '../../services/ontology_graph';
 import { parsePropertyValue } from './ontologyPropertyValue';
 
 type Catalog = {revision: number; items: {key: string; name: string; parameters: {key: string; type: string; nullable: boolean}[]}[]};
 
-export default function OntologyFunctions({id, record, onStarted, onCommitted}: {
-  id: string; record?: OntologyRecord; onStarted: () => void; onCommitted: (name: string) => void;
+export default function OntologyFunctions({id, record, onCommitted}: {
+  id: string; record?: OntologyRecord; onCommitted: (name: string) => void;
 }) {
   const [catalog,setCatalog] = useState<Catalog>();
   const [selected,setSelected] = useState('');
@@ -29,7 +29,7 @@ export default function OntologyFunctions({id, record, onStarted, onCommitted}: 
   const fn = catalog?.items.find(f => f.key === selected);
   const run = async () => {
     if (!record?.id || !record.revision || !catalog || !fn || busy.current) return;
-    busy.current = true; setPending(true);setError('');onStarted();
+    busy.current = true; setPending(true);setError('');
     try {
       const args = Object.fromEntries(fn.parameters.map(p => {
         if (!(p.key in values)) throw new Error('Enter a value for '+p.key+'.');
@@ -42,7 +42,7 @@ export default function OntologyFunctions({id, record, onStarted, onCommitted}: 
       retryIds.current.set(signature,requestId);
       const receipt = await graphRequest<TransactionReceipt>('post',path+'/'+encodeURIComponent(fn.key)+'/invoke',{data:{...data,requestId}});
       retryIds.current.delete(signature);onCommitted(receipt.name);
-    } catch (e) {setError(ontologyError(e,'Unable to run function.'));}
+    } catch (e) {const detail=ontologyError(e,'Unable to run function.');setError(detail);message.error(detail);}
     finally {busy.current=false;setPending(false);}
   };
   return <section className="flow-tool-section" aria-label="Business function runner"><h4>Business functions</h4>

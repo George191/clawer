@@ -3,7 +3,7 @@ import { PropertyLabel } from './PropertyTypeIcon';
 import { ExplorerValueProvider } from './ExplorerValue';
 import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Button } from '@/components/ui';
+import { Button, message } from '@/components/ui';
 import { DeleteOutlined, EditOutlined, ReloadOutlined } from '@/components/ui/icons';
 import { deleteEtlRow, fetchExplorerRowByKey, updateEtlRow } from '../../services/api';
 import { layoutPath, readLayouts, type Layouts } from '../../services/explorerLayouts';
@@ -66,8 +66,6 @@ function RecordPage({ source, identity }: { source: ExplorerDetailSource; identi
     const [confirmDelete, setConfirmDelete] = useState(false);
     const [busy, setBusy] = useState(false);
     const [stale, setStale] = useState(false);
-    const [share, setShare] = useState(false);
-    const [notice, setNotice] = useState('');
     const tablePath = source.kind === 'published' ? publishedExplorerHref(source.definitionId) : '/ontology/explorer?' + new URLSearchParams({ schema, table });
     const [key] = useState(identity);
     useEffect(() => {
@@ -119,34 +117,37 @@ function RecordPage({ source, identity }: { source: ExplorerDetailSource; identi
         try {
             if (remove) {
                 await deleteEtlRow(schema,table,result.identity,result.rowVersion);
+                message.success('Row deleted.');
                 navigate(tablePath,{replace:true});
             } else if (draft) {
                 const values=rowChanges(draft,result.row,result.columnTypes);
-                if (Object.keys(values).length) await updateEtlRow(schema,table,result.identity,values,result.rowVersion);
-                setDraft(undefined);setNotice('Changes saved.');reload(n=>n+1);
+                if (Object.keys(values).length) {
+                    await updateEtlRow(schema,table,result.identity,values,result.rowVersion);
+                    message.success('Changes saved.');
+                } else message.info('No changes to save.');
+                setDraft(undefined);reload(n=>n+1);
             }
         } catch (err) {
             const response=(err as {response?:{status:number;data?:{errors?:{code?:string};detail?:{code?:string}}}})?.response;
             if ((response?.data?.errors?.code ?? response?.data?.detail?.code)==='row_version_conflict') setStale(true);
-            setError(requestError(err));
+            const detail = requestError(err);
+            setError(detail); message.error(detail);
         } finally {setBusy(false);}
     }
     const showLink = async () => {
         try {
-            if (navigator.clipboard?.writeText) {
-                await navigator.clipboard.writeText(window.location.href);
-                setNotice('Object link copied.'); return;
-            }
-        } catch { /* The link remains selectable on HTTP or when clipboard access is disabled. */ }
-        setShare(v=>!v);
+            if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+            await navigator.clipboard.writeText(window.location.href);
+            message.success('Object link copied.');
+        } catch { message.error('Unable to copy the object link. Check clipboard permissions.'); }
     };
     const actions = source.kind === 'published' && publishedRecord ? objectTools.actionsForRecord(publishedRecord) : [
         ...(result?.rowActions?.edit && editFields.length > 0 ? [{key:'edit',label:'Edit row',icon:<EditOutlined />,onClick:()=>{
-            setMode('properties');setError('');setNotice('');
+            setMode('properties');setError('');
             setDraft(Object.fromEntries(editFields.map(name=>[name,editorValue(result.columnTypes[name],result.row[name])])));
         }}] : []),
         ...(result?.rowActions?.delete ? [{key:'delete',label:'Delete row',icon:<DeleteOutlined />,danger:true,onClick:()=>{
-            setError('');setNotice('');setConfirmDelete(true);
+            setError('');setConfirmDelete(true);
         }}] : []),
     ];
     return <article className="flow-console--ontology explorer-object-workspace explorer-full-record">
@@ -156,11 +157,9 @@ function RecordPage({ source, identity }: { source: ExplorerDetailSource; identi
             <span>{typeName}</span><h1>{title}</h1>
         </div><div className="record-operations">
             <Button onClick={showLink} disabled={!result}>Share link</Button>
-            <Button icon={<ReloadOutlined />} disabled={busy || (!!draft && !stale)} onClick={()=>{setNotice('');reload(n=>n+1);}}>Refresh</Button>
+            <Button icon={<ReloadOutlined />} disabled={busy || (!!draft && !stale)} onClick={()=>reload(n=>n+1)}>Refresh</Button>
             <ExplorerRecordActions items={actions} row={row || undefined} disabled={locked || stale} />
         </div></header>
-        {share && <label className="record-share">Object link<input readOnly value={window.location.href} onFocus={e=>e.currentTarget.select()} autoFocus /></label>}
-        {notice && <p role="status">{notice}</p>}
         {error && <div className="record-error" role="alert">{error}
             {stale && <Button onClick={()=>reload(n=>n+1)}>Reload current object</Button>}</div>}
         {layoutError && <p role="alert">Property layout unavailable. {layoutError}</p>}

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button } from '@/components/ui';
+import { Button, message } from '@/components/ui';
 import { graphRequest, type LinkType, type Page } from '../../services/ontology_graph';
 import { applyTransaction, listOntologyRecords, listPublishedOntologyTypes, listTransactions, ontologyError, undoTransaction,
   type OntologyRecordPage, type PublishedOntologyType, type TransactionReceipt, type TransactionStep } from '../../services/ontology';
@@ -68,7 +68,6 @@ export default function OntologyTransactions({objectType, onCommitted}: {objectT
   const [version, setVersion] = useState(0);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
-  const [status, setStatus] = useState('');
   const locked = useRef(false);
   const retryIds = useRef(new Map<string, string>());
   const nextAlias = useRef(1);
@@ -114,7 +113,7 @@ export default function OntologyTransactions({objectType, onCommitted}: {objectT
   const resetLinks = () => {setLinks([]);setLinkOffset(0);setMoreLinks(false);};
   const aliasesFor = (id: string) => entries.flatMap(({step}) => step.kind === 'create' && step.definitionId === id ? [step.alias] : []);
   const add = () => {
-    setError(''); setStatus('');
+    setError('');
     try {
       if (entries.length >= 24) throw new Error('A transaction supports up to 24 steps.');
       let entry: Entry;
@@ -140,25 +139,25 @@ export default function OntologyTransactions({objectType, onCommitted}: {objectT
         }
       }
       setEntries(prev => [...prev,entry]); resetStep();
-    } catch (e) {setError(description(e));}
+    } catch (e) {const detail = description(e);setError(detail);message.error({content:'Unable to add transaction step',description:detail,className:'explorer-toast'});}
   };
   const perform = async (undo?: TransactionReceipt) => {
     if (locked.current) return;
-    locked.current = true; setPending(true);setError('');setStatus('');
+    locked.current = true; setPending(true);setError('');
     try {
       if (undo) {
-        await undoTransaction(project,undo.id); setStatus('Undone: ' + undo.name);
+        await undoTransaction(project,undo.id); message.success({content:'Transaction undone',description:undo.name,className:'explorer-toast'});
       } else {
         const steps = entries.map(entry => entry.step);
         const signature = JSON.stringify([name,steps]);
         const id = retryIds.current.get(signature) ?? newOntologyRequestId();
         retryIds.current.set(signature, id);
         const result = await applyTransaction(project,name,id,steps);
-        setStatus('Committed: ' + result.name);setEntries([]);setName('');retryIds.current.delete(signature);
+        message.success({content:'Transaction committed',description:result.name,className:'explorer-toast'});setEntries([]);setName('');retryIds.current.delete(signature);
       }
       resetStep();resetLinks();setOffset(0);setVersion(v => v+1);
       onCommitted();
-    } catch (e) {setError(description(e));}
+    } catch (e) {const detail = description(e);setError(detail);message.error({content:undo ? 'Unable to undo transaction' : 'Unable to commit transaction',description:detail,className:'explorer-toast'});}
     finally {locked.current = false;setPending(false);}
   };
   return <section aria-label="Transaction workbench" className="ontology-transaction">
@@ -189,7 +188,7 @@ export default function OntologyTransactions({objectType, onCommitted}: {objectT
         <ol>{entries.map((entry,index) => <li key={index}>{entry.label}{index === entries.length-1 && <Button size="small" onClick={() => setEntries(entries.slice(0,-1))}>Remove last step</Button>}</li>)}</ol>
         <Button type="primary" disabled={!entries.length || !name.trim()} onClick={() => perform()}>Commit transaction</Button>
       </fieldset>
-      {error && <p role="alert">{error} <Button size="small" disabled={pending} onClick={() => {setError('');setVersion(v => v+1);}}>Refresh options</Button></p>}{status && <p role="status">{status}</p>}
+      {error && <p role="alert">{error} <Button size="small" disabled={pending} onClick={() => {setError('');setVersion(v => v+1);}}>Refresh options</Button></p>}
     </section>
     <section className="flow-tool-section" aria-label="My transactions">
       <h4>My transactions</h4>

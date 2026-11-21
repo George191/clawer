@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, Checkbox, Input } from '@/components/ui';
+import { Button, Checkbox, Input, message } from '@/components/ui';
 import { ontologyError, type OntologyPrincipal, type SemanticDefinition } from '../../services/ontology';
 import {
   mergeRevisionProposal, readRevision, readRevisionHistory, readRevisionPrincipals, readRevisionProposal,
@@ -60,7 +60,6 @@ export default function OntologyRevisions({ definitionId, onMerged }: Props) {
   const [role, setRole] = useState<RevisionRole>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
   const locked = useRef(false);
   const active = useRef(true);
   const refresh = () => setVersion(value => value + 1);
@@ -120,13 +119,13 @@ export default function OntologyRevisions({ definitionId, onMerged }: Props) {
 
   const switchTab = (next: Tab) => {
     setTab(next); setOffset(0); setSelectedProposal(''); setSelectedRevision(undefined); setComposer(undefined);
-    setRole(undefined); setError(''); setNotice('');
+    setRole(undefined); setError('');
   };
   const run = async (work: () => Promise<void>) => {
     if (locked.current) return;
-    locked.current = true; setBusy(true); setError(''); setNotice('');
+    locked.current = true; setBusy(true); setError('');
     try { await work(); }
-    catch (failure) { if (active.current) setError(describe(failure)); }
+    catch (failure) { if (active.current) { const detail = describe(failure); setError(detail); message.error({ content: 'Revision action failed', description: detail, className: 'explorer-toast' }); } }
     finally { locked.current = false; if (active.current) setBusy(false); }
   };
   const submit = () => {
@@ -137,7 +136,7 @@ export default function OntologyRevisions({ definitionId, onMerged }: Props) {
         : await submitRestoreProposal(definitionId, composer.revision, composer.target, composer.summary.trim());
       if (!active.current) return;
       switchTab('proposals');
-      setSelectedProposal(result.id); setNotice('Proposal submitted for independent review.'); refresh();
+      setSelectedProposal(result.id); message.success({ content: 'Proposal submitted for independent review.', className: 'explorer-toast' }); refresh();
     });
   };
   const review = (approve: boolean) => {
@@ -145,7 +144,7 @@ export default function OntologyRevisions({ definitionId, onMerged }: Props) {
     void run(async () => {
       await reviewRevisionProposal(definitionId, proposal.id, approve, reviewNote.trim());
       if (!active.current) return;
-      setReviewNote(''); setNotice(approve ? 'Proposal approved.' : 'Proposal rejected.'); refresh();
+      setReviewNote(''); message.success({ content: approve ? 'Proposal approved.' : 'Proposal rejected.', className: 'explorer-toast' }); refresh();
     });
   };
   const merge = () => {
@@ -153,7 +152,7 @@ export default function OntologyRevisions({ definitionId, onMerged }: Props) {
     void run(async () => {
       const result = await mergeRevisionProposal(definitionId, proposal.id, proposal.baseRevision);
       if (!active.current) return;
-      setNotice('Published revision ' + result.mergedRevision + '.');
+      message.success({ content: 'Published revision ' + result.mergedRevision + '.', className: 'explorer-toast' });
       refresh(); onMerged();
     });
   };
@@ -162,7 +161,7 @@ export default function OntologyRevisions({ definitionId, onMerged }: Props) {
     void run(async () => {
       await setRevisionRoles(definitionId, role);
       if (!active.current) return;
-      setRole(undefined); setNotice('Revision roles saved.'); refresh();
+      setRole(undefined); message.success({ content: 'Revision roles saved.', className: 'explorer-toast' }); refresh();
     });
   };
 
@@ -172,7 +171,6 @@ export default function OntologyRevisions({ definitionId, onMerged }: Props) {
       {workspace && <p>Published revision {workspace.revision}</p>}
     </header>
     {error && <p className="flow-create-error" role="alert">{error}<Button size="small" onClick={() => { setError(''); refresh(); }}>Refresh</Button></p>}
-    {notice && <p className="flow-create-notice" role="status">{notice}</p>}
     {!workspace && !error && <p role="status">Loading revision workspace…</p>}
     {workspace && <>
       <nav className="flow-ontology-revision-actions" aria-label="Revision views">
@@ -181,7 +179,7 @@ export default function OntologyRevisions({ definitionId, onMerged }: Props) {
         {workspace.canManageRoles && <Button size="small" aria-pressed={tab === 'roles'} disabled={busy} onClick={() => switchTab('roles')}>Revision roles</Button>}
         <Button size="small" disabled={busy || !!composer} onClick={() => { setError(''); refresh(); }}>Refresh revisions</Button>
         {workspace.canEdit && <Button size="small" type="primary" disabled={busy || !!composer} onClick={() => {
-          setError(''); setNotice(''); setPrincipalQuery('');
+          setError(''); setPrincipalQuery('');
           setComposer({ kind: 'revision', revision: workspace.revision, definition: workspace.definition, summary: '' });
         }}>Propose change</Button>}
       </nav>
@@ -202,7 +200,7 @@ export default function OntologyRevisions({ definitionId, onMerged }: Props) {
           {!listing.page.items.length ? <p>No revision proposals.</p> : <table className="flow-ontology-revision-table">
             <thead><tr><th scope="col">Proposal</th><th scope="col">Base</th><th scope="col">Status</th></tr></thead>
             <tbody>{listing.page.items.map(item => <tr key={item.id}>
-              <th scope="row"><Button size="small" type="link" disabled={busy} onClick={() => { setSelectedProposal(item.id); setReviewNote(''); setError(''); setNotice(''); }}>{item.summary}</Button></th>
+              <th scope="row"><Button size="small" type="link" disabled={busy} onClick={() => { setSelectedProposal(item.id); setReviewNote(''); setError(''); }}>{item.summary}</Button></th>
               <td>{item.baseRevision}</td><td>{label(item)}</td>
             </tr>)}</tbody>
           </table>}
