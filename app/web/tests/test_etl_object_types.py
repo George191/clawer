@@ -60,7 +60,7 @@ def service(*results, ontology_installed=True):
     session = CatalogSession(*results, ontology_installed=ontology_installed)
 
     @asynccontextmanager
-    async def context():
+    async def context(*, repeatable_read: bool = False, query_timeout: bool = True):
         yield session
 
     instance.session = context
