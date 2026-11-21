@@ -40,7 +40,7 @@ import { useSandboxIdentity } from './SandboxMarkings';
 import { getSessionState } from '../../services/session';
 import { explorerResourceCapabilities } from '../../services/explorerCapabilities';
 import SandboxIndexPreview, { INDEX_PREVIEW_SCHEMA, INDEX_PREVIEW_TABLE } from './SandboxIndexPreview';
-import { activeExplorerFilters, appendAndFilters, blankExplorerFilter, cellFilterRows, countFilterTerms, exactCellValue, explorerFilterTerms, hasExplorerFilterInput, hasOr } from './explorerFilters';
+import { activeExplorerFilters, appendAndFilters, blankExplorerFilter, cellFilterRows, countFilterTerms, exactCellValue, explorerFilterTerms, hasExplorerFilterInput } from './explorerFilters';
 import type { ExplorerFilter } from './explorerFilters';
 import { firstIncompleteExplorerFilter } from './explorerFilterDraft';
 import  {  TemplateGlyph,  inferSiteKind  }  from  '../AICollect/WorkspaceDock';
@@ -1267,8 +1267,7 @@ footer: previewPage && <ExplorerResultsFooter offset={previewPage.offset} rowCou
                             validationRequest={filterValidationRequest}
                             rules={filterRules} setRules={setFilterRules} search={filterText} onSearchChange={setFilterText}
                             renderRuleNotice={isSchemas ? rule => activeExplorerFilters(filterRules).some(item => item.id === rule.id) ? <ExplorerFilterIndexNotice
-                                schema={selectedSchema} table={table.name} rule={rule} columnTypes={data?.columnTypes}
-                                assessable={!hasOr(explorerFilterTerms(filterRules))} /> : null : undefined}
+                                schema={selectedSchema} table={table.name} rule={rule} columnTypes={data?.columnTypes} /> : null : undefined}
                             renderSortNotice={isSchemas ? sorts => <ExplorerSortIndexNotice schema={selectedSchema} table={table.name} sorts={sorts} /> : undefined}
                             sorts={[{ field: sortField, direction: sortDirection }, ...sortConditions]}
                             onSortsChange={(sorts, apply) => {

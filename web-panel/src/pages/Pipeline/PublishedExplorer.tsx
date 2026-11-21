@@ -18,7 +18,7 @@ import { firstIncompleteExplorerFilter } from './explorerFilterDraft';
 import ExplorerSearchCondition from './ExplorerSearchCondition';
 import ExplorerFilterIndexNotice, { ExplorerSortIndexNotice } from './ExplorerFilterIndexNotice';
 import { LayoutToolbar, useResultLayout } from './ExplorerResultLayout';
-import { activeExplorerFilters, appendAndFilters, blankExplorerFilter, cellFilterRows, countFilterTerms, exactCellValue, explorerFilterTerms, hasExplorerFilterInput, hasOr, type ExplorerFilter } from './explorerFilters';
+import { activeExplorerFilters, appendAndFilters, blankExplorerFilter, cellFilterRows, countFilterTerms, exactCellValue, explorerFilterTerms, hasExplorerFilterInput, type ExplorerFilter } from './explorerFilters';
 import { explorerResourceCapabilities } from '../../services/explorerCapabilities';
 import PublishedSourceTools from './PublishedSourceTools';
 import PublishedExplorerRelationships from './PublishedExplorerRelationships';
@@ -270,7 +270,7 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
               if (!property?.sourceColumn || !activeExplorerFilters(filterRules).some(item => item.id === rule.id)) return null;
               const source = objectType.definition.source;
               return <ExplorerFilterIndexNotice schema={source.schema!} table={source.table!} rule={{ ...rule, field: property.sourceColumn }}
-                columnTypes={{ [property.sourceColumn]: types[rule.field] }} assessable={!hasOr(explorerFilterTerms(filterRules))} />;
+                columnTypes={{ [property.sourceColumn]: types[rule.field] }} />;
             } : undefined}
             renderSortNotice={objectType?.definition.source.mode === 'existing' && canManage ? sorts => {
               const source = objectType.definition.source;

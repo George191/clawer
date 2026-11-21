@@ -13,13 +13,12 @@ const operators: Partial<Record<string, PreviewIndexCoverageOperator>> = {
 };
 const supportedType = /^(smallint|int2|integer|int4|bigint|int8|numeric|decimal|real|float4|double precision|float8|text|character varying|varchar|character|char|bpchar|boolean|bool|uuid|date|timestamp|timestamp without time zone|timestamp with time zone|timestamptz)$/;
 const identifier = /^[a-z_][a-z0-9_]{0,62}$/;
-const unsupportedDescription = 'This advisory checks supported scalar comparisons against native B-tree index metadata. It does not assess this condition or rule out an available index.';
-const noIndexDescription = 'No supported leading B-tree index matches this field and operator. Other index types or combined conditions may still help. This is a catalog advisory, not a query plan or a timeout prediction.';
+const noIndexDescription = 'No supported leading B-tree index matches this row’s field and operator. Each row is checked independently, including rows in groups or joined by OR. Other index types or combined conditions may still help. This is a catalog advisory, not a query plan or a timeout prediction.';
 
 type Scope = { schema: string; table: string };
-type Props = Scope & { rule: ExplorerFilter; columnTypes?: Record<string, string>; assessable?: boolean };
+type Props = Scope & { rule: ExplorerFilter; columnTypes?: Record<string, string> };
 
-export default function ExplorerFilterIndexNotice({ schema, table, rule, columnTypes, assessable = true }: Props) {
+export default function ExplorerFilterIndexNotice({ schema, table, rule, columnTypes }: Props) {
   const operator = rule.operator.replace(/\s+/g, ' ').trim();
   const hasValue = operator === '介于' ? rule.value.split(',').length === 2 && rule.value.split(',').every(value => value.trim()) : !!rule.value.trim();
   const complete = rule.active !== false && !!rule.field && !/^group-(open|close)-/.test(rule.id)
@@ -27,11 +26,15 @@ export default function ExplorerFilterIndexNotice({ schema, table, rule, columnT
   if (!complete) return null;
   const type = columnTypes?.[rule.field]?.toLowerCase().replace(/\(\s*\d+(?:,\s*\d+)?\s*\)/g, '').trim();
   const operation = Object.prototype.hasOwnProperty.call(operators, operator) ? operators[operator] : undefined;
-  const supported = assessable && !rule.id.startsWith('group-')
-    && !!type && supportedType.test(type) && identifier.test(rule.field) && !!operation;
+  const supported = !!type && supportedType.test(type) && identifier.test(rule.field) && !!operation;
+  const unsupportedDescription = !operation
+    ? `The “${operator}” operator is not supported by this B-tree index check. Supported operators are =, <, <=, >, >= and BETWEEN. This does not mean an index is missing.`
+    : !identifier.test(rule.field) ? 'This field name is not supported by the index metadata endpoint. This does not mean an index is missing.'
+    : !type ? 'Column type metadata is unavailable for this row. This does not mean an index is missing.'
+    : `The field type “${type}” is not supported by this B-tree index check. This does not mean an index is missing.`;
   return <IndexNotice schema={schema} table={table} input={supported ? { field: rule.field, operator: operation! } : undefined}
     retryLabel={`Retry index check for ${rule.field}`} warning="No leading index · may be slow" noIndexDescription={noIndexDescription}
-    unsupportedDescription={!assessable || rule.id.startsWith('group-') ? 'Grouped or OR filters require a combined assessment. This row advisory does not evaluate the full query plan or rule out an available index.' : unsupportedDescription} />;
+    unsupportedDescription={unsupportedDescription} />;
 }
 
 export function ExplorerSortIndexNotice({ schema, table, sorts }: Scope & { sorts: ExplorerSort[] }) {

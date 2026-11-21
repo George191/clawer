@@ -103,6 +103,40 @@ test('filter checks send only field and operator, retaining the metadata result 
   assert.equal(ui.calls.length, 1);
 });
 
+test('grouped and OR filter rows are checked independently using only their field and operator', async () => {
+  for (const [id, join] of [['plain-or', 'or'], ['group-filter-a', 'and'], ['group-filter-nested-b', 'or']]) {
+    const ui = mount('default', { ...filterProps, rule: { ...rule, id, join } });
+    ui.runTimers();
+    assert.equal(ui.calls.length, 1);
+    assert.deepEqual(ui.calls[0].input, { field: 'employees', operator: 'gte' });
+    const tree = await ui.settle(0, 'no_candidate');
+    assert.equal(warning(tree), true);
+    assert.ok(copy(tree.props.title).includes('independently'));
+  }
+});
+
+test('changing a row connector does not discard its result or repeat the same catalog check', async () => {
+  const ui = mount('default', filterProps);
+  ui.runTimers();
+  assert.equal(warning(await ui.settle(0, 'no_candidate')), true);
+  for (const join of ['or', 'and']) {
+    assert.equal(warning(ui.render({ ...filterProps, rule: { ...rule, join } })), true);
+    ui.runTimers();
+    assert.equal(ui.calls.length, 1);
+    assert.equal(ui.calls[0].signal.aborted, false);
+  }
+});
+
+test('disabled rows, group boundaries and incomplete filters do not request an index check', () => {
+  for (const patch of [{ active: false }, { id: 'group-open-a' }, { id: 'group-close-a' },
+    { field: '' }, { value: '' }, { operator: '介于', value: '10,' }]) {
+    const ui = mount('default', { ...filterProps, rule: { ...rule, ...patch } });
+    ui.runTimers();
+    assert.equal(ui.calls.length, 0);
+    assert.equal(ui.view(), null);
+  }
+});
+
 test('confirmed missing filter and sort indexes display warning icons and slow-query advisories', async () => {
   for (const [component, props, expected] of [
     ['default', filterProps, 'No leading index'], ['ExplorerSortIndexNotice', sortProps, 'No matching sort index'],
@@ -136,11 +170,24 @@ test('unsupported conditions remain neutral and never claim an index is missing'
   assert.equal(unsupported.calls.length, 0);
   assert.equal(copy(unsupported.view()), 'Index not assessed');
   assert.equal(warning(unsupported.view()), false);
+  assert.match(unsupported.view().props.title, /field type.*jsonb/i);
   const checked = mount('ExplorerSortIndexNotice', sortProps); checked.runTimers();
   const tree = await checked.settle(0, 'unsupported');
   assert.equal(copy(tree), 'Index not assessed');
   assert.equal(warning(tree), false);
   assert.equal(warningIcon(tree), false);
+});
+
+test('unsupported filter operators explain their limitation without claiming a missing index', () => {
+  for (const [operator, value] of [['包含', 'Acme'], ['是  null', '']]) {
+    const ui = mount('default', { ...filterProps, rule: { ...rule, operator, value } });
+    ui.runTimers();
+    assert.equal(ui.calls.length, 0);
+    assert.equal(copy(ui.view()), 'Index not assessed');
+    assert.equal(warning(ui.view()), false);
+    assert.match(ui.view().props.title, /operator/i);
+    assert.match(ui.view().props.title, /not supported/i);
+  }
 });
 
 test('common scalar filter types receive the same warning and full immediate tooltip as sorts', async () => {
