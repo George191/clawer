@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ApiOutlined, AppstoreOutlined, ArrowLeftOutlined, BarChartOutlined, CheckOutlined, CloseOutlined, CopyOutlined, DeleteOutlined, DownOutlined, DownloadCircleFilled, FileSearchOutlined, LinkOutlined, LoadingOutlined, ProfileOutlined, SearchOutlined, ShareAltOutlined, SyncOutlined, TableOutlined } from '@/components/ui/icons';
 import { Button, Dropdown, Modal, message } from '@/components/ui';
 import type { SheetData } from 'write-excel-file/browser';
 import { projectHref } from '../../services/projectDomains';
-import { createSaved, listSaved, openSaved, removeSaved, savedPath, sharing, type Exploration, type SavedDetail, type SavedKind, type SavedMeta, type WorkbenchQuery } from '../../services/explorerSaved';
+import { createSaved, listSaved, openSaved, publishedSavedPath, removeSaved, savedPath, sharing, type Exploration, type SavedDetail, type SavedKind, type SavedMeta, type WorkbenchQuery } from '../../services/explorerSaved';
 import './explorer-workbench.css';
 export type ResourceView = 'preview' | 'schema' | 'stream' | 'evidence' | 'api';
 type RecordRow = Record<string, unknown>;
@@ -12,9 +12,9 @@ type Selection = {
     record: RecordRow;
     title: string;
 };
-type Props = {
-    schema: string;
-    table: string;
+type ExplorerSource = { kind: 'backed'; schema: string; table: string } | { kind: 'published'; definitionId: string };
+type Props<Q extends object = WorkbenchQuery> = {
+    source: ExplorerSource;
     label: string;
     available: boolean;
     glyph?: ReactNode;
@@ -22,18 +22,18 @@ type Props = {
     names?: Record<string, string>;
     rows: RecordRow[];
     selected: Selection[];
-    query: WorkbenchQuery;
+    query: Q;
     resource: ResourceView;
     admin: boolean;
     layoutControl: ReactNode;
     selectResource: (v: ResourceView) => void;
-    saved?: SavedDetail;
+    saved?: SavedDetail<Q>;
     savedLoading: boolean;
     savedError: string;
     openSavedItem: (id: string) => void;
     closeSavedItem: () => void;
-    saveCompleted: (detail: SavedDetail) => void;
-    updateSavedItem: (detail: SavedDetail) => void;
+    saveCompleted: (detail: SavedDetail<Q>) => void;
+    updateSavedItem: (detail: SavedDetail<Q>) => void;
     addFilter: (field: string) => void;
     backToTypes: () => void;
     toggleCatalog: () => void;
@@ -92,8 +92,11 @@ function ExploreChart({ field, fields, names, rows, select, onFilter }: {
             <i style={{ width: Math.max(2, count / groups[0][1] * 100) + '%' }}/><strong>{count}</strong></div>)}
         <button disabled={!field} onClick={() => onFilter(field)}>Filter by this property</button></section>;
 }
-export default function ExplorerWorkbenchHeader(p: Props) {
-    const path = savedPath(p.schema, p.table), saved = p.saved;
+export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuery>(p: Props<Q>) {
+    const sourceKey = JSON.stringify(p.source);
+    const path = useMemo(() => p.source.kind === 'published' ? publishedSavedPath(p.source.definitionId) : savedPath(p.source.schema, p.source.table), [sourceKey]);
+    const sourceLabel = p.source.kind === 'published' ? p.label : p.source.schema + '.' + p.source.table;
+    const saved = p.saved;
     const [menu, show] = useState(''), [search, setSearch] = useState(''), [choice, choose] = useState('');
     const [chart, setChart] = useState(''), [name, setName] = useState(''), [error, setError] = useState('');
     const [busy, setBusy] = useState(false), [dialog, setDialog] = useState<'save' | 'share' | ''>('');
@@ -101,7 +104,7 @@ export default function ExplorerWorkbenchHeader(p: Props) {
     const [exporting, setExporting] = useState(false);
     const openInTrigger = useRef<HTMLButtonElement>(null);
     const [deleteTarget, setDeleteTarget] = useState<SavedMeta>();
-    const [shareTarget, setShareTarget] = useState<SavedDetail>();
+    const [shareTarget, setShareTarget] = useState<SavedDetail<Q>>();
     const [librarySearch, setLibrarySearch] = useState(''), [access, setAccess] = useState<'all' | 'private' | 'shared'>('all');
     const [page, setPage] = useState(0), [items, setItems] = useState<{ items: SavedMeta[]; hasMore: boolean }>();
     const [generation, refresh] = useState(0), [saveKind, setSaveKind] = useState<SavedKind>('exploration');
@@ -110,7 +113,7 @@ export default function ExplorerWorkbenchHeader(p: Props) {
     const kind = menu === 'lists' ? 'list' : 'exploration';
     const library = menu === 'lists' || menu === 'explorations';
     const notify = (content: string, description?: string) => message.success({ content, description, className: 'explorer-toast' });
-    const link = (id: string) => new URL(projectHref('/ontology/explorer?' + new URLSearchParams({ schema: p.schema, table: p.table, saved: id }))).href;
+    const link = (id: string) => new URL(projectHref('/ontology/explorer?' + new URLSearchParams(p.source.kind === 'published' ? { objectType: p.source.definitionId, saved: id } : { schema: p.source.schema, table: p.source.table, saved: id }))).href;
     useEffect(() => () => opening.current?.abort(), []);
     useEffect(() => { setChart(saved?.kind === 'exploration' ? saved.content.chart ?? '' : ''); }, [saved?.id]);
     function openMenu(m: string) { show(v => v === m ? '' : m); setError(''); setPage(0); setLibrarySearch(''); setAccess('all'); }
@@ -141,7 +144,7 @@ export default function ExplorerWorkbenchHeader(p: Props) {
         if (p.savedLoading || p.savedError) return;
         setSaveKind(k); setName(''); setError(''); show(''); setDialog('save');
     }
-    function snapshot(): Exploration { return { ...p.query, chart: chart || null, view: p.mode }; }
+    function snapshot(): Exploration<Q> { return { ...p.query, chart: chart || null, view: p.mode }; }
     const listKeys = p.selected.length
         ? p.selected.map(r => Object.fromEntries(Object.entries(r.identity).map(([k, v]) => [k, String(v)])))
         : saved?.kind === 'list' ? saved.content.keys ?? [] : [];
@@ -150,9 +153,9 @@ export default function ExplorerWorkbenchHeader(p: Props) {
         setBusy(true); setError('');
         try {
             const content = saveKind === 'list' ? { keys: listKeys } : snapshot();
-            const item = await createSaved(path, saveKind, name.trim(), content);
+            const item = await createSaved<Q>(path, saveKind, name.trim(), content);
             setDialog(''); show(''); refresh(n => n + 1);
-            p.saveCompleted({ ...item, content: content as SavedDetail['content'], owned: true });
+            p.saveCompleted({ ...item, content: content as SavedDetail<Q>['content'], owned: true });
             notify(`${saveKind === 'list' ? 'List' : 'Exploration'} saved`, item.name);
         } catch (e) { setError(fail(e)); } finally { setBusy(false); }
     }
@@ -162,7 +165,7 @@ export default function ExplorerWorkbenchHeader(p: Props) {
         if (item.id === saved?.id) { setShareTarget(saved); return; }
         opening.current?.abort();
         const c = new AbortController(); opening.current = c; setBusy(true);
-        try { const detail = await openSaved(path, item.id, c.signal); if (!c.signal.aborted) setShareTarget(detail); }
+        try { const detail = await openSaved<Q>(path, item.id, c.signal); if (!c.signal.aborted) setShareTarget(detail); }
         catch (e) { if (!c.signal.aborted) setError(fail(e)); }
         finally { if (!c.signal.aborted) setBusy(false); }
     }
@@ -193,15 +196,17 @@ export default function ExplorerWorkbenchHeader(p: Props) {
     const exportDescription = p.selected.length ? `Download ${p.selected.length} selected object${p.selected.length === 1 ? '' : 's'}.` : `Download ${p.rows.length} object${p.rows.length === 1 ? '' : 's'} on this results page.`;
     const apps = [
         { key: 'preview', group: 'analyze', label: 'Data preview', icon: <TableOutlined />, run: () => openResource('preview') },
-        { key: 'stream', group: 'analyze', label: 'Stream', icon: <SyncOutlined />, run: () => openResource('stream') },
-        { key: 'evidence', group: 'analyze', label: 'Evidence', icon: <FileSearchOutlined />, run: () => openResource('evidence') },
-        { key: 'schema', group: 'inspect', label: 'Properties & column mapping', icon: <ProfileOutlined />, run: () => openResource('schema') },
-        ...(p.admin ? [{ key: 'api', group: 'inspect', label: 'Published APIs', icon: <ApiOutlined />, run: () => openResource('api') }] : []),
+        ...(p.source.kind === 'backed' ? [
+            { key: 'stream', group: 'analyze', label: 'Stream', icon: <SyncOutlined />, run: () => openResource('stream') },
+            { key: 'evidence', group: 'analyze', label: 'Evidence', icon: <FileSearchOutlined />, run: () => openResource('evidence') },
+            { key: 'schema', group: 'inspect', label: 'Properties & column mapping', icon: <ProfileOutlined />, run: () => openResource('schema') },
+            ...(p.admin ? [{ key: 'api', group: 'inspect', label: 'Published APIs', icon: <ApiOutlined />, run: () => openResource('api') }] : []),
+        ] : []),
         { key: 'excel', group: 'export', label: 'Export as Excel', description: exportDescription, icon: exporting ? <LoadingOutlined spin /> : <DownloadCircleFilled />, disabled: exporting || !p.rows.length, run: async () => {
             if (exporting) return;
             setExporting(true);
             try {
-                await downloadExcel(p.selected.length ? p.selected.map(r => ({ ...r.record, ...r.identity })) : p.rows, p.fields, p.table);
+                await downloadExcel(p.selected.length ? p.selected.map(r => p.source.kind === 'published' ? r.record : ({ ...r.record, ...r.identity })) : p.rows, p.fields, p.source.kind === 'published' ? p.label : p.source.table);
                 closeOpenIn();
             } catch (e) { message.error({ content: 'Excel export failed', description: fail(e), className: 'explorer-toast' }); }
             finally { setExporting(false); }
@@ -225,7 +230,7 @@ export default function ExplorerWorkbenchHeader(p: Props) {
             if (event.key === 'ArrowDown') { event.preventDefault(); event.currentTarget.closest('section')?.querySelector<HTMLButtonElement>('.wb-open-in-actions button:not(:disabled)')?.focus(); }
         }}/></label>
         <div className="wb-open-in-body">
-            <nav className="wb-open-in-categories" role="menu" aria-label="Tool categories">{[['all', 'All'], ['analyze', 'Analyze objects'], ['inspect', 'Inspect source'], ['export', 'Export objects']].map(([key, label]) => <button type="button" role="menuitemradio" aria-checked={appGroup === key} key={key} onClick={() => setAppGroup(key)}>{label}</button>)}</nav>
+            <nav className="wb-open-in-categories" role="menu" aria-label="Tool categories">{[['all', 'All'], ['analyze', 'Analyze objects'], ...(p.source.kind === 'backed' ? [['inspect', 'Inspect source']] : []), ['export', 'Export objects']].map(([key, label]) => <button type="button" role="menuitemradio" aria-checked={appGroup === key} key={key} onClick={() => setAppGroup(key)}>{label}</button>)}</nav>
             <div className="wb-open-in-actions" role="menu" aria-label="Available tools">{matchingApps.map(app => <button type="button" role="menuitem" key={app.key} disabled={'disabled' in app && app.disabled} onClick={app.run}>{app.icon}<span>{app.label}{'description' in app && <small>{app.description}</small>}</span></button>)}{!matchingApps.length && <p role="status">No matching apps</p>}</div>
         </div>
     </section>;
@@ -237,7 +242,7 @@ export default function ExplorerWorkbenchHeader(p: Props) {
             {!items && !error && <p role="status" className="wb-library-empty">Loading saved items…</p>}
             {items && !items.items.length && <div className="wb-library-empty"><SearchOutlined /><strong>{librarySearch || access !== 'all' ? 'No matching saved items' : `No saved ${menu}`}</strong><p>{librarySearch || access !== 'all' ? 'Try another search or sharing filter.' : 'Save your work to return to it later.'}</p></div>}
             {items?.items.map(item => <div className={'wb-library-item' + (saved?.id === item.id ? ' is-current' : '')} key={item.id}>
-                <button className="wb-library-open" aria-label={`Open ${item.kind} ${item.name}`} aria-current={saved?.id === item.id ? 'page' : undefined} onClick={() => { show(''); p.openSavedItem(item.id); }}><span className="wb-library-icon">{item.kind === 'list' ? <TableOutlined /> : <BarChartOutlined />}</span><span><strong>{item.name}</strong><small>{item.shared ? 'Shared link enabled' : 'Private'} · {p.schema}.{p.table}</small></span>{saved?.id === item.id && <CheckOutlined />}</button>
+                <button className="wb-library-open" aria-label={`Open ${item.kind} ${item.name}`} aria-current={saved?.id === item.id ? 'page' : undefined} onClick={() => { show(''); p.openSavedItem(item.id); }}><span className="wb-library-icon">{item.kind === 'list' ? <TableOutlined /> : <BarChartOutlined />}</span><span><strong>{item.name}</strong><small>{item.shared ? 'Shared link enabled' : 'Private'} · {sourceLabel}</small></span>{saved?.id === item.id && <CheckOutlined />}</button>
                 <div className="wb-library-actions"><button aria-label={`Share ${item.kind} ${item.name}`} title="Share" onClick={() => void openShare(item)}><ShareAltOutlined /></button><button aria-label={`Delete ${item.kind} ${item.name}`} title="Delete" onClick={() => { show(''); setError(''); setDeleteTarget(item); }}><DeleteOutlined /></button></div>
             </div>)}
         </div>
@@ -246,7 +251,7 @@ export default function ExplorerWorkbenchHeader(p: Props) {
     return <header className="wb-header" ref={root}>
         <div className="wb-line wb-query">
             <button type="button" className="wb-back" onClick={p.backToTypes}><ArrowLeftOutlined /> Back to object types</button>
-            <span className="wb-type">{p.available && <button type="button" className="wb-catalog-toggle wb-type-icon" onClick={p.toggleCatalog} aria-label="Browse object types" title="Browse object types" aria-expanded={p.catalogOpen}><i>{p.glyph ?? <TableOutlined />}</i></button>}<strong title={p.schema + '.' + p.table}>{p.available ? p.label : p.table}</strong></span>
+            <span className="wb-type">{p.available && <button type="button" className="wb-catalog-toggle wb-type-icon" onClick={p.toggleCatalog} aria-label="Browse object types" title="Browse object types" aria-expanded={p.catalogOpen}><i>{p.glyph ?? <TableOutlined />}</i></button>}<strong title={sourceLabel}>{p.label}</strong></span>
             {p.available && <><label className="wb-property-search" ref={propertySearch} onClick={() => show('search')}><SearchOutlined /><input aria-label="Search properties to add a chart or filter" placeholder="Search properties to add a chart or filter…" value={search} onFocus={() => show('search')} onChange={e => { setSearch(e.target.value); show('search'); }} onKeyDown={e => { if (e.key === 'Enter' && find[0]) changeField(find[0]); }}/></label>
             {(['explorations', 'lists'] as const).map(entry => <Dropdown key={entry} trigger={['click']} placement="bottomRight" open={menu === entry}
                 onOpenChange={next => { if (next) openMenu(entry); else show(current => current === entry ? '' : current); }}
@@ -290,7 +295,7 @@ export default function ExplorerWorkbenchHeader(p: Props) {
             {error && <p role="alert" className="wb-dialog-error">{error}</p>}
         </Modal>
         <Modal className="flow-surface-modal wb-saved-dialog wb-delete-dialog" title={`Delete ${deleteTarget?.kind ?? 'saved item'}?`} open={!!deleteTarget} width={440} onCancel={() => { if (!busy) setDeleteTarget(undefined); }} keyboard={!busy} maskClosable={!busy} footer={<><Button disabled={busy} onClick={() => setDeleteTarget(undefined)}>Cancel</Button><Button danger type="primary" loading={busy} onClick={() => void deleteSaved()}>Delete {deleteTarget?.kind}</Button></>}>
-            <div className="wb-delete-resource"><DeleteOutlined /><strong>{deleteTarget?.name}</strong></div><p className="wb-dialog-help">This removes the saved {deleteTarget?.kind} and disables its share link. The underlying table and objects are unchanged.</p>{error && <p role="alert" className="wb-dialog-error">{error}</p>}
+            <div className="wb-delete-resource"><DeleteOutlined /><strong>{deleteTarget?.name}</strong></div><p className="wb-dialog-help">This removes the saved {deleteTarget?.kind} and disables its share link. The underlying objects are unchanged.</p>{error && <p role="alert" className="wb-dialog-error">{error}</p>}
         </Modal>
     </header>;
 }

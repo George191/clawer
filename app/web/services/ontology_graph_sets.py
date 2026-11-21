@@ -11,7 +11,7 @@ from app.web.services.ontology_graph import access, live_records
 from app.web.services.ontology_runtime_values import normalize_fields
 
 
-def filters(grant, query):
+def filters(grant, query, values=None, normalize=normalize_fields):
     _, definition, _, fields = grant
     props = {p.id: p for p in definition.properties if p.id in fields}
 
@@ -27,8 +27,8 @@ def filters(grant, query):
     conditions = []
     for f in query.filters:
         p = prop(f.field)
-        value = normalize_fields(definition, {f.field: f.value})[f.field]
-        column = Record.values[f.field]
+        value = normalize(definition, {f.field: f.value})[f.field]
+        column = (Record.values if values is None else values)[f.field]
         if f.op == "eq":
             conditions.append(
                 column.astext.is_(None) if value is None else column == type_coerce(value, JSONB)

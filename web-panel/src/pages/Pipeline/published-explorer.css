@@ -1,0 +1,23 @@
+.published-explorer { display:flex; flex:1; flex-direction:column; min-width:0; min-height:0; background:var(--ontology-panel); color:var(--ontology-text); }
+.published-explorer.is-exploring { overflow:auto; }
+.published-explorer-state { display:flex; align-items:center; justify-content:center; gap:10px; padding:18px; color:var(--ontology-muted); }
+.published-explorer-state[role=alert] { color:var(--ui-danger); }
+.published-explorer-scope { display:flex; flex-wrap:wrap; justify-content:space-between; gap:8px; padding:7px 12px; border-bottom:1px solid var(--ontology-control-border); color:var(--ontology-muted); font-size:11px; }
+.published-explorer-body { flex:1; min-height:100px; }
+.published-explorer-filters { flex:none; padding:10px 12px; border-bottom:1px solid var(--ontology-control-border); background:var(--ontology-bg); font-size:12px; }
+.published-explorer-filters header { display:flex; justify-content:space-between; align-items:center; margin-bottom:9px; }
+.published-explorer-filters button { color:inherit; }
+.published-explorer-filters header button,.published-explorer-filters li button { display:grid; place-items:center; padding:4px; border:0; background:transparent; cursor:pointer; }
+.published-explorer-filter-fields { display:flex; flex-wrap:wrap; align-items:flex-end; gap:8px; margin-block:6px; }
+.published-explorer-filter-fields label { display:grid; gap:4px; min-width:100px; color:var(--ontology-muted); }
+.published-explorer-filter-fields :is(input,select) { box-sizing:border-box; max-width:240px; min-height:28px; padding:4px 7px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-panel); color:var(--ontology-text); font:inherit; }
+.published-explorer-filters ul { display:flex; flex-wrap:wrap; gap:5px; padding:0; list-style:none; }
+.published-explorer-filters li { display:flex; gap:5px; align-items:center; border:1px solid var(--ontology-control-border); padding:2px 5px; border-radius:3px; }
+.published-explorer-filters li span { max-width:360px; overflow-wrap:anywhere; }
+.published-explorer-filters p[role=alert] { color:var(--ui-danger); }
+.published-explorer-aggregation { flex:none; max-height:180px; overflow:auto; padding:10px 12px; border-top:1px solid var(--ontology-control-border); font-size:11px; }
+.published-explorer-aggregation h3 { margin:0 0 7px; font-size:12px; }
+.published-explorer-aggregation table { width:100%; border-collapse:collapse; text-align:left; }
+.published-explorer-aggregation :is(th,td) { padding:4px 8px; border-bottom:1px solid var(--ontology-control-border); }
+.published-explorer input[type=checkbox] { accent-color:var(--ontology-muted); }
+.published-explorer .flow-published-selection-properties { margin-top:14px; }

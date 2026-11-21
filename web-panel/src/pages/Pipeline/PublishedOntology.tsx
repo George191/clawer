@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Button, Checkbox, Input, Modal } from '@/components/ui';
 import { AppstoreOutlined, ArrowLeftOutlined, BarsOutlined, CloseOutlined, DatabaseOutlined, ReloadOutlined, SearchOutlined } from '@/components/ui/icons';
 import { getSessionState } from '../../services/session';
@@ -19,10 +19,13 @@ import OntologyCatalogSkeleton from './OntologyCatalogSkeleton';
 import './ontology-create.css';
 import './published-results.css';
 import './published-tools.css';
+import { publishedExplorerHref, publishedRecordIdentity, type PublishedIdentity } from '../../services/publishedExplorerHandoff';
+import { queryPublishedExplorer } from '../../services/publishedExplorer';
 
 const pageSize = 25;
 const maxOffset = 100_000;
 type RecordQuery = { deleted: boolean; offset: number };
+type PublishedRecordPage = Omit<OntologyRecordPage, 'items'> & { items: (OntologyRecord & { identity?: PublishedIdentity | null })[] };
 type ActionInputs = Record<string, { text: string; isNull: boolean }>;
 type Operation = { kind: SemanticAction['kind']; fields: string[]; record?: OntologyRecord; initialInputs: ActionInputs };
 export type PublishedCatalogPage = PublishedOntologyPage & { offset: number; keyword: string; identity: string; includeHidden: boolean; includeDeleted: boolean };
@@ -74,6 +77,7 @@ function RecordHistory({ objectType, recordId, onChanged }: { objectType: string
 }
 
 export default function PublishedOntology({ selection, view, includeHidden, includeDeleted, managedProjects, catalogPage: retainedPage, onCatalogPage, onSelect, onClearSearch }: Props) {
+  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const search = params.get('publishedQ') || '';
   const keyword = search.trim();
@@ -85,7 +89,7 @@ export default function PublishedOntology({ selection, view, includeHidden, incl
   const [metadata, setMetadata] = useState<{ version: number; object?: PublishedOntologyType; error?: string }>();
   const [query, setQuery] = useState<RecordQuery>({ deleted: false, offset: 0 });
   const { deleted, offset } = query;
-  const [recordRead, setRecordRead] = useState<{ query: RecordQuery; version: number; page?: OntologyRecordPage; error?: string }>();
+  const [recordRead, setRecordRead] = useState<{ query: RecordQuery; version: number; page?: PublishedRecordPage; error?: string }>();
   const [chosenRecord, setChosenRecord] = useState<OntologyRecord>();
   const recordTitles = useRef<Record<number, HTMLButtonElement | null>>({});
   const [previewTab, setPreviewTab] = useState<'overview' | 'properties' | 'history'>('overview');
@@ -149,7 +153,10 @@ export default function PublishedOntology({ selection, view, includeHidden, incl
   useEffect(() => {
     if (!selection || metadata?.version !== version || !object) return;
     const request = new AbortController();
-    listOntologyRecords(selection, pageSize, query.offset, query.deleted && object.definition.source.mode === 'none', request.signal).then(page => {
+    const read = query.deleted
+      ? listOntologyRecords(selection, pageSize, query.offset, object.definition.source.mode === 'none', request.signal)
+      : queryPublishedExplorer(selection, { filters: [] }, pageSize, query.offset, request.signal);
+    read.then(page => {
       if (!request.signal.aborted && current()) setRecordRead({ query, version, page });
     }, failure => {
       if (!request.signal.aborted && current()) setRecordRead({ query, version, error: describe(failure, 'Unable to load records.') });
@@ -281,6 +288,8 @@ export default function PublishedOntology({ selection, view, includeHidden, incl
               {selectedRecord && <Button size="small" icon={<CloseOutlined />} onClick={closePreview}>1 selected</Button>}
               <div className="flow-published-results-toolbar-end">
                 <span title={object.definition.description || undefined}>{object.definition.source.mode === 'existing' ? `${object.definition.source.schema}.${object.definition.source.table} · Read only` : 'Object-managed records'} · Revision {object.revision}</span>
+                {!deleted && <Button size="small" disabled={loading} onClick={() => navigate(publishedExplorerHref(object.id, { returnTo: '/ontology?' + params.toString() }))}>Open in Object Explorer</Button>}
+                {!deleted && selectedRecord && publishedRecordIdentity(selectedRecord) && <Button size="small" disabled={loading} onClick={() => navigate(publishedExplorerHref(object.id, { query: { filters: [], keys: [publishedRecordIdentity(selectedRecord)!] }, returnTo: '/ontology?' + params.toString() }))}>Open selected in Object Explorer</Button>}
                 {!deleted && createAction && <Button size="small" type="primary" onClick={() => startAction('create', createAction.fields)}>Create object</Button>}
               </div>
             </div>

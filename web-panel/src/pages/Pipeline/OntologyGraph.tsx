@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui';
 import {
   listOntologyRecords,
@@ -16,6 +17,7 @@ import {
   type SetResult,
 } from '../../services/ontology_graph';
 import { getSessionState } from '../../services/session';
+import { publishedExplorerHref } from '../../services/publishedExplorerHandoff';
 
 const size = 20;
 const operatorLabels = { eq: 'Equals', contains: 'Contains', gt: 'Greater than', lt: 'Less than' };
@@ -357,6 +359,7 @@ function Panel({ objectType, recordId }: Props) {
 }
 
 function ObjectSets({ object }: { object: PublishedOntologyType }) {
+  const navigate = useNavigate();
   const props = object.definition.properties;
   const [field, setField] = useState(''),
     [op, setOp] = useState<SetQuery['filters'][number]['op']>('eq'),
@@ -555,6 +558,10 @@ function ObjectSets({ object }: { object: PublishedOntologyType }) {
             Matching records: {data.count}
             {data.sum != null ? ' · Sum: ' + data.sum : ''}
           </p>
+          {active && <Button size="small" onClick={() => navigate(publishedExplorerHref(object.id, {
+            ...(active.id ? { savedSet: active.id } : { query: active.query }),
+            returnTo: '/ontology?catalog=published&objectType=' + encodeURIComponent(object.id),
+          }))}>Open in Object Explorer</Button>}
           <ul>
             {data.items.map((row) => (
               <li key={row.id}>{display(row.title ?? row.id)}</li>

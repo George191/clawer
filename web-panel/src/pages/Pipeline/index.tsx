@@ -18,6 +18,7 @@ import './foundry-workbench-tokens.css';
 import './ontology-workspace.css';
 import ExplorerCatalog from './ExplorerCatalog';
 import ExplorerWorkbenchHeader from './ExplorerWorkbenchHeader';
+import PublishedExplorer from './PublishedExplorer';
 import { openSaved, savedPath, type SavedDetail } from '../../services/explorerSaved';
 import { ExplorerTypeIcon } from './ExplorerObjectOverview';
 import ExplorerSelection, { useExplorerPresentation, type ExplorerPreviewRow } from './ExplorerSelection';
@@ -109,13 +110,16 @@ const  FilterGroupIcon:  React.FC  =  ()  =>  <svg  className="flow-filter-mini-
 const  EditIcon:  React.FC<{  className?:  string  }>  =  ({  className  })  =>  <svg  className={className}  viewBox="0  0  24  24"  role="img"  aria-label="Edit"  fill="none"><path  d="M5.5  17.8V19h1.2l9.9-9.9-1.2-1.2-9.9  9.9Z"  stroke="currentColor"  strokeWidth="1.6"  strokeLinejoin="round"/><path  d="m14.7  7.9  1.4-1.4a1.7  1.7  0  0  1  2.4  2.4l-1.4  1.4"  stroke="currentColor"  strokeWidth="1.6"  strokeLinecap="round"/></svg>;
 const  DeleteIcon:  React.FC<{  className?:  string  }>  =  ({  className  })  =>  <svg  className={className}  viewBox="0  0  24  24"  role="img"  aria-label="Delete"  fill="none"><path  d="M6.5  7.5h11M9.5  7.5V5.8h5v1.7m-6.7  0  .7  11h5l.7-11"  stroke="currentColor"  strokeWidth="1.6"  strokeLinecap="round"  strokeLinejoin="round"/></svg>;
 const Pipeline: React.FC = () => {
-    const { pathname } = useLocation();
+    const { pathname, search, hash } = useLocation();
+    const explorerParams = new URLSearchParams(search);
+    const publishedExplorer = !!matchPath('/ontology/explorer', pathname)
+        && (['objectType', 'objectSet', 'savedSet'].some(key => explorerParams.has(key)) || new URLSearchParams(hash.replace(/^#/, '')).has('objectSet'));
     return <ConfigProvider locale={enUS}><main className="flow-console flow-console--ontology">
         <section className="flow-core">
             {matchPath('/ontology', pathname) ? <OntologyExplorer refreshToken={0} />
                 : matchPath('/ontology/connections', pathname) ? <DataConnections />
                 : matchPath('/ontology/lineage', pathname) ? <OntologyLineage refreshToken={0} />
-                    : matchPath('/ontology/runtime', pathname) ? <FlowRuntime /> : <div className="flow-exploration-workspace"><DataLayersWorkspace /></div>}
+                    : matchPath('/ontology/runtime', pathname) ? <FlowRuntime /> : <div className="flow-exploration-workspace">{publishedExplorer ? <PublishedExplorer /> : <DataLayersWorkspace />}</div>}
         </section>
     </main></ConfigProvider>;
 };
@@ -1184,7 +1188,7 @@ const DataLayersWorkspace: React.FC = () => {
                 </div>}
                 {!isSchemas && !selectedTableAvailable ? <div className="flow-workspace-empty" role="status"><DatabaseOutlined /><h3>{tablesLoading || !catalogLoaded && !requestError ? 'Loading schema resources…' : selectedSchema ? serverTables.length ? 'No table selected' : 'No tables in this schema' : 'No schema selected'}</h3><p>{schemaNode?.status === 'stopped' ? 'This schema is not available in the connected database.' : serverTables.length ? 'Select a table from the catalog.' : 'Select a schema to explore its tables and data.'}</p></div> : <div className="flow-inspector">
                     {isSchemas && requestedSchema && requestedTable && <fieldset className="wb-shell" disabled={workbenchLocked}>
-                        <ExplorerWorkbenchHeader key={JSON.stringify([previewIdentity, requestedSchema, requestedTable])} schema={requestedSchema} table={requestedTable} available={selectedTableAvailable}
+                        <ExplorerWorkbenchHeader key={JSON.stringify([previewIdentity, requestedSchema, requestedTable])} source={{ kind: 'backed', schema: requestedSchema, table: requestedTable }} available={selectedTableAvailable}
                             backToTypes={backToTypes} label={selectedTableAvailable ? mapping?.displayName || requestedTable : requestedTable}
                             glyph={<ExplorerTypeIcon compact dataType={selectedTableAvailable ? mapping?.dataType ?? table.dataType : undefined} table={requestedTable} />}
                             fields={data?.columns || filterFields} names={Object.fromEntries((mapping?.properties || []).flatMap(p => p.sourceColumn ? [[p.sourceColumn, p.name]] : []))}
