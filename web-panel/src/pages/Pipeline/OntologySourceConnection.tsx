@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useId, useState, type ReactNode } from 'react';
 import { Button, Select } from '@/components/ui';
 import { ReloadOutlined } from '@/components/ui/icons';
 import { fetchDataSources, type DataConnectorEngine } from '../../services/api';
@@ -12,6 +12,7 @@ export default function OntologySourceConnection({ value, warehouseName, disable
   value?: string; warehouseName?: string; disabled: boolean; onChange: (id: string) => void;
   onAvailabilityChange: (available: boolean) => void; children: ReactNode;
 }) {
+  const connectionId = useId();
   const [connections, setConnections] = useState<Choice[]>([]);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [revision, setRevision] = useState(0);
@@ -36,16 +37,15 @@ export default function OntologySourceConnection({ value, warehouseName, disable
   useEffect(() => { onAvailabilityChange(available); }, [available, onAvailabilityChange]);
   return <div className="flow-source-dataset">
     <div className="flow-source-connection-row">
-      <div className="flow-create-field"><span>Data connection</span>
-        <div title={selected?.name}>
-          <Select aria-label={selected ? 'Data connection: ' + selected.name : 'Data connection'}
-            className="flow-ontology__select flow-source-connection"
-            popupClassName="flow-ontology__select-popup flow-source-connection-menu" showSearch loading={status === 'loading'}
-            value={selected?.id} placeholder={status === 'loading' ? 'Loading connections…' : 'Select a connection'} disabled={disabled} onChange={onChange}
-            options={options.map(option => ({ value: option.id, label: <span className="flow-source-connection-option" title={option.name}>
-              <ConnectorMark engine={option.engine} /><span className="flow-source-connection-name">{option.name}</span>
-            </span> }))} />
-        </div>
+      <label className="flow-source-connection-label" htmlFor={connectionId}>Data connection</label>
+      <div className="flow-source-connection-field" title={selected?.name}>
+        <Select id={connectionId} aria-label={selected ? 'Data connection: ' + selected.name : 'Data connection'}
+          className="flow-ontology__select flow-source-connection"
+          popupClassName="flow-ontology__select-popup flow-source-connection-menu" showSearch loading={status === 'loading'}
+          value={selected?.id} placeholder={status === 'loading' ? 'Loading connections…' : 'Select a connection'} disabled={disabled} onChange={onChange}
+          options={options.map(option => ({ value: option.id, label: <span className="flow-source-connection-option" title={option.name}>
+            <ConnectorMark engine={option.engine} /><span className="flow-source-connection-name">{option.name}</span>
+          </span> }))} />
       </div>
       <div className="flow-source-connection-actions">
         <a href={projectHref(external ? '/ontology/connections?sourceId=' + encodeURIComponent(selected.id) : '/ontology/connections')}
