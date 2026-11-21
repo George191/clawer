@@ -19,6 +19,10 @@
 .explorer-row-links ul { display:grid; gap:8px; margin:0; padding:0; list-style:none; }
 .explorer-row-links li { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:10px; border:1px solid var(--ontology-control-border); border-radius:4px; background:var(--ontology-panel); }
 .explorer-row-links li > a { flex:1; min-width:0; color:var(--ontology-text); font-size:12px; overflow-wrap:anywhere; }
+.explorer-row-links .ui-btn.explorer-links-unlink { flex:none; width:26px; min-height:26px; height:26px; padding:0; border:0; color:var(--ui-error); background:transparent; }
+.explorer-row-links .explorer-links-unlink .ui-icon { width:14px; height:14px; font-size:14px; }
+.explorer-row-links .explorer-links-unlink:hover:not(:disabled) { background:var(--ontology-hover); }
+.explorer-unlink-dialog .ui-modal-body > p { margin:0; }
 .explorer-row-links nav { display:flex; align-items:center; gap:8px; margin-top:12px; }
 .explorer-linked-properties { flex-basis:100%; margin:4px 0 0; padding-top:8px; max-height:360px; overflow:auto; border-top:1px solid var(--ontology-control-border); }
 .explorer-linked-properties > div { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,2fr); gap:8px; padding:5px 0; }

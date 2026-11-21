@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Button } from '@/components/ui';
+import { Button, Modal } from '@/components/ui';
 import {
   listOntologyRecords,
   ontologyError,
@@ -19,6 +19,9 @@ import {
 import { getSessionState } from '../../services/session';
 import { publishedExplorerHref } from '../../services/publishedExplorerHandoff';
 import useExplorerErrorToast from './useExplorerErrorToast';
+import { ApartmentOutlined, DatabaseOutlined, PlusOutlined } from '@/components/ui/icons';
+import './ontology-tool-workbench.css';
+import './ontology-graph-workbench.css';
 
 const size = 20;
 const operatorLabels = { eq: 'Equals', contains: 'Contains', gt: 'Greater than', lt: 'Less than' };
@@ -64,6 +67,17 @@ function Message({ text }: { text?: string }) {
   return null;
 }
 
+function useGraphOperation() {
+  const locked = useRef(false), alive = useRef(true);
+  const identity = useRef(getSessionState().identity).current;
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  const current = () => {
+    const session = getSessionState();
+    return alive.current && session.authenticated && !session.locked && session.identity === identity;
+  };
+  return {locked, current};
+}
+
 function NewType({ object, onSaved }: { object: PublishedOntologyType; onSaved: () => void }) {
   const [term, search] = useState(''),
     [off, page] = useState(0),
@@ -76,18 +90,20 @@ function NewType({ object, onSaved }: { object: PublishedOntologyType; onSaved: 
   const types = usePage('types:' + term + ':' + off, (signal) =>
     api<Page<{id:string;name:string}>>('get','/projects/'+object.definition.projectId+'/link-targets',
       {params:{limit:size, offset:off,q:term},signal}));
+  const {locked, current} = useGraphOperation();
   async function save() {
-    pending(true);
+    if (locked.current || !current()) return;
+    locked.current = true; pending(true);
     fail('');
     try {
       await api('post', '/projects/' + object.definition.projectId + '/link-types', {
         data: { sourceDefinitionId: object.id, targetDefinitionId: target, key, name, cardinality: card },
       });
-      onSaved();
+      if (current()) onSaved();
     } catch (e) {
-      fail(reason(e));
+      if (current()) fail(reason(e));
     } finally {
-      pending(false);
+      locked.current = false; if (current()) pending(false);
     }
   }
   return (
@@ -190,7 +206,11 @@ function Links({ anchor, move }: { anchor: Anchor; move: (a: Anchor) => void }) 
   const choices = usePage([target, coff, version].join('/'), () =>
     target && types?.data?.canManage ? listOntologyRecords(target, size, coff) : Promise.resolve({ items: [], hasMore: false }),
   );
+  const {locked, current} = useGraphOperation();
+  const [removing, setRemoving] = useState<Neighbor>();
   async function mutate(id: string, linkId?: string) {
+    if (locked.current || !current()) return;
+    locked.current = true;
     const pair =
       direction === 'outgoing'
         ? { sourceRecordId: anchor.record, targetRecordId: id }
@@ -200,13 +220,16 @@ function Links({ anchor, move }: { anchor: Anchor; move: (a: Anchor) => void }) 
     try {
       if (linkId) await api('delete', base + '/links/' + linkId, { params: pair });
       else await api('post', base + '/links', { data: pair });
+      if (!current()) return;
+      setRemoving(undefined);
       pick('');
       page(0);
       reload((n) => n + 1);
     } catch (e) {
-      fail(reason(e));
+      if (current()) fail(reason(e));
     } finally {
-      pending(false);
+      locked.current = false;
+      if (current()) pending(false);
     }
   }
   return (
@@ -246,8 +269,8 @@ function Links({ anchor, move }: { anchor: Anchor; move: (a: Anchor) => void }) 
       />
       {selected && (
         <>
-          <ul>
-            {relations?.data?.items.map(({ linkId, record }) => (
+          <ul className="ontology-graph-neighbors">
+            {relations?.data?.items.map(({ linkId, record, canUnlink }) => (
               <li key={linkId}>
                 <Button
                   onClick={() =>
@@ -256,11 +279,11 @@ function Links({ anchor, move }: { anchor: Anchor; move: (a: Anchor) => void }) 
                 >
                   {display(record.title ?? record.id)}
                 </Button>
-                {types?.data?.canManage && (
+                {canUnlink && (
                   <Button
                     disabled={busy}
                     aria-label={'Remove link to ' + display(record.title ?? record.id)}
-                    onClick={() => void mutate(record.id!, linkId)}
+                    onClick={() => setRemoving({linkId, record, canUnlink})}
                   >
                     Remove link
                   </Button>
@@ -299,65 +322,51 @@ function Links({ anchor, move }: { anchor: Anchor; move: (a: Anchor) => void }) 
         </>
       )}
       <Message text={error || types?.error || choices?.error || relations?.error} />
+      <Modal open={!!removing} title="Remove relationship" okText="Remove relationship" confirmLoading={busy} closable={!busy} maskClosable={!busy} okButtonProps={{danger: true}} onCancel={() => { if (!busy) setRemoving(undefined); }} onOk={() => removing?.canUnlink ? mutate(removing.record.id, removing.linkId) : undefined}>
+        <p>Remove the link between <strong>{anchor.title}</strong> and <strong>{display(removing?.record.title)}</strong>?</p><p>The two objects and their property values will be preserved.</p>
+      </Modal>
     </div>
   );
 }
 
-type Props = { objectType: PublishedOntologyType; recordId?: string; returnTo: string; onOpenExplorer: () => void };
+type Props = { objectType: PublishedOntologyType; recordId?: string; recordTitle?: string; returnTo: string; onOpenExplorer: () => void };
 export default function OntologyGraph(props: Props) {
   return props.objectType.definition.source.mode === 'none' ? (
     <Panel key={props.objectType.id + ':' + (props.recordId ?? '')} {...props} />
   ) : null;
 }
-function Panel({ objectType, recordId, returnTo, onOpenExplorer }: Props) {
-  const [create, toggle] = useState(false),
-    [version, reload] = useState(0),
-    [trail, walk] = useState<Anchor[]>([]);
+function Panel({ objectType, recordId, recordTitle, returnTo, onOpenExplorer }: Props) {
+  const [tab, setTab] = useState<'relationships' | 'sets'>('relationships');
+  const [create, toggle] = useState(false), [version, reload] = useState(0), [recordOffset, setRecordOffset] = useState(0);
+  const [trail, walk] = useState<Anchor[]>([]);
   const rights = usePage(objectType.id, (signal) =>
-    api<{ canManage: boolean }>('get', objectPath(objectType.id) + '/link-types', {
-      params: { limit: 1 },
-      signal,
-    }),
+    api<{ canManage: boolean }>('get', objectPath(objectType.id) + '/link-types', {params: { limit: 1 }, signal}),
   );
-  const anchor =
-    trail[trail.length - 1] ??
-    (recordId ? { type: objectType.id, record: recordId, title: recordId } : undefined);
-  return (
-    <section className="ontology-graph" aria-label="Object relationships and sets">
-      <section className="flow-tool-section" aria-label="Relationships">
-        <header className="flow-tool-heading">
-          <h3>Relationships</h3>
-          {rights?.data?.canManage && (
-            <Button size="small" aria-expanded={create} onClick={() => toggle((v) => !v)}>
-              {create ? 'Cancel relationship type' : 'New relationship type'}
-            </Button>
-          )}
+  const records = usePage('graph-records:' + objectType.id + ':' + recordOffset, signal => listOntologyRecords(objectType.id, size, recordOffset, false, signal));
+  const anchor = trail[trail.length - 1] ?? (recordId ? { type: objectType.id, record: recordId, title: recordTitle || records?.data?.items.find(item => item.id === recordId)?.title?.toString() || 'Selected object' } : undefined);
+  return <section className="ontology-tool-workbench ontology-graph-workbench" aria-label="Object relationships and sets">
+    <header className="ontology-tool-header"><div><h3><ApartmentOutlined />Relationships and object sets</h3><p>Browse linked objects or define a reusable query. Relationship links are stored independently of object properties.</p></div></header>
+    <nav className="ontology-tool-tabs" aria-label="Graph tools"><button type="button" aria-pressed={tab === 'relationships'} onClick={() => setTab('relationships')}>Relationships</button><button type="button" aria-pressed={tab === 'sets'} onClick={() => setTab('sets')}>Dynamic object sets</button></nav>
+    <Message text={rights?.error || records?.error} />
+    {tab === 'relationships' ? <div className="ontology-tool-layout">
+      <aside className="ontology-tool-catalog" aria-label="Objects to inspect"><div className="ontology-graph-catalog-heading">{objectType.definition.name}</div><div className="ontology-tool-catalog-list">
+        {!records && <p role="status">Loading objects…</p>}
+        {records?.data && !records.data.items.length && <p>No visible objects.</p>}
+        {records?.data?.items.map(record => <button type="button" key={record.id} aria-pressed={anchor?.record === record.id} onClick={() => { toggle(false); walk([{type: objectType.id, record: record.id!, title: display(record.title ?? record.id)}]); }}><DatabaseOutlined /><span><strong>{display(record.title ?? record.id)}</strong><small>Revision {record.revision}</small></span></button>)}
+      </div><Pages offset={recordOffset} more={records?.data?.hasMore} change={setRecordOffset} /></aside>
+      <div className="ontology-tool-detail">
+        <header className="ontology-tool-detail-header"><div><h4>{create ? 'New relationship type' : anchor?.title || 'Select an object'}</h4><span>{create ? 'Define the two object types and link cardinality.' : 'Choose a relationship to inspect connected objects.'}</span></div>
+          {rights?.data?.canManage && <Button size="small" icon={!create ? <PlusOutlined /> : undefined} aria-expanded={create} onClick={() => toggle(value => !value)}>{create ? 'Cancel' : 'New type'}</Button>}
         </header>
-        <Message text={rights?.error} />
-        {create && (
-          <NewType
-            object={objectType}
-            onSaved={() => {
-              toggle(false);
-              reload((n) => n + 1);
-            }}
-          />
-        )}
-        {anchor ? (
-          <>
-            <p>
-              Browsing {anchor.title}{' '}
-              {trail.length > 0 && <Button onClick={() => walk((t) => t.slice(0, -1))}>Back one record</Button>}
-            </p>
-            <Links key={anchor.record + ':' + version} anchor={anchor} move={(a) => walk((t) => [...t, a])} />
-          </>
-        ) : (
-          <p>Select a record to browse or edit its relationships.</p>
-        )}
-      </section>
-      <ObjectSets object={objectType} returnTo={returnTo} onOpenExplorer={onOpenExplorer} />
-    </section>
-  );
+        <div className="ontology-tool-form">
+          {create ? <NewType object={objectType} onSaved={() => { toggle(false); reload(value => value + 1); }} /> : anchor ? <>
+            {!!trail.length && <div className="ontology-graph-trail"><span>{trail.map(item => item.title).join(' / ')}</span><Button size="small" onClick={() => walk(previous => previous.slice(0, -1))}>Back</Button></div>}
+            <Links key={anchor.record + ':' + version} anchor={anchor} move={next => walk(previous => [...previous, next])} />
+          </> : <div className="ontology-tool-empty"><ApartmentOutlined /><h4>Choose an object to browse its links</h4><p>Linked objects can be opened without changing the current result set.</p></div>}
+        </div>
+      </div>
+    </div> : <div className="ontology-graph-set-body"><ObjectSets object={objectType} returnTo={returnTo} onOpenExplorer={onOpenExplorer} /></div>}
+  </section>;
 }
 
 function ObjectSets({ object, returnTo, onOpenExplorer }: { object: PublishedOntologyType; returnTo: string; onOpenExplorer: () => void }) {
@@ -419,17 +428,22 @@ function ObjectSets({ object, returnTo, onOpenExplorer }: { object: PublishedOnt
     groupPage(0);
     run((prev) => ({ id, query, nonce: (prev?.nonce ?? 0) + 1 }));
   }
+  const {locked, current} = useGraphOperation();
+  const [confirmDelete, setConfirmDelete] = useState(false);
   async function mutate(remove = false) {
-    pending(true);
+    if (locked.current || !current()) return;
+    locked.current = true; pending(true);
     fail('');
     setValidationError('');
     try {
       if (remove) {
         await api('delete', path + '/' + chosen);
-        choose('');
+        if (!current()) return;
+        setConfirmDelete(false); choose('');
         run(undefined);
       } else {
         const item = await api<NamedSet>('post', path, { data: { name, query } });
+        if (!current()) return;
         choose(item.id);
         setName('');
         execute(item.id);
@@ -437,15 +451,15 @@ function ObjectSets({ object, returnTo, onOpenExplorer }: { object: PublishedOnt
       reload((n) => n + 1);
       page(0);
     } catch (e) {
-      fail(reason(e));
+      if (current()) fail(reason(e));
     } finally {
-      pending(false);
+      locked.current = false; if (current()) pending(false);
     }
   }
   const data = result?.data;
   return (
     <section className="flow-tool-section" aria-label="Dynamic object sets">
-      <header className="flow-tool-heading"><h3>Dynamic object sets</h3></header>
+      <header className="flow-tool-heading"><div><h3>Dynamic object sets</h3><p>Save a query that is re-evaluated against current objects. Preview the results, then continue in Explorer.</p></div></header>
       <div className="flow-tool-fields">
         <label>
           Filter property
@@ -552,7 +566,7 @@ function ObjectSets({ object, returnTo, onOpenExplorer }: { object: PublishedOnt
         <Button disabled={!chosen} onClick={() => execute(chosen)}>
           Run saved set
         </Button>
-        <Button disabled={!chosen || busy} onClick={() => void mutate(true)}>
+        <Button disabled={!chosen || busy} onClick={() => setConfirmDelete(true)}>
           Delete saved set
         </Button>
       </div>
@@ -610,6 +624,9 @@ function ObjectSets({ object, returnTo, onOpenExplorer }: { object: PublishedOnt
       )}
       {validationError && <p role="alert">{validationError}</p>}
       <Message text={error || saved?.error || result?.error} />
+      <Modal open={confirmDelete} title="Delete object set" okText="Delete object set" okButtonProps={{danger:true}} confirmLoading={busy} closable={!busy} maskClosable={!busy} onCancel={() => { if (!busy) setConfirmDelete(false); }} onOk={() => mutate(true)}>
+        <p>Delete <strong>{saved?.data?.items.find(item => item.id === chosen)?.name}</strong>?</p><p>This removes the saved query. Object records will be preserved.</p>
+      </Modal>
     </section>
   );
 }

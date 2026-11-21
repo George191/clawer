@@ -20,7 +20,10 @@
 .is-exploring .wb-shell { flex:1; min-height:0; overflow:hidden; }
 .is-exploring .wb-header { display:flex; flex-direction:column; height:100%; min-height:0; }
 .is-exploring .wb-line { flex:none; }
-.is-exploring .explore-analysis { flex:1; min-height:0; overflow:auto; }
+.flow-console--ontology .explorer-object-workspace.is-exploring .flow-layer-main { min-height:0; overflow:hidden; }
+.flow-console--ontology .explorer-object-workspace.is-exploring .flow-inspector { flex:1; min-height:0; overflow:hidden; }
+.is-exploring .explore-analysis { display:flex; flex:1; flex-direction:column; min-height:0; overflow:hidden; }
+.is-exploring .explore-analysis > :not(.explore-analysis__card) { flex:none; }
 .wb-header { --wb-toolbar-font-size:11px; position: relative; font-size: 13px; background:var(--ontology-panel); }
 .wb-line { display:flex; align-items:center; min-width:0; gap:8px; padding:0 12px; border-bottom:1px solid var(--ontology-control-border); }
 .wb-line button,.wb-library button { display:inline-flex; align-items:center; justify-content:center; gap:5px; min-height:28px; padding:3px 9px; border:1px solid transparent; border-radius:3px; color:var(--ontology-text); background:transparent; font:inherit; cursor:pointer; }

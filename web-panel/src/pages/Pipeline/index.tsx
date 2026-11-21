@@ -1,6 +1,5 @@
 import ExplorerFieldEditor from './ExplorerFieldEditor';
 import ExplorerFilterEditor, { normalizeFilterDepth, randomId, SortDirectionIcon, type ExplorerSort as SortCondition } from './ExplorerFilterEditor';
-import { PropertyLabel } from './PropertyTypeIcon';
 import { JsonTreeValue } from './ExplorerJsonValue';
 import { editorValue, rowChanges } from './explorerRowEditing';
 import  React,  {  useCallback,  useEffect,  useRef,  useState  }  from  'react';
@@ -31,6 +30,7 @@ import ExplorerRecordLink from './ExplorerRecordLink';
 import ExplorerRowLinks from './ExplorerRowLinks';
 import NewObjectType from './NewObjectType';
 import ExplorerTableSchema from './ExplorerTableSchema';
+import ExplorerRecordMutation, { recordMutationActions } from './ExplorerRecordMutation';
 import useExplorerErrorToast from './useExplorerErrorToast';
 import { LayoutToolbar, useResultLayout } from './ExplorerResultLayout';
 import ExplorerTableEvidence from './ExplorerTableEvidence';
@@ -575,36 +575,28 @@ const DataLayersWorkspace: React.FC = () => {
     };
     const rowActions = (row: ExplorerPreviewRow) => {
         if (!row.version) return [];
-        return [
-            ...(canEditRows ? [{ key: 'edit', label: 'Edit row', icon: <EditOutlined />, onClick: () => startRowEdit(row.key, row) }] : []),
-            ...(canDeleteRows ? [{ key: 'delete', label: 'Delete row', icon: <DeleteOutlined />, danger: true, onClick: () => {
+        return recordMutationActions({
+            edit: canEditRows ? () => startRowEdit(row.key, row) : undefined,
+            remove: canDeleteRows ? () => {
                 if (!data || !row.version || !dataRows.includes(row.record) || mutationPending.current) return;
                 setRowDetailsError('');
                 setDeleteSnapshot({ data, row: row.record, version: row.version });
-            } }] : []),
-        ];
+            } : undefined,
+            disabled: mutationLoading,
+        });
     };
     const rowMutation = (row: ExplorerPreviewRow) => {
         const deleting = deleteSnapshot?.data === data && deleteSnapshot?.row === row.record;
         const editing = editingDraft && editSnapshot.current?.data === data && editSnapshot.current?.row === row.record;
         if (!editing && !deleting) return null;
-        return <section className="flow-explorer-row-mutation" aria-label={deleting ? 'Confirm row deletion' : 'Edit selected row'}>
-            {rowDetailsError && <p role="alert" className="flow-explorer-row-error">{rowDetailsError}</p>}
-            {editing ? <form onSubmit={event => { event.preventDefault(); void saveRowEdit(); }}>
-                <div className="flow-explorer-row-fields">{data?.columns.filter(key => !Object.prototype.hasOwnProperty.call(row.identity, key)).map(key => <div key={key} className="flow-explorer-row-field"><PropertyLabel type={data.columnTypes?.[key] || 'string'}>{key}</PropertyLabel>{rowEditor(key)}</div>)}</div>
-                <footer className="flow-explorer-row-tools">
-                    <Button disabled={mutationLoading} onClick={cancelRowEdit}>Cancel edit</Button>
-                    <Button htmlType="submit" type="primary" loading={mutationLoading} disabled={loading || !canEditRows || !row.version}>Save row</Button>
-                </footer>
-            </form> : <>
-                <p>Delete this row from <strong>{tableDescription}</strong>?</p>
-                <code className="flow-explorer-row-key">{JSON.stringify(row.identity)}</code>
-                <div className="flow-explorer-row-tools">
-                    <Button danger type="primary" loading={mutationLoading} disabled={loading || !canDeleteRows || !row.version} onClick={() => removeRow(row.record)}>Confirm delete</Button>
-                    <Button disabled={mutationLoading} onClick={() => { setDeleteSnapshot(undefined); setRowDetailsError(''); }}>Cancel deletion</Button>
-                </div>
-            </>}
-        </section>;
+        return <ExplorerRecordMutation mode={editing ? 'edit' : 'delete'} title={row.title} identity={row.identity} error={rowDetailsError}
+            busy={mutationLoading} disabled={loading || (editing ? !canEditRows || rowVersion(row.record) !== editSnapshot.current?.version : !canDeleteRows || rowVersion(row.record) !== deleteSnapshot?.version)}
+            fields={editing ? data?.columns.filter(key => !Object.prototype.hasOwnProperty.call(row.identity, key)).map(key => ({
+                key, label: key, type: data.columnTypes?.[key] || 'string', value: editingDraft?.[key] ?? null,
+                onChange: value => setEditingDraft(current => current ? { ...current, [key]: value } : current),
+            })) : undefined}
+            onSubmit={editing ? saveRowEdit : () => removeRow(row.record)}
+            onCancel={editing ? cancelRowEdit : () => { if (!mutationPending.current) { setDeleteSnapshot(undefined); setRowDetailsError(''); } }} />;
     };
     const appliedSort = appliedQuery.sorts[0];
     const toggleHeaderSort = (field: string) => {
@@ -1242,7 +1234,7 @@ renderRelationships: (row, page) => <ExplorerRowLinks schema={selectedSchema} ta
 rowActions: rowActions,
 renderMutation: rowMutation,
 onRefresh: () => setPreviewRevision(value => value + 1),
-footer: previewPage && <ExplorerResultsFooter offset={previewPage.offset} rowCount={previewPage.result.rowCount} pageSize={pageSize} loading={loading}
+footer: previewPage && <ExplorerResultsFooter offset={previewPage.offset} rowCount={previewPage.result.rowCount} pageSize={pageSize} loading={loading} locked={!!editingRowKey || !!deleteSnapshot || mutationLoading}
  canPageFurther={previewPage.offset === (pageNumber - 1) * pageSize && previewPage.limit === pageSize && previewPage.result.canPageFurther}
  onPageSize={size => { if (canChangePreview()) { setPageSize(size); setPageNumber(1); } }}
  onPrevious={() => { if (canChangePreview()) setPageNumber(pageNumber - 1); }} onNext={() => { if (canChangePreview()) setPageNumber(pageNumber + 1); }}

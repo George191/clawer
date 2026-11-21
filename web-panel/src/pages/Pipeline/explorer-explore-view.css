@@ -17,7 +17,8 @@
 .explore-analysis__summary > div:first-child { padding-left:0; border:0; }
 .explore-analysis__summary dt { margin:0 0 5px; color:var(--ontology-muted); font-size:11px; }
 .explore-analysis__summary dd { margin:0; font-size:19px; line-height:24px; font-weight:500; font-variant-numeric:tabular-nums; }
-.explore-analysis__card { border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-panel); overflow:hidden; }
+.explore-analysis__card { display:flex; flex:1; flex-direction:column; min-height:0; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-panel); overflow:hidden; }
+.explore-analysis__card > :not(.explore-analysis__distribution,.explore-analysis__empty) { flex:none; }
 .explore-analysis__card > header { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:46px; padding:8px 14px; border-bottom:1px solid var(--ontology-control-border); }
 .explore-analysis__card > header > div { display:flex; align-items:center; gap:8px; min-width:0; }
 .explore-analysis__card h3 { overflow:hidden; margin:0; color:inherit; font-size:13px; font-weight:500; text-overflow:ellipsis; white-space:nowrap; }
@@ -33,7 +34,7 @@
 .explore-analysis__controls button[aria-pressed=true] { border-color:color-mix(in srgb,var(--ui-action-bg) 65%,var(--ontology-control-border)); background:color-mix(in srgb,var(--ui-action-bg) 12%,var(--ontology-panel)); color:var(--ui-action-link); }
 .explore-analysis__range { display:flex; flex-wrap:wrap; gap:6px 20px; margin:0; padding:0 14px 8px; color:var(--ontology-muted); font-size:11px; }
 .explore-analysis__range strong { margin-left:5px; color:var(--ontology-text); font-weight:500; font-variant-numeric:tabular-nums; }
-.explore-analysis__distribution { max-height:420px; padding:0 10px 6px; overflow:auto; overscroll-behavior:contain; }
+.explore-analysis__distribution { flex:1; min-height:0; padding:0 10px 6px; overflow:auto; overscroll-behavior:contain; }
 .explore-analysis__columns,.explore-analysis__value { display:grid; grid-template-columns:minmax(100px,1fr) minmax(80px,2fr) 68px 60px; align-items:center; gap:12px; width:100%; min-width:0; padding:7px 4px; text-align:left; }
 .explore-analysis__columns { position:sticky; top:0; z-index:1; background:var(--ontology-panel); color:var(--ontology-muted); font-size:10px; }
 .explore-analysis__columns > :nth-last-child(-n+2),.explore-analysis__value > :nth-last-child(-n+2) { text-align:right; }
@@ -50,7 +51,7 @@
 .explore-analysis__footer > div { display:flex; gap:14px; }
 .explore-analysis__footer button { padding:0; border:0; background:transparent; color:var(--ui-action-link); font-size:11px; }
 .explore-analysis__footer button:hover { text-decoration:underline; }
-.explore-analysis__empty { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; min-height:180px; padding:24px; color:var(--ontology-muted); text-align:center; }
+.explore-analysis__empty { display:flex; flex:1; flex-direction:column; align-items:center; justify-content:center; gap:10px; min-height:0; padding:24px; overflow:auto; color:var(--ontology-muted); text-align:center; }
 .explore-analysis__empty strong { color:var(--ontology-text); font-size:13px; font-weight:500; }
 .explore-analysis__empty p { max-width:480px; margin:0; line-height:1.6; font-size:12px; }
 @media(max-width:650px) {

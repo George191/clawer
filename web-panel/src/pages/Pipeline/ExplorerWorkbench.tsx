@@ -69,18 +69,18 @@ export function ExplorerResults({ results, children, viewportRef, selectionKey }
   return <div className="flow-inspector-body" ref={viewportRef}>{children}{results && <ExplorerSelection key={selectionKey} {...results} />}</div>;
 }
 
-export function ExplorerResultsFooter({ offset, rowCount, pageSize, loading, canPageFurther, onPageSize, onPrevious, onNext, notices }: {
-  offset: number; rowCount: number; pageSize: number; loading: boolean; canPageFurther: boolean;
+export function ExplorerResultsFooter({ offset, rowCount, pageSize, loading, locked = false, canPageFurther, onPageSize, onPrevious, onNext, notices }: {
+  offset: number; rowCount: number; pageSize: number; loading: boolean; locked?: boolean; canPageFurther: boolean;
   onPageSize: (size: number) => void; onPrevious: () => void; onNext: () => void; notices?: ReactNode;
 }) {
   return <footer className="flow-preview-pager">
     {notices && <div className="flow-preview-pager-notices" role="status">{notices}</div>}
     <nav aria-label="Preview pagination"><span className="flow-preview-range" aria-live="polite">{loading ? 'Loading preview…' : rowCount
       ? `Rows ${(offset + 1).toLocaleString('en-US')}–${(offset + rowCount).toLocaleString('en-US')}` : 'No rows on this page'}</span>
-      <div className="flow-preview-page-controls"><label>Rows per page <select aria-label="Rows per page" value={pageSize} disabled={loading} onChange={event => onPageSize(Number(event.target.value))}>
+      <div className="flow-preview-page-controls"><label>Rows per page <select aria-label="Rows per page" value={pageSize} disabled={loading || locked} onChange={event => { if (!loading && !locked) onPageSize(Number(event.target.value)); }}>
         {[10, 20, 50].map(count => <option key={count} value={count}>{count}</option>)}
-      </select></label><Button size="small" disabled={loading || !offset} onClick={onPrevious}>Previous</Button>
-        <Button size="small" disabled={loading || !canPageFurther} onClick={onNext}>Next</Button></div>
+      </select></label><Button size="small" disabled={loading || locked || !offset} onClick={onPrevious}>Previous</Button>
+        <Button size="small" disabled={loading || locked || !canPageFurther} onClick={onNext}>Next</Button></div>
     </nav>
   </footer>;
 }

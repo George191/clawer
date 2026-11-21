@@ -1,15 +1,15 @@
 import { Button } from '@/components/ui';
 import type { BusinessFunction, FunctionAssignment, FunctionOperand, SemanticDefinition } from '../../services/ontology';
 
-export default function OntologyFunctionEditor({definition, disabled, change}: {
-  definition: SemanticDefinition; disabled: boolean; change: (next: BusinessFunction[]) => void;
+export default function OntologyFunctionEditor({definition, disabled, change, embedded = false}: {
+  definition: SemanticDefinition; disabled: boolean; embedded?: boolean; change: (next: BusinessFunction[]) => void;
 }) {
   const functions = definition.functions ?? [];
   const fields = definition.properties.filter(p => definition.actions.some(a => a.kind === 'modify' && a.fields.includes(p.id)));
   const first = (): FunctionAssignment => ({field: fields[0]?.id ?? '', operation: 'set', operands: [{parameter: 'value'}]});
   const update = (index: number, patch: Partial<BusinessFunction>) =>
     change(functions.map((fn, i) => i === index ? {...fn, ...patch} : fn));
-  return <details><summary>Business functions</summary><fieldset disabled={disabled}>
+  const content = <fieldset disabled={disabled}>
     {functions.map((fn, i) => <fieldset key={i}><legend>{fn.name || 'New function'}</legend>
       <label>Function identifier<input value={fn.key} maxLength={63} onChange={e => update(i,{key:e.target.value})} /></label>
       <label>Function name<input value={fn.name} maxLength={100} onChange={e => update(i,{name:e.target.value})} /></label>
@@ -43,6 +43,7 @@ export default function OntologyFunctionEditor({definition, disabled, change}: {
       <Button size="small" onClick={() => change(functions.filter((_,j) => j !== i))}>Remove function</Button>
     </fieldset>)}
     <Button disabled={!fields.length || functions.length >= 24} onClick={() => change([...functions,{key:'',name:'',assignments:[first()]}])}>Add function</Button>
-    {!fields.length && <p>Enable Modify and select an editable property to define a function.</p>}
-  </fieldset></details>;
+    {!fields.length && <p>Enable Edit and select an editable property to define a function.</p>}
+  </fieldset>;
+  return embedded ? content : <details><summary>Business functions</summary>{content}</details>;
 }

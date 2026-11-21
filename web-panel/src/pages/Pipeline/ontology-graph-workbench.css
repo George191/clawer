@@ -1,0 +1,22 @@
+.ontology-graph-workbench > .ontology-tool-tabs { padding:0; margin-bottom:10px; }
+.ontology-graph-catalog-heading { padding:9px 12px; border-bottom:1px solid var(--ontology-border); color:var(--ontology-muted); font-size:11px; }
+.ontology-graph-workbench .ontology-graph-pages { display:flex; flex:none; justify-content:space-between; gap:6px; padding:8px; }
+.ontology-graph-workbench .ontology-tool-form > :is(form,div) { min-width:0; }
+.ontology-graph-workbench .ontology-tool-detail-header span { color:var(--ontology-muted); font-size:11px; }
+.ontology-graph-workbench label { display:grid; gap:5px; font-size:12px; }
+.ontology-graph-workbench :is(select,input:not([type=checkbox])) { box-sizing:border-box; width:100%; min-width:0; min-height:30px; padding:5px 8px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-bg); color:var(--ontology-text); font:inherit; }
+.ontology-graph-workbench .flow-tool-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.ontology-graph-workbench .flow-tool-fields > :is(label,.ui-btn) { width:100%; min-width:0; max-width:none; }
+.ontology-graph-workbench .ontology-tool-form > div > label { margin-bottom:10px; }
+.ontology-graph-workbench .ontology-graph-neighbors { display:grid; gap:0; margin:12px 0; padding:0; list-style:none; }
+.ontology-graph-neighbors > li { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 0; border-bottom:1px solid var(--ontology-border); }
+.ontology-graph-neighbors > li > .ui-btn:first-child { justify-content:flex-start; min-width:0; max-width:100%; overflow:hidden; background:transparent; border-color:transparent; text-align:left; }
+.ontology-graph-neighbors > li > .ui-btn:last-child:not(:first-child) { flex:none; color:var(--ui-error); font-size:11px; }
+.ontology-graph-trail { display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--ontology-muted); font-size:11px; }
+.ontology-graph-trail > span { min-width:0; overflow-wrap:anywhere; }
+.ontology-graph-set-body { flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; }
+.ontology-graph-workbench .flow-tool-section { border:0; padding:0; background:transparent; }
+.ontology-graph-workbench .flow-tool-heading p { margin-top:4px; font-size:11px; }
+.ontology-graph-workbench .flow-set-save { display:flex; align-items:flex-end; gap:10px; padding:12px 0; border:0; border-top:1px solid var(--ontology-border); background:transparent; }
+.ontology-graph-workbench .flow-tool-section [aria-label="Object set results"] { padding:12px; border:1px solid var(--ontology-border); border-radius:3px; }
+@media(max-width:640px) { .ontology-graph-workbench .flow-tool-fields { grid-template-columns:minmax(0,1fr); } }

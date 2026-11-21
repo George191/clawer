@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Checkbox, Input, Modal, message, type MenuItem } from '@/components/ui';
-import { BranchesOutlined, CodeOutlined, DeleteOutlined, DownloadOutlined, EditOutlined, HistoryOutlined, PlusOutlined, SyncOutlined, UndoOutlined } from '@/components/ui/icons';
+import { BranchesOutlined, CodeOutlined, DeleteOutlined, DownloadOutlined, HistoryOutlined, PlusOutlined, SyncOutlined } from '@/components/ui/icons';
 import { getSessionState } from '../../services/session';
 import {
-  listOntologyRecords, listOntologyRecordHistory, ontologyError as describe, submitOntologyAction, undoOntologyEdit,
-  type OntologyRecord, type OntologyRecordHistoryPage, type OntologyRecordPage, type PublishedOntologyType, type SemanticAction,
+  ontologyError as describe, submitOntologyAction,
+  type OntologyRecord, type OntologyRecordPage, type PublishedOntologyType, type SemanticAction,
 } from '../../services/ontology';
 import type { ExplorerToolAction } from './ExplorerWorkbenchHeader';
 import OntologyGraph from './OntologyGraph';
@@ -13,108 +13,17 @@ import OntologyRevisions from './OntologyRevisions';
 import OntologySdkDownload from './OntologySdkDownload';
 import OntologyTransactions from './OntologyTransactions';
 import { parsePropertyValue } from './ontologyPropertyValue';
-import useExplorerErrorToast from './useExplorerErrorToast';
+import DeletedObjects, { RecordHistory } from './PublishedDeletedObjects';
+import ExplorerRecordMutation, { recordMutationActions } from './ExplorerRecordMutation';
 import './published-tools.css';
 import './explorer-resource-tools.css';
 import './published-results.css';
 import './explorer-history.css';
 
-const pageSize = 25;
-const maxOffset = 100_000;
 type ActionInputs = Record<string, { text: string; isNull: boolean }>;
 type Operation = { kind: SemanticAction['kind']; fields: string[]; record?: OntologyRecord; initialInputs: ActionInputs };
-type Props = { objectType?: PublishedOntologyType; actions: NonNullable<OntologyRecordPage['actions']>; record?: OntologyRecord; returnTo: string; onChanged: () => void; busy?: boolean };
+type Props = { objectType?: PublishedOntologyType; actions: NonNullable<OntologyRecordPage['actions']>; record?: OntologyRecord; returnTo: string; onChanged: (kind?: SemanticAction['kind']) => void; busy?: boolean };
 const title = (value: unknown) => value == null ? 'Untitled object' : typeof value === 'object' ? JSON.stringify(value) : String(value);
-
-function historyValue(delta: { before?: unknown; after?: unknown }, side: 'before' | 'after') {
-  if (!Object.prototype.hasOwnProperty.call(delta, side)) return <span className="explorer-history-unset">Not set</span>;
-  const value = delta[side];
-  return value === null ? <span className="explorer-history-unset">null</span>
-    : typeof value === 'object' ? <code>{JSON.stringify(value, null, 2)}</code> : <span>{String(value)}</span>;
-}
-
-function RecordHistory({ objectType, recordId, onChanged }: { objectType: string; recordId: string; onChanged: () => void }) {
-  const [offset, setOffset] = useState(0);
-  const [page, setPage] = useState<OntologyRecordHistoryPage>();
-  const [error, setError] = useState('');
-  const [version, setVersion] = useState(0);
-  const [undoing, setUndoing] = useState(false);
-  const active = useRef(true);
-  const identity = useRef(getSessionState().identity).current;
-  const current = () => active.current && identity === getSessionState().identity;
-  useExplorerErrorToast(error, 'Unable to load action history', () => setVersion(value => value + 1));
-  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
-  useEffect(() => {
-    const controller = new AbortController();
-    setPage(undefined); setError('');
-    listOntologyRecordHistory(objectType, recordId, pageSize, offset, controller.signal).then(
-      result => { if (!controller.signal.aborted && current()) setPage(result); },
-      failure => { if (!controller.signal.aborted && current()) setError(describe(failure, 'Unable to load this record’s action history.')); },
-    );
-    return () => controller.abort();
-  }, [objectType, recordId, offset, version, identity]);
-  return <section className="explorer-history" aria-label="Record action history">
-    <header><HistoryOutlined /><h4>Edit history</h4></header>
-    {error ? null
-      : !page ? <p role="status">Loading action history…</p> : <>
-        {page.items.length ? <ol className="explorer-history-events">{page.items.map(event => <li key={event.revision}>
-          <span className="explorer-history-marker" aria-hidden="true">{event.kind === 'modify' ? <EditOutlined /> : event.kind === 'delete' ? <DeleteOutlined /> : <PlusOutlined />}</span>
-          <details open><summary><span><strong>{{ create: 'Created', modify: 'Modified', delete: 'Deleted' }[event.kind]}</strong><small>Revision {event.revision}</small></span>
-            <time dateTime={event.createdAt}>{new Date(event.createdAt).toLocaleString()}</time></summary>
-            {event.changes && Object.keys(event.changes).length ? <div className="explorer-history-changes"><table><thead><tr><th>Property</th><th>Previous value</th><th>Updated value</th></tr></thead>
-              <tbody>{Object.entries(event.changes).map(([field, delta]) => <tr key={field}><th scope="row">{field}</th><td>{historyValue(delta, 'before')}</td><td>{historyValue(delta, 'after')}</td></tr>)}</tbody></table></div>
-              : <p>{event.changes ? 'No readable property changes.' : 'Property changes are restricted by the current access policy.'}</p>}
-            {event.canUndo && <footer><Button icon={<UndoOutlined />} disabled={undoing} size="small" onClick={async () => {
-              if (!current() || undoing) return;
-              setUndoing(true);
-              try { await undoOntologyEdit(objectType, recordId, event.revision); if (current()) { message.success('Edit undone.'); setVersion(value => value + 1); onChanged(); } }
-              catch (failure) { if (current()) message.error({ content: 'Unable to undo this edit', description: describe(failure, 'Unable to undo this edit.'), className: 'explorer-toast' }); }
-              finally { if (current()) setUndoing(false); }
-            }}>Undo edit</Button></footer>}
-          </details>
-        </li>)}</ol> : <p>No action history on this page.</p>}
-        {(offset > 0 || page.hasMore) && <footer className="flow-published-results-pagination" aria-label="Action history pagination"><div>
-          <Button size="small" disabled={!offset || undoing} onClick={() => setOffset(Math.max(0, offset - pageSize))}>Previous page</Button>
-          <Button size="small" disabled={!page.hasMore || offset + pageSize > maxOffset || undoing} onClick={() => setOffset(offset + pageSize)}>Next page</Button>
-        </div></footer>}
-      </>}
-  </section>;
-}
-
-function DeletedObjects({ objectType, onChanged }: { objectType: PublishedOntologyType; onChanged: () => void }) {
-  const [offset, setOffset] = useState(0);
-  const [version, setVersion] = useState(0);
-  const [page, setPage] = useState<OntologyRecordPage>();
-  const [error, setError] = useState('');
-  const [selected, setSelected] = useState<OntologyRecord>();
-  useExplorerErrorToast(error, 'Unable to load deleted objects', () => setVersion(value => value + 1));
-  useEffect(() => {
-    const controller = new AbortController();
-    const identity = getSessionState().identity;
-    const current = () => !controller.signal.aborted && identity === getSessionState().identity;
-    setPage(undefined); setError('');
-    listOntologyRecords(objectType.id, pageSize, offset, true, controller.signal).then(
-      result => { if (current()) setPage(result); },
-      failure => { if (current()) setError(describe(failure, 'Unable to load deleted objects.')); },
-    );
-    return () => controller.abort();
-  }, [objectType.id, offset, version]);
-  return <section className="flow-tool-section" aria-label="Deleted objects">
-    {error ? null
-      : !page ? <p role="status">Loading deleted objects…</p>
-        : page.items.length ? <ul className="flow-published-deleted-objects">{page.items.map(record => <li key={record.id}>
-          <Button size="small" type="text" aria-pressed={selected?.id === record.id} onClick={() => setSelected(record)}>{title(record.title)}</Button>
-          <span>Revision {record.revision}</span>
-        </li>)}</ul> : <p>No deleted objects are available to this account.</p>}
-    {(offset > 0 || page?.hasMore) && <footer className="flow-published-results-pagination" aria-label="Deleted objects pagination"><div>
-      <Button size="small" disabled={!offset || !page} onClick={() => { setSelected(undefined); setOffset(Math.max(0, offset - pageSize)); }}>Previous page</Button>
-      <Button size="small" disabled={!page?.hasMore || offset + pageSize > maxOffset} onClick={() => { setSelected(undefined); setOffset(offset + pageSize); }}>Next page</Button>
-    </div></footer>}
-    {selected?.id && <RecordHistory key={selected.id} objectType={objectType.id} recordId={selected.id} onChanged={() => {
-      setSelected(undefined); setVersion(value => value + 1); onChanged();
-    }} />}
-  </section>;
-}
 
 export function usePublishedObjectTools({ objectType, actions, record, returnTo, onChanged, busy = false }: Props) {
   const [tool, setTool] = useState('');
@@ -128,7 +37,10 @@ export function usePublishedObjectTools({ objectType, actions, record, returnTo,
   const typeId = useRef(objectType?.id);
   typeId.current = objectType?.id;
   const identity = useRef(getSessionState().identity).current;
-  const current = () => active.current && identity === getSessionState().identity;
+  const current = () => {
+    const session = getSessionState();
+    return active.current && session.authenticated && !session.locked && identity === session.identity;
+  };
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   const native = objectType?.definition.source.mode === 'none';
   const startAction = (kind: SemanticAction['kind'], fields: string[], selected?: OntologyRecord) => {
@@ -142,7 +54,7 @@ export function usePublishedObjectTools({ objectType, actions, record, returnTo,
     setInputs(initialInputs); setOperation({ kind, fields, record: selected, initialInputs });
   };
   const applyAction = async () => {
-    if (!objectType || !current() || !operation || locked.current) return;
+    if (!objectType || !current() || !operation || busy || locked.current) return;
     const definitionId = objectType.id;
     locked.current = true; setPending(true); setError('');
     let submitted = false;
@@ -155,12 +67,13 @@ export function usePublishedObjectTools({ objectType, actions, record, returnTo,
         if (!input) { if (operation.kind === 'create' && property.required) throw new Error(property.name + ' is required.'); continue; }
         const initial = operation.initialInputs[id];
         if (initial && input.text === initial.text && input.isNull === initial.isNull) continue;
+        if (input.isNull && property.required) throw new Error(property.name + ' is required.');
         try { values[id] = input.isNull ? null : parsePropertyValue(input.text, property.type); }
         catch (failure) { throw new Error(property.name + ': ' + (failure instanceof Error ? failure.message : 'invalid value')); }
       }
       const selected = operation.record;
       if (operation.kind !== 'create' && (!selected?.id || selected.revision == null)) throw new Error('This record cannot be changed.');
-      if (operation.kind === 'modify' && !Object.keys(values).length) throw new Error('Change at least one property.');
+      if (operation.kind === 'modify' && !Object.keys(values).length) { setOperation(undefined); return; }
       submitted = true;
       await submitOntologyAction(objectType.id, operation.kind,
         operation.kind === 'create' ? { values } : operation.kind === 'modify'
@@ -168,12 +81,12 @@ export function usePublishedObjectTools({ objectType, actions, record, returnTo,
           : { recordId: selected!.id!, expectedRevision: selected!.revision! });
       if (current() && typeId.current === definitionId) {
         message.success({ create: 'Object created.', modify: 'Object updated.', delete: 'Object deleted.' }[operation.kind]);
-        setOperation(undefined); onChanged();
+        setOperation(undefined); onChanged(operation.kind);
       }
     } catch (failure) { if (current()) {
       const detail = describe(failure, failure instanceof Error ? failure.message : 'The action failed.');
       if (!submitted) setError(detail);
-      message.error({ content: 'Object action failed', description: detail, className: 'explorer-toast' });
+      else if ((failure as { code?: string })?.code !== 'ERR_CANCELED') message.error({ content: 'Object action failed', description: detail, className: 'explorer-toast' });
     } }
     finally { locked.current = false; if (current()) setPending(false); }
   };
@@ -189,22 +102,38 @@ export function usePublishedObjectTools({ objectType, actions, record, returnTo,
   ] : [];
   const create = native ? actions.find(action => action.kind === 'create') : undefined;
   const creating = operation?.kind === 'create';
-  const actionsForRecord = (selected?: OntologyRecord): MenuItem[] => native && selected?.id ? actions.filter(action => action.kind !== 'create').map(action => ({
-    key: action.kind, label: action.kind === 'modify' ? 'Modify' : 'Delete', danger: action.kind === 'delete',
-    icon: action.kind === 'modify' ? <EditOutlined /> : <DeleteOutlined />,
-    disabled: busy || pending, onClick: () => startAction(action.kind, action.fields, selected),
-  })) : [];
+  const actionsForRecord = (selected?: OntologyRecord): MenuItem[] => {
+    if (!native || !selected?.id || selected.revision == null) return [];
+    const edit = actions.find(action => action.kind === 'modify');
+    const remove = actions.find(action => action.kind === 'delete');
+    return recordMutationActions({
+      edit: edit ? () => startAction('modify', edit.fields, selected) : undefined,
+      remove: remove ? () => startAction('delete', remove.fields, selected) : undefined,
+      disabled: busy || pending,
+    });
+  };
+  const renderMutation = (selected?: OntologyRecord) => {
+    if (!objectType || !selected?.id || !operation || operation.kind === 'create' || operation.record?.id !== selected.id) return null;
+    return <ExplorerRecordMutation mode={operation.kind === 'modify' ? 'edit' : 'delete'} title={title(selected.title)} identity={{ $recordId: selected.id }}
+      error={error} busy={pending} disabled={busy} fields={operation.kind === 'modify' ? operation.fields.map(id => {
+        const property = objectType.definition.properties.find(item => item.id === id);
+        const input = inputs[id];
+        return { key: id, label: property?.name || id, type: property?.type || 'string', value: input?.text || '',
+          onChange: (value: string | null) => setInputs(previous => ({ ...previous, [id]: { text: value ?? '', isNull: value === null } })),
+          nullControl: !property?.required ? { checked: !!input?.isNull, onChange: (isNull: boolean) => setInputs(previous => ({ ...previous, [id]: { text: previous[id]?.text || '', isNull } })) } : undefined };
+      }) : undefined} onSubmit={applyAction} onCancel={() => { if (!locked.current) { setOperation(undefined); setError(''); } }} />;
+  };
   const renderHistory = (selected?: OntologyRecord) => objectType && native && selected?.id
     ? <RecordHistory key={selected.id} objectType={objectType.id} recordId={selected.id} onChanged={onChanged} /> : null;
   return {
     tools,
     createButton: create ? <Button size="small" className="wb-create-object" icon={<PlusOutlined />} disabled={busy || pending} onClick={() => startAction('create', create.fields)}>Create object</Button> : null,
-    actionsForRecord, renderHistory,
+    actionsForRecord, renderHistory, renderMutation, mutationOpen: !!operation && !creating,
     dialogs: objectType ? <>
       <Modal open={!!tool} centered width={1040} className="flow-surface-modal flow-published-dialog explorer-resource-dialog" title={tool} onCancel={() => setTool('')} footer={<Button onClick={() => setTool('')}>Close</Button>}>
         <div className="explorer-resource-context"><strong>{objectType.definition.name}</strong><code>{objectType.definition.id}</code></div>
         <div className="flow-ontology-tool-content" role="region" aria-label={tool || undefined} tabIndex={0}>
-          {tool === 'Relationships and sets' && <OntologyGraph key={objectType.id} objectType={objectType} recordId={record?.id || undefined} returnTo={returnTo} onOpenExplorer={() => setTool('')} />}
+          {tool === 'Relationships and sets' && <OntologyGraph key={objectType.id} objectType={objectType} recordId={record?.id || undefined} recordTitle={record?.title == null ? undefined : String(record.title)} returnTo={returnTo} onOpenExplorer={() => setTool('')} />}
           {tool === 'Transactions' && <OntologyTransactions key={objectType.id} objectType={objectType} onCommitted={onChanged} />}
           {tool === 'Functions' && <OntologyFunctions key={objectType.id} id={objectType.id} record={record} onCommitted={name => { message.success('Committed: ' + name); onChanged(); }} />}
           {tool === 'Model revisions' && <OntologyRevisions key={objectType.id} showTitle={false} definitionId={objectType.id} onMerged={onChanged} />}
@@ -212,8 +141,7 @@ export function usePublishedObjectTools({ objectType, actions, record, returnTo,
         </div>
       </Modal>
       <OntologySdkDownload key={objectType.id} definitionId={objectType.id} open={sdkOpen} onClose={() => setSdkOpen(false)} />
-      {operation && <Modal open centered width={creating ? 560 : 520} className={`flow-surface-modal flow-published-dialog${creating ? ' published-create-object-dialog' : ''}`} title={operation.kind === 'create' ? 'Create object' : operation.kind === 'modify' ? 'Modify object' : 'Delete object'} okText={operation.kind === 'create' ? 'Create object' : operation.kind === 'delete' ? 'Delete object' : 'Submit action'} onOk={applyAction} onCancel={() => { if (!locked.current) setOperation(undefined); }} confirmLoading={pending} maskClosable={!pending} closable={!pending} keyboard={!pending}>
-        {creating ? <>
+      {creating && operation && <Modal open centered width={560} className="flow-surface-modal flow-published-dialog published-create-object-dialog" title="Create object" okText="Create object" onOk={applyAction} onCancel={() => { if (!locked.current) setOperation(undefined); }} confirmLoading={pending} maskClosable={!pending} closable={!pending} keyboard={!pending}>
           <div className="published-create-object-context"><strong>{objectType.definition.name}</strong><p>Enter the property values for the new object.</p></div>
           {error && <p role="alert" className="flow-create-error">{error}</p>}
           <div className="published-create-object-fields" role="group" aria-label="Object properties">
@@ -232,16 +160,6 @@ export function usePublishedObjectTools({ objectType, actions, record, returnTo,
               </div>;
             })}
           </div>
-        </> : <>
-        {error && <p role="alert" className="flow-create-error">{error}</p>}
-        {operation.kind === 'delete' && <p>Delete this object record? The source table, if any, is not modified.</p>}
-        {operation.fields.map(id => {
-          const property = objectType.definition.properties.find(item => item.id === id);
-          const input = inputs[id];
-          return <div key={id} className="flow-semantic-config"><label className="flow-create-field"><span>{property?.name || id} ({property?.type || 'value'})</span><Input aria-label={property?.name || id} value={input?.text || ''} disabled={pending || input?.isNull} onChange={event => { const text = event.target.value; setInputs(previous => ({ ...previous, [id]: { text, isNull: false } })); }} /></label>
-            {!property?.required && <Checkbox checked={!!input?.isNull} disabled={pending} onChange={event => { const isNull = event.target.checked; setInputs(previous => ({ ...previous, [id]: { text: previous[id]?.text || '', isNull } })); }}>Set to null</Checkbox>}</div>;
-        })}
-        </>}
       </Modal>}
     </> : null,
   };

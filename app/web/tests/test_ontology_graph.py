@@ -202,12 +202,26 @@ async def test_bidirectional_relationships_project_permissions_record_policy_and
         await s.commit()
         out = await graph.neighbors(s, g.reader, rel, g.r[0][0], "outgoing", 10, 0)
         assert [link["linkId"] for link in out["items"]] == [first]
+        assert out["items"][0]["canUnlink"] is False
         assert "secret" not in out["items"][0]["record"].properties
         inc = await graph.neighbors(s, g.reader, rel, g.r[1][0], "incoming", 10, 0)
         assert inc["items"][0]["record"].id == g.r[0][0]
+        assert inc["items"][0]["linkId"] == first
+        assert inc["items"][0]["canUnlink"] is False
+        for direction, record_id, neighbor in (
+            ("outgoing", g.r[0][0], g.r[1][0]),
+            ("incoming", g.r[1][0], g.r[0][0]),
+        ):
+            managed = await graph.neighbors(s, g.owner, rel, record_id, direction, 10, 0)
+            item = next(item for item in managed["items"] if item["record"].id == neighbor)
+            assert item["linkId"] == first and item["canUnlink"] is True
         with pytest.raises(HTTPException) as denied:
             await graph.neighbors(s, g.reader, rel, g.r[1][2], "incoming", 10, 0)
         assert denied.value.status_code == 404
+        with pytest.raises(HTTPException) as denied:
+            await edge(g.r[1][0], False, first, actor=g.reader)
+        assert denied.value.status_code == 403
+        await s.rollback()
         await edge(g.r[1][0], False, first)
         fresh = await edge(g.r[1][0])
         assert fresh != first

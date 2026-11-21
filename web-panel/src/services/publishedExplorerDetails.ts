@@ -20,7 +20,8 @@ export async function fetchPublishedFile(definitionId: string, key: Record<strin
 }
 
 export type PublishedRelationship = LinkType & { direction: 'incoming' | 'outgoing'; targetDefinitionId: string };
-export type PublishedRelationships = { relations: PublishedRelationship[]; items: OntologyRecord[]; selected?: string; hasMore: boolean; offset: number };
+export type PublishedLinkedRecord = OntologyRecord & { id: string; linkId: string; canUnlink: boolean };
+export type PublishedRelationships = { relations: PublishedRelationship[]; items: PublishedLinkedRecord[]; selected?: string; hasMore: boolean; offset: number };
 export async function fetchPublishedRelationships(definitionId: string, recordId: string, relation: string | undefined, offset: number, signal: AbortSignal): Promise<PublishedRelationships> {
   const types: LinkType[] = [];
   let more = true;
@@ -35,5 +36,13 @@ export async function fetchPublishedRelationships(definitionId: string, recordId
   const selected = relations.find(item => item.id + ':' + item.direction === relation) ?? (relation ? undefined : relations[0]);
   if (!selected) return { relations, items: [], hasMore: false, offset };
   const page = await graphRequest<Page<Neighbor>>('get', '/link-types/' + selected.id + '/records/' + recordId + '/neighbors', { params: { direction: selected.direction, limit: 10, offset }, signal });
-  return { relations, items: page.items.map(item => item.record), selected: selected.id + ':' + selected.direction, hasMore: page.hasMore, offset };
+  return { relations, items: page.items.map(item => ({ ...item.record, linkId: item.linkId, canUnlink: item.canUnlink })), selected: selected.id + ':' + selected.direction, hasMore: page.hasMore, offset };
 }
+
+export const unlinkPublishedRelationship = (relation: PublishedRelationship, recordId: string, linked: PublishedLinkedRecord, signal?: AbortSignal) =>
+  graphRequest<void>('delete', '/link-types/' + encodeURIComponent(relation.id) + '/links/' + encodeURIComponent(linked.linkId), {
+    params: {
+      sourceRecordId: relation.direction === 'outgoing' ? recordId : linked.id,
+      targetRecordId: relation.direction === 'outgoing' ? linked.id : recordId,
+    }, signal,
+  });

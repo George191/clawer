@@ -147,7 +147,7 @@ async def main():
         assert "exploration" not in parse_qs(urlsplit(page.url).query)
 
         await preview.get_by_role("button", name="Actions").click()
-        await page.get_by_role("menuitem", name="Edit row").click()
+        await page.get_by_role("menuitem", name="Edit", exact=True).click()
         await preview.get_by_role("textbox", name="Edit name").fill("Unsaved tab draft")
         close_original = tabs.get_by_role("button", name="Close " + table, exact=True)
         await expect(close_original).to_be_disabled()
@@ -156,7 +156,7 @@ async def main():
         await expect(close_original).to_be_disabled()
         await tabs.get_by_role("button", name="Close Exploration 2", exact=True).click()
         await expect(preview.get_by_role("textbox", name="Edit name")).to_have_value("Unsaved tab draft")
-        await preview.get_by_role("button", name="Cancel edit", exact=True).click()
+        await preview.get_by_role("button", name="Cancel", exact=True).click()
         await expect(close_original).to_be_enabled()
 
         # The surviving tab still deep-links its own resource on a reload.

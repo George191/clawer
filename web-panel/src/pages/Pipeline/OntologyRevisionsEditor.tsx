@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Button, Checkbox, Input, Select } from '@/components/ui';
 import type { OntologyPrincipal, Principal, SemanticAction, SemanticDefinition, SemanticProperty } from '../../services/ontology';
 import OntologyMarkingsEditor from './OntologyMarkingsEditor';
@@ -23,6 +24,8 @@ type Props = {
 };
 
 export default function OntologyRevisionsEditor({ initial, definition, principals, onPrincipalSearch, onChange, disabled }: Props) {
+  const [section, setSection] = useState('general');
+  const sections = [{id: 'general', label: 'General'}, {id: 'properties', label: 'Properties', count: definition.properties.length}, ...(definition.source.mode === 'none' ? [{id: 'actions', label: 'Actions', count: definition.actions.length}, {id: 'functions', label: 'Functions', count: (definition.functions ?? []).length}] : []), {id: 'security', label: 'Security'}];
   const change = (values: Partial<SemanticDefinition>) => onChange({ ...definition, ...values });
   const projectPrincipals = principals.map(principal => ({ value: principalKey(principal), label: principal.name + ' · ' + principal.kind }));
   const primary = new Set(definition.primaryKey);
@@ -57,6 +60,10 @@ export default function OntologyRevisionsEditor({ initial, definition, principal
   );
 
   return <div className="ontology-revisions__editor">
+    <nav className="ontology-revisions__sections" aria-label="Proposal sections">{sections.map(item => <button type="button" key={item.id} aria-pressed={section === item.id} disabled={disabled} onClick={() => setSection(item.id)}>{item.label}{item.count != null && <span>{item.count}</span>}</button>)}</nav>
+    <section className="ontology-revisions__section" aria-label={sections.find(item => item.id === section)?.label}>
+    {section === 'general' && <>
+      <header><h4>Object type details</h4><p>Define how this object type appears throughout the ontology.</p></header>
     <div className="flow-create-grid">
       <label className="flow-create-field"><span>Display name</span><Input maxLength={120} value={definition.name} disabled={disabled} onChange={event => change({ name: event.target.value })} /></label>
       <label className="flow-create-field"><span>Plural display name</span><Input maxLength={120} value={definition.pluralName} disabled={disabled} onChange={event => change({ pluralName: event.target.value })} /></label>
@@ -65,9 +72,10 @@ export default function OntologyRevisionsEditor({ initial, definition, principal
     <label className="flow-create-field"><span>Description</span><Input.TextArea maxLength={4000} rows={3} value={definition.description} disabled={disabled} onChange={event => change({ description: event.target.value })} /></label>
     <label className="flow-create-field"><span>Groups</span><Select aria-label="Groups" mode="tags" options={definition.groups.map(value => ({ value, label: value }))} value={definition.groups} disabled={disabled} onChange={(groups: string[]) => change({ groups })} /></label>
 
-    <details>
-      <summary>Properties</summary>
-      <p className="flow-create-help">Existing property IDs, types and source mappings are fixed. Primary key {definition.primaryKey.join(', ')}.</p>
+    </>}
+    {section === 'properties' && <>
+      <header><h4>Properties</h4><p>Manage display names, required values and the title used to identify objects.</p></header>
+      <p className="flow-create-help">Existing IDs, types and source mappings are fixed. Primary key: <code>{definition.primaryKey.join(', ')}</code>.</p>
       <label className="flow-create-field"><span>Title property</span><Select aria-label="Title property" value={definition.titleKey || undefined} disabled={disabled} options={fieldOptions} onChange={(titleKey: string) => change({ titleKey })} /></label>
       {definition.properties.map((property, index) => {
         const saved = initial.properties.some(original => original.id === property.id);
@@ -82,26 +90,26 @@ export default function OntologyRevisionsEditor({ initial, definition, principal
           <Button size="small" disabled={disabled || primary.has(property.id)} onClick={() => removeProperty(index)}>Remove property</Button>
         </section>;
       })}
-      <Button size="small" disabled={disabled || definition.properties.length >= 200} onClick={() => change({ properties: [...definition.properties, { id: '', name: '', type: 'string', required: false }] })}>Add property</Button>
-    </details>
+      <Button className="ontology-revisions__add-property" size="small" disabled={disabled || definition.properties.length >= 200} onClick={() => change({ properties: [...definition.properties, { id: '', name: '', type: 'string', required: false }] })}>Add property</Button>
+    </>}
 
-    {definition.source.mode === 'none' && <details>
-      <summary>Actions</summary>
+    {section === 'actions' && definition.source.mode === 'none' && <>
+      <header><h4>Object actions</h4><p>Choose which actions are available, who can run them and which properties they can change.</p></header>
       {actionKinds.map(kind => {
         const action = definition.actions.find(item => item.kind === kind);
         return <div className="flow-semantic-config" key={kind}>
-          <Checkbox checked={!!action} disabled={disabled} onChange={event => toggleAction(kind, event.target.checked)}>{kind[0].toUpperCase() + kind.slice(1)} objects</Checkbox>
+          <Checkbox checked={!!action} disabled={disabled} onChange={event => toggleAction(kind, event.target.checked)}>{{create: 'Create', modify: 'Edit', delete: 'Delete'}[kind]} objects</Checkbox>
           {action && <>
             {principalSelect('Submitters', action.submitters, submitters => setAction(kind, { submitters }))}
             {kind !== 'delete' && <label className="flow-create-field"><span>Editable properties</span><Select aria-label="Editable properties" mode="multiple" disabled={disabled} value={action.fields} options={fieldOptions.filter(item => kind === 'create' || !primary.has(item.value))} onChange={(fields: string[]) => setAction(kind, { fields })} /></label>}
           </>}
         </div>;
       })}
-    </details>}
+    </>}
 
-    {definition.source.mode === 'none' && <OntologyFunctionEditor definition={definition} disabled={disabled} change={functions => change({functions})} />}
-    <details>
-      <summary>Security</summary>
+    {section === 'functions' && definition.source.mode === 'none' && <><header><h4>Business functions</h4><p>Define repeatable property updates with named input parameters. Functions use the properties enabled for Edit.</p></header><OntologyFunctionEditor embedded definition={definition} disabled={disabled} change={functions => change({functions})} /></>}
+    {section === 'security' && <>
+      <header><h4>Access and security</h4><p>Proposed access changes take effect only after independent review and publication.</p></header>
       <label className="flow-create-field"><span>Object security policy</span><Select aria-label="Object security policy" disabled={disabled} value={security.mode} options={[
         { value: 'explicit', label: 'Explicit readers' },
         ...(definition.source.mode === 'existing' ? [{ value: 'inherit', label: 'Inherit source access' }] : []),
@@ -115,6 +123,7 @@ export default function OntologyRevisionsEditor({ initial, definition, principal
       <OntologyMarkingsEditor key={definition.projectId} project={definition.projectId} value={security.markings ?? []} principals={principals}
         onChange={markings => { if (!disabled) change({ security: { ...security, markings } }); }} />
       <OntologyRecordPolicyEditor definition={definition} principals={principals} onChange={next => { if (!disabled) change({ security: next }); }} />
-    </details>
+    </>}
+    </section>
   </div>;
 }

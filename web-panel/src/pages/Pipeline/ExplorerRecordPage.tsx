@@ -1,10 +1,10 @@
-import ExplorerFieldEditor from './ExplorerFieldEditor';
+import ExplorerRecordMutation, { recordMutationActions } from './ExplorerRecordMutation';
 import { PropertyLabel } from './PropertyTypeIcon';
 import { ExplorerValueProvider } from './ExplorerValue';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Button, message } from '@/components/ui';
-import { DeleteOutlined, EditOutlined, ReloadOutlined } from '@/components/ui/icons';
+import { ReloadOutlined } from '@/components/ui/icons';
 import { deleteEtlRow, fetchExplorerRowByKey, updateEtlRow } from '../../services/api';
 import { layoutPath, readLayouts, type Layouts } from '../../services/explorerLayouts';
 import { publishedLayoutPath } from '../../services/explorerLayouts';
@@ -120,13 +120,14 @@ function RecordPage({ source, identity }: { source: ExplorerDetailSource; identi
     const editFields = result ? Object.keys(result.columnTypes).filter(name => !Object.prototype.hasOwnProperty.call(result.identity,name)) : [];
     const layout=layouts?.personal.layout ?? layouts?.default.layout;
     const presentations=Object.fromEntries((layout?.columns ?? []).map(c=>[c.field,c.presentation??'value']));
-    const locked=busy || !!draft || confirmDelete;
     const links = useExplorerLinkAvailability(schema, table, result?.identity, revision);
     const native = objectType?.definition.source.mode === 'none';
     const hasLinks = source.kind === 'published' ? native : !!links.page;
     const currentMode = mode === 'links' && !hasLinks || mode === 'history' && !publishedRecord?.hasHistory ? 'overview' : mode;
     const objectTools = usePublishedObjectTools({ objectType, actions: publishedRecord?.actions || [], record: publishedRecord,
-        returnTo: '/ontology?catalog=published', busy: !result || !!error, onChanged: () => reload(value => value + 1) });
+        returnTo: '/ontology?catalog=published', busy: !result || !!error,
+        onChanged: kind => { if (kind === 'delete') navigate(tablePath, { replace:true }); else reload(value => value + 1); } });
+    const locked=busy || !!draft || confirmDelete || objectTools.mutationOpen;
     async function mutate(remove: boolean) {
         if (source.kind !== 'backed' || !result?.rowVersion || busy || stale) return;
         setMutationError(''); setValidationError(''); setBusy(true);
@@ -163,15 +164,20 @@ function RecordPage({ source, identity }: { source: ExplorerDetailSource; identi
             message.success('Object link copied.');
         } catch { message.error('Unable to copy the object link. Check clipboard permissions.'); }
     };
-    const actions = source.kind === 'published' && publishedRecord ? objectTools.actionsForRecord(publishedRecord) : [
-        ...(result?.rowActions?.edit && editFields.length > 0 ? [{key:'edit',label:'Edit row',icon:<EditOutlined />,onClick:()=>{
+    const actions = source.kind === 'published' && publishedRecord ? objectTools.actionsForRecord(publishedRecord) : recordMutationActions({
+        edit: result?.rowVersion && result.rowActions?.edit && editFields.length > 0 ? ()=>{
             setMode('properties');setMutationError('');setValidationError('');
             setDraft(Object.fromEntries(editFields.map(name=>[name,editorValue(result.columnTypes[name],result.row[name])])));
-        }}] : []),
-        ...(result?.rowActions?.delete ? [{key:'delete',label:'Delete row',icon:<DeleteOutlined />,danger:true,onClick:()=>{
+        } : undefined,
+        remove: result?.rowVersion && result.rowActions?.delete ? ()=>{
             setMutationError('');setValidationError('');setConfirmDelete(true);
-        }}] : []),
-    ];
+        } : undefined,
+    });
+    const mutation = source.kind === 'published' ? objectTools.renderMutation(publishedRecord) : result && (draft || confirmDelete)
+        ? <ExplorerRecordMutation mode={draft ? 'edit' : 'delete'} title={title} identity={result.identity} error={validationError}
+            busy={busy} disabled={stale} fields={draft ? editFields.map(name => ({ key:name, label:name, type:result.columnTypes[name], value:draft[name],
+                onChange:(value:string | null)=>setDraft(current=>current ? {...current,[name]:value} : current) })) : undefined}
+            onSubmit={()=>mutate(confirmDelete)} onCancel={()=>{ if (!busy) { setDraft(undefined);setConfirmDelete(false);setValidationError(''); } }} /> : null;
     return <article className="flow-console--ontology explorer-object-workspace explorer-full-record">
         <nav aria-label="Object location"><Link to="/ontology">Ontology</Link><span>/</span>
             <Link to={tablePath}>{source.kind === 'published' ? typeName : `${schema}.${table}`}</Link></nav>
@@ -180,18 +186,13 @@ function RecordPage({ source, identity }: { source: ExplorerDetailSource; identi
             <h1>{title}</h1>
         </div><div className="record-operations">
             <Button onClick={showLink} disabled={!result}>Share link</Button>
-            <Button icon={<ReloadOutlined />} disabled={busy || (!!draft && !stale)} onClick={()=>reload(n=>n+1)}>Refresh</Button>
+            <Button icon={<ReloadOutlined />} disabled={busy || (!!draft && !stale) || objectTools.mutationOpen} onClick={()=>reload(n=>n+1)}>Refresh</Button>
             <ExplorerRecordActions items={actions} row={row || undefined} disabled={locked || stale} />
         </div></header>
         {!result && !error && <p role="status">Loading object…</p>}
         {result && row && <>
             <dl className="record-identity">{Object.entries(result.identity).map(([name,value])=>
                 <div key={name}><dt><PropertyLabel type={result.columnTypes[name] || 'string'}>{name}</PropertyLabel></dt><dd>{String(value)}</dd></div>)}</dl>
-            {confirmDelete && <section className="record-confirm" aria-label="Confirm row deletion">
-                <strong>Delete {title}?</strong><span>This removes the row from {schema}.{table}.</span>
-                <Button disabled={busy} onClick={()=>setConfirmDelete(false)}>Cancel deletion</Button>
-                <Button danger disabled={busy || stale} onClick={()=>void mutate(true)}>Confirm delete</Button>
-            </section>}
             <div className="record-tabs" aria-label="Object views">{(['overview','properties'] as const).map(tab=>
                 <button type="button" key={tab} aria-pressed={tab===currentMode} disabled={locked} onClick={()=>setMode(tab)}>
                     {{overview:'Overview',properties:'Properties'}[tab]}</button>)}
@@ -200,14 +201,7 @@ function RecordPage({ source, identity }: { source: ExplorerDetailSource; identi
                 {hasLinks && <button type="button" aria-pressed={currentMode==='links'} disabled={locked} onClick={()=>setMode('links')}>Links</button>}
                 {publishedRecord?.hasHistory && <button type="button" aria-pressed={currentMode==='history'} disabled={locked} onClick={()=>setMode('history')}>History</button>}
             </div>
-            <div className="record-content">{draft ? <form className="record-edit" onSubmit={e=>{e.preventDefault();void mutate(false);}}>
-                {validationError && <p className="record-error" role="alert">{validationError}</p>}
-                <div className="record-edit-fields">{editFields.map(name=><div key={name} className="record-edit-field"><PropertyLabel type={result.columnTypes[name]}>{name}</PropertyLabel>
-                    <ExplorerFieldEditor name={name} type={result.columnTypes[name]} disabled={busy || stale} value={draft[name]}
-                        onChange={value=>setDraft({...draft,[name]:value})} />
-                </div>)}</div><footer className="record-operations record-edit-tools"><Button disabled={busy} onClick={()=>setDraft(undefined)}>Cancel edit</Button>
-                    <Button type="primary" htmlType="submit" disabled={busy || stale}>Save changes</Button></footer>
-            </form> : currentMode==='links' ? source.kind === 'published'
+            <div className="record-content">{mutation ?? (currentMode==='links' ? source.kind === 'published'
                 ? <PublishedExplorerRelationships definitionId={source.definitionId} recordId={publishedRecord!.id!} />
                 : <ExplorerRowLinks schema={schema} table={table} primaryKey={result.identity} initialPage={links.page}/> :
                 currentMode === 'history' && publishedRecord ? objectTools.renderHistory(publishedRecord) :
@@ -216,7 +210,7 @@ function RecordPage({ source, identity }: { source: ExplorerDetailSource; identi
                 !metadata ? <p role="status">Loading object presentation…</p> :
                 metadata.error ? null :
                 currentMode==='properties' ? <ExplorerProperties presentation={presentation} presentations={presentations} row={row}/> :
-                <ExplorerObjectOverview row={row} presentation={presentation} presentations={presentations} typeName={typeName} group={currentGroup}/>}</div>
+                <ExplorerObjectOverview row={row} presentation={presentation} presentations={presentations} typeName={typeName} group={currentGroup}/>)}</div>
         </>}
         {objectTools.dialogs}
     </article>;

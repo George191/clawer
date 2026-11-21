@@ -182,22 +182,23 @@ export default function OntologyRevisions({ definitionId, onMerged, showTitle = 
       </div>}
     </header>
     {workspace && <nav className="ontology-revisions__tabs" aria-label="Revision views">
-      <button type="button" aria-pressed={tab === 'proposals'} disabled={busy} onClick={() => switchTab('proposals')}>Proposals</button>
-      <button type="button" aria-pressed={tab === 'history'} disabled={busy} onClick={() => switchTab('history')}>Revision history</button>
-      {workspace.canManageRoles && <button type="button" aria-pressed={tab === 'roles'} disabled={busy} onClick={() => switchTab('roles')}>Revision roles</button>}
+      <button type="button" aria-pressed={tab === 'proposals'} disabled={busy || !!composer} onClick={() => switchTab('proposals')}>Proposals</button>
+      <button type="button" aria-pressed={tab === 'history'} disabled={busy || !!composer} onClick={() => switchTab('history')}>Revision history</button>
+      {workspace.canManageRoles && <button type="button" aria-pressed={tab === 'roles'} disabled={busy || !!composer} onClick={() => switchTab('roles')}>Revision roles</button>}
     </nav>}
     <div className={`ontology-revisions__body${composer ? ' is-composing' : ''}`} role="region" aria-label="Revision workspace" tabIndex={0}>
       {!workspace && !error && !requestError && <p className="ontology-revisions__loading" role="status"><ReloadOutlined spin />Loading revision workspace…</p>}
       {workspace && <>
         {composer ? <section className="ontology-revisions__composer" aria-label={composer.kind === 'restore' ? 'Restore proposal' : 'Change proposal'}>
           <div className="ontology-revisions__form" role="region" aria-label="Proposal form" tabIndex={0}>
-            <header className="ontology-revisions__panel-heading"><div><h4>{composer.kind === 'restore' ? 'Restore revision ' + composer.target : 'Propose a change'}</h4><p>Based on published revision {composer.revision}. Changes require independent review before publication.</p></div></header>
+            <header className="ontology-revisions__panel-heading"><div><h4>{composer.kind === 'restore' ? 'Restore revision ' + composer.target : 'Propose a change'}</h4><p>Based on revision {composer.revision}<span aria-hidden="true">·</span>Draft proposal</p></div><span className="ontology-revisions__draft">Not published</span></header>
             <label className="flow-create-field"><span>Proposal summary</span><Input aria-label="Proposal summary" value={composer.summary} maxLength={500}
               disabled={busy} placeholder="Describe the purpose of this change" onChange={event => setComposer({ ...composer, summary: event.target.value })} /></label>
             {composer.kind === 'revision' && <OntologyRevisionsEditor initial={workspace.definition} definition={composer.definition} principals={principals}
               disabled={busy} onPrincipalSearch={setPrincipalQuery} onChange={definition => setComposer({ ...composer, definition })} />}
           </div>
           <footer className="ontology-revisions__footer">
+            <span className="ontology-revisions__review-note">Submit → Independent review → Publish</span>
             <Button size="small" onClick={() => setComposer(undefined)} disabled={busy}>Cancel proposal</Button>
             <Button size="small" type="primary" onClick={submit} loading={busy} disabled={!composer.summary.trim()}>Submit proposal</Button>
           </footer>

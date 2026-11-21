@@ -7,10 +7,15 @@ import { parsePropertyValue } from './ontologyPropertyValue';
 import { newOntologyRequestId } from '../../services/ontology';
 import OntologyWriteback from './OntologyWriteback';
 import useExplorerErrorToast from './useExplorerErrorToast';
+import { BranchesOutlined, DeleteOutlined, HistoryOutlined, PlusOutlined } from '@/components/ui/icons';
+import { getSessionState } from '../../services/session';
+import './ontology-tool-workbench.css';
+import './ontology-transaction-workbench.css';
 
 type Kind = TransactionStep['kind'];
 type Entry = {label: string; step: TransactionStep};
 const emptyRecords: OntologyRecordPage = {items: [], hasMore: false, actions: []};
+const operationLabels = {create: 'Create object', modify: 'Edit object', delete: 'Delete object', link: 'Add relationship', unlink: 'Remove relationship'};
 const description = (error: unknown) => ontologyError(error, 'The transaction request failed.');
 
 function RecordPicker({type, label, value, aliases = [], change, version}: {
@@ -44,6 +49,7 @@ function RecordPicker({type, label, value, aliases = [], change, version}: {
 
 export default function OntologyTransactions({objectType, onCommitted}: {objectType: PublishedOntologyType; onCommitted: () => void}) {
   const project = objectType.definition.projectId;
+  const [tab, setTab] = useState<'compose' | 'history'>('compose');
   const [name, setName] = useState('');
   const [entries, setEntries] = useState<Entry[]>([]);
   const [kind, setKind] = useState<Kind>('create');
@@ -74,7 +80,13 @@ export default function OntologyTransactions({objectType, onCommitted}: {objectT
   useExplorerErrorToast(requestError, 'Unable to load transaction options', () => {
     if (!pending) { setRequestError(''); setVersion(value => value + 1); }
   });
-  const locked = useRef(false);
+  const locked = useRef(false), alive = useRef(true);
+  const identity = useRef(getSessionState().identity).current;
+  const current = () => {
+    const session = getSessionState();
+    return alive.current && session.authenticated && !session.locked && session.identity === identity;
+  };
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const retryIds = useRef(new Map<string, string>());
   const nextAlias = useRef(1);
   const selectedType = types.find(t => t.id === typeId);
@@ -126,7 +138,7 @@ export default function OntologyTransactions({objectType, onCommitted}: {objectT
       let entry: Entry;
       if (kind === 'link' || kind === 'unlink') {
         if (!link || !source || !target) throw new Error('Select a relationship and both records.');
-        entry = {label: kind + ' · ' + link.name + ' · ' + source + ' → ' + target,
+        entry = {label: operationLabels[kind] + ' · ' + link.name + ' · ' + source + ' → ' + target,
           step: {kind,linkTypeId:link.id,source,target}};
       } else {
         if (!action || !selectedType) throw new Error('This action is unavailable for this object type.');
@@ -141,7 +153,7 @@ export default function OntologyTransactions({objectType, onCommitted}: {objectT
         } else {
           if (!record.id || !record.revision) throw new Error('Select a current record.');
           if (kind === 'modify' && !Object.keys(fields).length) throw new Error('Enter at least one change.');
-          entry = {label: kind + ' · ' + record.title + ' · r' + record.revision,
+          entry = {label: operationLabels[kind] + ' · ' + record.title + ' · r' + record.revision,
             step:{kind, definitionId:typeId,recordId:record.id,expectedRevision:record.revision,values:fields}};
         }
       }
@@ -149,30 +161,32 @@ export default function OntologyTransactions({objectType, onCommitted}: {objectT
     } catch (e) {const detail = description(e);setError(detail);message.error({content:'Unable to add transaction step',description:detail,className:'explorer-toast'});}
   };
   const perform = async (undo?: TransactionReceipt) => {
-    if (locked.current) return;
+    if (locked.current || !current()) return;
     locked.current = true; setPending(true);setError('');
     try {
       if (undo) {
-        await undoTransaction(project,undo.id); message.success({content:'Transaction undone',description:undo.name,className:'explorer-toast'});
+        await undoTransaction(project,undo.id); if (!current()) return; message.success({content:'Transaction undone',description:undo.name,className:'explorer-toast'});
       } else {
         const steps = entries.map(entry => entry.step);
         const signature = JSON.stringify([name,steps]);
         const id = retryIds.current.get(signature) ?? newOntologyRequestId();
         retryIds.current.set(signature, id);
         const result = await applyTransaction(project,name,id,steps);
-        message.success({content:'Transaction committed',description:result.name,className:'explorer-toast'});setEntries([]);setName('');retryIds.current.delete(signature);
+        if (!current()) return;
+        message.success({content:'Transaction committed',description:result.name,className:'explorer-toast'});setEntries([]);setName('');retryIds.current.delete(signature);setTab('history');
       }
       resetStep();resetLinks();setOffset(0);setVersion(v => v+1);
       onCommitted();
-    } catch (e) {const detail = description(e);message.error({content:undo ? 'Unable to undo transaction' : 'Unable to commit transaction',description:detail,className:'explorer-toast'});}
-    finally {locked.current = false;setPending(false);}
+    } catch (e) {if (!current()) return;const detail = description(e);message.error({content:undo ? 'Unable to undo transaction' : 'Unable to commit transaction',description:detail,className:'explorer-toast'});}
+    finally {locked.current = false;if (current()) setPending(false);}
   };
-  return <section aria-label="Transaction workbench" className="ontology-transaction">
-    <section className="flow-tool-section" aria-label="Transaction steps">
-      <h3>Cross-object transaction</h3>
-      <fieldset disabled={pending}><label>Transaction name<input maxLength={120} value={name} onChange={e => setName(e.target.value)} /></label>
+  return <section aria-label="Transaction workbench" className="ontology-tool-workbench ontology-transaction-workbench">
+    <header className="ontology-tool-header"><div><h3><BranchesOutlined />Transactions</h3><p>Stage changes across objects and relationships, then commit them together. No changes are applied until you commit.</p></div></header>
+    <nav className="ontology-tool-tabs" aria-label="Transaction views"><button type="button" aria-pressed={tab === 'compose'} disabled={pending} onClick={() => setTab('compose')}>New transaction{entries.length ? ' · ' + entries.length : ''}</button><button type="button" aria-pressed={tab === 'history'} disabled={pending} onClick={() => setTab('history')}>History and writeback</button></nav>
+    {tab === 'compose' ? <div className="ontology-transaction-layout">
+      <section className="flow-tool-section ontology-transaction-editor" aria-label="Transaction steps"><header><h4>Add an operation</h4><p>Choose an object type and supply the values for this step.</p></header><fieldset disabled={pending}>
         <div className="ontology-tx-fields"><label>Step operation<select aria-label="Step operation" value={kind} onChange={e => {if (e.target.value === kind) return;setKind(e.target.value as Kind);if (!edge) resetLinks();resetStep();}}>
-          {(['create','modify','delete','link','unlink'] as const).map(k => <option key={k} value={k}>{k}</option>)}</select></label>
+          {(['create','modify','delete','link','unlink'] as const).map(k => <option key={k} value={k}>{operationLabels[k]}</option>)}</select></label>
         <label>Step object type<select aria-label="Step object type" value={typeId} onChange={e => {if (e.target.value === typeId) return;setTypeId(e.target.value);setActions([]);resetLinks();resetStep();}}>
           {types.map(t => <option key={t.id} value={t.id}>{t.definition.name}</option>)}</select></label></div>
         {moreTypes && <Button disabled={typesLoading || typeOffset + 50 > 100_000} onClick={() => {setTypesLoading(true);setTypeOffset(typeOffset+50);}}>Load more object types</Button>}
@@ -191,14 +205,15 @@ export default function OntologyTransactions({objectType, onCommitted}: {objectT
               {!p.required && <label><input type="checkbox" checked={values[p.id] === null} onChange={e => setValues(prev => {
                 const updated = {...prev}; if (e.target.checked) updated[p.id] = null; else delete updated[p.id];return updated;
               })} />Set {p.name} to null</label>}</div>)}</div></>}
-        <Button disabled={entries.length >= 24 || (edge ? !link || !source || !target : !action || (kind !== 'create' && !record.id))} onClick={add}>Add step</Button>
-        <ol>{entries.map((entry,index) => <li key={index}>{entry.label}{index === entries.length-1 && <Button size="small" onClick={() => setEntries(entries.slice(0,-1))}>Remove last step</Button>}</li>)}</ol>
-        <Button type="primary" disabled={!entries.length || !name.trim()} onClick={() => perform()}>Commit transaction</Button>
-      </fieldset>
-      {error && <p role="alert">{error} <Button size="small" disabled={pending} onClick={() => {setError('');setVersion(v => v+1);}}>Refresh options</Button></p>}
-    </section>
-    <section className="flow-tool-section" aria-label="My transactions">
-      <h4>My transactions</h4>
+        <Button disabled={entries.length >= 24 || (edge ? !link || !source || !target : !action || (kind !== 'create' && !record.id))} onClick={add} icon={<PlusOutlined />}>Add step</Button>
+      </fieldset></section>
+      <aside className="ontology-transaction-queue" aria-label="Staged changes">
+        <header><h4>Staged changes</h4><span>{entries.length} / 24</span></header>
+        <label className="ontology-transaction-name">Transaction name<input aria-label="Transaction name" maxLength={120} disabled={pending} placeholder="Describe these changes" value={name} onChange={event => setName(event.target.value)} /></label>
+        <div className="ontology-transaction-steps">{entries.length ? <ol>{entries.map((entry,index) => <li key={index}><span className="ontology-transaction-step-number">{index + 1}</span><div><strong>{operationLabels[entry.step.kind]}</strong><p>{entry.label}</p></div>{index === entries.length - 1 && <Button type="text" size="small" icon={<DeleteOutlined />} aria-label="Remove last step" disabled={pending} onClick={() => setEntries(entries.slice(0,-1))} />}</li>)}</ol> : <div className="ontology-tool-empty"><PlusOutlined /><h4>No staged changes</h4><p>Add an operation from the editor. Later steps can reference objects created earlier in the same transaction.</p></div>}</div>
+        <footer className="ontology-tool-footer"><p>All steps succeed or none are applied.</p><Button type="primary" loading={pending} disabled={pending || !entries.length || !name.trim()} onClick={() => perform()}>Commit transaction</Button></footer>
+      </aside>
+    </div> : <section className="flow-tool-section ontology-transaction-history" aria-label="My transactions"><header><h4><HistoryOutlined />My transactions</h4><p>Inspect committed operations, undo eligible transactions and review writeback delivery.</p></header>
       {historyLoading && <p role="status">Loading transactions…</p>}
       {!historyLoading && !history.length && !error && !requestError && <p>No transactions on this page.</p>}
       <ul>{history.map(item => <li key={item.id}>{item.name} · {item.stepCount} steps · {new Date(item.createdAt).toLocaleString()} {' '}
@@ -207,6 +222,6 @@ export default function OntologyTransactions({objectType, onCommitted}: {objectT
         {deliveryId === item.id && <OntologyWriteback key={item.id} project={project} transaction={item.id}/>}</li>)}</ul>
       {(offset > 0 || hasMore) && <div><Button disabled={!offset || historyLoading || pending} onClick={() => {setHistoryLoading(true);setOffset(offset-25);}}>Previous transactions</Button>
         <Button disabled={!hasMore || historyLoading || pending || offset + 25 > 100_000} onClick={() => {setHistoryLoading(true);setOffset(offset+25);}}>Next transactions</Button></div>}
-    </section>
+    </section>}
   </section>;
 }

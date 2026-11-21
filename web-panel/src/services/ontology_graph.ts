@@ -23,7 +23,7 @@ export type SetResult = Page<OntologyRecord> & {
   query?: SetQuery;
 };
 export type NamedSet = { id: string; name: string };
-export type Neighbor = { linkId: string; record: OntologyRecord };
+export type Neighbor = { linkId: string; canUnlink: boolean; record: OntologyRecord & { id: string } };
 
 export async function graphRequest<T>(
   method: 'get' | 'post' | 'put' | 'delete',

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { fetchPublishedRelationships, type PublishedRelationships } from '../../services/publishedExplorerDetails';
+import { fetchPublishedRelationships, unlinkPublishedRelationship, type PublishedRelationships } from '../../services/publishedExplorerDetails';
 import { fetchPublishedOntologyType, ontologyError, type OntologyRecord, type PublishedOntologyType } from '../../services/ontology';
 import { publishedLayoutPath, readLayouts, type Layouts } from '../../services/explorerLayouts';
 import { publishedColumnTypes, publishedPresentation } from '../../services/publishedExplorerPresentation';
@@ -65,9 +65,18 @@ function RelationshipPage({ definitionId, recordId }: Props) {
   if (!page) return <p role="status">Loading relationships…</p>;
   return <ExplorerRelationshipsView loading={loading} selectedId={page.selected}
     relations={page.relations.map(item => ({ id: item.id + ':' + item.direction, name: item.name, direction: item.direction }))}
-    records={selected ? page.items.map(record => ({ key: record.id!,
+    records={selected ? page.items.map(record => ({ key: record.linkId,
       link: <ExplorerRecordLink definitionId={selected.targetDefinitionId} identity={{ $recordId: record.id! }}>{String(record.title ?? 'Untitled object')}</ExplorerRecordLink>,
-      properties: <LinkedProperties definitionId={selected.targetDefinitionId} record={record} /> })) : []}
+      properties: <LinkedProperties definitionId={selected.targetDefinitionId} record={record} />,
+      unlink: record.canUnlink ? {
+        label: String(record.title ?? 'Untitled object'),
+        description: <>Remove the “{selected.name}” relationship between this object and <strong>{String(record.title ?? 'Untitled object')}</strong>? Both objects remain available.</>,
+        run: async signal => {
+          await unlinkPublishedRelationship(selected, recordId, record, signal);
+          if (live(signal, identity)) { setExpanded(''); setOffset(0); reload(value => value + 1); }
+        },
+      } : undefined,
+    })) : []}
     expanded={expanded} onToggle={key => setExpanded(value => value === key ? '' : key)}
     onSelect={id => { setRelation(id); setOffset(0); }} offset={offset} hasMore={page.hasMore} pageLimit={100_000}
     onPage={offset => { setRelation(page.selected); setOffset(offset); }} />;

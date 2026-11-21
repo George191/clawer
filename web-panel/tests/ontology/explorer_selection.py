@@ -210,14 +210,14 @@ def run():
         for candidate, preview in ((page, panel), (other, other_panel)):
             row(candidate, 1).press("Enter")
             preview.get_by_role("button", name="Actions").click()
-            candidate.get_by_role("menuitem", name="Edit row").click()
+            candidate.get_by_role("menuitem", name="Edit", exact=True).click()
             expect(preview.get_by_role("textbox", name="Edit id")).to_have_value(str(START))
             expect(row(candidate, 2).get_by_role("checkbox")).to_be_disabled()
 
         def edit(candidate, preview, value):
             preview.get_by_role("textbox", name="Edit name").fill(value)
             with candidate.expect_response(lambda r: r.request.method == "PATCH" and urlsplit(r.url).path == endpoint) as sent:
-                preview.get_by_role("button", name="Save row").click()
+                preview.get_by_role("button", name="Save changes", exact=True).click()
             body = sent.value.request.post_data_json
             assert body["key"] == {"id": str(START)}
             return sent.value.status, body["expectedVersion"]
@@ -227,7 +227,7 @@ def run():
         stale_status, stale_version = edit(other, other_panel, "Preview stale")
         assert stale_status == 409 and initial_version == stale_version
         expect(other_panel.get_by_role("alert")).to_contain_text("select the row again")
-        expect(other_panel.get_by_role("button", name="Save row")).to_be_disabled()
+        expect(other_panel.get_by_role("button", name="Save changes", exact=True)).to_be_disabled()
         other.close()
 
         # Navigate with the newly refreshed snapshot and keep the mobile panel in the page.
@@ -240,13 +240,13 @@ def run():
         if screenshots:
             page.screenshot(path=Path(screenshots) / "selection-mobile.png", animations="disabled")
         panel.get_by_role("button", name="Actions").click()
-        page.get_by_role("menuitem", name="Delete row").click()
-        expect(panel.get_by_role("region", name="Confirm row deletion")).to_be_visible()
-        panel.get_by_role("button", name="Cancel deletion").click()
+        page.get_by_role("menuitem", name="Delete", exact=True).click()
+        expect(panel.get_by_role("region", name="Confirm object deletion")).to_be_visible()
+        panel.get_by_role("button", name="Cancel", exact=True).click()
         panel.get_by_role("button", name="Actions").click()
-        page.get_by_role("menuitem", name="Delete row").click()
+        page.get_by_role("menuitem", name="Delete", exact=True).click()
         with page.expect_response(lambda r: r.request.method == "DELETE" and urlsplit(r.url).path == endpoint) as deleted:
-            panel.get_by_role("button", name="Confirm delete").click()
+            panel.get_by_role("button", name="Delete", exact=True).click()
         assert deleted.value.status == 200 and deleted.value.request.post_data_json["key"] == {"id": str(START + 1)}
         expect(row(page, 2)).to_have_count(0)
         configure_mapping(page, None)

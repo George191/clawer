@@ -269,10 +269,16 @@ async def neighbors(session, user, link_type_id, record_id, direction, limit, of
             .limit(limit + 1)
         )
     ).all()
+    can_manage = await session.scalar(
+        projects_statement(user, manage=True)
+        .with_only_columns(Team.id)
+        .where(Team.id == typ.project_id)
+    )
     return {
         "items": [
             {
                 "linkId": lid,
+                "canUnlink": can_manage is not None,
                 "record": _project_record(definition, fields, r.values, r.id, r.revision),
             }
             for r, lid in rows[:limit]
