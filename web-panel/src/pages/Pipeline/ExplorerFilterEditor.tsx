@@ -2,6 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Button, Dropdown, Input } from '@/components/ui';
 import { ArrowDownOutlined, ArrowUpOutlined, CloseOutlined, DownOutlined, SearchOutlined } from '@/components/ui/icons';
 import type { ExplorerFilter } from './explorerFilters';
+import { availableExplorerSortFields, firstIncompleteExplorerFilter, nextUnusedExplorerField, type ExplorerFilterPart } from './explorerFilterDraft';
 import './explorer-filter-editor.css';
 
 type  FilterCheckboxChange  =  {  target:  {  checked:  boolean  }  };
@@ -78,14 +79,17 @@ export interface ExplorerFilterEditorProps {
     formatValue: (value: unknown) => string;
     onApply: () => void;
     columnMode?: boolean;
+    validationRequest?: number;
     renderRuleNotice?: (rule: ExplorerFilter) => React.ReactNode;
     renderSortNotice?: (sorts: ExplorerSort[]) => React.ReactNode;
     footerAccessory?: React.ReactNode;
     children?: React.ReactNode;
 }
 
-export default function ExplorerFilterEditor({ rules, setRules, search, onSearchChange, sorts, onSortsChange, fields, rows, formatValue, onApply, columnMode = true, renderRuleNotice, renderSortNotice, footerAccessory, children }: ExplorerFilterEditorProps) {
+export default function ExplorerFilterEditor({ rules, setRules, search, onSearchChange, sorts, onSortsChange, fields, rows, formatValue, onApply, columnMode = true, validationRequest, renderRuleNotice, renderSortNotice, footerAccessory, children }: ExplorerFilterEditorProps) {
     const [filterMoving, setFilterMoving] = useState<{ id: string; peerId: string; direction: 'up' | 'down' } | null>(null);
+    const rulesRef = useRef<HTMLDivElement>(null);
+    const [invalidFilter, setInvalidFilter] = useState<{ id: string; parts: ExplorerFilterPart[] }>();
     const sortConditionsRef = useRef<HTMLDivElement>(null);
     const [sortConditionsOverflow, setSortConditionsOverflow] = useState(false);
     const sortField = sorts[0]?.field || '';
@@ -110,15 +114,82 @@ export default function ExplorerFilterEditor({ rules, setRules, search, onSearch
         const frame = window.requestAnimationFrame(() => sortConditionsRef.current?.scrollTo({ left: sortConditionsRef.current.scrollWidth, behavior: 'smooth' }));
         return () => window.cancelAnimationFrame(frame);
     }, [sortConditionsOverflow]);
+    useEffect(() => {
+        if (!columnMode || rules.length !== 1 || rules[0].active === false || rules[0].id === 'placeholder-rule' ||
+            rules[0].id.startsWith('group-') || rules[0].field || rules[0].value || !fields[0]) return;
+        setRules(current => current.length === 1 && current[0].id === rules[0].id && current[0].active !== false && !current[0].field && !current[0].value
+            ? [{ ...current[0], field: fields[0] }] : current);
+    }, [columnMode, rules, fields, setRules]);
+    useEffect(() => setInvalidFilter(undefined), [rules]);
+    useEffect(() => {
+        if (!invalidFilter) return;
+        const row = Array.from(rulesRef.current?.querySelectorAll<HTMLElement>('.flow-filter-rule') || [])
+            .find(element => element.id === `explorer-filter-${invalidFilter.id}`);
+        const targets = invalidFilter.parts.map(part => row?.querySelector<HTMLElement>(`.explorer-filter-${part === 'operator' ? 'op' : part === 'field' ? 'field-link' : 'value'}`));
+        targets[0]?.scrollIntoView({ block: 'nearest' });
+        targets[0]?.focus({ preventScroll: true });
+        if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) targets.forEach(target => target?.animate([
+            { transform: 'translateX(0)' }, { transform: 'translateX(-4px)' }, { transform: 'translateX(4px)' },
+            { transform: 'translateX(-3px)' }, { transform: 'translateX(3px)' }, { transform: 'translateX(0)' },
+        ], { duration: 320, easing: 'ease-in-out' }));
+    }, [invalidFilter]);
+    const canAddFilter = () => {
+        if (!columnMode) return true;
+        const incomplete = firstIncompleteExplorerFilter(rules);
+        if (!incomplete) return true;
+        setInvalidFilter(incomplete);
+        return false;
+    };
+    useEffect(() => { if (validationRequest) canAddFilter(); }, [validationRequest]);
+    const nextFilterField = (rows: ExplorerFilter[], rule: ExplorerFilter, index: number) => {
+        const preceding = rows.slice(0, index + 1).filter(row => !/^group-(open|close)-/.test(row.id));
+        const afterField = rule.field || preceding[preceding.length - 1]?.field;
+        return columnMode ? nextUnusedExplorerField(fields, rows.map(row => row.field), afterField) : fields[0] || '';
+    };
+    const addFilterCondition = (rule: ExplorerFilter, index: number) => {
+        if (!canAddFilter()) return;
+        setRules(rows => {
+            const next = { id: ((rule.id.startsWith('group-filter-') || rule.id.startsWith('group-close-')) && filterNestingDepth(rule.id) > 0)
+                ? `group-filter-${'nested-'.repeat(filterNestingDepth(rule.id))}${randomId()}` : randomId(),
+                field: nextFilterField(rows, rule, index), operator: '=', value: '', active: true, join: 'and' };
+            const cleanRows = rows.length === 1 && rows[0].id === 'placeholder-rule' ? [] : rows;
+            const closeIndex = rule.id.startsWith('group-close-') ? index : findContainingClose(cleanRows, index);
+            if (rule.id.startsWith('group-close-')) return [...cleanRows.slice(0, index + 1), next, ...cleanRows.slice(index + 1)];
+            if (closeIndex >= 0) return [...cleanRows.slice(0, closeIndex), next, ...cleanRows.slice(closeIndex)];
+            return [...cleanRows, next];
+        });
+    };
+    const addFilterGroup = (rule: ExplorerFilter, index: number) => {
+        if (!canAddFilter()) return;
+        setRules(rows => {
+            const groupId = randomId();
+            const cleanRows = rows.length === 1 && rows[0].id === 'placeholder-rule' ? [] : rows;
+            const nested = rule.id.startsWith('group-filter-') || rule.id.startsWith('group-close-');
+            const depth = filterNestingDepth(rule.id), currentPrefix = 'nested-'.repeat(depth), childPrefix = 'nested-'.repeat(depth + 1);
+            const additions = [
+                { id: `group-open-${currentPrefix}${groupId}`, field: '', operator: '=', value: '', active: true, join: 'and' },
+                { id: `group-filter-${childPrefix}${groupId}`, field: nextFilterField(rows, rule, index), operator: '=', value: '', active: true, join: 'and' },
+                { id: `group-close-${currentPrefix}${groupId}`, field: '', operator: '=', value: '', active: true, join: 'and' },
+            ];
+            const closeIndex = nested ? findContainingClose(cleanRows, index) : -1;
+            return closeIndex >= 0 ? [...cleanRows.slice(0, closeIndex), ...additions, ...cleanRows.slice(closeIndex)] : [...cleanRows, ...additions];
+        });
+    };
+    const nextSortField = nextUnusedExplorerField(fields, sorts.map(sort => sort.field));
+    const addSortField = () => {
+        if (columnMode) {
+            if (nextSortField) onSortsChange([...sorts.filter(sort => sort.field), { field: nextSortField, direction: 'asc' }], false);
+        } else onSortsChange([{ field: sortField, direction: sortDirection }, ...sortConditions, { field: fields[0] || '', direction: 'asc' }], false);
+    };
     const clearSorts = () => onSortsChange([{ field: '', direction: sortDirection }], true);
     return <div className={`flow-filter-card${columnMode ? ' explorer-filter-editor' : ''}`}>
         {!columnMode && onSearchChange && <div><Input.Search aria-label="Search all columns" size="small" placeholder="Search all columns" value={search || ''} onChange={event => onSearchChange(event.target.value)} onSearch={onApply} /></div>}
         {columnMode && <div className="flow-schema-filter-label">Filter</div>}
-                                <div className="flow-filter-rules">{rules.map((rule,  index)  =>  <div  className={['flow-filter-rule', rule.id.startsWith('group-open-') ? 'is-group-open' : '', rule.id.startsWith('group-close-') ? 'is-group-close' : '', rule.id.startsWith('group-filter-') ? 'is-nested' : '', rule.id.includes('nested-') ? 'is-group-nested' : '', `is-group-depth-${filterNestingDepth(rule.id)}`, filterMoving?.id === rule.id ? `is-moving is-moving-${filterMoving.direction}` : filterMoving?.peerId === rule.id ? `is-moving is-moving-${filterMoving.direction === 'up' ? 'down' : 'up'}` : '', rule.active === false ? 'is-inactive' : ''].filter(Boolean).join(' ')}  style={{  '--filter-depth':  filterNestingDepth(rule.id)  }  as  React.CSSProperties}  key={rule.id} id={columnMode ? `explorer-filter-${rule.id}` : undefined}><span  className="flow-filter-row-check"><FilterCheckbox  checked={rule.active  !==  false}  onChange={(event)  =>  setRules((rows)  =>  rows.map((item,  itemIndex)  =>  rule.id.startsWith('group-open-')  ?  (()  =>  {  const  ruleIndex  =  rows.findIndex((entry)  =>  entry.id  ===  rule.id);  const  bounds  =  filterGroupBounds(rows,  ruleIndex);  return  bounds  &&  ruleIndex  <=  itemIndex  &&  itemIndex  <=  bounds.end  ?  {  ...item,  active:  event.target.checked  }  :  item;  })()  :  item.id  ===  rule.id  ?  {  ...item,  active:  event.target.checked  }  :  item))}  /></span><span  className="flow-filter-row-content"><FilterFieldPicker explorer={columnMode} fields={fields} value={rule.field}  onChange={(field)  =>  setRules((rows)  =>  rows.map((item)  =>  item.id  ===  rule.id  ?  {  ...item,  field  }  :  item))}  /><FilterOperatorSpan explorer={columnMode} value={rule.operator}  onChange={(operator)  =>  setRules((rows)  =>  rows.map((item)  =>  item.id  ===  rule.id  ?  {  ...item,  operator  }  :  item))}  /><FilterValuePicker explorer={columnMode} suggestions={[...new Set(rows.map((row) => formatValue(row[rule.field])))]} value={rule.value}  onChange={(value)  =>  setRules((rows)  =>  rows.map((item)  =>  item.id  ===  rule.id  ?  {  ...item,  value  }  :  item))}  />{index  <  rules.length  -  1  &&  !rules[index  +  1]?.id.startsWith('group-close-')  &&  <span  className="flow-filter-join"  role="button"  tabIndex={0}  onClick={()  =>  setRules((rows)  =>  rows.map((item)  =>  item.id  ===  rule.id  ?  {  ...item,  join:  item.join  ===  'or'  ?  'and'  :  'or'  }  :  item))}>{rule.join  ||  'and'}</span>}</span>{(index  ===  rules.length  - 1  ||  rule.id.startsWith('group-close-')  ||  rules[index  + 1]?.id.startsWith('group-close-'))  &&  <span  className={columnMode ? 'flow-filter-row-actions explorer-filter-rule-actions' : 'flow-filter-row-actions'}>{rule.id.startsWith('group-close-')  &&  index  <  rules.length  -  1  &&  !rules[index  + 1]?.id.startsWith('group-close-')  &&  <span  className="flow-filter-join flow-filter-close-join"  role="button"  tabIndex={0}  onClick={()  =>  setRules((rows)  =>  rows.map((item)  =>  item.id  ===  rule.id  ?  {  ...item,  join:  item.join  ===  'or'  ?  'and'  :  'or'  }  :  item))}>{rule.join  ||  'and'}</span>}<button  type="button"  className={columnMode ? 'explorer-filter-mini' : 'flow-filter-mini'} aria-label="Add filter condition" title="Add filter condition" onClick={()  =>  setRules((rows)  =>  {  const  next  =  {  id:  ((rule.id.startsWith('group-filter-')  ||  rule.id.startsWith('group-close-'))  &&  filterNestingDepth(rule.id)  >  0)  ?  `group-filter-${'nested-'.repeat(filterNestingDepth(rule.id))}${randomId()}`  :  randomId(),  field: fields[0] || '',  operator:  '=',  value:  '',  active:  true,  join:  'and'  };  const  cleanRows  =  rows.length  ===  1  &&  rows[0].id === 'placeholder-rule'  ?  []  :  rows;  const  closeIndex  =  rule.id.startsWith('group-close-')  ?  index  :  findContainingClose(cleanRows,  index);  if  (rule.id.startsWith('group-close-'))  return  [...cleanRows.slice(0, index  +  1), next, ...cleanRows.slice(index  +  1)];  if  (closeIndex  >= 0)  return  [...cleanRows.slice(0, closeIndex), next, ...cleanRows.slice(closeIndex)];  return  [...cleanRows, next];  })}><FilterAddIcon /></button><button  type="button"  className={columnMode ? 'explorer-filter-mini' : 'flow-filter-mini'}  aria-label="Add filter group" title="Add filter group" onClick={()  =>  setRules((rows)  =>  {  const  groupId  =  randomId();  const  cleanRows  =  rows.length  ===  1  &&  rows[0].id  ===  'placeholder-rule'  ?  []  :  rows;  const  nested  =  rule.id.startsWith('group-filter-')  ||  rule.id.startsWith('group-close-');  const  depth  =  rule.id.match(/nested-/g)?.length  ||  0;  const  currentPrefix  =  'nested-'.repeat(depth);  const  childPrefix  =  'nested-'.repeat(depth  +  1);  const  additions  =  [{  id:  `group-open-${currentPrefix}${groupId}`,  field:  '',  operator:  '=',  value:  '',  active:  true,  join:  'and'  },  {  id:  `group-filter-${childPrefix}${groupId}`,  field: fields[0] || '',  operator:  '=',  value:  '',  active:  true,  join:  'and'  },  {  id:  `group-close-${currentPrefix}${groupId}`,  field:  '',  operator:  '=',  value:  '',  active:  true,  join:  'and'  }];  const  closeIndex  =  nested  ?  findContainingClose(cleanRows,  index)  :  -1;  return  closeIndex  >=  0  ?  [...cleanRows.slice(0, closeIndex), ...additions, ...cleanRows.slice(closeIndex)]  :  [...cleanRows, ...additions];  })}><FilterGroupIcon /></button>{rule.id === 'placeholder-rule' && <span className="flow-filter-placeholder">Select + to add a filter condition</span>}</span>}{renderRuleNotice?.(rule)}<span  className="flow-filter-row-end-actions"><button  type="button"  className="flow-filter-reorder"  aria-label="Move  up"  disabled={index  ===  0}  onClick={()  =>  {  if  (index  === 0)  return;  const  movingId  =  rule.id;  setFilterMoving({  id:  movingId,  peerId:  rules[index  -  1].id,  direction:  'up'  });  window.setTimeout(()  =>  {  setRules((rows)  =>  {  const  currentIndex  =  rows.findIndex((item)  =>  item.id  ===  movingId);  if  (currentIndex  <=  0)  return  rows;  return  moveFilterRows(rows, currentIndex, 'up');  });  setFilterMoving(null);  },  180);  }}><ArrowUpOutlined  /></button><button  type="button"  className="flow-filter-reorder"  aria-label="Move  down"  disabled={index  ===  rules.length  -  1}  onClick={()  =>  {  if  (index  >=  rules.length  -  1)  return;  const  movingId  =  rule.id;  setFilterMoving({  id:  movingId,  peerId:  rules[index  +  1].id,  direction:  'down'  });  window.setTimeout(()  =>  {  setRules((rows)  =>  moveFilterRows(rows, rows.findIndex((item)  =>  item.id  ===  movingId), 'down'));  setFilterMoving(null);  },  180);  }}><ArrowDownOutlined  /></button><button  type="button"  className="flow-filter-remove" aria-label="Remove filter condition" title="Remove filter condition" onClick={()  =>  setRules((rows)  =>  {  if  (rows.length  ===  1)  return  [{  id:  'placeholder-rule',  field:  '',  operator:  '=',  value:  '',  active:  false,  join:  'and',  placeholder:  true  }];  const  next  =  removeFilterRow(rows, index);  return  next.length  ?  next  :  [{  id:  'placeholder-rule',  field:  '',  operator:  '=',  value:  '',  active:  false,  join:  'and',  placeholder:  true  }];  })}><CloseOutlined /></button></span></div>)}</div>
+                                <div className="flow-filter-rules" ref={rulesRef}>{rules.map((rule,  index)  =>  <div  className={['flow-filter-rule', rule.id.startsWith('group-open-') ? 'is-group-open' : '', rule.id.startsWith('group-close-') ? 'is-group-close' : '', rule.id.startsWith('group-filter-') ? 'is-nested' : '', rule.id.includes('nested-') ? 'is-group-nested' : '', `is-group-depth-${filterNestingDepth(rule.id)}`, filterMoving?.id === rule.id ? `is-moving is-moving-${filterMoving.direction}` : filterMoving?.peerId === rule.id ? `is-moving is-moving-${filterMoving.direction === 'up' ? 'down' : 'up'}` : '', rule.active === false ? 'is-inactive' : '', invalidFilter?.id === rule.id ? invalidFilter.parts.map(part => `has-invalid-${part}`).join(' ') : ''].filter(Boolean).join(' ')}  style={{  '--filter-depth':  filterNestingDepth(rule.id)  }  as  React.CSSProperties}  key={rule.id} id={columnMode ? `explorer-filter-${rule.id}` : undefined}><span  className="flow-filter-row-check"><FilterCheckbox  checked={rule.active  !==  false}  onChange={(event)  =>  setRules((rows)  =>  rows.map((item,  itemIndex)  =>  rule.id.startsWith('group-open-')  ?  (()  =>  {  const  ruleIndex  =  rows.findIndex((entry)  =>  entry.id  ===  rule.id);  const  bounds  =  filterGroupBounds(rows,  ruleIndex);  return  bounds  &&  ruleIndex  <=  itemIndex  &&  itemIndex  <=  bounds.end  ?  {  ...item,  active:  event.target.checked  }  :  item;  })()  :  item.id  ===  rule.id  ?  {  ...item,  active:  event.target.checked  }  :  item))}  /></span><span  className="flow-filter-row-content"><FilterFieldPicker explorer={columnMode} fields={fields} value={rule.field}  onChange={(field)  =>  setRules((rows)  =>  rows.map((item)  =>  item.id  ===  rule.id  ?  {  ...item,  field  }  :  item))}  /><FilterOperatorSpan explorer={columnMode} value={rule.operator}  onChange={(operator)  =>  setRules((rows)  =>  rows.map((item)  =>  item.id  ===  rule.id  ?  {  ...item,  operator  }  :  item))}  /><FilterValuePicker explorer={columnMode} suggestions={[...new Set(rows.map((row) => formatValue(row[rule.field])))]} value={rule.value}  onChange={(value)  =>  setRules((rows)  =>  rows.map((item)  =>  item.id  ===  rule.id  ?  {  ...item,  value  }  :  item))}  />{index  <  rules.length  -  1  &&  !rules[index  +  1]?.id.startsWith('group-close-')  &&  <span  className="flow-filter-join"  role="button"  tabIndex={0}  onClick={()  =>  setRules((rows)  =>  rows.map((item)  =>  item.id  ===  rule.id  ?  {  ...item,  join:  item.join  ===  'or'  ?  'and'  :  'or'  }  :  item))}>{rule.join  ||  'and'}</span>}</span>{(index  ===  rules.length  - 1  ||  rule.id.startsWith('group-close-')  ||  rules[index  + 1]?.id.startsWith('group-close-'))  &&  <span  className={columnMode ? 'flow-filter-row-actions explorer-filter-rule-actions' : 'flow-filter-row-actions'}>{rule.id.startsWith('group-close-')  &&  index  <  rules.length  -  1  &&  !rules[index  + 1]?.id.startsWith('group-close-')  &&  <span  className="flow-filter-join flow-filter-close-join"  role="button"  tabIndex={0}  onClick={()  =>  setRules((rows)  =>  rows.map((item)  =>  item.id  ===  rule.id  ?  {  ...item,  join:  item.join  ===  'or'  ?  'and'  :  'or'  }  :  item))}>{rule.join  ||  'and'}</span>}<button  type="button"  className={columnMode ? 'explorer-filter-mini' : 'flow-filter-mini'} aria-label="Add filter condition" title="Add filter condition" onClick={() => addFilterCondition(rule, index)}><FilterAddIcon /></button><button  type="button"  className={columnMode ? 'explorer-filter-mini' : 'flow-filter-mini'}  aria-label="Add filter group" title="Add filter group" onClick={() => addFilterGroup(rule, index)}><FilterGroupIcon /></button>{rule.id === 'placeholder-rule' && <span className="flow-filter-placeholder">Select + to add a filter condition</span>}</span>}{renderRuleNotice?.(rule)}<span  className="flow-filter-row-end-actions"><button  type="button"  className="flow-filter-reorder"  aria-label="Move  up"  disabled={index  ===  0}  onClick={()  =>  {  if  (index  === 0)  return;  const  movingId  =  rule.id;  setFilterMoving({  id:  movingId,  peerId:  rules[index  -  1].id,  direction:  'up'  });  window.setTimeout(()  =>  {  setRules((rows)  =>  {  const  currentIndex  =  rows.findIndex((item)  =>  item.id  ===  movingId);  if  (currentIndex  <=  0)  return  rows;  return  moveFilterRows(rows, currentIndex, 'up');  });  setFilterMoving(null);  },  180);  }}><ArrowUpOutlined  /></button><button  type="button"  className="flow-filter-reorder"  aria-label="Move  down"  disabled={index  ===  rules.length  -  1}  onClick={()  =>  {  if  (index  >=  rules.length  -  1)  return;  const  movingId  =  rule.id;  setFilterMoving({  id:  movingId,  peerId:  rules[index  +  1].id,  direction:  'down'  });  window.setTimeout(()  =>  {  setRules((rows)  =>  moveFilterRows(rows, rows.findIndex((item)  =>  item.id  ===  movingId), 'down'));  setFilterMoving(null);  },  180);  }}><ArrowDownOutlined  /></button><button  type="button"  className="flow-filter-remove" aria-label="Remove filter condition" title="Remove filter condition" onClick={()  =>  setRules((rows)  =>  {  if  (rows.length  ===  1)  return  [{  id:  'placeholder-rule',  field:  '',  operator:  '=',  value:  '',  active:  false,  join:  'and',  placeholder:  true  }];  const  next  =  removeFilterRow(rows, index);  return  next.length  ?  next  :  [{  id:  'placeholder-rule',  field:  '',  operator:  '=',  value:  '',  active:  false,  join:  'and',  placeholder:  true  }];  })}><CloseOutlined /></button></span></div>)}</div>
 
         <div className="flow-filter-sort"><strong>Sort by</strong>
             <div className="flow-sort-conditions-viewport" ref={sortConditionsRef}><div className="flow-sort-conditions-track">
-                <span className={columnMode ? 'explorer-filter-sort-field-wrap' : 'flow-filter-sort-field-wrap'}><FilterFieldPicker explorer={columnMode} fields={fields} value={sortField}
+                <span className={columnMode ? 'explorer-filter-sort-field-wrap' : 'flow-filter-sort-field-wrap'}><FilterFieldPicker explorer={columnMode} fields={columnMode ? availableExplorerSortFields(fields, sorts, 0) : fields} value={sortField}
                     onChange={field => onSortsChange([{ field, direction: sortDirection }, ...sortConditions], true)}
                     className={columnMode ? 'explorer-filter-sort-field' : 'flow-filter-sort-field'} labelClassName="flow-filter-sort-field-label" trailing={<>
                         <button type="button" className="flow-filter-sort-direction-toggle" aria-label={sortDirection === 'asc' ? 'Switch to descending' : 'Switch to ascending'} onClick={event => {
@@ -130,7 +201,7 @@ export default function ExplorerFilterEditor({ rules, setRules, search, onSearch
                     </>} />
                 </span>
                 {sortConditions.map((condition, index) => <span className={columnMode ? 'explorer-filter-sort-field-wrap' : 'flow-filter-sort-field-wrap'} key={`${condition.field}-${index}`}>
-                    <FilterFieldPicker explorer={columnMode} fields={fields} value={condition.field}
+                    <FilterFieldPicker explorer={columnMode} fields={columnMode ? availableExplorerSortFields(fields, sorts, index + 1) : fields} value={condition.field}
                         onChange={field => onSortsChange([sorts[0], ...sortConditions.map((item, itemIndex) => itemIndex === index ? { ...item, field } : item)], false)}
                         className={columnMode ? 'explorer-filter-sort-field' : 'flow-filter-sort-field'} labelClassName="flow-filter-sort-field-label" trailing={<>
                             <button type="button" className="flow-filter-sort-direction-toggle" aria-label="Toggle sort direction" onClick={event => {
@@ -141,7 +212,7 @@ export default function ExplorerFilterEditor({ rules, setRules, search, onSearch
                             }}><CloseOutlined /></button> : <SortActionMenu onDelete={() => onSortsChange([sorts[0], ...sortConditions.filter((_, itemIndex) => itemIndex !== index)], true)} onClear={clearSorts} />}
                         </>} />
                 </span>)}
-                <button type="button" className={columnMode ? 'explorer-filter-mini explorer-filter-sort-add' : 'flow-filter-mini flow-filter-sort-add'} aria-label="Add sort field" onClick={() => onSortsChange([{ field: sortField, direction: sortDirection }, ...sortConditions, { field: fields[0] || '', direction: 'asc' }], false)}><FilterAddIcon /></button>
+                <button type="button" className={columnMode ? 'explorer-filter-mini explorer-filter-sort-add' : 'flow-filter-mini flow-filter-sort-add'} aria-label="Add sort field" disabled={columnMode && !nextSortField} onClick={addSortField}><FilterAddIcon /></button>
             </div></div>
             {sortConditionsOverflow && <div className={columnMode ? 'explorer-sort-scroll-buttons' : 'flow-sort-scroll-buttons'}>
                 <button type="button" aria-label="Scroll left" onClick={() => sortConditionsRef.current?.scrollBy({ left: -140, behavior: 'smooth' })}>‹</button>

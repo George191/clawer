@@ -8,7 +8,7 @@ const source = readFileSync(new URL('../src/pages/Pipeline/explorerFilters.ts', 
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 const exports = {};
 vm.runInThisContext('(function(exports){' + compiled + '\n})')(exports);
-const { activeExplorerFilters, blankExplorerFilter } = exports;
+const { activeExplorerFilters, blankExplorerFilter, hasExplorerFilterInput } = exports;
 const rule = (id, patch = {}) => ({ ...blankExplorerFilter(id), ...patch });
 
 test('column filter indicators omit incomplete and disabled conditions but include unary filters', () => {
@@ -30,4 +30,11 @@ test('multiple conditions on one column retain their row identities and order fo
   const result = activeExplorerFilters(rows);
   assert.equal(result[0], rows[0]);
   assert.equal(result[1], rows[1]);
+});
+
+test('default field-only rows do not mark the query dirty but entered and unary conditions do', () => {
+  assert.equal(hasExplorerFilterInput(rule('initial', { field: 'id' })), false);
+  assert.equal(hasExplorerFilterInput(rule('unary', { field: 'name', operator: '是空的' })), true);
+  assert.equal(hasExplorerFilterInput(rule('range-draft', { field: 'employees', operator: '介于', value: '10,' })), true);
+  assert.equal(hasExplorerFilterInput(rule('missing-field', { value: '10' })), false);
 });

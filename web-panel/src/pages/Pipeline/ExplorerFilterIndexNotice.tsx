@@ -11,9 +11,9 @@ import './explorer-filter-index-notice.css';
 const operators: Partial<Record<string, PreviewIndexCoverageOperator>> = {
   '=': 'eq', '<': 'lt', '<=': 'lte', '>': 'gt', '>=': 'gte', '介于': 'between',
 };
-const supportedType = /^(smallint|int2|integer|int4|bigint|int8|date|timestamp with time zone|timestamptz)$/;
+const supportedType = /^(smallint|int2|integer|int4|bigint|int8|numeric|decimal|real|float4|double precision|float8|text|character varying|varchar|character|char|bpchar|boolean|bool|uuid|date|timestamp|timestamp without time zone|timestamp with time zone|timestamptz)$/;
 const identifier = /^[a-z_][a-z0-9_]{0,62}$/;
-const unsupportedDescription = 'This advisory checks integer, date and timezone-aware timestamp comparisons only. It does not assess this condition or rule out an available index.';
+const unsupportedDescription = 'This advisory checks supported scalar comparisons against native B-tree index metadata. It does not assess this condition or rule out an available index.';
 const noIndexDescription = 'No supported leading B-tree index matches this field and operator. Other index types or combined conditions may still help. This is a catalog advisory, not a query plan or a timeout prediction.';
 
 type Scope = { schema: string; table: string };
@@ -69,14 +69,14 @@ function IndexNotice({ schema, table, input, retryLabel, warning, noIndexDescrip
     return () => { window.clearTimeout(timer); controller.abort(); };
   }, [key, shape, schema, table, identity]);
   if (!identity || !schema || !table) return null;
-  if (!input || current?.state === 'unsupported') return <Tooltip title={unsupportedDescription}>
+  if (!input || current?.state === 'unsupported') return <Tooltip overlayClassName="explorer-index-tooltip" mouseEnterDelay={0} title={unsupportedDescription}>
     <span className="explorer-filter-index-notice" role="status">Index not assessed</span>
   </Tooltip>;
   if (current?.state === 'candidate') return null;
-  if (current?.state === 'no_candidate') return <Tooltip title={noIndexDescription}>
+  if (current?.state === 'no_candidate') return <Tooltip overlayClassName="explorer-index-tooltip" mouseEnterDelay={0} title={<><strong>{warning}</strong><div>{noIndexDescription}</div></>}>
     <span className="explorer-filter-index-notice is-warning" role="status"><WarningOutlined /><span>{warning}</span></span>
   </Tooltip>;
-  if (current?.state === 'unavailable') return <Tooltip title="Index metadata could not be checked. The check may have timed out or be unavailable. Retry to verify it; this does not mean an index is missing.">
+  if (current?.state === 'unavailable') return <Tooltip overlayClassName="explorer-index-tooltip" mouseEnterDelay={0} title="Index metadata could not be checked. The check may have timed out or be unavailable. Retry to verify it; this does not mean an index is missing.">
     <button type="button" className="explorer-filter-index-notice is-warning is-retry" aria-label={retryLabel} onClick={() => retry(value => value + 1)}><WarningOutlined /><span>Index check unavailable</span></button>
   </Tooltip>;
   return <span className="explorer-filter-index-notice" role="status"><ReloadOutlined spin /><span>Checking index…</span></span>;

@@ -131,7 +131,7 @@ test('unavailable checks have a warning icon and retry without claiming a missin
 });
 
 test('unsupported conditions remain neutral and never claim an index is missing', async () => {
-  const unsupported = mount('default', { ...filterProps, columnTypes: { employees: 'text' } });
+  const unsupported = mount('default', { ...filterProps, columnTypes: { employees: 'jsonb' } });
   unsupported.runTimers();
   assert.equal(unsupported.calls.length, 0);
   assert.equal(copy(unsupported.view()), 'Index not assessed');
@@ -141,6 +141,21 @@ test('unsupported conditions remain neutral and never claim an index is missing'
   assert.equal(copy(tree), 'Index not assessed');
   assert.equal(warning(tree), false);
   assert.equal(warningIcon(tree), false);
+});
+
+test('common scalar filter types receive the same warning and full immediate tooltip as sorts', async () => {
+  for (const type of ['text', 'character varying(160)', 'numeric(12,2)', 'uuid', 'boolean', 'timestamp without time zone']) {
+    const ui = mount('default', { ...filterProps, columnTypes: { employees: type } });
+    ui.runTimers();
+    assert.deepEqual(ui.calls[0].input, { field: 'employees', operator: 'gte' });
+    const tree = await ui.settle(0, 'no_candidate');
+    assert.equal(warning(tree), true);
+    assert.equal(warningIcon(tree), true);
+    assert.equal(tree.props.mouseEnterDelay, 0);
+    assert.equal(tree.props.overlayClassName, 'explorer-index-tooltip');
+    assert.ok(copy(tree.props.title).includes('No leading index · may be slow'));
+    assert.ok(copy(tree.props.title).includes('not a query plan or a timeout prediction'));
+  }
 });
 
 test('cancelled and locked-session responses cannot publish stale results', async () => {

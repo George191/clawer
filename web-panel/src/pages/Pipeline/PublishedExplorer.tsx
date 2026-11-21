@@ -14,10 +14,11 @@ import type { ResourceView } from './ExplorerWorkbenchHeader';
 import type { ExplorerPreviewRow } from './ExplorerSelection';
 import ExplorerWorkbench, { ExplorerFilterButton, ExplorerResults, ExplorerResultsFooter, explorerResultColumns } from './ExplorerWorkbench';
 import ExplorerFilterEditor, { normalizeFilterDepth, randomId } from './ExplorerFilterEditor';
+import { firstIncompleteExplorerFilter } from './explorerFilterDraft';
 import ExplorerSearchCondition from './ExplorerSearchCondition';
 import ExplorerFilterIndexNotice, { ExplorerSortIndexNotice } from './ExplorerFilterIndexNotice';
 import { LayoutToolbar, useResultLayout } from './ExplorerResultLayout';
-import { activeExplorerFilters, appendAndFilters, blankExplorerFilter, cellFilterRows, countFilterTerms, exactCellValue, explorerFilterTerms, hasOr, type ExplorerFilter } from './explorerFilters';
+import { activeExplorerFilters, appendAndFilters, blankExplorerFilter, cellFilterRows, countFilterTerms, exactCellValue, explorerFilterTerms, hasExplorerFilterInput, hasOr, type ExplorerFilter } from './explorerFilters';
 import { explorerResourceCapabilities } from '../../services/explorerCapabilities';
 import PublishedSourceTools from './PublishedSourceTools';
 import PublishedExplorerRelationships from './PublishedExplorerRelationships';
@@ -42,7 +43,7 @@ function commonFilters(query: PublishedExplorerQuery, objectType: PublishedOntol
   });
   return normalizeFilterDepth(appendAndFilters(query.workbenchFilters || [], inherited, 'semantic-scope'));
 }
-const wireFilters = (rules: ExplorerFilter[]) => rules.filter(rule => rule.field || /^group-(open|close)-/.test(rule.id))
+const wireFilters = (rules: ExplorerFilter[]) => rules.filter(rule => hasExplorerFilterInput(rule) || /^group-(open|close)-/.test(rule.id))
   .map(({ id, field, operator, value, active, join }) => ({ id, field, operator, value, active, join }));
 
 export default function PublishedExplorer() {
@@ -73,6 +74,8 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [filterRules, setFilterRules] = useState<ExplorerFilter[]>([blankExplorerFilter('rule-1')]);
+  const [filterValidationRequest, setFilterValidationRequest] = useState(0);
+  useEffect(() => setFilterValidationRequest(0), [filterRules]);
   const [draftSorts, setDraftSorts] = useState<ExplorerSort[]>([]);
   const navigationDraft = useRef<{ route: string; mode: typeof mode; rules?: ExplorerFilter[] }>();
   const initialLayoutSorts = useRef(!entry.saved && !entry.savedSet && !entry.query.sorts?.length).current;
@@ -178,10 +181,15 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
     if (query && !fatalError) changeQuery({ ...query, sorts: next.filter(item => item.field) }, true);
   }
   function addFilter(field: string) {
-    if (!canChange()) return;
+    if (!canChange() || !canAppendFilter()) return;
     const id = randomId(), next = appendAndFilters(wireFilters(filterRules), [{ ...blankExplorerFilter(id), field }], randomId());
     if (next.length > 100) { message.warning('The table supports up to 100 filter rows'); return; }
     setFilterRules(normalizeFilterDepth(next)); setFiltersOpen(true);
+  }
+  function canAppendFilter() {
+    if ((!filtersOpen && !filterRules.some(rule => rule.field || rule.value)) || !firstIncompleteExplorerFilter(filterRules)) return true;
+    setMode('results'); setFiltersOpen(true); setFilterValidationRequest(value => value + 1);
+    return false;
   }
   function openColumnFilter(field: string) {
     if (!canChange()) return;
@@ -201,7 +209,7 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
   const dataColumns = explorerResultColumns({ layout: resultLayout, sorts, filters: activeFilters, openFilter: openColumnFilter, types, names, addFilter,
     setSort: (field, direction) => { if (requireDraftApplied(true)) updateSorts([{ field, direction }, ...sorts.filter(item => item.field !== field)]); },
     clearSorts: () => { if (requireDraftApplied(true)) updateSorts([]); },
-    filterValue: (field, value, exclude) => { if (requireDraftApplied()) applyRules(appendAndFilters(activeFilters, cellFilterRows(field, value, exclude, randomId()), randomId())); },
+    filterValue: (field, value, exclude) => { if (canChange() && canAppendFilter() && requireDraftApplied()) applyRules(appendAndFilters(activeFilters, cellFilterRows(field, value, exclude, randomId()), randomId())); },
   });
   const objectTools = usePublishedObjectTools({ objectType, actions: result?.actions || [], record: original(activeRow), returnTo: entry.returnTo, busy: busy || !!error,
     onChanged: () => { setActiveRow(undefined); setChosen([]); retry(value => value + 1); } });
@@ -256,6 +264,7 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
             removeSearch={() => { if (canChange()) changeQuery({ ...query, search: '' }); }} />}
           {query?.keys && <div className="flow-schema-applied flow-query-chips" aria-label="Object set scope"><span>{query.keys.length} object references{result ? ` · ${result.count} matching objects` : ''}</span></div>}
           {filtersOpen && query && <ExplorerFilterEditor rules={filterRules} setRules={setFilterRules} sorts={draftSorts}
+            validationRequest={filterValidationRequest}
             renderRuleNotice={objectType?.definition.source.mode === 'existing' && canManage ? rule => {
               const property = properties.find(property => property.id === rule.field);
               if (!property?.sourceColumn || !activeExplorerFilters(filterRules).some(item => item.id === rule.id)) return null;

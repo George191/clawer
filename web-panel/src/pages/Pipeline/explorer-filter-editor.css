@@ -12,6 +12,9 @@
 .explorer-filter-editor .explorer-filter-field-link > span:first-child { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .explorer-filter-editor .explorer-filter-value { color:var(--ui-action-link); font-family:inherit; font-size:11px; font-weight:400; }
 .explorer-filter-editor .flow-filter-rule.is-inactive :is(.explorer-filter-field-link,.explorer-filter-op,.explorer-filter-value) { color:var(--ontology-muted); }
+.explorer-filter-editor .flow-filter-rule.has-invalid-field .flow-filter-row-content > .ui-dropdown-trigger:first-child > .explorer-filter-field-link,
+.explorer-filter-editor .flow-filter-rule.has-invalid-operator .explorer-filter-op,
+.explorer-filter-editor .flow-filter-rule.has-invalid-value .explorer-filter-value { border-color:var(--ui-warning); background:color-mix(in srgb,var(--ui-warning) 8%,var(--ontology-panel)); }
 .flow-console--ontology .explorer-filter-editor .explorer-filter-mini { display:inline-flex; flex:none; align-items:center; justify-content:center; width:26px; min-width:26px; height:26px; padding:0; border:0; border-radius:3px; background:transparent; color:var(--ontology-muted); cursor:pointer; }
 .flow-console--ontology .explorer-filter-editor .explorer-filter-mini:hover { background:var(--ontology-hover); color:var(--ontology-text); }
 .flow-console--ontology .explorer-filter-editor .flow-filter-sort { min-height:42px; padding:7px 6px; border-top:1px solid var(--ontology-border); }
@@ -21,6 +24,7 @@
 .explorer-filter-editor .explorer-filter-sort-field { display:inline-flex; align-items:center; gap:4px; min-width:0; max-width:280px; border-color:var(--ontology-control-border); background:var(--ontology-panel); }
 .flow-console--ontology .explorer-filter-editor .flow-filter-sort button { display:inline-flex; flex:none; align-items:center; justify-content:center; width:20px; min-width:20px; height:22px; padding:0; border:0; border-radius:2px; background:transparent; color:var(--ontology-muted); }
 .flow-console--ontology .explorer-filter-editor .flow-filter-sort button:hover { background:var(--ontology-hover); color:var(--ontology-text); }
+.flow-console--ontology .explorer-filter-editor .flow-filter-sort button:disabled { opacity:.35; cursor:default; background:transparent; }
 .explorer-filter-editor .explorer-filter-sort-field > .flow-filter-sort-direction-toggle { margin-left:auto; }
 .explorer-filter-editor .flow-filter-sort .flow-filter-sort-direction-toggle svg { width:16px; height:16px; }
 .flow-console--ontology .explorer-filter-editor .flow-filter-sort .explorer-filter-sort-remove { width:0; min-width:0; margin-left:-4px; overflow:hidden; opacity:0; pointer-events:none; }

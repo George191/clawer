@@ -33,7 +33,7 @@ _COVERAGE = text(f"""
             pg_catalog.unnest(CAST(:operators AS text[]))
         ) AS q(field, operator)
     ), fields AS MATERIALIZED (
-        SELECT a.attnum, a.atttypid, q.operator, q.strategies
+        SELECT a.attnum, a.atttypid, a.attcollation, q.operator, q.strategies
         FROM asset
         JOIN pg_catalog.pg_attribute a ON a.attrelid = asset.oid
         JOIN requested q ON a.attname = q.field
@@ -46,8 +46,12 @@ _COVERAGE = text(f"""
         WHEN EXISTS (
             SELECT 1 FROM fields WHERE atttypid NOT IN (
                 'pg_catalog.int2'::pg_catalog.regtype, 'pg_catalog.int4'::pg_catalog.regtype,
-                'pg_catalog.int8'::pg_catalog.regtype, 'pg_catalog.date'::pg_catalog.regtype,
-                'pg_catalog.timestamptz'::pg_catalog.regtype
+                'pg_catalog.int8'::pg_catalog.regtype, 'pg_catalog.numeric'::pg_catalog.regtype,
+                'pg_catalog.float4'::pg_catalog.regtype, 'pg_catalog.float8'::pg_catalog.regtype,
+                'pg_catalog.text'::pg_catalog.regtype, 'pg_catalog.varchar'::pg_catalog.regtype,
+                'pg_catalog.bpchar'::pg_catalog.regtype, 'pg_catalog.bool'::pg_catalog.regtype,
+                'pg_catalog.uuid'::pg_catalog.regtype, 'pg_catalog.date'::pg_catalog.regtype,
+                'pg_catalog.timestamp'::pg_catalog.regtype, 'pg_catalog.timestamptz'::pg_catalog.regtype
             )
         ) THEN 'unsupported'
         WHEN EXISTS (
@@ -62,9 +66,11 @@ _COVERAGE = text(f"""
                   WHERE NOT EXISTS (
                       SELECT 1 FROM pg_catalog.generate_series(0, CAST(:size AS integer) - 1) AS prefix(pos)
                       JOIN pg_catalog.pg_opclass k ON k.oid = i.indclass[prefix.pos] AND k.opcmethod = btree.oid
-                      WHERE i.indkey[prefix.pos] = f.attnum
+                      WHERE i.indkey[prefix.pos] = f.attnum AND i.indcollation[prefix.pos] = f.attcollation
                         AND (f.operator = 'eq' OR prefix.pos = :size - 1)
-                        AND k.opcdefault AND k.opcintype = f.atttypid
+                        AND k.opcdefault AND k.opcintype = CASE f.atttypid
+                            WHEN 'pg_catalog.varchar'::pg_catalog.regtype THEN 'pg_catalog.text'::pg_catalog.regtype
+                            ELSE f.atttypid END
                         AND k.opcnamespace = 'pg_catalog'::pg_catalog.regnamespace
                         AND NOT EXISTS (
                             SELECT 1 FROM pg_catalog.unnest(f.strategies) strategy(number)
@@ -72,7 +78,7 @@ _COVERAGE = text(f"""
                                 SELECT 1 FROM pg_catalog.pg_amop o
                                 JOIN pg_catalog.pg_operator op ON op.oid = o.amopopr
                                 WHERE o.amopfamily = k.opcfamily AND o.amopmethod = btree.oid
-                                  AND o.amoplefttype = f.atttypid AND o.amoprighttype = f.atttypid
+                                  AND o.amoplefttype = k.opcintype AND o.amoprighttype = k.opcintype
                                   AND o.amoppurpose = 's' AND o.amopstrategy = strategy.number
                                   AND op.oprnamespace = 'pg_catalog'::pg_catalog.regnamespace
                             )

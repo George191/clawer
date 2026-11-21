@@ -4,6 +4,7 @@ export type ExplorerFilter = EtlDataQuery['filters'][number];
 const openGroup = (row: ExplorerFilter) => row.id.startsWith('group-open-');
 const closeGroup = (row: ExplorerFilter) => row.id.startsWith('group-close-');
 const unary = (operator: string) => /^(是\s+null|不是\s+null|是空的|不是空的)$/.test(operator);
+export const hasExplorerFilterInput = (rule: ExplorerFilter): boolean => !!rule.field && (rule.value !== '' || unary(rule.operator));
 
 interface FilterTerm {
     start: number;
@@ -27,7 +28,7 @@ export function explorerFilterTerms(rows: ExplorerFilter[]): FilterTerm[] {
             if (group.active && group.terms.length) {
                 stack[stack.length - 1].terms.push({ start: group.start, end: index, join: rule.join, children: group.terms });
             }
-        } else if (parent.active && rule.active && rule.field && (rule.value !== '' || unary(rule.operator))) {
+        } else if (parent.active && rule.active && hasExplorerFilterInput(rule)) {
             parent.terms.push({ start: index, end: index, join: rule.join, rule });
         }
     });

@@ -259,9 +259,9 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
         for operator in ("eq", "lt", "lte", "gt", "gte", "between"):
             self.assertEqual(await probe("id", operator), "candidate")
         self.assertEqual(await probe("happened_at", "between"), "candidate")
-        for field in ("second_key", "partial_key", "included", "expression_key", "plain"):
+        for field in ("second_key", "partial_key", "included", "expression_key", "plain", "local_time", "code"):
             self.assertEqual(await probe(field), "no_candidate", field)
-        for field in ("local_time", "code", "code_id"):
+        for field in ("code_id",):
             self.assertEqual(await probe(field), "unsupported", field)
         self.assertEqual(await probe("id", as_reader=True), "candidate")
         self.assertEqual(await probe("happened_at", as_reader=True), "unavailable")
@@ -321,13 +321,67 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
             (("expr_one", "eq"), ("expr_two", "eq")),
         ):
             self.assertEqual(await probe(*comparison), "no_candidate", comparison)
-        self.assertEqual(await probe(("a", "eq"), ("kind", "eq"), reader=True), "unsupported")
+        self.assertEqual(await probe(("a", "eq"), ("kind", "eq"), reader=True), "no_candidate")
         self.assertEqual(await probe(("c", "eq"), ("kind", "eq"), reader=True), "unavailable")
         self.assertEqual(await probe(("a", "eq"), ("does_not_exist", "eq"), reader=True), "unavailable")
         await self.pg.execute(f"REVOKE USAGE ON SCHEMA {SCHEMA} FROM {role}")
         with self.assertRaises(HTTPException) as error:
             await probe(("a", "eq"), ("b", "eq"), reader=True)
         self.assertEqual(error.exception.status_code, 404)
+
+    async def test_filter_index_coverage_supports_common_native_types_and_collation_after_acl(self):
+        role = "helio_scalar_coverage_" + uuid4().hex[:12]
+        async with self.pg.session() as session:
+            for sql in (
+                f"CREATE DOMAIN {SCHEMA}.scalar_id AS bigint",
+                f"""CREATE TABLE {SCHEMA}.scalar_shapes (
+                    code text, label varchar(80), padded char(8), amount numeric(20,3),
+                    ratio_real real, ratio_double double precision, active boolean, token uuid,
+                    local_time timestamp, missing_text text, different_collation text,
+                    pattern_label varchar(80), custom_type {SCHEMA}.scalar_id, document jsonb
+                )""",
+                *(f"CREATE INDEX ON {SCHEMA}.scalar_shapes ({field})" for field in (
+                    "label", "padded", "amount", "ratio_real", "ratio_double", "active", "token", "local_time",
+                )),
+                f"CREATE INDEX ON {SCHEMA}.scalar_shapes (code, amount, local_time)",
+                f'CREATE INDEX ON {SCHEMA}.scalar_shapes (different_collation COLLATE "C")',
+                f"CREATE INDEX ON {SCHEMA}.scalar_shapes (pattern_label varchar_pattern_ops)",
+                f"CREATE INDEX ON {SCHEMA}.scalar_shapes (custom_type)",
+                f"CREATE ROLE {role} NOLOGIN",
+                f"GRANT SELECT ON public.ontology_objects TO {role}",
+                f"GRANT USAGE ON SCHEMA {SCHEMA} TO {role}",
+                f"GRANT SELECT (code, label) ON {SCHEMA}.scalar_shapes TO {role}",
+            ):
+                await session.execute(text(sql))
+
+        async def cleanup():
+            await self.pg.execute(f"DROP OWNED BY {role}")
+            await self.pg.execute(f"DROP ROLE {role}")
+
+        self.addAsyncCleanup(cleanup)
+
+        async def probe(*terms, reader=False):
+            shapes = [PreviewIndexCoverageRequest(field=field, operator=operator) for field, operator in terms]
+            payload = shapes[0] if len(shapes) == 1 else PreviewCompositeIndexCoverageRequest(terms=shapes)
+            async with self.pg.session() as session:
+                if reader:
+                    await session.execute(text(f"SET LOCAL ROLE {role}"))
+                return (await preview_index_coverage(session, SCHEMA, "scalar_shapes", payload)).state
+
+        for field in ("code", "label", "padded", "amount", "ratio_real", "ratio_double", "active", "token", "local_time"):
+            for operator in ("eq", "lt", "lte", "gt", "gte", "between"):
+                self.assertEqual(await probe((field, operator)), "candidate", (field, operator))
+        for field in ("missing_text", "different_collation", "pattern_label"):
+            self.assertEqual(await probe((field, "eq")), "no_candidate", field)
+        for field in ("custom_type", "document"):
+            self.assertEqual(await probe((field, "eq")), "unsupported", field)
+        self.assertEqual(await probe(("code", "eq"), ("amount", "gte")), "candidate")
+        self.assertEqual(await probe(("local_time", "between"), ("code", "eq"), ("amount", "eq")), "candidate")
+        self.assertEqual(await probe(("code", "eq"), ("local_time", "eq")), "no_candidate")
+        self.assertEqual(await probe(("label", "eq"), reader=True), "candidate")
+        self.assertEqual(await probe(("amount", "eq"), reader=True), "unavailable")
+        self.assertEqual(await probe(("document", "eq"), reader=True), "unavailable")
+        self.assertEqual(await probe(("missing", "eq"), reader=True), "unavailable")
 
     async def test_sort_index_coverage_matches_complete_direction_nulls_collation_and_acl(self):
         role = "helio_sort_coverage_" + uuid4().hex[:12]

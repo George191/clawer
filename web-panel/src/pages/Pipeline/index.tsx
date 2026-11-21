@@ -40,8 +40,9 @@ import { useSandboxIdentity } from './SandboxMarkings';
 import { getSessionState } from '../../services/session';
 import { explorerResourceCapabilities } from '../../services/explorerCapabilities';
 import SandboxIndexPreview, { INDEX_PREVIEW_SCHEMA, INDEX_PREVIEW_TABLE } from './SandboxIndexPreview';
-import { activeExplorerFilters, appendAndFilters, blankExplorerFilter, cellFilterRows, countFilterTerms, exactCellValue, explorerFilterTerms, hasOr } from './explorerFilters';
+import { activeExplorerFilters, appendAndFilters, blankExplorerFilter, cellFilterRows, countFilterTerms, exactCellValue, explorerFilterTerms, hasExplorerFilterInput, hasOr } from './explorerFilters';
 import type { ExplorerFilter } from './explorerFilters';
+import { firstIncompleteExplorerFilter } from './explorerFilterDraft';
 import  {  TemplateGlyph,  inferSiteKind  }  from  '../AICollect/WorkspaceDock';
 import { fetchCurrentUserContext, fetchLayers, fetchLayerTables, fetchTableData, fetchHandlerCode, queryEtlTable, queryExplorerPreview, fetchRowPreviewPolicy, fetchEtlTableColumns, fetchTableStream, fetchLayerScript, setTableOffset, validateHandlerCode, saveHandlerCode, updateEtlRow, deleteEtlRow, fetchEtlApis, createEtlApi, updateEtlApi, deleteEtlApi, fetchVulnerabilityKeywords, uploadVulnerabilityKeywords, activateVulnerabilityKeywordVersion, downloadVulnerabilityKeywordVersion, downloadCurrentVulnerabilityKeywords } from '../../services/api';
 import type { RowPreviewMode, EtlDataQuery, EtlPublishedApi, VulnerabilityKeywordConfig } from '../../services/api';
@@ -259,6 +260,7 @@ const DataLayersWorkspace: React.FC = () => {
     const editSnapshot = useRef<RowSnapshot>();
     const  tableTabsRef  =  useRef<HTMLDivElement>(null);
     const  [filterOpen,  setFilterOpen]  =  useState(false);
+    const [filterValidationRequest, setFilterValidationRequest] = useState(0);
     const  [filterText,  setFilterText]  =  useState('');
     const  [filterRules,  setFilterRules]  =  useState<ExplorerFilter[]>([{  id:  'rule-1',  field:  'record_id',  operator:  '=',  value:  '',  active:  true,  join:  'and'  }]);
     const  [sortField,  setSortField]  =  useState('record_id');
@@ -606,7 +608,13 @@ const DataLayersWorkspace: React.FC = () => {
         }
         return selectedTableAvailable && showPreview && !loading && !savedBlocked && queryScopeReady;
     };
-    const filterDraft = (rows: ExplorerFilter[]) => rows.filter((rule) => rule.field || /^group-(open|close)-/.test(rule.id));
+    const filterDraft = (rows: ExplorerFilter[]) => rows.filter((rule) => hasExplorerFilterInput(rule) || /^group-(open|close)-/.test(rule.id));
+    useEffect(() => setFilterValidationRequest(0), [filterRules]);
+    const canAppendFilter = () => {
+        if (!isSchemas || (!filterOpen && !filterRules.some(rule => rule.field || rule.value)) || !firstIncompleteExplorerFilter(filterRules)) return true;
+        setWorkbenchMode('results'); setFilterOpen(true); setFilterValidationRequest(value => value + 1);
+        return false;
+    };
     const hasFilterDraft = () => JSON.stringify(filterDraft(filterRules)) !== JSON.stringify(filterDraft(appliedQuery.filters));
     const requireAppliedFilterDraft = () => {
         if (!canChangePreview()) return false;
@@ -623,7 +631,7 @@ const DataLayersWorkspace: React.FC = () => {
         setPageNumber(1);
     };
     const addColumnFilter = (field: string) => {
-        if (!canChangePreview()) return;
+        if (!canChangePreview() || !canAppendFilter()) return;
         const id = randomId();
         const next = appendAndFilters(filterDraft(filterRules), [{ ...blankExplorerFilter(id), field }], randomId());
         if (next.length > 100) { message.warning('The table supports up to 100 filter rows'); return; }
@@ -643,7 +651,7 @@ const DataLayersWorkspace: React.FC = () => {
         });
     };
     const quickCellFilter = (field: string, value: string | null, exclude: boolean) => {
-        if (!requireAppliedFilterDraft()) return;
+        if (!canChangePreview() || !canAppendFilter() || !requireAppliedFilterDraft()) return;
         const id = randomId();
         setExplorerFilters(appendAndFilters(appliedQuery.filters, cellFilterRows(field, value, exclude, id), `${id}-previous`));
     };
@@ -1256,6 +1264,7 @@ footer: previewPage && <ExplorerResultsFooter offset={previewPage.offset} rowCou
                             {isSchemas && pageNumber > 1 && <Button size="small" onClick={() => setPageNumber(1)}>Back to first page</Button>}
                         </div>}
                         {showPreview && !savedBlocked && queryScopeReady && filterOpen && <ExplorerFilterEditor
+                            validationRequest={filterValidationRequest}
                             rules={filterRules} setRules={setFilterRules} search={filterText} onSearchChange={setFilterText}
                             renderRuleNotice={isSchemas ? rule => activeExplorerFilters(filterRules).some(item => item.id === rule.id) ? <ExplorerFilterIndexNotice
                                 schema={selectedSchema} table={table.name} rule={rule} columnTypes={data?.columnTypes}
