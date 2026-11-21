@@ -2,7 +2,7 @@ import PropertyTypeIcon from './PropertyTypeIcon';
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, message } from '@/components/ui';
-import { FilterOutlined, PlusOutlined, SearchOutlined } from '@/components/ui/icons';
+import { DownOutlined, FilterOutlined, PlusOutlined, SearchOutlined } from '@/components/ui/icons';
 import { fetchEtlTableColumns } from '../../services/api';
 import { explorerPropertyType, fetchExplorerProperties, saveExplorerProperties, type ExplorerMappedProperty as Property, type ExplorerPropertyMapping as Mapping } from '../../services/explorerProperties';
 import { ontologyError } from '../../services/ontology';
@@ -154,10 +154,10 @@ function Workbench({schema,table,canManage,identity,onSaved,onDirtyChange}: Prop
                                 onChange={e=>patch(index,{visibility:e.target.value as Property['visibility'], ...(e.target.value==='hidden'?{summary:false}:{})})}>
                                 {(draft.titleProperty && item.sourceColumn===draft.titleProperty?['normal','prominent']:['normal','prominent','hidden']).map(v=><option key={v} value={v}>{readable(v)}</option>)}
                             </select> : <span className="physical-chip visibility">{readable(item.visibility)}</span>}</td>
-                            <td>{editable && propertyFormatters(item.type).length>1 ? <select className="physical-chip formatter" aria-label={'Formatter for '+item.name} value={item.formatter}
+                            <td>{editable && propertyFormatters(item.type).length>1 ? <span className="physical-formatter-select"><select className="physical-chip formatter" aria-label={'Formatter for '+item.name} value={item.formatter}
                                 onChange={e=>patch(index,{formatter:e.target.value as Property['formatter']})}>
                                 {propertyFormatters(item.type).map(v=><option key={v} value={v}>{readable(v)}</option>)}
-                            </select> : <span className="physical-chip formatter">{readable(item.formatter)}</span>}</td>
+                            </select><DownOutlined aria-hidden="true" /></span> : <span className="physical-chip formatter">{readable(item.formatter)}</span>}</td>
                             <td><code>{item.sourceColumn || '—'}</code></td></tr>)}
                         {!items.length && <tr><td colSpan={5}>{draft.properties.length?'No properties match the current filters.':'No properties registered.'}</td></tr>}</tbody></>
                     : <><thead><tr>{['Source column','PostgreSQL type','Mapped property','Constraints'].map(s=><th key={s} scope="col">{s}</th>)}</tr></thead><tbody>
