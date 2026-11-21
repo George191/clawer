@@ -176,7 +176,7 @@ function RecordPage({ source, identity }: { source: ExplorerDetailSource; identi
         } : undefined,
     });
     const mutation = source.kind === 'published' ? objectTools.renderMutation(publishedRecord) : result && draft
-        ? <ExplorerRecordMutation mode="edit" title={title} identity={result.identity} error={validationError}
+        ? <ExplorerRecordMutation mode="edit" title={title} error={validationError}
             busy={busy} disabled={stale} fields={editFields.map(name => ({ key:name, label:name, type:result.columnTypes[name], value:draft[name],
                 onChange:(value:string | null)=>setDraft(current=>current ? {...current,[name]:value} : current),
                 nullControl:result.columnNullable?.[name] === true ? rowNullControl(name, draft[name], rememberedEditValues.current,
@@ -217,7 +217,7 @@ function RecordPage({ source, identity }: { source: ExplorerDetailSource; identi
                 <ExplorerObjectOverview row={row} presentation={presentation} presentations={presentations} typeName={typeName} group={currentGroup}/>)}</div>
         </>}
         {objectTools.dialogs}
-        {source.kind === 'backed' && result && confirmDelete && <ExplorerRecordMutation mode="delete" title={title} identity={result.identity}
+        {source.kind === 'backed' && result && confirmDelete && <ExplorerRecordMutation mode="delete" title={title}
             busy={busy} disabled={stale} onSubmit={()=>mutate(true)} onCancel={()=>{ if (!busy) setConfirmDelete(false); }} />}
     </article>;
 }

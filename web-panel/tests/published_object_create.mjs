@@ -142,6 +142,8 @@ test('edit uses the common inline editor while delete uses its independent confi
     } else {
       assert.equal(tree.type, 'Modal'); assert.equal(tree.props.open, true); assert.equal(tree.props.cancelText, 'Cancel');
       assert.ok(text(tree).includes('Delete Photo?'));
+      assert.equal(nodes(tree).some(node => node.type === 'code' || node.type === 'pre'), false);
+      assert.ok(!text(tree).includes('$recordId'));
     }
   }
 });
@@ -243,7 +245,7 @@ test('delete submits the object revision only after common confirmation and stal
 test('the shared editor blocks disabled submissions for both physical and semantic field descriptors', async () => {
   for (const type of ['bigint', 'number']) {
     let writes = 0;
-    const tree = mutations.default({ mode: 'edit', title: 'Record', identity: { id: '1' }, disabled: true,
+    const tree = mutations.default({ mode: 'edit', title: 'Record', disabled: true,
       fields: [{ key: 'count', label: 'Count', type, value: '2', onChange() {} }], onSubmit: () => writes++, onCancel() {} });
     const field = nodes(tree).find(node => node.type === './ExplorerFieldEditor');
     assert.equal(field.props.disabled, true);

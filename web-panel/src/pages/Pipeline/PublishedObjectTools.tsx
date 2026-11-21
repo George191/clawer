@@ -114,7 +114,7 @@ export function usePublishedObjectTools({ objectType, actions, record, returnTo,
   };
   const renderMutation = (selected?: OntologyRecord) => {
     if (!objectType || !selected?.id || operation?.kind !== 'modify' || operation.record?.id !== selected.id) return null;
-    return <ExplorerRecordMutation mode="edit" title={title(selected.title)} identity={{ $recordId: selected.id }}
+    return <ExplorerRecordMutation mode="edit" title={title(selected.title)}
       error={error} busy={pending} disabled={busy} fields={operation.fields.map(id => {
         const property = objectType.definition.properties.find(item => item.id === id);
         const input = inputs[id];
@@ -131,7 +131,7 @@ export function usePublishedObjectTools({ objectType, actions, record, returnTo,
     actionsForRecord, renderHistory, renderMutation, mutationOpen: !!operation && !creating,
     dialogs: objectType ? <>
       {operation?.kind === 'delete' && operation.record && <ExplorerRecordMutation mode="delete" title={title(operation.record.title)}
-        identity={{ $recordId: operation.record.id }} busy={pending} disabled={busy} onSubmit={applyAction}
+        busy={pending} disabled={busy} onSubmit={applyAction}
         onCancel={() => { if (!locked.current) { setOperation(undefined); setError(''); } }} />}
       <Modal open={!!tool} centered width={1040} className="flow-surface-modal flow-published-dialog explorer-resource-dialog" title={tool} onCancel={() => setTool('')} footer={<Button onClick={() => setTool('')}>Close</Button>}>
         <div className="explorer-resource-context"><strong>{objectType.definition.name}</strong><code>{objectType.definition.id}</code></div>

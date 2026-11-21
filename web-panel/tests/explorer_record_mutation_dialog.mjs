@@ -6,6 +6,7 @@ import ts from 'typescript';
 
 const jsx = (type, props) => ({ type, props });
 const nodes = tree => tree && typeof tree === 'object' ? [tree, ...[tree.props?.children].flat(Infinity).flatMap(nodes)] : [];
+const text = tree => typeof tree === 'string' || typeof tree === 'number' ? String(tree) : tree && typeof tree === 'object' ? [tree.props?.children].flat(Infinity).map(text).join('') : '';
 function compile(file, require) {
   const source = ts.transpileModule(readFileSync(new URL('../src/pages/Pipeline/' + file + (file.endsWith('.ts') ? '' : '.tsx'), import.meta.url), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
@@ -26,7 +27,7 @@ const mutation = compile('ExplorerRecordMutation', ui);
 function publishedTools(request = async () => {}, actions = [{ kind: 'delete', fields: [] }]) {
   const states = [], refs = [], calls = [], notifications = [];
   let cursor = 0, result;
-  const record = { id: 'record', title: 'Synthetic object', revision: 7, properties: { caption: 'Original' } };
+  const record = { id: '9f7e1db8-0000-4000-8000-000000000007', title: 'Synthetic object', revision: 7, properties: { caption: 'Original' } };
   const objectType = { id: 'synthetic-type', definition: { id: 'synthetic', name: 'Synthetic type', source: { mode: 'none' }, properties: [{ id: 'caption', name: 'Caption', type: 'string', required: false }] } };
   const module = compile('PublishedObjectTools', name => {
     if (name === 'react') return {
@@ -64,19 +65,20 @@ function selection(tools, record) {
 
 test('object deletion opens an application modal and cancellation never submits a delete', async () => {
   let deleted = 0, cancelled = 0;
-  const tree = mutation.default({ mode: 'delete', title: 'Synthetic object', identity: { id: '9007199254740993' },
+  const tree = mutation.default({ mode: 'delete', title: 'Synthetic object',
     onSubmit: () => deleted++, onCancel: () => cancelled++ });
   assert.equal(tree.type, 'Modal');
   assert.equal(tree.props.open, true);
   assert.equal(tree.props.okButtonProps.danger, true);
   assert.equal(nodes(tree).some(node => node.props?.className === 'flow-explorer-row-mutation'), false);
+  assert.equal(nodes(tree).some(node => node.type === 'code' || node.type === 'pre'), false);
   await tree.props.onCancel();
   assert.equal(deleted, 0); assert.equal(cancelled, 1);
 });
 
 test('a busy deletion locks confirmation, escape, mask and cancel until its request settles', async () => {
   let deleted = 0, cancelled = 0;
-  const tree = mutation.default({ mode: 'delete', title: 'Synthetic object', identity: { id: 'one' }, busy: true,
+  const tree = mutation.default({ mode: 'delete', title: 'Synthetic object', busy: true,
     onSubmit: () => deleted++, onCancel: () => cancelled++ });
   assert.equal(tree.props.confirmLoading, true);
   assert.equal(tree.props.closable, false); assert.equal(tree.props.maskClosable, false); assert.equal(tree.props.keyboard, false);
@@ -87,7 +89,7 @@ test('a busy deletion locks confirmation, escape, mask and cancel until its requ
 
 test('disabled deletion does not submit and successful confirmation calls only the supplied adapter', async () => {
   let deleted = 0;
-  const props = { mode: 'delete', title: 'Synthetic object', identity: { id: 'one' }, onSubmit: () => deleted++, onCancel() {} };
+  const props = { mode: 'delete', title: 'Synthetic object', onSubmit: () => deleted++, onCancel() {} };
   const blocked = mutation.default({ ...props, disabled: true });
   assert.equal(blocked.props.okButtonProps.disabled, true);
   await blocked.props.onOk(); assert.equal(deleted, 0);
@@ -100,7 +102,7 @@ test('shared editors expose null only through field capability and lock nullable
     { key: 'required', label: 'Required field', type: 'text', value: 'Required value', onChange() {} },
     { key: 'nullable', label: 'Optional field', type: 'text', value: 'Previous value', onChange() {}, nullControl: { checked: false, onChange: value => { nullValue = value; } } },
   ];
-  const props = { mode: 'edit', title: 'Synthetic object', identity: { id: 'one' }, fields, onSubmit() {}, onCancel() {} };
+  const props = { mode: 'edit', title: 'Synthetic object', fields, onSubmit() {}, onCancel() {} };
   const tree = mutation.default(props);
   const controls = nodes(tree).filter(node => node.type === 'Checkbox');
   assert.equal(controls.length, 1); assert.equal(controls[0].props['aria-label'], 'Set Optional field to null');
@@ -114,6 +116,9 @@ test('Published delete keeps the actual selection Overview while using the separ
   tools.result().actionsForRecord(tools.record)[0].onClick(); tools.render();
   assert.equal(tools.result().renderMutation(tools.record), null);
   assert.equal(tools.dialog().type, 'Modal');
+  assert.equal(nodes(tools.dialog()).some(node => node.type === 'code' || node.type === 'pre'), false);
+  assert.ok(!text(tools.dialog()).includes(tools.record.id));
+  assert.ok(!text(tools.dialog()).includes('$recordId'));
   const panel = selection(tools.result(), tools.record);
   assert.ok(nodes(panel).some(node => node.type === 'Overview'));
   assert.ok(nodes(panel).some(node => node.props?.['aria-label'] === 'Selected object view'));

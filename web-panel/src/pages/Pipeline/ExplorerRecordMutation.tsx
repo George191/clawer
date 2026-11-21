@@ -20,8 +20,8 @@ export function recordMutationActions({ edit, remove, disabled = false }: {
   ];
 }
 
-export default function ExplorerRecordMutation({ mode, title, identity, fields = [], error, busy = false, disabled = false, onSubmit, onCancel }: {
-  mode: 'edit' | 'delete'; title: ReactNode; identity: Record<string, unknown>; fields?: Field[];
+export default function ExplorerRecordMutation({ mode, title, fields = [], error, busy = false, disabled = false, onSubmit, onCancel }: {
+  mode: 'edit' | 'delete'; title: ReactNode; fields?: Field[];
   error?: string; busy?: boolean; disabled?: boolean;
   onSubmit: () => void | Promise<void>; onCancel: () => void;
 }) {
@@ -30,7 +30,6 @@ export default function ExplorerRecordMutation({ mode, title, identity, fields =
     closable={!busy} maskClosable={!busy} keyboard={!busy} okButtonProps={{ danger: true, disabled }} cancelButtonProps={{ disabled: busy }}
     onOk={() => { if (!busy && !disabled) return onSubmit(); }} onCancel={() => { if (!busy) onCancel(); }}>
     <p>Delete <strong>{title}</strong>?</p>
-    <code className="flow-explorer-row-key">{JSON.stringify(identity)}</code>
   </Modal>;
   return <section className="flow-explorer-row-mutation" aria-label="Edit object">
     {error && <p role="alert" className="flow-explorer-row-error">{error}</p>}

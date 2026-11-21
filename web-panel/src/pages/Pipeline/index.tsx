@@ -592,7 +592,7 @@ const DataLayersWorkspace: React.FC = () => {
     const rowMutation = (row: ExplorerPreviewRow) => {
         const editing = editingDraft && editSnapshot.current?.data === data && editSnapshot.current?.row === row.record;
         if (!editing) return null;
-        return <ExplorerRecordMutation mode="edit" title={row.title} identity={row.identity} error={rowDetailsError}
+        return <ExplorerRecordMutation mode="edit" title={row.title} error={rowDetailsError}
             busy={mutationLoading} disabled={loading || !canEditRows || rowVersion(row.record) !== editSnapshot.current?.version}
             fields={data?.columns.filter(key => !Object.prototype.hasOwnProperty.call(row.identity, key)).map(key => ({
                 key, label: key, type: data.columnTypes?.[key] || 'string', value: editingDraft?.[key] ?? null,
@@ -1352,7 +1352,7 @@ footer: previewPage && <ExplorerResultsFooter offset={previewPage.offset} rowCou
         {isSchemas && canManage && createTableSchema && creationSchemas.some((item) => item.key === createTableSchema) && <NewObjectType variant="storage" schemas={creationSchemas.filter((item) => item.key === createTableSchema)} initialSchema={createTableSchema} onCancel={() => setCreateTableSchema('')} onOpenExisting={(object) => openWizardTable(object.schema, object.table)} onCreated={(schema, created) => openWizardTable(schema, created.name)} />}
         {isSchemas && deleteSnapshot?.data === data && deleteSnapshot && <ExplorerRecordMutation mode="delete"
             title={explorerRowTitle(deleteSnapshot.row, primaryKey(deleteSnapshot.row), explorerPresentation?.presentation?.titleProperty, data?.primaryKey)}
-            identity={primaryKey(deleteSnapshot.row)} busy={mutationLoading}
+            busy={mutationLoading}
             disabled={loading || !canDeleteRows || rowVersion(deleteSnapshot.row) !== deleteSnapshot.version}
             onSubmit={() => removeRow(deleteSnapshot.row)} onCancel={() => { if (!mutationPending.current) { setDeleteSnapshot(undefined); setRowDetailsError(''); } }} />}
         <Modal  className="flow-surface-modal flow-offset-modal"  title="Adjust  Kafka  offset"  open={offsetOpen}  onCancel={() => { if (!mutationPending.current) setOffsetOpen(false); }}  cancelText="Cancel"  onOk={saveOffset} confirmLoading={mutationLoading} okButtonProps={{ disabled: !canManage || !stream?.available || offsetPartition === undefined || offset === undefined || offset < 0 || !Number.isSafeInteger(offset) }}  okText="Confirm  SET  OFFSET"  width={460}>
