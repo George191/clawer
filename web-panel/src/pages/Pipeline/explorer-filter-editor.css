@@ -56,12 +56,10 @@
 
 .explorer-filter-editor .flow-filter-rule > :is(.explorer-filter-index-notice,.ui-tooltip-trigger:has(> .explorer-filter-index-notice)) { order:5; margin-left:0; }
 .explorer-filter-editor .flow-filter-rule > .flow-filter-row-end-actions { order:4; flex:none; width:0; margin-left:auto; margin-right:-4px; overflow:hidden; opacity:0; transform:translateX(5px); pointer-events:none; transition:width .18s ease,margin-right .18s ease,opacity .18s ease,transform .18s ease; }
-.explorer-filter-editor .flow-filter-row-end-actions > button { flex:0 0 15px; }
+.explorer-filter-editor .flow-filter-row-end-actions > button { flex:0 0 15px; opacity:1; }
 .explorer-filter-editor .flow-filter-rule:is(:hover,:focus-within) > .flow-filter-row-end-actions { width:51px; margin-right:0; opacity:1; transform:translateX(0); pointer-events:auto; }
-.explorer-filter-editor .flow-filter-rule:focus-within .flow-filter-reorder { opacity:1; }
 @media (hover:none), (pointer:coarse) {
   .explorer-filter-editor .flow-filter-rule > .flow-filter-row-end-actions { width:51px; margin-right:0; opacity:1; transform:none; pointer-events:auto; }
-  .explorer-filter-editor .flow-filter-reorder { opacity:1; }
 }
 @media (prefers-reduced-motion:reduce) {
   .explorer-filter-editor .flow-filter-rule > .flow-filter-row-end-actions,
