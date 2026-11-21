@@ -189,7 +189,7 @@ export default function ExplorerWorkbenchHeader(p: Props) {
     const changeField = (f: string) => { choose(f); setSearch(p.names?.[f] || f); show('property'); };
     const closeOpenIn = () => { show(''); openInTrigger.current?.focus(); };
     const openResource = (view: ResourceView) => { p.selectResource(view); p.setMode('results'); closeOpenIn(); };
-    const exportDescription = p.selected.length ? `Download ${p.selected.length} selected objects.` : `Download ${p.rows.length} objects on this results page.`;
+    const exportDescription = p.selected.length ? `Download ${p.selected.length} selected object${p.selected.length === 1 ? '' : 's'}.` : `Download ${p.rows.length} object${p.rows.length === 1 ? '' : 's'} on this results page.`;
     const apps = [
         { key: 'preview', group: 'analyze', label: 'Data preview', icon: <TableOutlined />, run: () => openResource('preview') },
         { key: 'stream', group: 'analyze', label: 'Stream', icon: <SyncOutlined />, run: () => openResource('stream') },
