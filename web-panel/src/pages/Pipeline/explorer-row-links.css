@@ -1,11 +1,18 @@
 .explorer-row-links { min-width:0; color:var(--ontology-text); font-size:11px; }
 .explorer-links-heading { display:flex; align-items:center; gap:9px; margin-bottom:12px; }
 .explorer-links-heading > .ui-icon { flex:none; color:var(--ontology-muted); font-size:16px; }
-.explorer-links-heading label { display:flex; align-items:center; flex:1; min-width:0; gap:9px; color:var(--ontology-muted); }
+.explorer-links-heading label { position:relative; display:flex; align-items:center; flex:1; min-width:0; gap:9px; color:var(--ontology-muted); }
+.explorer-links-heading label::after { content:''; position:absolute; right:12px; top:50%; width:6px; height:6px; border-right:1px solid var(--ontology-muted); border-bottom:1px solid var(--ontology-muted); transform:translateY(-70%) rotate(45deg); pointer-events:none; }
 .explorer-links-heading label > span { flex:none; }
 .explorer-links-heading select { flex:1; }
-.explorer-row-links select { width:100%; min-width:0; min-height:30px; padding:4px 8px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-panel); color:var(--ontology-text); font:inherit; }
-.explorer-links-mapping { display:grid; gap:7px; padding:10px; margin-bottom:12px; border:1px solid var(--ontology-control-border); border-radius:4px; background:var(--ontology-panel); }
+.explorer-row-links select { appearance:none; width:100%; min-width:0; min-height:30px; padding:4px 30px 4px 8px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-panel); color:var(--ontology-text); font:inherit; }
+.explorer-links-mapping { margin-bottom:12px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-panel); }
+.explorer-links-mapping > summary { padding:6px 9px; color:var(--ontology-muted); font-size:11px; cursor:pointer; }
+.explorer-links-mapping[open] > summary { border-bottom:1px solid var(--ontology-border); }
+.explorer-links-mapping > .explorer-links-field-mapping { padding:8px 9px; }
+.explorer-links-mapping > summary { padding:6px 8px; color:var(--ontology-muted); font-size:11px; cursor:pointer; }
+.explorer-links-mapping[open] > summary { border-bottom:1px solid var(--ontology-border); }
+.explorer-links-mapping .explorer-links-field-mapping { padding:8px; }
 .explorer-links-badge { display:inline-block; padding:2px 5px; border-radius:2px; background:var(--ontology-hover); color:var(--ontology-muted); }
 .explorer-links-empty p { margin:0; color:var(--ontology-muted); }
 .explorer-links-field-mapping { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
@@ -19,6 +26,13 @@
 .explorer-row-links ul { display:grid; gap:8px; margin:0; padding:0; list-style:none; }
 .explorer-row-links li { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:10px; border:1px solid var(--ontology-control-border); border-radius:4px; background:var(--ontology-panel); }
 .explorer-row-links li > a { flex:1; min-width:0; color:var(--ontology-text); font-size:12px; overflow-wrap:anywhere; }
+.explorer-linked-object { display:grid; flex:1; grid-template-columns:26px minmax(0,1fr); gap:4px 7px; min-width:0; }
+.explorer-linked-object > :is(.flow-explorer-selection__icon,.flow-semantic-type-glyph) { grid-column:1; grid-row:1; width:26px; height:26px; border-radius:3px; font-size:16px; }
+.explorer-linked-object > :is(.flow-explorer-selection__icon,.flow-semantic-type-glyph) > .workspace-glyph { width:16px; height:16px; font-size:16px; }
+.explorer-linked-object__identity { display:contents; }
+.explorer-linked-object__type { grid-column:2; grid-row:1; align-self:center; min-width:0; color:var(--ontology-muted); font-size:11px; overflow-wrap:anywhere; }
+.explorer-linked-object__identity > a { grid-column:1/-1; grid-row:2; min-width:0; color:var(--ontology-text); font-size:12px; font-weight:500; text-decoration:none; overflow-wrap:anywhere; }
+.explorer-linked-object__identity > a:hover { color:var(--ui-action-link); text-decoration:underline; }
 .explorer-row-links .ui-btn.explorer-links-unlink { flex:none; width:26px; min-height:26px; height:26px; padding:0; border:0; color:var(--ui-error); background:transparent; }
 .explorer-row-links .explorer-links-unlink .ui-icon { width:14px; height:14px; font-size:14px; }
 .explorer-row-links .explorer-links-unlink:hover:not(:disabled) { background:var(--ontology-hover); }

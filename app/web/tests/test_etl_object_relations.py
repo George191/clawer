@@ -319,6 +319,15 @@ class ObjectRelationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(pg.rollbacks, 1)
             self.assertFalse(any(sql.startswith(("CREATE", "INSERT")) for sql, _ in pg.calls))
 
+    def test_relationship_names_are_display_names_and_keep_identifier_fields_strict(self):
+        for name in ("承担企业", "Works for", "作者 · 所属机构"):
+            self.assertEqual(validate_definition({**SEEDS[0], "name": name})["name"], name)
+        for name in ("", " ", " trailing ", "line\nbreak", "x" * 129, 7):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                validate_definition({**SEEDS[0], "name": name})
+        with self.assertRaises(ValueError):
+            validate_definition({**SEEDS[0], "relationship_kind": "所属企业"})
+
     async def test_invalid_identifiers_fields_cardinality_and_provenance_fail_before_database(self):
         mutations = [{"source_schema": "public"}, {"target_schema": "ts_meta"},
                      {"target_schema": "ts_meta_hist"}, {"source_table": "x; DROP TABLE x"},

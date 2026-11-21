@@ -52,6 +52,22 @@ test('read-only relationship rows retain properties and never expose unlink', ()
   assert.equal(ui.modal().props.open, false);
 });
 
+test('all linked records share the same title and type header while import metadata stays collapsed', () => {
+  const ui = mount();
+  ui.props.records[0].icon = jsx('TypeIcon', {});
+  ui.props.records[0].typeName = 'Related type';
+  ui.props.relations[0].fieldMapping = { label: 'Import rule', fields: [{ source: 'company_id', target: 'id' }] };
+  ui.render();
+  const heading = ui.nodes().find(node => node.props.className === 'explorer-linked-object');
+  assert.equal(heading.props.children[0].type, 'TypeIcon');
+  const identity = heading.props.children[1];
+  assert.equal(identity.props.children[0].props.children, 'Related type');
+  assert.equal(identity.props.children[1], ui.props.records[0].link);
+  const mapping = ui.nodes().find(node => node.type === 'details');
+  assert.equal(mapping.props.open, undefined);
+  assert.equal(nodes(mapping).find(node => node.type === 'summary').props.children, 'Import rule');
+});
+
 test('unlink requires an application confirmation and cancellation makes no request', () => {
   let calls = 0;
   const ui = mount(async () => calls++);

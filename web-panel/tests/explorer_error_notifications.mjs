@@ -153,7 +153,8 @@ function sharedView(file, props, api = {}, expose = 'exports.default') {
     if (name === '../../services/explorerLayouts') return { readLayouts: async () => ({ personal: { layout: null }, default: { layout: null } }), layoutPath: () => '/layout' };
     if (name === './ExplorerValue') return { ExplorerValueProvider: 'ValueProvider' };
     if (name === './ExplorerRelationshipsView') return { default: 'RelationshipsView', ExplorerLinkedProperties: 'LinkedPropertiesView' };
-    if (name === './ExplorerObjectOverview') return { explorerFields: () => [] };
+    if (name === './ExplorerObjectOverview') return { explorerFields: () => [], explorerRowTitle: () => 'Related object', ExplorerTypeIcon: 'TypeIcon' };
+    if (name === '../../services/explorerProperties') return { fetchExplorerProperties: async () => ({ properties: [], titleProperty: null, displayName: 'Related type', primaryKey: ['id'] }) };
     if (name === '@/components/ui') return { Button: 'Button', theme: { useToken: () => ({ token: {} }) } };
     if (name === '@/components/ui/icons') return new Proxy({}, { get: (_, key) => String(key) });
     if (name === '../../stores/settings') return { useThemeStore: select => select({ mode: 'dark' }) };
@@ -161,20 +162,20 @@ function sharedView(file, props, api = {}, expose = 'exports.default') {
     return {};
   }, undefined, expose);
   const render = () => runtime.render(() => component(props));
-  return { errors, props, render, async flush() { for (let i = 0; i < 5; i++) await Promise.resolve(); return render(); } };
+  return { errors, props, render, async flush() { for (let i = 0; i < 12; i++) await Promise.resolve(); return render(); } };
 }
 
-test('related properties recover after a failed read when the target scope changes', async () => {
-  const props = { schema: 'ts_ods', table: 'missing', identity: '{"id":"one"}' };
+test('related objects recover after a failed read when the target scope changes', async () => {
+  const props = { schema: 'ts_ods', table: 'missing', primaryKey: { id: 'one' } };
   const ui = sharedView('ExplorerRowLinks', props, { fetchExplorerRowByKey: async (_schema, table) => {
     if (table === 'missing') throw new Error('Read failed');
     return { row: { id: 'one' }, identity: { id: 'one' }, columnTypes: { id: 'text' } };
-  } }, 'LinkedProperties');
+  }, fetchExplorerRowLinks: async (schema, table) => ({ selected: 'relation', relations: [{ id: 'relation', name: 'Has child', direction: 'outgoing', schema, table, fields: [], targetFields: [] }], links: [{ linkId: 'edge', identity: { id: 'one' }, canUnlink: false }], offset: 0, hasMore: false }) }, 'LinkPage');
   ui.render(); assert.equal(await ui.flush(), null);
-  assert.match(ui.errors.at(-1)[0], /could not be read/);
+  assert.match(ui.errors.at(-1)[0], /Unable to read related records/);
   props.table = 'available'; ui.render();
-  assert.equal((await ui.flush()).type, 'ValueProvider');
-  assert.equal(ui.errors.at(-1)[0], undefined);
+  assert.equal((await ui.flush()).type, 'RelationshipsView');
+  assert.equal(ui.errors.at(-1)[0], '');
 });
 
 test('media request failures notify without an inline error or a false empty preview', async () => {

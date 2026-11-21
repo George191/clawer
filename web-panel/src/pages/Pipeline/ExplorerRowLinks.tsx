@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { explorerFields } from './ExplorerObjectOverview';
+import { ExplorerTypeIcon, explorerFields, explorerRowTitle } from './ExplorerObjectOverview';
 import { ExplorerValueProvider } from './ExplorerValue';
 import { fetchExplorerRowByKey, fetchExplorerRowLinks, unlinkExplorerRowLink, type ExplorerRowLinkPage } from '../../services/api';
 import { ExplorerRecordLink } from './ExplorerRecordLink';
 import { layoutPath, readLayouts, type ResultLayout } from '../../services/explorerLayouts';
+import { fetchExplorerProperties, type ExplorerPropertyMapping } from '../../services/explorerProperties';
 import ExplorerRelationshipsView, { ExplorerLinkedProperties } from './ExplorerRelationshipsView';
 import useExplorerErrorToast from './useExplorerErrorToast';
 import { getSessionState } from '../../services/session';
@@ -47,26 +48,12 @@ export function useExplorerLinkAvailability(schema: string, table: string, ident
     return { ...current, retry: () => setRetry(n => n + 1) };
 }
 
-function LinkedProperties({ schema, table, identity }: {schema: string; table: string; identity: string}) {
-    const [row, setRow] = useState<Awaited<ReturnType<typeof fetchExplorerRowByKey>>>();
-    const [layout, setLayout] = useState<ResultLayout | null>();
-    const [failed, setFailed] = useState(false);
-    const sessionIdentity = getSessionState().identity;
-    useEffect(() => {
-        const read = new AbortController();
-        setFailed(false); setRow(undefined); setLayout(undefined);
-        Promise.all([fetchExplorerRowByKey(schema, table, JSON.parse(identity), read.signal), readLayouts(layoutPath(schema, table), read.signal)])
-            .then(([result, layouts]) => { if (live(read.signal, sessionIdentity)) { setRow(result); setLayout(layouts.personal.layout ?? layouts.default.layout); } })
-            .catch(error => { if (live(read.signal, sessionIdentity) && error?.code !== 'ERR_CANCELED') setFailed(true); });
-        return () => read.abort();
-    }, [schema, table, identity, sessionIdentity]);
-    useExplorerErrorToast(failed ? 'This record could not be read. Its access or identity may have changed.' : undefined, 'Related record unavailable');
-    if (failed) return null;
-    if (!row) return <p role="status">Loading record properties…</p>;
-    const previewRow = { record: row.row, identity: row.identity, key: identity, title: '', columnTypes: row.columnTypes };
+function LinkedProperties({ schema, table, row, layout, presentation }: {schema: string; table: string;
+    row: Awaited<ReturnType<typeof fetchExplorerRowByKey>>; layout: ResultLayout | null; presentation: ExplorerPropertyMapping}) {
+    const previewRow = { record: row.row, identity: row.identity, key: JSON.stringify(row.identity), title: '', columnTypes: row.columnTypes };
     const presentations = Object.fromEntries((layout?.columns ?? []).map(column => [column.field, column.presentation ?? 'value']));
     return <ExplorerValueProvider schema={schema} table={table}>
-        <ExplorerLinkedProperties row={previewRow} fields={explorerFields(previewRow, Object.keys(row.row), undefined, presentations)} />
+        <ExplorerLinkedProperties row={previewRow} fields={explorerFields(previewRow, Object.keys(row.row), presentation, presentations)} />
     </ExplorerValueProvider>;
 }
 
@@ -74,7 +61,8 @@ function LinkPage({ schema, table, primaryKey, initialPage }: Props) {
     const [relation, setRelation] = useState<string | null>(initialPage?.selected ?? null);
     const [offset, setOffset] = useState(0);
     const [retry, setRetry] = useState(0);
-    const [page, setPage] = useState<ExplorerRowLinkPage | undefined>(initialPage);
+    const [read, setRead] = useState<{ page: ExplorerRowLinkPage; rows: Awaited<ReturnType<typeof fetchExplorerRowByKey>>[];
+        presentation?: ExplorerPropertyMapping; layout?: ResultLayout | null }>();
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [expanded, setExpanded] = useState('');
@@ -83,13 +71,23 @@ function LinkPage({ schema, table, primaryKey, initialPage }: Props) {
     useEffect(() => {
         const controller = new AbortController();
         setError(''); setLoading(true); setExpanded('');
-        fetchExplorerRowLinks(schema, table, JSON.parse(key), relation, offset, controller.signal)
-            .then(value => { if (live(controller.signal, sessionIdentity)) { setPage(value); setLoading(false); } })
+        fetchExplorerRowLinks(schema, table, JSON.parse(key), relation, offset, controller.signal).then(async page => {
+            if (!live(controller.signal, sessionIdentity)) return;
+            const target = page.relations.find(item => item.id === page.selected);
+            if (!target || !page.links.length) return { page, rows: [] };
+            const [presentation, layouts, rows] = await Promise.all([
+                fetchExplorerProperties(target.schema, target.table, controller.signal),
+                readLayouts(layoutPath(target.schema, target.table), controller.signal),
+                Promise.all(page.links.map(item => fetchExplorerRowByKey(target.schema, target.table, item.identity, controller.signal))),
+            ]);
+            return { page, rows, presentation, layout: layouts.personal.layout ?? layouts.default.layout };
+        }).then(value => { if (value && live(controller.signal, sessionIdentity)) { setRead(value); setLoading(false); } })
             .catch(error => { if (live(controller.signal, sessionIdentity) && error?.code !== 'ERR_CANCELED') { setError('Unable to read related records.'); setLoading(false); } });
         return () => controller.abort();
     }, [schema, table, key, relation, offset, retry, sessionIdentity]);
     useExplorerErrorToast(error, 'Unable to read related records', () => setRetry(v => v + 1));
     if (error) return null;
+    const page = read?.page;
     if (!page) return <p role="status">Looking up related records…</p>;
     const selected = page.relations.find(item => item.id === page.selected);
     if (page.relations.length && !selected) return null;
@@ -97,15 +95,16 @@ function LinkPage({ schema, table, primaryKey, initialPage }: Props) {
         relations={page.relations.map(item => ({ id: item.id, name: item.name, direction: item.direction,
             fieldMapping: { label: 'Import rule',
                 fields: item.fields.map((field, index) => ({ source: field, target: item.targetFields[index] })) } }))}
-        records={selected ? page.links.map(record => {
+        records={selected ? page.links.map((record, index) => {
             const { identity } = record;
             const identityKey = JSON.stringify(identity);
-            const label = Object.entries(identity).map(([name, value]) => `${name} = ${value}`).join(' · ');
-            return { key: record.linkId,
+            const row = read!.rows[index], presentation = read!.presentation!;
+            const label = explorerRowTitle(row.row, identity, presentation.titleProperty, presentation.primaryKey);
+            return { key: record.linkId, typeName: presentation.displayName, icon: <ExplorerTypeIcon dataType={presentation.dataType} table={selected.table} />,
                 link: <ExplorerRecordLink schema={selected.schema} table={selected.table} identity={identity}>
                     {label}
                 </ExplorerRecordLink>,
-                properties: <LinkedProperties key={identityKey} schema={selected.schema} table={selected.table} identity={identityKey} />,
+                properties: <LinkedProperties key={identityKey} schema={selected.schema} table={selected.table} row={row} presentation={presentation} layout={read!.layout ?? null} />,
                 unlink: record.canUnlink ? {
                     label,
                     description: <>Remove the “{selected.name}” relationship to <strong>{label}</strong>? Both records and their source fields remain available.</>,

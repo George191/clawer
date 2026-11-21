@@ -28,9 +28,9 @@ WORKERS = 6
 BATCH_SIZE = 3000
 TARGET = ("ts_ods", "local_demo_companies")
 APPROVED = {
-    "local_demo_expert_company": ("ts_ods", "local_demo_experts", "LOCAL-EX-", 12),
-    "local_demo_patent_company": ("ts_ods", "local_demo_patents", "LOCAL-PT-", 20),
-    "local_demo_project_company": ("ts_dwd", "local_demo_project_portfolio", "LOCAL-RD-", 8),
+    "专家所属企业": ("ts_ods", "local_demo_experts", "LOCAL-EX-", 12),
+    "申请企业": ("ts_ods", "local_demo_patents", "LOCAL-PT-", 20),
+    "承担企业": ("ts_dwd", "local_demo_project_portfolio", "LOCAL-RD-", 8),
 }
 
 

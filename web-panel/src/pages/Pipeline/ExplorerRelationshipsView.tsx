@@ -15,7 +15,7 @@ type Relationship = {
   fieldMapping?: { label: string; fields: { source: string; target: string }[] };
 };
 type LinkedRecord = {
-  key: string; link: ReactNode; properties: ReactNode;
+  key: string; link: ReactNode; properties: ReactNode; icon?: ReactNode; typeName?: string;
   unlink?: { label: string; description: ReactNode; run: (signal: AbortSignal) => Promise<void> };
 };
 
@@ -68,15 +68,16 @@ export default function ExplorerRelationshipsView({ relations, selectedId, recor
         {relations.map(item => <option key={item.id} value={item.id}>{item.name} · {item.direction}</option>)}
       </select></label>
     </header>
-    {selected.fieldMapping && <div className="explorer-links-mapping">
+    {selected.fieldMapping && <details className="explorer-links-mapping"><summary>{selected.fieldMapping.label}</summary>
       <div className="explorer-links-field-mapping">
-        <span className="explorer-links-badge">{selected.fieldMapping.label}</span>
         <div className="explorer-links-fields">{selected.fieldMapping.fields.map(field => <span key={field.source}><code>{field.source}</code><span aria-hidden="true">→</span><code>{field.target}</code></span>)}</div>
       </div>
-    </div>}
+    </details>}
     {emptyReason || !records.length ? <div className="explorer-links-empty" role="status"><LinkOutlined /><strong>No matching records</strong><p>{emptyReason || 'No objects match this relationship for the selected record.'}</p></div> :
       <ul>{records.map(record => <li key={record.key}>
-        {record.link}
+        <div className="explorer-linked-object">{record.icon}<div className="explorer-linked-object__identity">
+          {record.typeName && <span className="explorer-linked-object__type">{record.typeName}</span>}{record.link}
+        </div></div>
         <Button size="small" disabled={loading || busy} aria-expanded={expanded === record.key} onClick={() => onToggle(record.key)}>
           {expanded === record.key ? 'Hide properties' : 'Show properties'}
         </Button>

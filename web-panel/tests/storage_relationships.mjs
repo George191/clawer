@@ -30,8 +30,12 @@ function workspace(initial = page(), fresh = initial) {
     if (name === '../../services/session') return { getSessionState: () => session };
     if (name === '../../services/api') return {
       fetchExplorerRowLinks: async () => { reads++; return current; },
+      fetchExplorerRowByKey: async (_schema, _table, identity) => ({ row: { name: 'Physical company' }, identity, columnTypes: { name: 'text' } }),
       unlinkExplorerRowLink: async (...args) => { calls.push(args); if (failure) throw failure; current = { ...current, links: [], identities: [] }; },
     };
+    if (name === '../../services/explorerProperties') return { fetchExplorerProperties: async () => ({ displayName: 'Physical companies', dataType: 'company', titleProperty: 'name', primaryKey: ['id'], properties: [] }) };
+    if (name === '../../services/explorerLayouts') return { readLayouts: async () => ({ personal: { layout: null }, default: { layout: null } }), layoutPath: () => '/layout' };
+    if (name === './ExplorerObjectOverview') return { explorerRowTitle: row => row.name, explorerFields: () => [], ExplorerTypeIcon: 'TypeIcon' };
     if (name === './ExplorerRelationshipsView') return { default: 'View' };
     if (name === './useExplorerErrorToast') return { default() {} };
     return { default: name };
@@ -43,7 +47,7 @@ function workspace(initial = page(), fresh = initial) {
     for (const [index, effect, deps] of scheduled) { effects[index]?.cleanup?.(); effects[index] = { deps, cleanup: effect() }; }
     return tree;
   };
-  const flush = async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); return render(); };
+  const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); return render(); };
   render();
   return { flush, render, calls, tree: () => tree, reads: () => reads, reject: value => { failure = value; } };
 }

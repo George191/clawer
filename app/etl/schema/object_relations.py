@@ -70,9 +70,11 @@ def validate_definition(value: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(value, dict) or set(value) - set(_FIELDS):
         raise ValueError("A relationship must contain only the documented metadata fields")
     row = {"description": "", "enabled": True, **value}
-    for key in ("name", "relationship_kind"):
-        if not isinstance(row.get(key), str) or not re.fullmatch(r"[a-z_][a-z0-9_]{0,127}", row[key]):
-            raise ValueError(f"Invalid relationship {key}")
+    name = row.get("name")
+    if not isinstance(name, str) or not name.strip() or name != name.strip() or len(name) > 128 or re.search(r"[\x00-\x1f\x7f]", name):
+        raise ValueError("A relationship name must contain 1–128 visible characters")
+    if not isinstance(row.get("relationship_kind"), str) or not re.fullmatch(r"[a-z_][a-z0-9_]{0,127}", row["relationship_kind"]):
+        raise ValueError("Invalid relationship relationship_kind")
     for side in ("source", "target"):
         schema, table = row.get(f"{side}_schema"), row.get(f"{side}_table")
         if not isinstance(schema, str) or not re.fullmatch(r"ts_[a-z0-9_]{1,60}", schema) or schema in {"ts_meta", "ts_meta_hist"}:

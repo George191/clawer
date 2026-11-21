@@ -28,7 +28,7 @@ class Result:
 
 
 def pair(number=1):
-    return {"relation": "local_demo_expert_company", "relationId": "9",
+    return {"relation": "专家所属企业", "relationId": "9",
             "sourceKey": {"id": f"LOCAL-EX-{number:03d}"}, "targetKey": {"id": "LOCAL-CO-001"}}
 
 
@@ -74,7 +74,7 @@ class ImportTests(unittest.IsolatedAsyncioTestCase):
                         return 11 if "experts" in params["name"] else 12
                     raise AssertionError("An existing pair cannot require a new cardinality/write path")
 
-            definition = {"name": "local_demo_expert_company"}
+            definition = {"name": "专家所属企业"}
             expected = {definition["name"]: {"definition": definition,
                 "source": {"schema": "ts_ods", "table": "local_demo_experts", "oid": 11},
                 "target": {"schema": "ts_ods", "table": "local_demo_companies", "oid": 12}}}
@@ -85,7 +85,7 @@ class ImportTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_resume_keeps_old_journals_and_only_reads_the_uncommitted_range(self):
         pairs = [pair(number) for number in range(3001)]
-        plan = {"planId": "reviewed-plan", "relations": [{"definition": {"name": "local_demo_expert_company"}}]}
+        plan = {"planId": "reviewed-plan", "relations": [{"definition": {"name": "专家所属企业"}}]}
 
         class Pg:
             connect = AsyncMock()
