@@ -15,7 +15,7 @@ import type { ExplorerPreviewRow } from './ExplorerSelection';
 import ExplorerWorkbench, { ExplorerFilterButton, ExplorerResults, ExplorerResultsFooter, explorerResultColumns } from './ExplorerWorkbench';
 import ExplorerFilterEditor, { normalizeFilterDepth, randomId } from './ExplorerFilterEditor';
 import ExplorerSearchCondition from './ExplorerSearchCondition';
-import ExplorerFilterIndexNotice from './ExplorerFilterIndexNotice';
+import ExplorerFilterIndexNotice, { ExplorerSortIndexNotice } from './ExplorerFilterIndexNotice';
 import { LayoutToolbar, useResultLayout } from './ExplorerResultLayout';
 import { activeExplorerFilters, appendAndFilters, blankExplorerFilter, cellFilterRows, countFilterTerms, exactCellValue, explorerFilterTerms, hasOr, type ExplorerFilter } from './explorerFilters';
 import { explorerResourceCapabilities } from '../../services/explorerCapabilities';
@@ -262,6 +262,12 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
               const source = objectType.definition.source;
               return <ExplorerFilterIndexNotice schema={source.schema!} table={source.table!} rule={{ ...rule, field: property.sourceColumn }}
                 columnTypes={{ [property.sourceColumn]: types[rule.field] }} assessable={!hasOr(explorerFilterTerms(filterRules))} />;
+            } : undefined}
+            renderSortNotice={objectType?.definition.source.mode === 'existing' && canManage ? sorts => {
+              const source = objectType.definition.source;
+              const mapped = sorts.filter(sort => sort.field).map(sort => ({ ...sort, field: properties.find(property => property.id === sort.field)?.sourceColumn || '' }));
+              if (mapped.some(sort => !sort.field)) return <span className="explorer-filter-index-notice" role="status">Index not assessed</span>;
+              return <ExplorerSortIndexNotice schema={source.schema!} table={source.table!} sorts={mapped} />;
             } : undefined}
             onSortsChange={(next, apply) => { setDraftSorts(next); if (apply) updateSorts(next); }} fields={fields} rows={rows} formatValue={display}
             onApply={() => { if (canChange()) changeQuery({ ...query, filters: [], workbenchFilters: wireFilters(normalizeFilterDepth(filterRules)), sorts: draftSorts.filter(item => item.field) }); }} />}

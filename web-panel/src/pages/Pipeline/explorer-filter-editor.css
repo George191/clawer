@@ -10,7 +10,7 @@
 .explorer-filter-editor :is(.explorer-filter-field-link,.explorer-filter-op,.explorer-filter-value) { display:inline-flex; align-items:center; box-sizing:border-box; min-height:26px; max-width:240px; padding:2px 3px; border:1px solid transparent; border-radius:3px; color:var(--ontology-text); font-size:12px; line-height:20px; cursor:pointer; }
 .explorer-filter-editor :is(.explorer-filter-field-link,.explorer-filter-op,.explorer-filter-value):hover { border-color:var(--ontology-control-border); background:var(--ontology-hover); }
 .explorer-filter-editor .explorer-filter-field-link > span:first-child { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.explorer-filter-editor .explorer-filter-value { color:var(--ui-action-link); }
+.explorer-filter-editor .explorer-filter-value { color:var(--ui-action-link); font-family:inherit; font-size:11px; font-weight:400; }
 .explorer-filter-editor .flow-filter-rule.is-inactive :is(.explorer-filter-field-link,.explorer-filter-op,.explorer-filter-value) { color:var(--ontology-muted); }
 .flow-console--ontology .explorer-filter-editor .explorer-filter-mini { display:inline-flex; flex:none; align-items:center; justify-content:center; width:26px; min-width:26px; height:26px; padding:0; border:0; border-radius:3px; background:transparent; color:var(--ontology-muted); cursor:pointer; }
 .flow-console--ontology .explorer-filter-editor .explorer-filter-mini:hover { background:var(--ontology-hover); color:var(--ontology-text); }
@@ -18,14 +18,15 @@
 .flow-console--ontology .explorer-filter-editor .flow-filter-sort strong { height:26px; margin-right:4px; color:var(--ontology-text); font-size:12px; font-weight:500; }
 .explorer-filter-editor .flow-sort-conditions-track { gap:6px; }
 .explorer-filter-editor .explorer-filter-sort-field-wrap { display:inline-flex; flex:none; align-items:center; }
-.explorer-filter-editor .explorer-filter-sort-field { display:inline-flex; align-items:center; gap:6px; min-width:100px; max-width:280px; border-color:var(--ontology-control-border); background:var(--ontology-panel); }
+.explorer-filter-editor .explorer-filter-sort-field { display:inline-flex; align-items:center; gap:4px; min-width:0; max-width:280px; border-color:var(--ontology-control-border); background:var(--ontology-panel); }
 .flow-console--ontology .explorer-filter-editor .flow-filter-sort button { display:inline-flex; flex:none; align-items:center; justify-content:center; width:20px; min-width:20px; height:22px; padding:0; border:0; border-radius:2px; background:transparent; color:var(--ontology-muted); }
 .flow-console--ontology .explorer-filter-editor .flow-filter-sort button:hover { background:var(--ontology-hover); color:var(--ontology-text); }
 .explorer-filter-editor .explorer-filter-sort-field > .flow-filter-sort-direction-toggle { margin-left:auto; }
-.explorer-filter-editor .explorer-filter-sort-remove { opacity:0; pointer-events:none; }
-.explorer-filter-editor .explorer-filter-sort-field:is(:hover,:focus-within) .explorer-filter-sort-remove { opacity:1; pointer-events:auto; }
+.explorer-filter-editor .flow-filter-sort .flow-filter-sort-direction-toggle svg { width:16px; height:16px; }
+.flow-console--ontology .explorer-filter-editor .flow-filter-sort .explorer-filter-sort-remove { width:0; min-width:0; margin-left:-4px; overflow:hidden; opacity:0; pointer-events:none; }
+.flow-console--ontology .explorer-filter-editor .flow-filter-sort .explorer-filter-sort-field:is(:hover,:focus-within) .explorer-filter-sort-remove { width:18px; min-width:18px; margin-left:0; opacity:1; pointer-events:auto; }
 @media (hover:none), (pointer:coarse) {
-  .explorer-filter-editor .explorer-filter-sort-remove { opacity:1; pointer-events:auto; }
+  .flow-console--ontology .explorer-filter-editor .flow-filter-sort .explorer-filter-sort-remove { width:18px; min-width:18px; margin-left:0; opacity:1; pointer-events:auto; }
 }
 .explorer-filter-editor .explorer-sort-scroll-buttons { display:flex; align-items:center; gap:3px; }
 .explorer-filter-editor .flow-filter-apply { flex-wrap:wrap; gap:9px; padding:7px 6px 8px; border-top:1px solid var(--ontology-border); }
@@ -48,9 +49,6 @@
 .explorer-filter-popup .explorer-filter-value-actions { display:flex; flex:none; justify-content:flex-end; gap:6px; padding-top:8px; border-top:1px solid var(--ontology-border); }
 .explorer-filter-popup.explorer-filter-operator-dropdown .ui-dropdown-menu { min-width:208px; max-height:300px; overflow:auto; }
 .explorer-filter-popup.explorer-filter-operator-dropdown .ui-dropdown-menu-item { min-height:28px; padding:4px 8px; font-size:12px; }
-
-.explorer-filter-editor .explorer-filter-advanced { margin:0; padding:7px 6px; border-top:1px solid var(--ontology-border); color:var(--ontology-muted); font-size:11px; }
-.explorer-filter-editor .explorer-filter-advanced > summary { cursor:pointer; }
 
 .explorer-filter-editor .flow-filter-rule > :is(.explorer-filter-index-notice,.ui-tooltip-trigger:has(> .explorer-filter-index-notice)) { order:2; margin-left:auto; }
 .explorer-filter-editor .flow-filter-rule:has(.explorer-filter-index-notice) > .flow-filter-row-end-actions { order:3; margin-left:0; }

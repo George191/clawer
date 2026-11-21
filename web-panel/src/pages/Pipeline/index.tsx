@@ -21,7 +21,7 @@ import './explorer-resource-tools.css';
 import ExplorerCatalog from './ExplorerCatalog';
 import ExplorerWorkbench, { ExplorerFilterButton, ExplorerResults, ExplorerResultsFooter, explorerResultColumns } from './ExplorerWorkbench';
 import ExplorerSearchCondition from './ExplorerSearchCondition';
-import ExplorerFilterIndexNotice from './ExplorerFilterIndexNotice';
+import ExplorerFilterIndexNotice, { ExplorerSortIndexNotice } from './ExplorerFilterIndexNotice';
 import PublishedExplorer from './PublishedExplorer';
 import { openSaved, savedPath, type SavedDetail } from '../../services/explorerSaved';
 import { catalogReturnHref, compactExplorerSearch } from '../../services/explorerNavigation';
@@ -34,7 +34,6 @@ import ExplorerTableSchema from './ExplorerTableSchema';
 import { LayoutToolbar, useResultLayout } from './ExplorerResultLayout';
 import ExplorerTableEvidence from './ExplorerTableEvidence';
 import ExplorerStreamPositions, { topicRate } from './ExplorerStreamPositions';
-import ExplorerIndexCoverage from './ExplorerIndexCoverage';
 import ExplorerIndexedProjection from './ExplorerIndexedProjection';
 import ExplorerIndexedIdSample from './ExplorerIndexedIdSample';
 import { useSandboxIdentity } from './SandboxMarkings';
@@ -1261,15 +1260,13 @@ footer: previewPage && <ExplorerResultsFooter offset={previewPage.offset} rowCou
                             renderRuleNotice={isSchemas ? rule => activeExplorerFilters(filterRules).some(item => item.id === rule.id) ? <ExplorerFilterIndexNotice
                                 schema={selectedSchema} table={table.name} rule={rule} columnTypes={data?.columnTypes}
                                 assessable={!hasOr(explorerFilterTerms(filterRules))} /> : null : undefined}
+                            renderSortNotice={isSchemas ? sorts => <ExplorerSortIndexNotice schema={selectedSchema} table={table.name} sorts={sorts} /> : undefined}
                             sorts={[{ field: sortField, direction: sortDirection }, ...sortConditions]}
                             onSortsChange={(sorts, apply) => {
                                 setSortField(sorts[0]?.field || ''); setSortDirection(sorts[0]?.direction || 'asc'); setSortConditions(sorts.slice(1));
                                 if (apply) { setAppliedQuery(current => ({ ...current, sorts: sorts.filter(item => item.field) })); setPageNumber(1); }
                             }}
                             fields={filterFields} rows={dataRows} formatValue={formatCell} onApply={applyFilters} columnMode={isSchemas}
-                            coverage={isSchemas && !indexPreviewAsset && selectedTableAvailable && <ExplorerIndexCoverage schema={selectedSchema} table={table.name}
-                                rules={filterRules} columnTypes={data?.columnTypes} allowSample={canManage} conflictingOptions={Boolean(filterText || partition || sortField ||
-                                    sortConditions.some(item => item.field) || appliedQuery.sorts.length)} />}
                             footerAccessory={!isSchemas && canManage && <span className="flow-api-count"><button type="button" className="flow-api-count-number" onClick={() => { setApiListOpen(true); setFilterOpen(true); }}>{apiCount}</button><span className="flow-api-count-label"> / APIs</span></span>}>
                             {!isSchemas && canManage && apiListOpen && apiPanel}
                         </ExplorerFilterEditor>}

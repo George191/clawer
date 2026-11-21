@@ -116,7 +116,28 @@ class PreviewCompositeIndexCoverageRequest(BaseModel):
         return self
 
 
-PreviewIndexCoverageInput = PreviewIndexCoverageRequest | PreviewCompositeIndexCoverageRequest
+class PreviewIndexSort(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    field: str = Field(strict=True, pattern=r"^[a-z_][a-z0-9_]{0,62}$")
+    direction: Literal["asc", "desc"]
+
+
+class PreviewSortIndexCoverageRequest(BaseModel):
+    """An ordered key shape, without filter values or executable SQL."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sorts: list[PreviewIndexSort] = Field(strict=True, min_length=1, max_length=8)
+
+    @model_validator(mode="after")
+    def distinct_sort_columns(self):
+        if len({sort.field for sort in self.sorts}) != len(self.sorts):
+            raise ValueError("Use distinct sort fields")
+        return self
+
+
+PreviewIndexCoverageInput = PreviewIndexCoverageRequest | PreviewCompositeIndexCoverageRequest | PreviewSortIndexCoverageRequest
 
 
 class PreviewIndexCoverage(BaseModel):

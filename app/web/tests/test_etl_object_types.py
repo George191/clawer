@@ -580,6 +580,32 @@ class ObjectRouteTests(unittest.TestCase):
             })
             self.assertEqual((composite.status_code, composite.json()), (200, {"state": "candidate"}))
 
+    def test_sort_index_coverage_requires_distinct_ordered_fields_without_values_or_sql(self):
+        url = "/api/v1/etl/ts_ods/objects/preview-index-coverage"
+        with patch.object(etl, "preview_index_coverage", new=AsyncMock(return_value={"state": "candidate"})) as advisory:
+            for data in (
+                {"sorts": []}, {"sorts": "id"},
+                {"sorts": [{"field": f"key_{index}", "direction": "asc"} for index in range(9)]},
+                {"sorts": [{"field": "id", "direction": "asc"}, {"field": "id", "direction": "desc"}]},
+                {"sorts": [{"field": "id", "direction": "ASC"}]},
+                {"sorts": [{"field": "id", "direction": "asc NULLS FIRST"}]},
+                {"sorts": [{"field": "id", "direction": "asc", "value": "x"}]},
+                {"sorts": [{"field": "id DESC", "direction": "asc"}]},
+                {"sorts": [{"field": "id", "direction": 1}]},
+                {"sorts": [{"field": "id"}]},
+                {"sorts": [{"field": "id", "direction": "asc"}], "terms": []},
+                {"sorts": [{"field": "id", "direction": "asc"}], "field": "id", "operator": "eq"},
+            ):
+                self.assertEqual(self.client.post(url, json=data).status_code, 422, data)
+            payload = {"sorts": [{"field": "id", "direction": "desc"}, {"field": "day", "direction": "asc"}]}
+            self.assertEqual(self.client.post(url + "?direction=asc", json=payload).status_code, 422)
+            advisory.assert_not_called()
+            response = self.client.post(url, json=payload)
+            self.assertEqual((response.status_code, response.json()), (200, {"state": "candidate"}))
+            self.assertEqual(response.headers["cache-control"], "no-store")
+            self.assertEqual(advisory.call_args.args[3].model_dump(), payload)
+            self.assertEqual(self.client.post(url, json={"sorts": payload["sorts"][:1]}).status_code, 200)
+
     def test_column_lineage_query_requires_one_canonical_field_and_direction(self):
         url = "/api/v1/etl/ts_ods/objects/lineage-column-references"
         selected = "?column=id&direction=incoming"

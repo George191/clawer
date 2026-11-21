@@ -1410,11 +1410,12 @@ export const fetchObservedTableLineage = (source: TableLineageIdentity, directio
 export type PreviewIndexCoverageOperator = 'eq' | 'lt' | 'lte' | 'gt' | 'gte' | 'between';
 export type PreviewIndexCoverageState = 'candidate' | 'no_candidate' | 'unsupported' | 'unavailable';
 export type PreviewIndexCoverageTerm = { field: string; operator: PreviewIndexCoverageOperator };
-export type PreviewIndexCoverageInput = PreviewIndexCoverageTerm | { terms: PreviewIndexCoverageTerm[] };
+export type PreviewIndexCoverageInput = PreviewIndexCoverageTerm | { terms: PreviewIndexCoverageTerm[] } | { sorts: { field: string; direction: 'asc' | 'desc' }[] };
 export const checkPreviewIndexCoverage = (
   schema: string, table: string, request: PreviewIndexCoverageInput, signal?: AbortSignal,
 ): Promise<{ state: PreviewIndexCoverageState }> =>
   client.post(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/preview-index-coverage`,
+    'sorts' in request ? { sorts: request.sorts.map(({ field, direction }) => ({ field, direction })) } :
     'terms' in request ? { terms: request.terms.map(({ field, operator }) => ({ field, operator })) } :
       { field: request.field, operator: request.operator }, { signal }).then(r => unwrap<{ state: PreviewIndexCoverageState }>(r.data));
 
@@ -1445,15 +1446,6 @@ export const fetchIndexedProjectionCapability = (schema: string, table: string, 
   client.get(indexedProjectionPath(schema, table), { signal }).then(r => unwrap<IndexedProjectionCapability>(r.data));
 export const queryIndexedProjection = (schema: string, table: string, predicate: IndexedIdSamplePredicate, expectedProjectionRevision: string, signal?: AbortSignal): Promise<IndexedProjectionResult> =>
   client.post(indexedProjectionPath(schema, table), { ...predicate, expectedProjectionRevision }, { signal }).then(r => unwrap<IndexedProjectionResult>(r.data));
-export type IndexedCompoundSamplePredicate = { tenantId: string; groupId: string; idFrom: string; idTo: string };
-const indexedCompoundSamplePath = (schema: string, table: string) =>
-  `/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/indexed-compound-id-sample`;
-export const fetchIndexedCompoundSample = (schema: string, table: string, signal?: AbortSignal): Promise<IndexedIdSampleCapability> =>
-  client.get(indexedCompoundSamplePath(schema, table), { signal }).then(r => unwrap<IndexedIdSampleCapability>(r.data));
-export const queryIndexedCompoundSample = (schema: string, table: string, predicate: IndexedCompoundSamplePredicate, signal?: AbortSignal): Promise<IndexedIdSampleResult> =>
-  client.post(indexedCompoundSamplePath(schema, table), predicate, { signal }).then(r => unwrap<IndexedIdSampleResult>(r.data));
-
-
 export type TableLineageCommonDownstream = Omit<TableLineageCommonUpstream, 'ancestor'> & { descendant: TableLineageIdentity | null };
 export const fetchTableLineageCommonDownstream = (source: TableLineageIdentity, target: TableLineageIdentity, signal?: AbortSignal): Promise<TableLineageCommonDownstream> =>
   client.get(`/etl/${encodeURIComponent(source.schema)}/${encodeURIComponent(source.table)}/lineage-common-downstream`, {

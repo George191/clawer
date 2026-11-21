@@ -78,13 +78,13 @@ export interface ExplorerFilterEditorProps {
     formatValue: (value: unknown) => string;
     onApply: () => void;
     columnMode?: boolean;
-    coverage?: React.ReactNode;
     renderRuleNotice?: (rule: ExplorerFilter) => React.ReactNode;
+    renderSortNotice?: (sorts: ExplorerSort[]) => React.ReactNode;
     footerAccessory?: React.ReactNode;
     children?: React.ReactNode;
 }
 
-export default function ExplorerFilterEditor({ rules, setRules, search, onSearchChange, sorts, onSortsChange, fields, rows, formatValue, onApply, columnMode = true, coverage, renderRuleNotice, footerAccessory, children }: ExplorerFilterEditorProps) {
+export default function ExplorerFilterEditor({ rules, setRules, search, onSearchChange, sorts, onSortsChange, fields, rows, formatValue, onApply, columnMode = true, renderRuleNotice, renderSortNotice, footerAccessory, children }: ExplorerFilterEditorProps) {
     const [filterMoving, setFilterMoving] = useState<{ id: string; peerId: string; direction: 'up' | 'down' } | null>(null);
     const sortConditionsRef = useRef<HTMLDivElement>(null);
     const [sortConditionsOverflow, setSortConditionsOverflow] = useState(false);
@@ -147,8 +147,8 @@ export default function ExplorerFilterEditor({ rules, setRules, search, onSearch
                 <button type="button" aria-label="Scroll left" onClick={() => sortConditionsRef.current?.scrollBy({ left: -140, behavior: 'smooth' })}>‹</button>
                 <button type="button" aria-label="Scroll right" onClick={() => sortConditionsRef.current?.scrollBy({ left: 140, behavior: 'smooth' })}>›</button>
             </div>}
+            {renderSortNotice?.(sorts)}
         </div>
-        {coverage && (columnMode ? <details className="explorer-filter-advanced"><summary>Index coverage</summary>{coverage}</details> : coverage)}
         <div className="flow-filter-apply"><button type="button" className={columnMode ? 'explorer-filter-apply-button' : 'flow-filter-apply-button'} onClick={onApply}>Apply filters</button><span className="flow-filter-edited-hint">Apply to update filters and pending sorts</span>{footerAccessory}</div>
         {children}
     </div>;

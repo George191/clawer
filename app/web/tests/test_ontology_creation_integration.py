@@ -13,7 +13,7 @@ from sqlalchemy.engine import make_url
 from app.etl.schema import ontology
 from app.etl.schema.object_relations import OBJECT_RELATIONS_DDL_STATEMENTS
 from app.storage.postgres_client import PostgresClient
-from app.web.api.models.etl import PreviewCompositeIndexCoverageRequest, PreviewIndexCoverageRequest
+from app.web.api.models.etl import PreviewCompositeIndexCoverageRequest, PreviewIndexCoverageRequest, PreviewSortIndexCoverageRequest
 from app.web.api.models.indexed_id_sample import IndexedCompoundSampleRequest, IndexedSampleRequest
 from app.web.core.config import settings
 from app.web.core.config.indexed_sample import IndexedCompoundSampleScope, IndexedSampleScope
@@ -328,6 +328,72 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(HTTPException) as error:
             await probe(("a", "eq"), ("b", "eq"), reader=True)
         self.assertEqual(error.exception.status_code, 404)
+
+    async def test_sort_index_coverage_matches_complete_direction_nulls_collation_and_acl(self):
+        role = "helio_sort_coverage_" + uuid4().hex[:12]
+        async with self.pg.session() as session:
+            for sql in (
+                f"CREATE DOMAIN {SCHEMA}.sort_id AS bigint",
+                f"""CREATE TABLE {SCHEMA}.sort_shapes (
+                    a bigint, b date, c timestamptz, included int, plain int, partial_key int,
+                    expression_key int, null_order int, code text, label varchar(80),
+                    different_collation text, custom_type {SCHEMA}.sort_id, hash_key int
+                )""",
+                f"CREATE INDEX ON {SCHEMA}.sort_shapes (a, b DESC, c) INCLUDE (included)",
+                f"CREATE INDEX ON {SCHEMA}.sort_shapes (partial_key) WHERE partial_key > 0",
+                f"CREATE INDEX ON {SCHEMA}.sort_shapes (plain, (expression_key + 1))",
+                f"CREATE INDEX ON {SCHEMA}.sort_shapes (null_order DESC NULLS LAST)",
+                f"CREATE INDEX ON {SCHEMA}.sort_shapes (code DESC)",
+                f"CREATE INDEX ON {SCHEMA}.sort_shapes (label)",
+                f'CREATE INDEX ON {SCHEMA}.sort_shapes (different_collation COLLATE "C")',
+                f"CREATE INDEX ON {SCHEMA}.sort_shapes (custom_type)",
+                f"CREATE INDEX ON {SCHEMA}.sort_shapes USING hash (hash_key)",
+                f"CREATE ROLE {role} NOLOGIN",
+                f"GRANT SELECT ON public.ontology_objects TO {role}",
+                f"GRANT USAGE ON SCHEMA {SCHEMA} TO {role}",
+                f"GRANT SELECT (a, b, code) ON {SCHEMA}.sort_shapes TO {role}",
+            ):
+                await session.execute(text(sql))
+
+        async def cleanup():
+            await self.pg.execute(f"DROP OWNED BY {role}")
+            await self.pg.execute(f"DROP ROLE {role}")
+
+        self.addAsyncCleanup(cleanup)
+
+        async def probe(*sorts, reader=False, table="sort_shapes"):
+            payload = PreviewSortIndexCoverageRequest(sorts=[{"field": field, "direction": direction} for field, direction in sorts])
+            async with self.pg.session() as session:
+                if reader:
+                    await session.execute(text(f"SET LOCAL ROLE {role}"))
+                return (await preview_index_coverage(session, SCHEMA, table, payload)).state
+
+        for sorts in (
+            (("a", "asc"),), (("a", "desc"),), (("code", "asc"),), (("code", "desc"),),
+            (("label", "asc"),), (("a", "asc"), ("b", "desc")),
+            (("a", "desc"), ("b", "asc")), (("a", "asc"), ("b", "desc"), ("c", "asc")),
+            (("a", "desc"), ("b", "asc"), ("c", "desc")),
+        ):
+            self.assertEqual(await probe(*sorts), "candidate", sorts)
+        for sorts in (
+            (("b", "desc"),), (("b", "desc"), ("a", "asc")),
+            (("a", "asc"), ("b", "asc")), (("a", "asc"), ("b", "desc"), ("c", "desc")),
+            (("a", "asc"), ("included", "asc")), (("plain", "asc"),),
+            (("partial_key", "asc"),), (("expression_key", "asc"),),
+            (("null_order", "asc"),), (("null_order", "desc"),),
+            (("different_collation", "asc"),), (("hash_key", "asc"),),
+        ):
+            self.assertEqual(await probe(*sorts), "no_candidate", sorts)
+        self.assertEqual(await probe(("custom_type", "asc")), "unsupported")
+        self.assertEqual(await probe(("a", "asc"), ("b", "desc"), reader=True), "candidate")
+        self.assertEqual(await probe(("a", "asc"), ("c", "asc"), reader=True), "unavailable")
+        self.assertEqual(await probe(("custom_type", "asc"), reader=True), "unavailable")
+        self.assertEqual(await probe(("absent", "asc"), reader=True), "unavailable")
+        await self.workspace.set_object_visibility(SCHEMA, "sort_shapes", "hidden", "fixture")
+        for table in ("sort_shapes", "absent"):
+            with self.assertRaises(HTTPException) as error:
+                await probe(("a", "asc"), table=table)
+            self.assertEqual(error.exception.status_code, 404)
 
     async def test_lineage_neighbors_are_direct_typed_visible_and_bounded(self):
         await self.workspace.create_table(SCHEMA, await self.relation_payload())

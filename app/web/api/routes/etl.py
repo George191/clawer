@@ -1741,7 +1741,7 @@ async def get_preview_index_coverage(
     session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
 ) -> PreviewIndexCoverage:
     if request.query_params:
-        raise HTTPException(422, "Index coverage accepts only a filter shape in the body")
+        raise HTTPException(422, "Index coverage accepts only a filter or sort shape in the body")
     response.headers["Cache-Control"] = "no-store"
     return await preview_index_coverage(session, schema, table, payload)
 
