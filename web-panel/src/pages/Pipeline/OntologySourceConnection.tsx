@@ -39,18 +39,20 @@ export default function OntologySourceConnection({ value, warehouseName, disable
       <div className="flow-create-field"><span>Data connection</span>
         <div title={selected?.name}>
           <Select aria-label={selected ? 'Data connection: ' + selected.name : 'Data connection'}
-            className={'flow-ontology__select flow-source-connection' + (selected ? ' has-selection' : '')}
-            popupClassName="flow-ontology__select-popup flow-source-connection-menu" popupMatchSelectWidth={false}
-            value={selected?.id} placeholder="Select a connection" disabled={disabled} onChange={onChange}
-            options={options.map(option => ({ value: option.id, label: <span className="flow-source-connection-option">
+            className="flow-ontology__select flow-source-connection"
+            popupClassName="flow-ontology__select-popup flow-source-connection-menu" showSearch loading={status === 'loading'}
+            value={selected?.id} placeholder={status === 'loading' ? 'Loading connections…' : 'Select a connection'} disabled={disabled} onChange={onChange}
+            options={options.map(option => ({ value: option.id, label: <span className="flow-source-connection-option" title={option.name}>
               <ConnectorMark engine={option.engine} /><span className="flow-source-connection-name">{option.name}</span>
             </span> }))} />
         </div>
       </div>
-      <a href={projectHref(external ? '/ontology/connections?sourceId=' + encodeURIComponent(selected.id) : '/ontology/connections')}
-        target="_blank" rel="noreferrer">Data Connections ↗</a>
-      <Button size="small" type="text" icon={<ReloadOutlined />} aria-label="Refresh connections" title="Refresh connections"
-        disabled={disabled || status === 'loading'} onClick={() => setRevision(n => n + 1)} />
+      <div className="flow-source-connection-actions">
+        <a href={projectHref(external ? '/ontology/connections?sourceId=' + encodeURIComponent(selected.id) : '/ontology/connections')}
+          target="_blank" rel="noreferrer">Data Connections ↗</a>
+        <Button size="small" type="text" icon={<ReloadOutlined spin={status === 'loading'} />} aria-label="Refresh connections" title="Refresh connections"
+          disabled={disabled || status === 'loading'} onClick={() => setRevision(n => n + 1)} />
+      </div>
     </div>
     {status === 'error' && <p role="alert">Could not load saved connections. Refresh connections to retry.</p>}
     {value && !selected && status === 'ready' && <p role="alert">This saved connection is no longer available. Select another connection.</p>}

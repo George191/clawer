@@ -465,7 +465,7 @@ export default function DataConnections({ onChanged }: Props = {}) {
       {canManage && !loading && !loadError && (viewedSource ? <section className="ontology-connections-detail" aria-label="Source details">
         <Button size="small" icon={<ArrowLeftOutlined />} disabled={pending} onClick={() => showSource()}>Back to sources</Button>
         <header>
-          <div><ConnectorMark engine={viewedSource.engine} /><div><span className="ontology-connectors__eyebrow">Source details · {labelFor(viewedSource.engine)}</span><h2>{viewedSource.name}</h2>
+          <div className="ontology-connections-detail__identity"><ConnectorMark engine={viewedSource.engine} /><div><span className="ontology-connectors__eyebrow">Source details · {labelFor(viewedSource.engine)}</span><h2 title={viewedSource.name}>{viewedSource.name}</h2>
             {sourcePaused && <span className="ontology-connectors__capability is-unavailable" role="status">Paused</span>}</div></div>
           <div className="ontology-connections-detail__actions">
             {(viewedSource.catalogAvailable || sourcePaused) && viewedType?.catalogAvailable && <Button aria-expanded={exploring && !sourcePaused} disabled={blocked || sourcePaused} onClick={() => setExploringSource(exploring ? '' : viewedSource.id)}>{exploring && !sourcePaused ? 'Close source catalog' : 'Explore source'}</Button>}
@@ -502,13 +502,15 @@ export default function DataConnections({ onChanged }: Props = {}) {
           <label className="ontology-connections-inventory__filter">Connector <select aria-label="Filter sources by connector" value={sourceEngine} onChange={(event) => setSourceEngine(event.target.value)}>
             <option value="all">All connectors</option>{connectors.map((type) => <option key={type.engine} value={type.engine}>{type.name}</option>)}
           </select></label>
+          <span className="ontology-connections-inventory__count" role="status">{filteredSources.length} of {sources.length} sources</span>
         </div>
-        {filteredSources.length ? <div className="ontology-connections-inventory__table"><table>
+        {filteredSources.length ? <div className="ontology-connections-inventory__table" role="region" aria-label="Saved sources" tabIndex={0}><table>
+          <colgroup><col className="ontology-connections-inventory__source-column" /><col className="ontology-connections-inventory__connector-column" /><col className="ontology-connections-inventory__endpoint-column" /><col className="ontology-connections-inventory__tested-column" /></colgroup>
           <thead><tr><th scope="col">Source</th><th scope="col">Connector</th><th scope="col">Endpoint</th><th scope="col">Last connectivity test</th></tr></thead>
           <tbody>{filteredSources.map((source) => <tr key={source.id}>
-            <td><button type="button" className="ontology-connections-source-link" title={source.name} onClick={() => showSource(source)}><ConnectorMark engine={source.engine} /><span>{source.name}</span></button>
-              {isConnectionPaused(source) && <span className="ontology-connectors__capability is-unavailable">Paused</span>}</td>
-            <td>{labelFor(source.engine)}</td><td><code>{endpoint(source.config)}</code></td><td>{formatDate(source.testedAt)}</td>
+            <td><div className="ontology-connections-source"><button type="button" className="ontology-connections-source-link" title={source.name} onClick={() => showSource(source)}><ConnectorMark engine={source.engine} /><span>{source.name}</span></button>
+              {isConnectionPaused(source) && <span className="ontology-connections-source__paused">Paused</span>}</div></td>
+            <td>{labelFor(source.engine)}</td><td><code title={endpoint(source.config)}>{endpoint(source.config)}</code></td><td><time dateTime={source.testedAt || undefined}>{formatDate(source.testedAt)}</time></td>
           </tr>)}</tbody>
         </table></div> : <div className="ontology-connections-inventory__empty" role="status">
           <DatabaseOutlined /><strong>{sources.length ? 'No sources match your filters' : 'No sources configured'}</strong>
@@ -541,7 +543,7 @@ export default function DataConnections({ onChanged }: Props = {}) {
               <label>Category <select aria-label="Filter connector category" value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}</select></label>
             </div>
             <div className="ontology-connectors__grid">{filtered.map((item) => <button type="button" key={item.engine} className="ontology-connectors__card" aria-label={item.name} aria-pressed={chosen?.engine === item.engine} disabled={blocked} onClick={() => setChosenEngine(item.engine)}>
-              <ConnectorMark engine={item.engine} /><strong>{item.name}</strong><small>{item.description}</small><span className={`ontology-connectors__capability${item.driverAvailable ? '' : ' is-unavailable'}`}>{item.driverAvailable ? 'Read-only connection test' : 'Driver required'}</span>
+              <ConnectorMark engine={item.engine} /><strong title={item.name}>{item.name}</strong><small>{item.description}</small><span className={`ontology-connectors__capability${item.driverAvailable ? '' : ' is-unavailable'}`}>{item.driverAvailable ? 'Read-only connection test' : 'Driver required'}</span>
             </button>)}</div>
             {!filtered.length && <p className="ontology-connectors__empty">No connectors match your search.</p>}
             {chosen && !chosen.driverAvailable && <p className="ontology-connectors__prerequisite" role="status">{chosen.prerequisite}</p>}

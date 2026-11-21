@@ -1,14 +1,18 @@
 .flow-semantic-wizard { --wizard-inset: clamp(14px, 1.6vw, 20px); font: 400 12px/1.5 var(--ontology-font); }
 .flow-source-dataset { display: grid; gap: 10px; }
-.flow-source-connection-row { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; }
-.flow-source-connection-row a { align-self: end; line-height: 30px; color: var(--ontology-link); }
-.flow-source-connection:not(.has-selection) { width: 170px; }
-.flow-source-connection.has-selection { width: 62px; }
-.flow-source-connection-option { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
-.flow-source-connection-option .ontology-connectors__mark { width: 24px; height: 24px; flex-basis: 24px; border: 0; background: transparent; }
-.flow-source-connection.has-selection .ui-select-selection-item .flow-source-connection-name { display: none; }
-.flow-source-connection-menu { min-width: min(240px, calc(100vw - 32px)); max-width: calc(100vw - 32px); }
-.flow-source-connection-menu .flow-source-connection-name { overflow-wrap: anywhere; }
+.flow-source-connection-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 10px; }
+.flow-source-connection-actions { display: flex; align-items: center; gap: 6px; }
+.flow-source-connection-actions a { color: var(--ontology-link); white-space: nowrap; }
+.flow-source-connection.ui-select { width: 100%; }
+.flow-semantic-wizard .flow-source-connection .ui-select-selector { min-height: 32px; padding: 3px 28px 3px 8px; }
+.flow-source-connection:has(.ui-select-selection-item) .ui-select-selection-search { left: 36px; }
+.flow-source-connection-option { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; }
+.flow-source-connection-option .ontology-connectors__mark { width: 28px; height: 24px; flex-basis: 28px; border: 0; background: transparent; }
+.flow-source-connection-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flow-source-connection-menu .ui-select-item { min-height: 34px; padding: 5px 8px; }
+@media (pointer: coarse) {
+  .flow-semantic-wizard .flow-source-connection .ui-select-selector, .flow-source-connection-menu .ui-select-item { min-height: 40px; }
+}
 .flow-semantic-wizard .ui-modal-title { font: 500 14px/20px var(--ontology-font); }
 .flow-semantic-wizard .ui-modal-header { padding: 11px 16px; }
 .flow-semantic-wizard .ui-modal-close { top: 9px; }
@@ -69,6 +73,8 @@
   .flow-semantic-wizard .flow-create-source { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 580px) {
+  .flow-source-connection-row { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .flow-source-connection-actions { justify-self: end; }
   .flow-semantic-wizard { max-width: calc(100vw - 16px); }
   .flow-semantic-wizard .ui-modal-content { height: calc(100dvh - 24px); }
   .flow-semantic-wizard .flow-create-layout { grid-template-columns: minmax(0, 1fr); }
