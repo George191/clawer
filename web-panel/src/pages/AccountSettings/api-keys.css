@@ -24,7 +24,6 @@
   width: 100%; min-width: 0; box-sizing: border-box; height: 36px; padding: 5px 10px;
   border: 1px solid #4a5362; border-radius: 6px; background: #20252c; color: #e4e7eb;
 }
-.acc-keys input:focus, .acc-keys select:focus { outline: 2px solid var(--ui-focus-ring); outline-offset: 1px; }
 .acc-keys .key-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 12px 0; border-top: 1px solid #39414d; }
 .acc-keys .key-metadata { flex: 1 1 230px; gap: 3px; overflow-wrap: anywhere; }
 .acc-keys .key-metadata code, .acc-keys .key-metadata small, .acc-keys p { font-size: 13px; color: #a5afbd; }

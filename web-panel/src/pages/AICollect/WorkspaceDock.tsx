@@ -4783,12 +4783,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           box-shadow: none !important;
           font-size: 9px !important;
         }
-        .workspace-dock-log-run-select:focus-within .ui-select-selector {
-          outline: 2px solid var(--ui-focus-ring) !important;
-          outline-offset: 1px;
-          border-radius: 4px;
-          background: ${aura.surfaceSoft} !important;
-        }
         .workspace-dock-log-run-select .ui-select-selection-wrap {
           display: flex;
           align-items: center;

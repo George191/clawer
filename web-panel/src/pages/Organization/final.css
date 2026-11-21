@@ -15,7 +15,6 @@
 .access-toolbar{display:grid;grid-template-columns:150px 150px minmax(220px,1fr) auto auto;gap:8px;min-height:auto;padding:12px 14px;background:#1a1d27}
 .access-toolbar .ui-input-affix-wrapper{width:100%;max-width:none}
 .access-page .ui-select-selector,.access-page .ui-select:hover .ui-select-selector,.access-page .ui-select-focused .ui-select-selector,.access-page .ui-input-affix-wrapper,.access-page .ui-input-affix-wrapper:hover,.access-page .ui-input-affix-wrapper-focused,.access-page .ui-btn,.access-page .ui-btn:hover,.access-page .ui-btn:focus-visible{border:0!important;box-shadow:none!important}
-.access-page :is(.ui-input-affix-wrapper,.ui-select):focus-within{outline:2px solid var(--ui-focus-ring);outline-offset:1px}
 
 .access-page .ui-select-selector,.access-page .ui-input-affix-wrapper,.access-page .ui-btn-default{background:#343947!important;color:#e4e7eb!important}
 .access-page .ui-select:hover .ui-select-selector,.access-page .ui-input-affix-wrapper:hover,.access-page .ui-btn-default:hover{background:#292e3b!important;color:#e4e7eb!important}

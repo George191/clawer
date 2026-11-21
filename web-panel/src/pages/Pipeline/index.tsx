@@ -1054,7 +1054,7 @@ const DataLayersWorkspace: React.FC = () => {
                 {!isSchemas && <div className="flow-table-switcher">
                 <Dropdown  overlayClassName="flow-menu-popup flow-table-tab-dropdown"  trigger={['click']}  dropdownRender={()  =>  (
                     <div  className="flow-tab-search-panel">
-                        <div  className="flow-tab-search-input-wrap">
+                        <div  className="flow-tab-search-input-wrap ui-input-surface">
                             <SearchOutlined  className="flow-tab-search-icon"  />
                             <input  className="flow-tab-search-input"  autoFocus  placeholder="Search  tables..."  value={tableSearch}  onChange={(e)  =>  setTableSearch(e.target.value)}  />
                         </div>
@@ -1083,6 +1083,14 @@ backToTypes: backToTypes,
 label: selectedTableAvailable ? mapping?.displayName || requestedTable : requestedTable,
 glyph: <ExplorerTypeIcon compact dataType={selectedTableAvailable ? mapping?.dataType ?? table.dataType : undefined} table={requestedTable} />,
 fields: data?.columns || filterFields,
+types: data?.columnTypes,
+appliedSearch: appliedQuery.search,
+onSearchValues: value => {
+    if (!requireAppliedFilterDraft() || !requireAppliedSortDraft()) return false;
+    const search = value.trim();
+    setFilterText(search); setAppliedQuery(current => ({ ...current, search })); setPageNumber(1);
+    return true;
+},
 names: Object.fromEntries((mapping?.properties || []).flatMap(p => p.sourceColumn ? [[p.sourceColumn, p.name]] : [])),
 rows: dataRows.map((row,i) => ({...row,...primaryKey(row,i)})),
 selected: workbenchRows,

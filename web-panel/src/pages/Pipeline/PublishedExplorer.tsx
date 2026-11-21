@@ -72,9 +72,8 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [filterRules, setFilterRules] = useState<ExplorerFilter[]>([blankExplorerFilter('rule-1')]);
-  const [search, setSearch] = useState('');
   const [draftSorts, setDraftSorts] = useState<ExplorerSort[]>([]);
-  const navigationDraft = useRef<{ route: string; mode: typeof mode; rules?: ExplorerFilter[]; search?: string }>();
+  const navigationDraft = useRef<{ route: string; mode: typeof mode; rules?: ExplorerFilter[] }>();
   const initialLayoutSorts = useRef(!entry.saved && !entry.savedSet && !entry.query.sorts?.length).current;
   const originals = useRef(new Map<string, PublishedExplorerRecord>());
   const sessionIdentity = getSessionState().identity;
@@ -108,7 +107,7 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
         setMode(draft?.mode ?? (saved?.kind === 'exploration' ? saved.content.view : 'results'));
         const rules = draft?.rules ?? commonFilters(query, objectType!);
         setFilterRules(rules.length ? rules : [blankExplorerFilter('rule-1')]);
-        setSearch(draft?.search ?? query.search ?? ''); setDraftSorts(query.sorts || []);
+        setDraftSorts(query.sorts || []);
       }
     }
     void load().catch(error => { if (!controller.signal.aborted) setScopeError(ontologyError(error, 'Unable to open this object set.')); });
@@ -154,10 +153,11 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
   function changeQuery(next: PublishedExplorerQuery, keepDraft = false) {
     let href: string;
     try { href = publishedExplorerHref(entry.definitionId, { query: next, returnTo: entry.returnTo }); }
-    catch (error) { message.error((error as Error).message); return; }
+    catch (error) { message.error((error as Error).message); return false; }
     const url = new URL(href, window.location.origin);
-    navigationDraft.current = { route: url.search + url.hash, mode, ...(keepDraft ? { rules: filterRules, search } : {}) };
+    navigationDraft.current = { route: url.search + url.hash, mode, ...(keepDraft ? { rules: filterRules } : {}) };
     navigate(href, { replace: true });
+    return true;
   }
   const canChange = () => !!query && !busy && !fatalError;
   function requireDraftApplied(sorting = false) {
@@ -198,7 +198,11 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
     <div className="flow-layer-layout"><ExplorerCatalog published={{ selectedId: entry.definitionId, onSelect: id => navigate(publishedExplorerHref(id)) }} overlayOpen={catalogOpen} onDismiss={() => setCatalogOpen(false)} /><section className="flow-layer-main">
       <ExplorerWorkbench<PublishedExploration> locked={busy || !!fatalError} header={{ source: selectionSource,
         label: objectType?.definition.name || entry.definitionId, available: !!objectType, glyph: objectType && <SemanticTypeGlyph definition={objectType.definition} />,
-        fields, names, rows, selected: chosen.filter(row => Object.keys(row.identity).length), query: { query: query || { filters: [] } }, resource, admin: canManage,
+        fields, names, types, rows, appliedSearch: query?.search,
+        onSearchValues: value => {
+          if (!query || !requireDraftApplied() || !requireDraftApplied(true)) return false;
+          return changeQuery({ ...query, search: value.trim() }, true);
+        }, selected: chosen.filter(row => Object.keys(row.identity).length), query: { query: query || { filters: [] } }, resource, admin: canManage,
         layoutControl: <><LayoutToolbar controls={resultLayout} admin={canManage} types={types} />{objectTools.createButton}</>, selectResource: setResource,
         availableResources: objectType ? explorerResourceCapabilities(objectType.definition.source, canManage) : [], additionalTools: objectTools.tools,
         saved: activeScope?.saved, savedLoading: !activeScope && !scopeError, savedError: scopeError, openSavedItem,
@@ -232,9 +236,9 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
             removeFilters={(start, end) => { if (requireDraftApplied()) applyRules(activeFilters.filter((_, index) => index < start || index > end)); }}
             removeSearch={() => { if (canChange()) changeQuery({ ...query, search: '' }); }} removeSort={field => { if (requireDraftApplied(true)) updateSorts(sorts.filter(item => item.field !== field)); }} />}
           {query?.keys && <div className="flow-schema-applied flow-query-chips" aria-label="Object set scope"><span>{query.keys.length} object references{result ? ` · ${result.count} matching objects` : ''}</span></div>}
-          {filtersOpen && query && <ExplorerFilterEditor rules={filterRules} setRules={setFilterRules} search={search} onSearchChange={setSearch} sorts={draftSorts}
+          {filtersOpen && query && <ExplorerFilterEditor rules={filterRules} setRules={setFilterRules} sorts={draftSorts}
             onSortsChange={(next, apply) => { setDraftSorts(next); if (apply) updateSorts(next); }} fields={fields} rows={rows} formatValue={display}
-            onApply={() => { if (canChange()) changeQuery({ ...query, filters: [], workbenchFilters: wireFilters(normalizeFilterDepth(filterRules)), search, sorts: draftSorts.filter(item => item.field) }); }} />}
+            onApply={() => { if (canChange()) changeQuery({ ...query, filters: [], workbenchFilters: wireFilters(normalizeFilterDepth(filterRules)), sorts: draftSorts.filter(item => item.field) }); }} />}
         </ExplorerResults>
       </ExplorerWorkbench>
     </section></div>

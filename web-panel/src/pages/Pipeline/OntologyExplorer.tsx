@@ -537,7 +537,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
             <button type="button" aria-pressed={publishedCatalog} onClick={() => { if (!publishedCatalog) selectPublished(); }}><AppstoreOutlined />Published</button>
           </nav>
           <div className="flow-ontology__topbar">
-            <div className="flow-ontology__search" role="search">
+            <div className="flow-ontology__search ui-input-surface" role="search">
               <SearchOutlined /><input ref={searchRef} data-testid="ontology-search" aria-label={searchLabel} placeholder={searchLabel + '…'}
                 value={catalogSearch} maxLength={publishedCatalog ? 200 : undefined} onChange={event => changeCatalogSearch(event.target.value)}
                 onKeyDown={event => {

@@ -6,6 +6,7 @@
 /* ── Google Fonts: Inter ── */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
 @import './scrollbars.css';
+@import './input-focus.css';
 
 :root {
   --ui-action-bg: #197f78;
@@ -16,7 +17,7 @@
   --ui-focus-on-dark: #53b9ae;
   --ui-action-link: var(--ui-link-on-dark);
   --ui-focus-ring: var(--ui-focus-on-dark);
-  --ui-focus-shadow: 0 0 0 2px color-mix(in srgb, var(--ui-focus-ring) 24%, transparent);
+  --ui-focus-shadow: none;
   accent-color: var(--ui-action-bg);
 }
 
@@ -28,7 +29,7 @@ html[data-theme='light'] {
   --ui-focus-ring: #0e766f;
 }
 
-:where(button, a[href], input, select, textarea, [tabindex]):focus-visible {
+:where(button, a[href], [tabindex]):not(input, select, textarea):focus-visible {
   outline: 2px solid var(--ui-focus-ring);
   outline-offset: 2px;
 }

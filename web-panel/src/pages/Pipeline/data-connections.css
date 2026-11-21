@@ -3,7 +3,7 @@
   font: 400 12px/1.5 var(--ontology-font, Inter, 'Segoe UI', sans-serif);
 }
 .ontology-connectors .ui-btn { min-height: 31px; border-radius: 4px; font-size: 12px; }
-.ontology-connectors :is(button, input, select):focus-visible { outline: 2px solid var(--ui-focus-ring); outline-offset: 2px; }
+.ontology-connectors button:focus-visible { outline: 2px solid var(--ui-focus-ring); outline-offset: 2px; }
 .ontology-connectors button:disabled { cursor: not-allowed; }
 .ontology-connectors__eyebrow { display: block; color: var(--ontology-muted, #9ca7b5); font-size: 11px; }
 .ontology-connectors :is(h1, h2, h3) { color: var(--ontology-text); font-weight: 600; }

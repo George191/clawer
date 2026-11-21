@@ -33,7 +33,6 @@
   display: block; box-sizing: border-box; width: 100%; height: 30px; padding: 3px 8px 3px 29px;
   appearance: none; border: 0; color: var(--ontology-text); background: transparent; font: inherit;
 }
-.flow-appearance-dialog .flow-icon-search input:focus { outline: none; box-shadow: none; }
 .flow-icon-search:focus-within > .ui-icon { color: var(--ontology-text); }
 .flow-icon-options {
   display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); align-content: start;

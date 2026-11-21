@@ -82,7 +82,7 @@ export default function OntologyIconPicker({ definition, disabled, onChange }: P
       </div>
       <div id={id + '-panel'} role="tabpanel" aria-labelledby={id + '-tab-' + tabs.indexOf(tab)} className="flow-appearance-panel">
         {tab === 'Icons' ? <>
-          <label className="flow-icon-search"><SearchOutlined />
+          <label className="flow-icon-search ui-input-surface"><SearchOutlined />
             <input ref={search} type="search" aria-label="Search icons" placeholder="Search icons" value={query}
               onChange={event => { setQuery(event.target.value); setPage(0); }}
               onKeyDown={event => {

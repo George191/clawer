@@ -4,8 +4,7 @@
 .flow-create-modal .ui-modal-title { font-size: 14px; font-weight: 500; }
 .flow-create-modal .ui-modal-body { padding: 0; }
 .flow-create-modal .ui-modal-footer { display: flex; align-items: center; gap: 8px; padding: 12px 22px; border-top: 1px solid var(--ontology-border); }
-.flow-create-modal :is(button,input):focus-visible { outline: 2px solid var(--ui-focus-ring); outline-offset: 2px; }
-.flow-create-modal .ui-input:focus { border-color: var(--ui-focus-ring); outline: none; box-shadow: none; }
+.flow-create-modal button:focus-visible { outline: 2px solid var(--ui-focus-ring); outline-offset: 2px; }
 .flow-create-modal .ui-input { border-radius: 3px; background: var(--ontology-bg); font: inherit; }
 .flow-create-modal .ui-checkbox-wrapper { gap: 5px; font-size: 12px; }
 .flow-create-modal .ui-checkbox-input:focus-visible + .ui-checkbox-inner { outline-color: var(--ui-focus-ring); }

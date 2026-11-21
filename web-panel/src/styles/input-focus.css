@@ -1,0 +1,26 @@
+/* Focus stays inside the control; its size and background remain unchanged. */
+:where(input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file'], [type='button'], [type='submit'], [type='reset'], [type='image']), textarea, select):focus,
+.ui-input:focus,
+:is(.ui-input-affix-wrapper, .ui-input-number, .ui-picker, .ui-input-surface):focus-within,
+.ui-select:focus-within > .ui-select-selector {
+  border-color: var(--ui-focus-ring);
+  outline: 1px solid var(--ui-focus-ring);
+  outline-offset: -1px;
+  box-shadow: var(--ui-focus-shadow);
+}
+
+.ui-input-surface {
+  transition: border-color 120ms ease;
+}
+/* A composed field owns focus on its outer surface only. */
+:is(.ui-input-surface, .ui-input-affix-wrapper, .ui-input-number, .ui-select, .ui-picker) :is(input, textarea):focus {
+  outline: none;
+  box-shadow: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-input-surface { transition: none; }
+}
+@media (forced-colors: active) {
+  .ui-input-surface:focus-within { outline: 1px solid Highlight; outline-offset: -1px; }
+}

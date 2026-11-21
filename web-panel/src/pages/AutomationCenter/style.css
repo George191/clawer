@@ -13,8 +13,7 @@
 }
 
 .automation-page > .automation-header,
-.automation-page > .automation-tabs,
-.automation-page > .automation-filters :is(.ui-input-affix-wrapper, .ui-select):focus-within { outline: 2px solid var(--ui-focus-ring); outline-offset: 1px; }
+.automation-page > .automation-tabs { outline: 2px solid var(--ui-focus-ring); outline-offset: 1px; }
 
 .automation-load-alert {
   flex: none;
@@ -147,7 +146,6 @@
   color: #e4e7eb !important;
 }
 
-.automation-filters :is(.ui-input-affix-wrapper, .ui-select):focus-within { outline: 2px solid var(--ui-focus-ring); outline-offset: 1px; }
 
 .automation-load-alert {
   margin-top: 10px;

@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ApiOutlined, AppstoreOutlined, ArrowLeftOutlined, BarChartOutlined, CheckOutlined, CloseOutlined, CopyOutlined, DeleteOutlined, DownOutlined, DownloadCircleFilled, FileSearchOutlined, LinkOutlined, LoadingOutlined, ProfileOutlined, SearchOutlined, ShareAltOutlined, SyncOutlined, TableOutlined } from '@/components/ui/icons';
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { ApiOutlined, AppstoreOutlined, ArrowLeftOutlined, BarChartOutlined, CheckOutlined, CloseOutlined, CopyOutlined, DeleteOutlined, DownOutlined, DownloadCircleFilled, FileSearchOutlined, FilterOutlined, LinkOutlined, LoadingOutlined, ProfileOutlined, SearchOutlined, ShareAltOutlined, SyncOutlined, TableOutlined } from '@/components/ui/icons';
 import { Button, Dropdown, Modal, message } from '@/components/ui';
 import type { SheetData } from 'write-excel-file/browser';
 import { projectHref } from '../../services/projectDomains';
 import { createSaved, listSaved, openSaved, publishedSavedPath, removeSaved, savedPath, sharing, type Exploration, type SavedDetail, type SavedKind, type SavedMeta, type WorkbenchQuery } from '../../services/explorerSaved';
+import PropertyTypeIcon from './PropertyTypeIcon';
 import './explorer-workbench.css';
 export type ResourceView = 'preview' | 'schema' | 'stream' | 'evidence' | 'api';
 export type ExplorerToolAction = { key: string; label: string; group: 'analyze' | 'inspect'; icon?: ReactNode; run: () => void };
@@ -21,6 +22,9 @@ type Props<Q extends object = WorkbenchQuery> = {
     glyph?: ReactNode;
     fields: string[];
     names?: Record<string, string>;
+    types?: Record<string, string>;
+    appliedSearch?: string;
+    onSearchValues: (value: string) => boolean;
     rows: RecordRow[];
     selected: Selection[];
     query: Q;
@@ -101,6 +105,8 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
     const sourceLabel = p.source.kind === 'published' ? p.label : p.source.schema + '.' + p.source.table;
     const saved = p.saved;
     const [menu, show] = useState(''), [search, setSearch] = useState(''), [choice, choose] = useState('');
+    const [activeSuggestion, setActiveSuggestion] = useState(-1);
+    const suggestionsId = useId();
     const [chart, setChart] = useState(''), [name, setName] = useState(''), [error, setError] = useState('');
     const [busy, setBusy] = useState(false), [dialog, setDialog] = useState<'save' | 'share' | ''>('');
     const [appSearch, setAppSearch] = useState(''), [appGroup, setAppGroup] = useState('all');
@@ -112,12 +118,19 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
     const [page, setPage] = useState(0), [items, setItems] = useState<{ items: SavedMeta[]; hasMore: boolean }>();
     const [generation, refresh] = useState(0), [saveKind, setSaveKind] = useState<SavedKind>('exploration');
     const opening = useRef<AbortController>();
-    const root = useRef<HTMLElement>(null), propertySearch = useRef<HTMLLabelElement>(null), popup = useRef<HTMLElement>(null);
+    const root = useRef<HTMLElement>(null), propertySearch = useRef<HTMLDivElement>(null), popup = useRef<HTMLElement>(null);
     const kind = menu === 'lists' ? 'list' : 'exploration';
     const library = menu === 'lists' || menu === 'explorations';
     const notify = (content: string, description?: string) => message.success({ content, description, className: 'explorer-toast' });
     const link = (id: string) => new URL(projectHref('/ontology/explorer?' + new URLSearchParams(p.source.kind === 'published' ? { objectType: p.source.definitionId, saved: id } : { schema: p.source.schema, table: p.source.table, saved: id }))).href;
     useEffect(() => () => opening.current?.abort(), []);
+    useEffect(() => { setSearch(''); }, [p.appliedSearch]);
+    useEffect(() => {
+        if (menu === 'property') popup.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+    }, [menu]);
+    useEffect(() => {
+        if (menu === 'search') popup.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
+    }, [menu, activeSuggestion]);
     useEffect(() => { setChart(saved?.kind === 'exploration' ? saved.content.chart ?? '' : ''); }, [saved?.id]);
     function openMenu(m: string) { show(v => v === m ? '' : m); setError(''); setPage(0); setLibrarySearch(''); setAccess('all'); }
     useEffect(() => {
@@ -139,7 +152,7 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
                 || (trigger && root.current?.contains(trigger) && trigger.getAttribute('data-wb-menu') === menu);
             if (!within) show('');
         };
-        const key = (e: KeyboardEvent) => { if (e.key === 'Escape') show(''); };
+        const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { if (menu === 'property') propertySearch.current?.querySelector('input')?.focus(); setActiveSuggestion(-1); show(''); } };
         document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', key);
         return () => { document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', key); };
     }, [menu, library]);
@@ -202,7 +215,15 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
     }
     function selectMode(mode: 'results' | 'explore') { p.selectResource('preview'); p.setMode(mode); show(''); }
     const field = chart && p.fields.includes(chart) ? chart : p.fields[0] ?? '';
-    const find = p.fields.filter(f => [f, p.names?.[f]].join(' ').toLowerCase().includes(search.toLowerCase())).slice(0, 30);
+    const find = p.fields.filter(f => [f, p.names?.[f]].join(' ').toLowerCase().includes(search.trim().toLowerCase()))
+        .sort((a, b) => (p.names?.[a] || a).localeCompare(p.names?.[b] || b)).slice(0, 30);
+    const hasValueSearch = !!search.trim();
+    const suggestionCount = find.length + Number(hasValueSearch);
+    const searchValues = () => { if (p.onSearchValues(search.trim())) { setSearch(''); choose(''); setActiveSuggestion(-1); show(''); } };
+    const selectSuggestion = (index: number) => {
+        if (hasValueSearch && index === 0) searchValues();
+        else if (find[index - Number(hasValueSearch)]) changeField(find[index - Number(hasValueSearch)]);
+    };
     const changeField = (f: string) => { choose(f); setSearch(p.names?.[f] || f); show('property'); };
     const closeOpenIn = () => { show(''); openInTrigger.current?.focus(); };
     const openResource = (view: ResourceView) => { p.selectResource(view); if (p.source.kind === 'backed' || view === 'preview') p.setMode('results'); closeOpenIn(); };
@@ -240,7 +261,7 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
         if (event.key === 'ArrowRight' && group.classList.contains('wb-open-in-categories')) { event.preventDefault(); event.currentTarget.querySelector<HTMLButtonElement>('.wb-open-in-actions button:not(:disabled)')?.focus(); }
         if (event.key === 'ArrowLeft' && group.classList.contains('wb-open-in-actions')) { event.preventDefault(); event.currentTarget.querySelector<HTMLButtonElement>('[aria-checked="true"]')?.focus(); }
     }}>
-        <label className="wb-open-in-search"><SearchOutlined /><input autoFocus aria-label="Search Open in tools" placeholder="Search for apps…" value={appSearch} onChange={event => { setAppSearch(event.target.value); setAppGroup('all'); }} onKeyDown={event => {
+        <label className="wb-open-in-search ui-input-surface"><SearchOutlined /><input autoFocus aria-label="Search Open in tools" placeholder="Search for apps…" value={appSearch} onChange={event => { setAppSearch(event.target.value); setAppGroup('all'); }} onKeyDown={event => {
             if (event.key === 'ArrowDown') { event.preventDefault(); event.currentTarget.closest('section')?.querySelector<HTMLButtonElement>('.wb-open-in-actions button:not(:disabled)')?.focus(); }
         }}/></label>
         <div className="wb-open-in-body">
@@ -251,7 +272,7 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
     const libraryContent = <section className="wb-library" aria-label={`Saved ${menu}`}>
         {error && <p role="alert" className="wb-library-error">{error}</p>}
         <div className="wb-library-heading"><div><h3>{menu === 'lists' ? 'Lists' : 'Explorations'}</h3><p>{menu === 'lists' ? 'Saved object selections' : 'Saved searches and views'}</p></div><button aria-label="Close saved items" onClick={() => show('')}><CloseOutlined /></button></div>
-        <div className="wb-library-controls"><label><SearchOutlined /><input aria-label={`Search ${menu}`} placeholder={`Search ${menu}…`} maxLength={100} value={librarySearch} onChange={e => { setLibrarySearch(e.target.value); setPage(0); }}/></label><select aria-label="Saved item sharing" value={access} onChange={e => { setAccess(e.target.value as typeof access); setPage(0); }}><option value="all">All</option><option value="private">Private</option><option value="shared">Shared</option></select></div>
+        <div className="wb-library-controls"><label className="ui-input-surface"><SearchOutlined /><input aria-label={`Search ${menu}`} placeholder={`Search ${menu}…`} maxLength={100} value={librarySearch} onChange={e => { setLibrarySearch(e.target.value); setPage(0); }}/></label><select aria-label="Saved item sharing" value={access} onChange={e => { setAccess(e.target.value as typeof access); setPage(0); }}><option value="all">All</option><option value="private">Private</option><option value="shared">Shared</option></select></div>
         <div className="wb-library-items">
             {!items && !error && <p role="status" className="wb-library-empty">Loading saved items…</p>}
             {items && !items.items.length && <div className="wb-library-empty"><SearchOutlined /><strong>{librarySearch || access !== 'all' ? 'No matching saved items' : `No saved ${menu}`}</strong><p>{librarySearch || access !== 'all' ? 'Try another search or sharing filter.' : 'Save your work to return to it later.'}</p></div>}
@@ -266,7 +287,48 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
         <div className="wb-line wb-query">
             <button type="button" className="wb-back" onClick={p.backToTypes}><ArrowLeftOutlined /> Back to object types</button>
             <span className="wb-type">{p.available && <button type="button" className="wb-catalog-toggle wb-type-icon" onClick={p.toggleCatalog} aria-label="Browse object types" title="Browse object types" aria-expanded={p.catalogOpen}><i>{p.glyph ?? <TableOutlined />}</i></button>}<strong title={sourceLabel}>{p.label}</strong></span>
-            {p.available && <><label className="wb-property-search" ref={propertySearch} onClick={() => show('search')}><SearchOutlined /><input aria-label="Search properties to add a chart or filter" placeholder="Search properties to add a chart or filter…" value={search} onFocus={() => show('search')} onChange={e => { setSearch(e.target.value); show('search'); }} onKeyDown={e => { if (e.key === 'Enter' && find[0]) changeField(find[0]); }}/></label>
+            {p.available && <><div className="wb-search" ref={propertySearch}>
+                <label className="wb-property-search ui-input-surface"><SearchOutlined /><input role="combobox" aria-autocomplete="list" aria-expanded={menu === 'search'} aria-controls={suggestionsId}
+                    aria-activedescendant={menu === 'search' && activeSuggestion >= 0 ? `${suggestionsId}-${activeSuggestion}` : undefined}
+                    aria-label="Search objects or properties" placeholder="Search objects or properties…" value={search}
+                    onFocus={() => { setActiveSuggestion(-1); show('search'); }} onClick={() => show('search')} onChange={event => { setSearch(event.target.value); setActiveSuggestion(-1); show('search'); }}
+                    onKeyDown={event => {
+                        if (event.nativeEvent.isComposing) return;
+                        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                            event.preventDefault(); show('search');
+                            setActiveSuggestion(current => suggestionCount ? (current < 0 ? event.key === 'ArrowDown' ? 0 : suggestionCount - 1 : (current + (event.key === 'ArrowDown' ? 1 : -1) + suggestionCount) % suggestionCount) : -1);
+                        } else if (event.key === 'Enter') {
+                            event.preventDefault(); selectSuggestion(activeSuggestion < 0 ? 0 : activeSuggestion);
+                        } else if (event.key === 'Escape' || event.key === 'Tab') { setActiveSuggestion(-1); show(''); }
+                    }} /></label>
+                {(menu === 'search' || menu === 'property') && <section className="wb-property-popup" ref={popup} aria-label="Search and property tools">
+                    {menu === 'search' ? <>
+                        <div className="wb-suggestions" id={suggestionsId} role="listbox" aria-label="Search suggestions">
+                            {hasValueSearch && <button type="button" role="option" tabIndex={-1} id={`${suggestionsId}-0`} aria-selected={activeSuggestion === 0} onMouseDown={event => event.preventDefault()} onMouseEnter={() => setActiveSuggestion(0)} onClick={searchValues}>
+                                <SearchOutlined /><span><strong>Search objects for “{search.trim()}”</strong><small>Search property values</small></span><kbd>↵</kbd>
+                            </button>}
+                            {find.length > 0 && <div className="wb-suggestion-heading" aria-hidden="true">Properties</div>}
+                            {find.map((f, index) => <button type="button" role="option" tabIndex={-1} key={f} id={`${suggestionsId}-${index + Number(hasValueSearch)}`} aria-selected={activeSuggestion === index + Number(hasValueSearch)}
+                                onMouseDown={event => event.preventDefault()} onMouseEnter={() => setActiveSuggestion(index + Number(hasValueSearch))} onClick={() => changeField(f)}>
+                                <PropertyTypeIcon type={p.types?.[f] || 'string'} /><span><strong>{p.names?.[f] || f}</strong>{p.names?.[f] && p.names[f] !== f && <small>{f}</small>}</span>
+                            </button>)}
+                            {!find.length && <p className="wb-suggestion-empty" role="status">No matching properties</p>}
+                        </div>
+                        <footer className="wb-suggestion-footer"><span><kbd>↑</kbd><kbd>↓</kbd> Navigate</span><span><kbd>↵</kbd> Select</span><span><kbd>esc</kbd> Close</span></footer>
+                    </> : <>
+                        <header className="wb-property-heading"><button type="button" aria-label="Back to properties" onClick={() => { show('search'); propertySearch.current?.querySelector('input')?.focus(); }}><ArrowLeftOutlined /></button><PropertyTypeIcon type={p.types?.[choice] || 'string'} /><span><strong>{p.names?.[choice] || choice}</strong>{p.names?.[choice] && p.names[choice] !== choice && <small>{choice}</small>}</span></header>
+                        <div className="wb-property-actions" role="menu" aria-label="Property actions" onKeyDown={event => {
+                            if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+                            event.preventDefault();
+                            const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button'));
+                            buttons[(buttons.indexOf(event.target as HTMLButtonElement) + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length]?.focus();
+                        }}>
+                            <button type="button" role="menuitem" onClick={() => { setChart(choice); setSearch(''); selectMode('explore'); }}><BarChartOutlined />Add chart</button>
+                            <button type="button" role="menuitem" onClick={() => { setSearch(''); selectMode('results'); p.addFilter(choice); }}><FilterOutlined />Add filter</button>
+                        </div>
+                    </>}
+                </section>}
+            </div>
             {(['explorations', 'lists'] as const).map(entry => <Dropdown key={entry} trigger={['click']} placement="bottomRight" open={menu === entry}
                 onOpenChange={next => { if (next) openMenu(entry); else show(current => current === entry ? '' : current); }}
                 overlayClassName="flow-menu-popup wb-library-popup" popupRender={() => libraryContent}>
@@ -289,15 +351,9 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
             </Dropdown>
             </div>
         </div>
-        {menu && !library && menu !== 'asset' && <section className={'wb-popup wb-popup--' + menu} ref={popup} aria-label="Explorer tools">
-            {error && <p role="alert" className="wb-library-error">{error}</p>}
-            {menu === 'search' && <>{find.map(f => <button key={f} onClick={() => changeField(f)}>{p.names?.[f] || f}</button>)}{!find.length && <p>No matching properties</p>}</>}
-            {menu === 'property' && <><strong>{p.names?.[choice] || choice}</strong><button onClick={() => { setChart(choice); setSearch(''); selectMode('explore'); }}>Add chart</button><button onClick={() => { setSearch(''); selectMode('results'); p.addFilter(choice); }}>Add filter</button></>}
-
-        </section>}
         {p.resource === 'preview' && p.mode === 'explore' && !p.savedLoading && !p.savedError && <ExploreChart field={field} select={setChart} fields={p.fields} names={p.names} rows={p.rows} onFilter={f => { selectMode('results'); p.addFilter(f); }}/>}</>}
         <Modal className="flow-surface-modal wb-saved-dialog" title="Save your work" open={dialog === 'save'} width={460} onCancel={() => { if (!busy) setDialog(''); }} keyboard={!busy} maskClosable={!busy} footer={<><Button disabled={busy} onClick={() => setDialog('')}>Cancel</Button><Button type="primary" loading={busy} disabled={!name.trim() || (saveKind === 'list' && !listKeys.length) || (saveKind === 'exploration' && saved?.kind === 'list')} onClick={() => void save()}>Save {saveKind}</Button></>}>
-            <div className="wb-save-kind"><button type="button" aria-pressed={saveKind === 'exploration'} disabled={saved?.kind === 'list'} onClick={() => setSaveKind('exploration')}><BarChartOutlined /><strong>Exploration</strong><span>Search, filters, sorting and chart</span></button><button type="button" aria-pressed={saveKind === 'list'} disabled={!listKeys.length} onClick={() => setSaveKind('list')}><TableOutlined /><strong>List</strong><span>{listKeys.length} selected objects</span></button></div>
+            <div className="wb-save-kind"><button type="button" aria-pressed={saveKind === 'exploration'} disabled={saved?.kind === 'list'} onClick={() => setSaveKind('exploration')}><BarChartOutlined /><strong>Exploration</strong><span>Search, filters, sorting and chart</span>{saveKind === 'exploration' && <CheckOutlined className="wb-save-kind-check" />}</button><button type="button" aria-pressed={saveKind === 'list'} disabled={!listKeys.length} onClick={() => setSaveKind('list')}><TableOutlined /><strong>List</strong><span>{listKeys.length} selected objects</span>{saveKind === 'list' && <CheckOutlined className="wb-save-kind-check" />}</button></div>
             {saved?.kind === 'list' && <p className="wb-dialog-help">A list keeps a fixed object selection. Return to all rows to create an exploration.</p>}
             <form onSubmit={e => { e.preventDefault(); void save(); }}><label className="wb-dialog-field">{saveKind === 'list' ? 'List name' : 'Exploration name'}<input autoFocus required maxLength={100} value={name} placeholder={saveKind === 'list' ? 'Name this object selection' : 'Name this exploration'} onChange={e => setName(e.target.value)}/></label></form>
             {error && <p role="alert" className="wb-dialog-error">{error}</p>}

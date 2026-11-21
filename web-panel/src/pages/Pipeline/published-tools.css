@@ -50,7 +50,6 @@
   border: 1px solid var(--ontology-control-border); border-radius: 3px;
   background: var(--ontology-bg); color: var(--ontology-text); font: inherit; font-weight: 400;
 }
-.flow-tool-section :is(input, select):focus-visible { outline: 2px solid var(--ui-focus-ring); outline-offset: 1px; }
 .flow-tool-section .ui-btn { min-height: 30px; max-width: 100%; font-size: 12px; }
 .flow-tool-section > .ui-btn { justify-self: start; }
 .flow-tool-section :is(ol, ul) { margin: 0; padding-inline-start: 20px; overflow-wrap: anywhere; }

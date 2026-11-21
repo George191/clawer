@@ -796,7 +796,6 @@
 .ui-dropdown.flow-table-tab-dropdown{background:#1e2024;border:1px solid rgba(148,163,184,.12);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.4)}
 .flow-tab-search-panel{padding:8px;min-width:260px;max-width:320px}
 .flow-tab-search-input-wrap{display:flex;align-items:center;gap:6px;padding:0 8px;border:1px solid rgba(148,163,184,.14);border-radius:5px;background:#16181c}
-.flow-tab-search-input-wrap:focus-within{border-color:var(--ui-focus-ring)}
 .flow-tab-search-icon{font-size:10px;color:#6c7a8c;flex:none}
 .flow-tab-search-input{flex:1;border:0;background:transparent;color:#c8d4e0;font-size:10px;height:26px;outline:none}
 .flow-tab-search-input::placeholder{color:#5a6675}
@@ -1094,7 +1093,6 @@
 .flow-td-sql-editor{width:100%;min-height:200px;padding:10px 12px;border:0;background:#0f141c;color:#e2e8f0;font:10px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;resize:vertical;outline:none;white-space:pre;tab-size:4}
 .flow-td-sql-editor textarea{background:#0f141c;color:#e2e8f0;font:10px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace!important;caret-color:#9b8ef9}
 .flow-td-sql-editor textarea::placeholder{color:#475569}
-.flow-td-sql-editor textarea:focus{outline:none;box-shadow:none}
 .flow-td-sql-preview{min-height:224px;margin:0;padding:12px;overflow:auto;background:#0f141c;color:#cbd5e1;font:10px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre;tab-size:4}
 .flow-td-sql-preview .is-keyword{color:#a78bfa;font-weight:600}
 .flow-td-sql-preview .is-string{color:#86d9a6}
