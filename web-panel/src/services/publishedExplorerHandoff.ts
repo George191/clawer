@@ -1,5 +1,5 @@
-import type { OntologyRecord } from './ontology';
 import type { SetQuery } from './ontology_graph';
+import { catalogReturnHref, compactExplorerSearch, ontologyCatalogHref } from './explorerNavigation';
 
 export type PublishedIdentity = Record<string, string>;
 export type PublishedExplorerQuery = SetQuery & {
@@ -48,22 +48,25 @@ export function parsePublishedExplorerEntry(search: string, hash = ''): Publishe
     try { query = validatePublishedExplorerQuery(JSON.parse(serialized)); }
     catch (error) { throw new Error(error instanceof SyntaxError ? 'The object set link is not valid JSON.' : (error as Error).message); }
   }
-  const requestedReturn = params.get('returnTo');
-  const returnTo = requestedReturn === '/ontology' || requestedReturn?.startsWith('/ontology?') ? requestedReturn : '/ontology?catalog=published&objectType=' + definitionId;
+  const returnTo = catalogReturnHref(params.get('returnTo'), 'published');
   return { definitionId, query, savedSet, saved, returnTo };
 }
 
 export function publishedExplorerHref(definitionId: string, options: { query?: PublishedExplorerQuery; savedSet?: string; saved?: string; returnTo?: string } = {}) {
   const params = new URLSearchParams({ objectType: definitionId });
   const fragment = new URLSearchParams();
-  if (options.query) fragment.set('objectSet', JSON.stringify(options.query));
+  if (options.query) {
+    if (options.savedSet) throw new Error('The link contains two object set scopes.');
+    const query = validatePublishedExplorerQuery(options.query);
+    if (query.filters.length || query.keys !== undefined || query.groupBy || query.sumField || query.sorts?.length) fragment.set('objectSet', JSON.stringify(query));
+  }
   if (options.savedSet) params.set('savedSet', options.savedSet);
   if (options.saved) params.set('saved', options.saved);
   if (options.returnTo) params.set('returnTo', options.returnTo);
   parsePublishedExplorerEntry(params.toString(), fragment.toString());
-  return '/ontology/explorer?' + params + (fragment.size ? '#' + fragment : '');
+  return '/ontology/explorer' + compactExplorerSearch(params.toString(), 'published') + (fragment.size ? '#' + fragment : '');
 }
 
-export function publishedRecordIdentity(record: OntologyRecord & { identity?: PublishedIdentity | null }): PublishedIdentity | null {
-  return record.identity ?? null;
+export function publishedCatalogHref(search: string) {
+  return ontologyCatalogHref(search, 'published');
 }

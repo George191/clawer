@@ -28,7 +28,7 @@ def main():
         public = str(UUID(source["visible_record"]))
         hidden = str(UUID(source["denied_record"]))
         assert public != hidden
-        route = base + "/ontology?" + urlencode({"catalog": "published", "objectType": type_id})
+        route = base + "/ontology/explorer?" + urlencode({"objectType": type_id})
         compiler = os.getenv("ONTOLOGY_QA_TSC") or str(Path.cwd() / "web-panel/node_modules/typescript/bin/tsc")
         node = os.getenv("ONTOLOGY_QA_NODE") or shutil.which("node") or compute_driver_executable()[0]
         chromium = os.getenv("ONTOLOGY_QA_CHROMIUM") or shutil.which("chromium") or shutil.which("chromium-browser")
@@ -44,11 +44,12 @@ def main():
                 page.get_by_role("button", name="Sign in", exact=True).click()
             assert login_response.value.status == 200
             page.wait_for_url(route)
-            expect(page.get_by_role("heading", name=name, exact=True)).to_be_visible()
+            expect(page.locator(".wb-type strong")).to_have_text(name)
             return page
 
         def download_sdk(page, directory, account):
-            page.get_by_role("button", name="TypeScript SDK", exact=True).click()
+            page.get_by_role("button", name="Open in", exact=True).click()
+            page.get_by_role("menuitem", name="TypeScript SDK", exact=True).click()
             dialog = page.get_by_role("dialog", name="TypeScript SDK")
             with page.expect_download() as pending:
                 dialog.get_by_role("link", name="Download TypeScript SDK", exact=True).click()

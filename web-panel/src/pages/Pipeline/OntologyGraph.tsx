@@ -301,13 +301,13 @@ function Links({ anchor, move }: { anchor: Anchor; move: (a: Anchor) => void }) 
   );
 }
 
-type Props = { objectType: PublishedOntologyType; recordId?: string };
+type Props = { objectType: PublishedOntologyType; recordId?: string; returnTo: string; onOpenExplorer: () => void };
 export default function OntologyGraph(props: Props) {
   return props.objectType.definition.source.mode === 'none' ? (
     <Panel key={props.objectType.id + ':' + (props.recordId ?? '')} {...props} />
   ) : null;
 }
-function Panel({ objectType, recordId }: Props) {
+function Panel({ objectType, recordId, returnTo, onOpenExplorer }: Props) {
   const [create, toggle] = useState(false),
     [version, reload] = useState(0),
     [trail, walk] = useState<Anchor[]>([]);
@@ -353,12 +353,12 @@ function Panel({ objectType, recordId }: Props) {
           <p>Select a record to browse or edit its relationships.</p>
         )}
       </section>
-      <ObjectSets object={objectType} />
+      <ObjectSets object={objectType} returnTo={returnTo} onOpenExplorer={onOpenExplorer} />
     </section>
   );
 }
 
-function ObjectSets({ object }: { object: PublishedOntologyType }) {
+function ObjectSets({ object, returnTo, onOpenExplorer }: { object: PublishedOntologyType; returnTo: string; onOpenExplorer: () => void }) {
   const navigate = useNavigate();
   const props = object.definition.properties;
   const [field, setField] = useState(''),
@@ -558,10 +558,13 @@ function ObjectSets({ object }: { object: PublishedOntologyType }) {
             Matching records: {data.count}
             {data.sum != null ? ' · Sum: ' + data.sum : ''}
           </p>
-          {active && <Button size="small" onClick={() => navigate(publishedExplorerHref(object.id, {
-            ...(active.id ? { savedSet: active.id } : { query: active.query }),
-            returnTo: '/ontology?catalog=published&objectType=' + encodeURIComponent(object.id),
-          }))}>Open in Object Explorer</Button>}
+          {active && <Button size="small" onClick={() => {
+            const href = publishedExplorerHref(object.id, {
+              ...(active.id ? { savedSet: active.id } : { query: active.query }), returnTo,
+            });
+            onOpenExplorer();
+            navigate(href);
+          }}>Open in Object Explorer</Button>}
           <ul>
             {data.items.map((row) => (
               <li key={row.id}>{display(row.title ?? row.id)}</li>

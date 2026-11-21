@@ -97,7 +97,7 @@ def run():
             args=["--disable-dev-shm-usage", "--no-proxy-server"],
         )
         try:
-            href = base + "/ontology?" + urlencode({"catalog": "published", "objectType": first})
+            href = base + "/ontology/explorer?" + urlencode({"objectType": first})
 
             def tab(person):
                 page = browser.new_page()
@@ -116,7 +116,8 @@ def run():
                 author.goto(href)
                 pane = author.get_by_role("region", name="Model revisions", exact=True)
                 if not pane.is_visible():
-                    author.get_by_role("button", name="Model revisions", exact=True).click()
+                    author.get_by_role("button", name="Open in", exact=True).click()
+                    author.get_by_role("menuitem", name="Model revisions", exact=True).click()
                 pane.get_by_role("button", name="Propose change", exact=True).click()
                 form = pane.get_by_role("region", name="Change proposal")
                 form.locator("summary").filter(has_text="Security").click()
@@ -157,7 +158,8 @@ def run():
                 lambda r: r.request.method == "GET"
                 and urlsplit(r.url).path.endswith("/revision-workspace")
             ):
-                viewer.get_by_role("button", name="Model revisions", exact=True).click()
+                viewer.get_by_role("button", name="Open in", exact=True).click()
+                viewer.get_by_role("menuitem", name="Model revisions", exact=True).click()
             viewer.get_by_role("button", name="Proposals", exact=True).click()
             viewer.get_by_role("button", name="Require project clearance", exact=True).click()
             with viewer.expect_response(

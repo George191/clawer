@@ -3,7 +3,7 @@ import { PropertyLabel } from './PropertyTypeIcon';
 import { JsonTreeValue } from './ExplorerJsonValue';
 import { editorValue, rowChanges } from './explorerRowEditing';
 import  React,  {  useCallback,  useEffect,  useLayoutEffect,  useRef,  useState  }  from  'react';
-import  {  Link,  matchPath,  useLocation,  useNavigate  }  from  'react-router-dom';
+import  {  Link,  matchPath,  Navigate,  useLocation,  useNavigate  }  from  'react-router-dom';
 import  {  Button,  Checkbox,  ConfigProvider,  Dropdown,  Input,  InputNumber,  Modal,  Select,  Space,  Spin,  Table,  Tag,  Upload,  message  }  from  '@/components/ui';
 import  enUS  from  '@/components/ui/locale';
 import  {  AlertOutlined,  ArrowDownOutlined,  ArrowUpOutlined,  CheckOutlined,  CloseOutlined,  CodeOutlined,  DatabaseOutlined,  DeleteOutlined,  DownOutlined,  DownloadOutlined,  EditOutlined,  PlusOutlined,  ReloadOutlined,  RightOutlined,  SearchOutlined,  SettingOutlined,  TableOutlined,  UploadOutlined  }  from  '@/components/ui/icons';
@@ -20,6 +20,7 @@ import ExplorerCatalog from './ExplorerCatalog';
 import ExplorerWorkbenchHeader from './ExplorerWorkbenchHeader';
 import PublishedExplorer from './PublishedExplorer';
 import { openSaved, savedPath, type SavedDetail } from '../../services/explorerSaved';
+import { catalogReturnHref, compactExplorerSearch } from '../../services/explorerNavigation';
 import { ExplorerTypeIcon } from './ExplorerObjectOverview';
 import ExplorerSelection, { useExplorerPresentation, type ExplorerPreviewRow } from './ExplorerSelection';
 import ExplorerRecordLink from './ExplorerRecordLink';
@@ -114,6 +115,8 @@ const Pipeline: React.FC = () => {
     const explorerParams = new URLSearchParams(search);
     const publishedExplorer = !!matchPath('/ontology/explorer', pathname)
         && (['objectType', 'objectSet', 'savedSet'].some(key => explorerParams.has(key)) || new URLSearchParams(hash.replace(/^#/, '')).has('objectSet'));
+    const compactSearch = matchPath('/ontology/explorer', pathname) ? compactExplorerSearch(search, publishedExplorer ? 'published' : 'backed') : search;
+    if (compactSearch !== search) return <Navigate replace to={{ pathname, search: compactSearch, hash }} />;
     return <ConfigProvider locale={enUS}><main className="flow-console flow-console--ontology">
         <section className="flow-core">
             {matchPath('/ontology', pathname) ? <OntologyExplorer refreshToken={0} />
@@ -150,14 +153,8 @@ const DataLayersWorkspace: React.FC = () => {
     const requestedView = new URLSearchParams(search).get('view');
     const requestedSavedId = isSchemas ? new URLSearchParams(search).get('saved') || '' : '';
     const navigate = useNavigate();
-    const catalogReturn = useRef('/ontology');
-    const requestedReturn = new URLSearchParams(search).get('returnTo');
-    if (requestedReturn === '/ontology' || requestedReturn?.startsWith('/ontology?')) catalogReturn.current = requestedReturn;
-    const backToTypes = () => {
-        const target = new URL(catalogReturn.current, window.location.origin);
-        for (const key of ['schema', 'table', 'tab', 'objectType']) target.searchParams.delete(key);
-        navigate(target.pathname + target.search);
-    };
+    const catalogReturn = catalogReturnHref(new URLSearchParams(search).get('returnTo'), 'backed');
+    const backToTypes = () => navigate(catalogReturn);
     const [canManage, setCanManage] = useState(false);
     const [mappingDirty, setMappingDirty] = useState(false);
     const [catalogOpen, setCatalogOpen] = useState(false);

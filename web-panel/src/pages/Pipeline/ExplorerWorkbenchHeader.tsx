@@ -6,6 +6,7 @@ import { projectHref } from '../../services/projectDomains';
 import { createSaved, listSaved, openSaved, publishedSavedPath, removeSaved, savedPath, sharing, type Exploration, type SavedDetail, type SavedKind, type SavedMeta, type WorkbenchQuery } from '../../services/explorerSaved';
 import './explorer-workbench.css';
 export type ResourceView = 'preview' | 'schema' | 'stream' | 'evidence' | 'api';
+export type ExplorerToolAction = { key: string; label: string; group: 'analyze' | 'inspect'; icon?: ReactNode; run: () => void };
 type RecordRow = Record<string, unknown>;
 type Selection = {
     identity: RecordRow;
@@ -24,6 +25,8 @@ type Props<Q extends object = WorkbenchQuery> = {
     selected: Selection[];
     query: Q;
     resource: ResourceView;
+    availableResources?: ResourceView[];
+    additionalTools?: ExplorerToolAction[];
     admin: boolean;
     layoutControl: ReactNode;
     selectResource: (v: ResourceView) => void;
@@ -192,16 +195,17 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
     const find = p.fields.filter(f => [f, p.names?.[f]].join(' ').toLowerCase().includes(search.toLowerCase())).slice(0, 30);
     const changeField = (f: string) => { choose(f); setSearch(p.names?.[f] || f); show('property'); };
     const closeOpenIn = () => { show(''); openInTrigger.current?.focus(); };
-    const openResource = (view: ResourceView) => { p.selectResource(view); p.setMode('results'); closeOpenIn(); };
+    const openResource = (view: ResourceView) => { p.selectResource(view); if (p.source.kind === 'backed' || view === 'preview') p.setMode('results'); closeOpenIn(); };
     const exportDescription = p.selected.length ? `Download ${p.selected.length} selected object${p.selected.length === 1 ? '' : 's'}.` : `Download ${p.rows.length} object${p.rows.length === 1 ? '' : 's'} on this results page.`;
+    const resources = p.availableResources ?? (p.source.kind === 'backed' ? ['preview', 'stream', 'evidence', 'schema', ...(p.admin ? ['api'] : [])] : ['preview']);
+    const sourceTool = p.source.kind === 'published';
     const apps = [
-        { key: 'preview', group: 'analyze', label: 'Data preview', icon: <TableOutlined />, run: () => openResource('preview') },
-        ...(p.source.kind === 'backed' ? [
-            { key: 'stream', group: 'analyze', label: 'Stream', icon: <SyncOutlined />, run: () => openResource('stream') },
-            { key: 'evidence', group: 'analyze', label: 'Evidence', icon: <FileSearchOutlined />, run: () => openResource('evidence') },
-            { key: 'schema', group: 'inspect', label: 'Properties & column mapping', icon: <ProfileOutlined />, run: () => openResource('schema') },
-            ...(p.admin ? [{ key: 'api', group: 'inspect', label: 'Published APIs', icon: <ApiOutlined />, run: () => openResource('api') }] : []),
-        ] : []),
+        ...(resources.includes('preview') ? [{ key: 'preview', group: 'analyze', label: 'Data preview', icon: <TableOutlined />, run: () => openResource('preview') }] : []),
+        ...(resources.includes('stream') ? [{ key: 'stream', group: sourceTool ? 'inspect' : 'analyze', label: sourceTool ? 'Source stream' : 'Stream', icon: <SyncOutlined />, run: () => openResource('stream') }] : []),
+        ...(resources.includes('evidence') ? [{ key: 'evidence', group: sourceTool ? 'inspect' : 'analyze', label: sourceTool ? 'Source evidence' : 'Evidence', icon: <FileSearchOutlined />, run: () => openResource('evidence') }] : []),
+        ...(resources.includes('schema') ? [{ key: 'schema', group: 'inspect', label: sourceTool ? 'Source column mapping' : 'Properties & column mapping', icon: <ProfileOutlined />, run: () => openResource('schema') }] : []),
+        ...(resources.includes('api') && p.admin ? [{ key: 'api', group: 'inspect', label: sourceTool ? 'Source APIs' : 'Published APIs', icon: <ApiOutlined />, run: () => openResource('api') }] : []),
+        ...(p.additionalTools ?? []).map(tool => ({ ...tool, run: () => { closeOpenIn(); tool.run(); } })),
         { key: 'excel', group: 'export', label: 'Export as Excel', description: exportDescription, icon: exporting ? <LoadingOutlined spin /> : <DownloadCircleFilled />, disabled: exporting || !p.rows.length, run: async () => {
             if (exporting) return;
             setExporting(true);
@@ -230,7 +234,7 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
             if (event.key === 'ArrowDown') { event.preventDefault(); event.currentTarget.closest('section')?.querySelector<HTMLButtonElement>('.wb-open-in-actions button:not(:disabled)')?.focus(); }
         }}/></label>
         <div className="wb-open-in-body">
-            <nav className="wb-open-in-categories" role="menu" aria-label="Tool categories">{[['all', 'All'], ['analyze', 'Analyze objects'], ...(p.source.kind === 'backed' ? [['inspect', 'Inspect source']] : []), ['export', 'Export objects']].map(([key, label]) => <button type="button" role="menuitemradio" aria-checked={appGroup === key} key={key} onClick={() => setAppGroup(key)}>{label}</button>)}</nav>
+            <nav className="wb-open-in-categories" role="menu" aria-label="Tool categories">{[['all', 'All'], ...(apps.some(app => app.group === 'analyze') ? [['analyze', 'Analyze objects']] : []), ...(apps.some(app => app.group === 'inspect') ? [['inspect', 'Inspect']] : []), ['export', 'Export objects']].map(([key, label]) => <button type="button" role="menuitemradio" aria-checked={appGroup === key} key={key} onClick={() => setAppGroup(key)}>{label}</button>)}</nav>
             <div className="wb-open-in-actions" role="menu" aria-label="Available tools">{matchingApps.map(app => <button type="button" role="menuitem" key={app.key} disabled={'disabled' in app && app.disabled} onClick={app.run}>{app.icon}<span>{app.label}{'description' in app && <small>{app.description}</small>}</span></button>)}{!matchingApps.length && <p role="status">No matching apps</p>}</div>
         </div>
     </section>;

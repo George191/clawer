@@ -17,6 +17,8 @@ import SemanticObjectWizard from './SemanticObjectWizard';
 import PublishedOntology, { type PublishedCatalogPage } from './PublishedOntology';
 import OntologyCatalogSkeleton from './OntologyCatalogSkeleton';
 import { listOntologyProjects } from '../../services/ontology';
+import { publishedCatalogHref, publishedExplorerHref } from '../../services/publishedExplorerHandoff';
+import { backedExplorerHref } from '../../services/explorerNavigation';
 import PostgresGlyph from './PostgresGlyph';
 import './ontology-explorer.css';
 import './ontology-create.css';
@@ -114,7 +116,6 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const publishedCatalog = params.get('catalog') === 'published';
-  const publishedId = publishedCatalog ? params.get('objectType') || '' : '';
   const keyword = params.get('q') || '';
   const group: Group = groups.some((item) => item.key === params.get('group')) ? params.get('group') as Group : 'all';
   const view = params.get('view') === 'list' ? 'list' : 'grid';
@@ -211,7 +212,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
 
   useEffect(() => {
     rootRef.current?.querySelector<HTMLElement>('.flow-ontology__body')?.scrollTo({ top: 0 });
-  }, [keyword, view, publishedCatalog, publishedId]);
+  }, [keyword, view, publishedCatalog]);
 
   useEffect(() => {
     let active = true;
@@ -429,7 +430,10 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const changeCatalogSearch = (value: string) => updateQuery(
     publishedCatalog ? { publishedQ: value || null, publishedOffset: null } : { q: value || null }, true,
   );
-  const selectPublished = (id = '') => updateQuery({ catalog: 'published', objectType: id || null, schema: null, table: null, tab: null });
+  const selectPublished = (id = '') => {
+    const returnTo = publishedCatalogHref(params.toString());
+    navigate(id ? publishedExplorerHref(id, { returnTo }) : returnTo);
+  };
   const selectObject = (object: { schema: string; table: string }) => updateQuery({ schema: object.schema, table: object.table, tab: null });
   const selectLinkedObject = async (object: { id: string; schema: string; table: string }) => {
     if (preview.loading || visibilitySaving || preview.id !== inspectorId || inspectorClosing || object.id === inspectorId) return;
@@ -454,7 +458,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     updateQuery({ schema: null, table: null, tab: null }, true);
   };
   const openWorkspace = () => {
-    if (selectedId) navigate(`/ontology/explorer?${new URLSearchParams({ schema: selectedSchema, table: selectedTable, returnTo: '/ontology?' + params.toString() })}`);
+    if (selectedId) navigate(backedExplorerHref(selectedSchema, selectedTable, '/ontology?' + params.toString()));
   };
   const startNewObject = () => {
     const destination = source || selectedSchema;
@@ -539,7 +543,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
             <button type="button" aria-pressed={!publishedCatalog} onClick={() => { if (publishedCatalog) updateQuery({ catalog: null, objectType: null }); }}><DatabaseOutlined />Storage-backed</button>
             <button type="button" aria-pressed={publishedCatalog} onClick={() => { if (!publishedCatalog) selectPublished(); }}><AppstoreOutlined />Published</button>
           </nav>
-          {!publishedId && <div className="flow-ontology__topbar">
+          <div className="flow-ontology__topbar">
             <div className="flow-ontology__search" role="search">
               <SearchOutlined /><input ref={searchRef} data-testid="ontology-search" aria-label={searchLabel} placeholder={searchLabel + '…'}
                 value={catalogSearch} maxLength={publishedCatalog ? 200 : undefined} onChange={event => changeCatalogSearch(event.target.value)}
@@ -558,12 +562,12 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
             <span className="flow-ontology__summary" aria-busy={publishedCatalog ? displayedTotal == null : loading}><span className="flow-ontology__summary-value">{displayedTotal == null ? '…' : number(displayedTotal)}</span><span>object types</span></span>
             <button type="button" className="flow-ontology__button" onClick={() => navigate('/ontology/runtime')}>Runtime</button>
             <button type="button" className="flow-ontology__button" onClick={() => navigate('/ontology/connections')}>Data Connections</button>
-          </div>}
+          </div>
           {(canManage || semanticProjectAccess) && <button type="button" className="flow-ontology__button flow-ontology__button--primary flow-ontology__create-action" onClick={startNewObject}><PlusOutlined />New object type</button>}
         </div>
       </header>
       <div className="flow-ontology__body">
-        {publishedCatalog ? <PublishedOntology key={publishedId} selection={publishedId} view={view} managedProjects={managedProjects} includeHidden={publishedHidden} includeDeleted={publishedDeleted} catalogPage={publishedPage?.identity === getSessionState().identity ? publishedPage : undefined} onCatalogPage={setPublishedPage} onSelect={selectPublished} onClearSearch={() => changeCatalogSearch('')} /> : <>
+        {publishedCatalog ? <PublishedOntology view={view} managedProjects={managedProjects} includeHidden={publishedHidden} includeDeleted={publishedDeleted} catalogPage={publishedPage?.identity === getSessionState().identity ? publishedPage : undefined} onCatalogPage={setPublishedPage} onSelect={selectPublished} onClearSearch={() => changeCatalogSearch('')} /> : <>
         <aside className="flow-ontology__sidebar" aria-label="Object type groups"><nav aria-busy={loading}>
           {groups.map((item) => {
             const expanded = expandedGroup === item.key;
@@ -608,7 +612,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
         </main>
         </>}
       </div>
-      {publishedCatalog && !publishedId && <footer className="flow-published-nav-footer">{lineageLink}</footer>}
+      {publishedCatalog && <footer className="flow-published-nav-footer">{lineageLink}</footer>}
     </div>
     <Drawer open={inspectorOpen} onClose={closeInspector} width="100%" title={`${inspectorId} Object type preview`} closable={false} destroyOnHidden rootClassName={`flow-ontology flow-ontology__drawer${inspectorClosing ? ' is-closing' : ''}`} styles={{ header: { display: 'none' }, body: { display: 'flex', padding: 0, overflow: 'hidden' } }}>
     <aside ref={inspectorRef} className="flow-ontology__inspector" data-testid="ontology-inspector" data-object-id={inspectorId} style={selectedColor}>

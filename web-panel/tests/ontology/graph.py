@@ -28,15 +28,14 @@ def launch_context(browser, fixture, actor):
 
 def open_graph(page, base, typ, record):
     page.goto(
-        base.rstrip("/") + "/ontology?catalog=published&objectType=" + typ["id"],
+        base.rstrip("/") + "/ontology/explorer?objectType=" + typ["id"],
         wait_until="domcontentloaded",
     )
-    page.get_by_role("region", name="Object results table").get_by_role(
+    page.get_by_role("region", name="Published Explorer results").get_by_role(
         "button", name=record["title"], exact=True
     ).click()
-    toggle = page.get_by_role("button", name="Relationships and sets", exact=True)
-    if toggle.get_attribute("aria-pressed") != "true":
-        toggle.click()
+    page.get_by_role("button", name="Open in", exact=True).click()
+    page.get_by_role("menuitem", name="Relationships and sets", exact=True).click()
     graph = page.get_by_role("region", name="Object relationships and sets")
     expect(graph).to_be_visible()
     return graph
@@ -63,8 +62,8 @@ def main():
         try:
             owner_context, owner = launch_context(browser, fixture, fixture["owner"])
             with owner.expect_response(
-                lambda r: r.request.method == "GET"
-                and ("/object-types/" + source["id"] + "/records?") in r.url
+                lambda r: r.request.method == "POST"
+                and r.url.split("?")[0].endswith("/object-types/" + source["id"] + "/explorer/query")
             ) as loaded:
                 view = open_graph(owner, base, source, left)
             source_page = loaded.value.json()

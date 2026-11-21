@@ -1,4 +1,4 @@
-"""Exercise published-record view transitions against the isolated workflow fixture."""
+"""Exercise Explorer selection and isolated deleted-object dialogs in the QA workflow."""
 import asyncio
 from ipaddress import ip_address
 import json
@@ -26,7 +26,7 @@ async def main():
     seed_id = uuid4().hex[:12]
     deleted_title = "Deleted QA record " + seed_id
     resource = f"/api/ontology/v1/object-types/{definition}"
-    target = base + "/ontology?" + urlencode({"catalog": "published", "objectType": definition})
+    target = base + "/ontology/explorer?" + urlencode({"objectType": definition})
     chromium = os.getenv("ONTOLOGY_QA_CHROMIUM") or shutil.which("chromium")
     screenshots = os.getenv("ONTOLOGY_QA_SCREENSHOTS")
     expect.set_options(timeout=20000)
@@ -40,9 +40,13 @@ async def main():
         await page.get_by_placeholder("Enter your password").fill(fixture["owner"]["password"])
         await page.get_by_role("button", name="Sign in", exact=True).click()
         await page.wait_for_url(target)
-        results = page.get_by_role("region", name="Object results table")
-        active = page.get_by_role("button", name="Show active objects")
-        deleted = page.get_by_role("button", name="Show deleted objects")
+        results = page.get_by_role("region", name="Published Explorer results")
+        deleted = page.get_by_role("dialog", name="Deleted objects", exact=True)
+
+        async def open_deleted():
+            await page.get_by_role("button", name="Open in", exact=True).click()
+            await page.get_by_role("menuitem", name="Deleted objects", exact=True).click()
+            await expect(deleted).to_be_visible()
         preview = page.get_by_role("complementary", name="Selection Preview")
         await expect(results.get_by_role("button", name=active_row["title"], exact=True)).to_be_visible()
 
@@ -59,14 +63,11 @@ async def main():
         assert status == 200, status
         await page.reload()
         await expect(results.get_by_role("button", name=active_row["title"], exact=True)).to_be_visible()
-        metadata_requests = []
-        page.on("request", lambda req: metadata_requests.append(req.url)
-                if urlsplit(req.url).path == resource else None)
-        results_node = await results.element_handle()
-        tools_node = await page.get_by_role("navigation", name="Object type tools").element_handle()
-        title_node = await page.get_by_role("heading", name=source["name"], exact=True).element_handle()
+        checkbox = results.get_by_role("checkbox", name="Select " + active_row["title"], exact=True)
+        await checkbox.check()
         await results.get_by_role("button", name=active_row["title"], exact=True).click()
         await expect(preview).to_be_visible()
+        await expect(page.get_by_role("toolbar", name="Selected object tools")).to_contain_text("1 selected")
         if screenshots:
             await page.screenshot(path=Path(screenshots) / "published-active-selection.png", animations="disabled")
 
@@ -94,47 +95,58 @@ async def main():
                 stale_finished.set()
 
         await page.route(base + resource + "/records?*", intercept)
-        await deleted.click()
+        await open_deleted()
         await asyncio.wait_for(arrived.wait(), 20)
-        await expect(deleted).to_have_attribute("aria-pressed", "true")
-        await expect(results.get_by_text("Loading deleted objects…", exact=True)).to_be_visible()
-        await expect(preview).to_have_count(0)
-        await expect(results.get_by_role("button", name=active_row["title"], exact=True)).to_have_count(0)
-        await active.click()
-        await expect(active).to_have_attribute("aria-pressed", "true")
+        await expect(deleted.get_by_text("Loading deleted objects…", exact=True)).to_be_visible()
+        await expect(deleted.get_by_role("button", name=active_row["title"], exact=True)).to_have_count(0)
+        await deleted.get_by_role("button", name="Close", exact=True).click()
+        await expect(deleted).to_have_count(0)
+        await expect(preview.get_by_role("heading", name=active_row["title"], exact=True)).to_be_visible()
+        await expect(page.get_by_role("toolbar", name="Selected object tools")).to_contain_text("1 selected")
         await expect(results.get_by_role("button", name=active_row["title"], exact=True)).to_be_visible()
         release.set()
         await asyncio.wait_for(stale_finished.wait(), 20)
+        await expect(deleted).to_have_count(0)
         await expect(results.get_by_role("button", name=active_row["title"], exact=True)).to_be_visible()
         await expect(results.get_by_role("button", name=deleted_title, exact=True)).to_have_count(0)
+        await expect(checkbox).to_be_checked()
+        await expect(preview.get_by_role("heading", name=active_row["title"], exact=True)).to_be_visible()
+        await expect(preview.get_by_text(deleted_title, exact=True)).to_have_count(0)
+
         fail = True
-        await deleted.click()
-        await expect(results.get_by_role("alert")).to_contain_text("Temporary records failure")
-        await expect(active).to_be_enabled()
-        await expect(deleted).to_have_attribute("aria-pressed", "true")
+        await open_deleted()
+        await expect(deleted.get_by_role("alert")).to_contain_text("Temporary records failure")
+        await expect(deleted.get_by_role("button", name="Close", exact=True)).to_be_enabled()
         fail = False
-        await results.get_by_role("button", name="Retry").click()
-        await expect(results.get_by_role("button", name=deleted_title, exact=True)).to_be_visible()
-        await expect(results.get_by_role("button", name=active_row["title"], exact=True)).to_have_count(0)
-        await results.get_by_role("button", name=deleted_title, exact=True).click()
-        await expect(preview.get_by_role("heading", name=deleted_title, exact=True)).to_be_visible()
-        await expect(preview.get_by_text("Actions", exact=True)).to_have_count(0)
+        await deleted.get_by_role("button", name="Retry", exact=True).click()
+        await expect(deleted.get_by_role("button", name=deleted_title, exact=True)).to_be_visible()
+        await expect(deleted.get_by_role("button", name=active_row["title"], exact=True)).to_have_count(0)
+        await deleted.get_by_role("button", name=deleted_title, exact=True).click()
+        history = deleted.get_by_role("region", name="Record action history")
+        await expect(history.get_by_role("heading", name="Action history", exact=True)).to_be_visible()
+        await expect(history.get_by_text("Deleted · Revision 2", exact=True)).to_be_visible()
+        await expect(deleted.get_by_text("Actions", exact=True)).to_have_count(0)
+        await expect(deleted.get_by_role("complementary", name="Selection Preview")).to_have_count(0)
         if screenshots:
             await page.screenshot(path=Path(screenshots) / "published-deleted-selection.png", animations="disabled")
-        assert len(metadata_requests) == 0
-        for node in (results_node, tools_node, title_node):
-            assert await node.evaluate("el => el.isConnected")
-        await active.click()
-        await expect(preview).to_have_count(0)
+        await deleted.get_by_role("button", name="Close", exact=True).click()
+        await expect(deleted).to_have_count(0)
+        await expect(preview.get_by_role("heading", name=active_row["title"], exact=True)).to_be_visible()
         await expect(results.get_by_role("button", name=active_row["title"], exact=True)).to_be_visible()
+        await expect(results.get_by_role("button", name=deleted_title, exact=True)).to_have_count(0)
+        await expect(checkbox).to_be_checked()
+        await expect(page.get_by_role("toolbar", name="Selected object tools")).to_contain_text("1 selected")
+        await expect(preview.get_by_text(deleted_title, exact=True)).to_have_count(0)
+        await checkbox.uncheck()
+        await preview.get_by_role("button", name="Close selection preview", exact=True).click()
         await page.set_viewport_size({"width": 390, "height": 844})
-        assert await tools_node.evaluate("el => el.scrollWidth <= el.clientWidth")
+        assert await page.locator(".wb-header").evaluate("el => el.scrollWidth <= el.clientWidth")
         assert (await results.bounding_box())["height"] >= 180
         if screenshots:
             await page.screenshot(path=Path(screenshots) / "published-active-mobile.png", animations="disabled")
         await browser.close()
-    print(json.dumps({"ok": True, "stableShell": True, "cancelOldRead": True,
-                      "scopeFailureAndRetry": True, "noStaleSelection": True, "metadataRefetches": 0,
+    print(json.dumps({"ok": True, "cancelClosedDialogRead": True,
+                      "deletedFailureAndRetry": True, "selectionIsolation": True,
                       "mobileToolsAndResults": True}))
 
 

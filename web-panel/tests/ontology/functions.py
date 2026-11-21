@@ -43,7 +43,7 @@ def run():
         )
         page = browser.new_page()
         expect.set_options(timeout=22000)
-        page.goto(base + "/ontology?catalog=published&objectType=" + source["id"])
+        page.goto(base + "/ontology/explorer?objectType=" + source["id"])
         page.get_by_placeholder("name@company.com").fill(actor["email"])
         page.get_by_placeholder("Enter your password").fill(actor["password"])
         page.get_by_role("button", name="Sign in", exact=True).click()
@@ -51,7 +51,11 @@ def run():
         def button(name):
             return page.get_by_role("button", name=name, exact=True)
 
-        button("Model revisions").click()
+        def open_tool(name):
+            button("Open in").click()
+            page.get_by_role("menuitem", name=name, exact=True).click()
+
+        open_tool("Model revisions")
         button("Propose change").click()
         form = page.get_by_role("region", name="Change proposal")
         form.get_by_role("textbox", name="Proposal summary").fill("QA multiply amount")
@@ -79,10 +83,16 @@ def run():
             path + f"/revision-proposals/{prop_id}/merge", json={"revision": revision}
         ).raise_for_status()
         page.reload()
-        button("Functions").click()
+        open_tool("Functions")
         panel = page.get_by_role("region", name="Business function runner")
         expect(panel.get_by_role("button", name="Run function")).to_be_disabled()
-        button(record["title"]).click()
+        page.get_by_role("dialog", name="Functions", exact=True).get_by_role(
+            "button", name="Close", exact=True
+        ).click()
+        page.get_by_role("region", name="Published Explorer results").get_by_role(
+            "button", name=record["title"], exact=True
+        ).click()
+        open_tool("Functions")
         panel.get_by_label("Published function").select_option("calculate_amount")
         panel.get_by_label("Argument units").fill("9")
         with page.expect_response(

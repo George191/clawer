@@ -6,6 +6,7 @@ import { FilterOutlined, PlusOutlined, SearchOutlined } from '@/components/ui/ic
 import { fetchEtlTableColumns } from '../../services/api';
 import { explorerPropertyType, fetchExplorerProperties, saveExplorerProperties, type ExplorerMappedProperty as Property, type ExplorerPropertyMapping as Mapping } from '../../services/explorerProperties';
 import { ontologyError } from '../../services/ontology';
+import { publishedExplorerHref } from '../../services/publishedExplorerHandoff';
 import type { EtlTableColumn } from '../../services/types';
 import { getSessionState } from '../../services/session';
 import ExplorerMappingPreview from './ExplorerMappingPreview';
@@ -132,7 +133,7 @@ function Workbench({schema,table,canManage,identity,onSaved,onDirtyChange}: Prop
                 </header>
                 <section className="flow-foundry-property-list"><div className="flow-foundry-property-tools">
                     <strong>{mode==='properties'?'Properties':'Source columns'} <span>{mode==='properties'?draft.properties.length:columns.length}</span></strong>
-                    {bound ? <Link to={'/ontology?'+new URLSearchParams({catalog:'published',objectType:draft.sourceDefinitionId!})}>Open published type</Link>
+                    {bound ? <Link to={publishedExplorerHref(draft.sourceDefinitionId!)}>Open published type</Link>
                         : canManage && <Button size="small" icon={<PlusOutlined/>} disabled={!structural} onClick={()=>create()}>Create property</Button>}
                     <Button size="small" aria-label="Search properties and columns" aria-expanded={searching} icon={<SearchOutlined/>}
                         onClick={()=>{setSearching(!searching);if(searching)setTerm('');}}/>

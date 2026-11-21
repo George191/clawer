@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { Button, Modal } from '@/components/ui';
-import { DownloadOutlined } from '@/components/ui/icons';
 import client from '../../services/api';
 import { fetchPublishedOntologyType, listOntologyRecords, ontologyError } from '../../services/ontology';
 import { generateOntologySdk, ontologySdkFilename, type OntologySdkFunction } from '../../services/ontology_sdk';
@@ -9,8 +8,7 @@ import { getSessionState } from '../../services/session';
 type Download = { url: string; filename: string; revision: number; identity: string };
 type FunctionsPage = { revision: number; items: OntologySdkFunction[] };
 
-export default function OntologySdkDownload({ definitionId }: { definitionId: string }) {
-  const [open, setOpen] = useState(false);
+export default function OntologySdkDownload({ definitionId, open, onClose }: { definitionId: string; open: boolean; onClose: () => void }) {
   const [version, setVersion] = useState(0);
   const [download, setDownload] = useState<Download>();
   const [error, setError] = useState('');
@@ -54,7 +52,7 @@ export default function OntologySdkDownload({ definitionId }: { definitionId: st
   }, [definitionId, open, version]);
 
   const close = () => {
-    setOpen(false);
+    onClose();
     setDownload(undefined);
     setError('');
   };
@@ -64,7 +62,6 @@ export default function OntologySdkDownload({ definitionId }: { definitionId: st
     setVersion(value => value + 1);
   };
   return <>
-    <Button size="small" icon={<DownloadOutlined />} onClick={() => setOpen(true)}>TypeScript SDK</Button>
     <Modal open={open} centered className="flow-surface-modal flow-published-dialog" title="TypeScript SDK" onCancel={close} footer={<>
       <Button onClick={close}>Close</Button>
       {download && <a className="ui-btn ui-btn-primary" href={download.url} download={download.filename}

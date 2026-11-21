@@ -137,14 +137,15 @@ def run():
             page.set_default_timeout(25_000)
             try:
                 page_url = (
-                    base + "/ontology?" + urlencode({"catalog": "published", "objectType": oid})
+                    base + "/ontology/explorer?" + urlencode({"objectType": oid})
                 )
                 page.goto(page_url)
                 page.get_by_placeholder("name@company.com").fill(owner["email"])
                 page.get_by_placeholder("Enter your password").fill(owner["password"])
                 page.get_by_role("button", name="Sign in", exact=True).click()
                 page.wait_for_url(page_url)
-                page.get_by_role("button", name="Model revisions", exact=True).click()
+                page.get_by_role("button", name="Open in", exact=True).click()
+                page.get_by_role("menuitem", name="Model revisions", exact=True).click()
                 page.get_by_role("button", name="Propose change", exact=True).click()
                 form = page.get_by_role("region", name="Change proposal")
                 form.get_by_label("Proposal summary").fill(

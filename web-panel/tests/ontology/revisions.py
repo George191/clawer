@@ -33,7 +33,7 @@ def verify():
         raise RuntimeError("The revision browser test requires a literal loopback fixture URL")
     definition_id = fixture["source"]["id"]
     page_url = (
-        base + "/ontology?" + urlencode({"catalog": "published", "objectType": definition_id})
+        base + "/ontology/explorer?" + urlencode({"objectType": definition_id})
     )
     original_name = fixture["source"]["name"]
     new_name = original_name[:102] + " revised"
@@ -74,10 +74,9 @@ def verify():
 
                 def workspace(page):
                     panel = page.get_by_role("region", name="Model revisions", exact=True)
-                    toggle = button(page, "Model revisions")
-                    expect(toggle).to_be_visible()
-                    if toggle.get_attribute("aria-pressed") != "true":
-                        toggle.click()
+                    if not panel.is_visible():
+                        button(page, "Open in").click()
+                        page.get_by_role("menuitem", name="Model revisions", exact=True).click()
                     panel.get_by_text(re.compile(r"^Published revision \d+$")).wait_for()
                     return panel
 
@@ -146,7 +145,7 @@ def verify():
                 button(pane, "Refresh revisions").click()
                 merge_from_browser(manager, proposal, "change")
                 stage = "verify the title refresh after merge"
-                expect(manager.get_by_role("heading", name=new_name, exact=True)).to_be_visible()
+                expect(manager.locator(".wb-type strong")).to_have_text(new_name)
                 stage = "verify the revision workspace after merge"
                 pane = workspace(manager)
                 expect(
@@ -179,9 +178,7 @@ def verify():
                 button(pane, "Refresh revisions").click()
                 merge_from_browser(manager, pane.get_by_role("region", name="Proposal details"), "restore")
                 stage = "verify the title refresh after restore"
-                expect(
-                    manager.get_by_role("heading", name=original_name, exact=True)
-                ).to_be_visible()
+                expect(manager.locator(".wb-type strong")).to_have_text(original_name)
                 stage = "verify the revision workspace after restore"
                 pane = workspace(manager)
                 expect(

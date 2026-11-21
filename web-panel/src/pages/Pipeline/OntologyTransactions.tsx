@@ -40,7 +40,7 @@ function RecordPicker({type, label, value, aliases = [], change, version}: {
     {error && <p role="alert">{error} <Button size="small" onClick={() => setRetry(value => value + 1)}>Retry records</Button></p>}</div>;
 }
 
-export default function OntologyTransactions({objectType}: {objectType: PublishedOntologyType}) {
+export default function OntologyTransactions({objectType, onCommitted}: {objectType: PublishedOntologyType; onCommitted: () => void}) {
   const project = objectType.definition.projectId;
   const [name, setName] = useState('');
   const [entries, setEntries] = useState<Entry[]>([]);
@@ -157,6 +157,7 @@ export default function OntologyTransactions({objectType}: {objectType: Publishe
         setStatus('Committed: ' + result.name);setEntries([]);setName('');retryIds.current.delete(signature);
       }
       resetStep();resetLinks();setOffset(0);setVersion(v => v+1);
+      onCommitted();
     } catch (e) {setError(description(e));}
     finally {locked.current = false;setPending(false);}
   };

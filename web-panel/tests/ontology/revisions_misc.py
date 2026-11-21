@@ -53,7 +53,7 @@ def verify():
         ):
             raise RuntimeError("The QA property must have persisted values")
         api = f"/api/ontology/v1/object-types/{definition_id}"
-        url = base + "/ontology?" + urlencode({"catalog": "published", "objectType": definition_id})
+        url = base + "/ontology/explorer?" + urlencode({"objectType": definition_id})
         reviewer_name = fixture["reader"].get("name") or fixture["reader"]["email"]
         run = uuid4().hex[:8]
         rejected = "QA rejected " + run
@@ -90,7 +90,8 @@ def verify():
         def panel(page):
             workspace = page.get_by_role("region", name="Model revisions", exact=True)
             if not workspace.is_visible():
-                button(page, "Model revisions").click()
+                button(page, "Open in").click()
+                page.get_by_role("menuitem", name="Model revisions", exact=True).click()
             identity = workspace.get_by_text(re.compile(r"^Published revision \d+$"))
             return workspace, int(identity.text_content().rsplit(" ", 1)[-1])
 
@@ -212,7 +213,8 @@ def verify():
                 )
                 reviewer.reload(wait_until="domcontentloaded")
                 with response(reviewer, "GET", api + "/revision-workspace") as request:
-                    button(reviewer, "Model revisions").click()
+                    button(reviewer, "Open in").click()
+                    reviewer.get_by_role("menuitem", name="Model revisions", exact=True).click()
                 assert request.value.status == 404
                 expect(
                     reviewer.get_by_role("region", name="Model revisions", exact=True).get_by_role(
@@ -236,9 +238,7 @@ def verify():
                 expect(
                     manager_panel.get_by_text(f"Published revision {baseline}", exact=True)
                 ).to_be_visible()
-                expect(
-                    manager.get_by_role("heading", name=source["name"], exact=True)
-                ).to_be_visible()
+                expect(manager.locator(".wb-type strong")).to_have_text(source["name"])
                 assertions.append("revoked approval cannot change the publication")
             finally:
                 browser.close()

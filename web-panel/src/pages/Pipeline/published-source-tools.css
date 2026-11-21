@@ -1,0 +1,20 @@
+.published-source-tools .ui-modal-body { max-height:70vh; overflow:auto; }
+.published-source-context { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; padding:0 0 12px; color:var(--ontology-text); font-size:12px; }
+.published-source-context span { color:var(--ontology-muted); }
+.published-source-tools .flow-schema-details { padding:0; }
+.published-source-tools .flow-schema-details > header { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:12px; }
+.published-source-tools .flow-schema-details h3 { margin:0 0 6px; font-size:13px; }
+.published-source-tools .flow-schema-details p { margin:6px 0 12px; color:var(--ontology-muted); font-size:12px; }
+.published-source-tools p[role=alert] { color:var(--ui-danger); }
+.published-source-tools table { width:100%; border-collapse:collapse; text-align:left; font-size:12px; }
+.published-source-tools :is(th,td) { padding:8px; border-bottom:1px solid var(--ontology-control-border); overflow-wrap:anywhere; }
+.published-source-api-list { display:grid; gap:12px; }
+.published-source-api-list article { padding:12px; border:1px solid var(--ontology-control-border); border-radius:3px; }
+.published-source-api-list h4 { display:flex; justify-content:space-between; margin:0 0 8px; font-size:12px; }
+.published-source-api-list h4 span { color:var(--ontology-muted); font-weight:400; }
+.published-source-api-list dl { display:flex; flex-wrap:wrap; gap:20px; font-size:12px; }
+.published-source-api-list dt { color:var(--ontology-muted); }
+.published-source-api-list dd { margin:4px 0 0; }
+.published-source-api-list details { font-size:12px; }
+.published-source-api-list summary { cursor:pointer; }
+.published-source-api-list pre { max-height:200px; overflow:auto; padding:10px; background:var(--ontology-bg); }

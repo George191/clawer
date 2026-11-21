@@ -55,6 +55,10 @@
 .flow-tool-section :is(ol, ul) { margin: 0; padding-inline-start: 20px; overflow-wrap: anywhere; }
 .flow-tool-section :is(ol, ul):empty { display: none; }
 .flow-tool-section li + li { margin-block-start: 4px; }
+.flow-tool-section .flow-published-deleted-objects { list-style: none; padding: 0; }
+.flow-published-deleted-objects li { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.flow-published-deleted-objects .ui-btn { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.flow-published-deleted-objects span { flex: none; color: var(--ontology-muted); font-size: 12px; }
 .flow-tool-section table { width: 100%; border-collapse: collapse; text-align: left; }
 .flow-tool-section :is(th, td) { padding: 5px 8px; border-bottom: 1px solid var(--ontology-control-border); }
 .ontology-graph, .ontology-transaction { display: grid; align-items: start; gap: 12px; }

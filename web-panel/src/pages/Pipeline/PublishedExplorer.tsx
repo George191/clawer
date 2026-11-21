@@ -3,11 +3,15 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui';
 import { CloseOutlined, FilterOutlined, ReloadOutlined } from '@/components/ui/icons';
 import { fetchPublishedOntologyType, ontologyError, type PublishedOntologyType } from '../../services/ontology';
+import { fetchCurrentUserContext } from '../../services/api';
 import { openSaved, publishedSavedPath, type SavedDetail } from '../../services/explorerSaved';
 import { loadPublishedSavedSet, queryPublishedExplorer, type PublishedExplorerRecord, type PublishedExplorerResult } from '../../services/publishedExplorer';
 import { parsePublishedExplorerEntry, publishedExplorerHref, validatePublishedExplorerQuery, type PublishedExploration, type PublishedExplorerEntry, type PublishedExplorerQuery } from '../../services/publishedExplorerHandoff';
 import { getSessionState } from '../../services/session';
-import ExplorerWorkbenchHeader from './ExplorerWorkbenchHeader';
+import ExplorerWorkbenchHeader, { type ResourceView } from './ExplorerWorkbenchHeader';
+import { explorerResourceCapabilities } from '../../services/explorerCapabilities';
+import PublishedSourceTools from './PublishedSourceTools';
+import { usePublishedObjectTools } from './PublishedObjectTools';
 import SemanticTypeGlyph from './SemanticTypeGlyph';
 import { parsePropertyValue } from './ontologyPropertyValue';
 import './published-results.css';
@@ -32,6 +36,7 @@ export default function PublishedExplorer() {
 function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKey: string }) {
   const navigate = useNavigate();
   const [objectType, setObjectType] = useState<PublishedOntologyType>();
+  const [canManage, setCanManage] = useState(false);
   const [metadataError, setMetadataError] = useState('');
   const [scope, setScope] = useState<Scope>();
   const [scopeError, setScopeError] = useState('');
@@ -41,6 +46,8 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
   const [mode, setMode] = useState<'results' | 'explore'>('results');
   const [selected, setSelected] = useState<Record<string, PublishedExplorerRecord>>({});
   const [preview, setPreview] = useState<PublishedExplorerRecord>();
+  const [previewTab, setPreviewTab] = useState<'properties' | 'history'>('properties');
+  const [resource, setResource] = useState<ResourceView>('preview');
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [field, setField] = useState(''), [operator, setOperator] = useState<keyof typeof labels>('eq'), [raw, setRaw] = useState('');
   const [filterError, setFilterError] = useState('');
@@ -50,8 +57,8 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
   useEffect(() => {
     const controller = new AbortController();
     setMetadataError('');
-    fetchPublishedOntologyType(entry.definitionId, controller.signal).then(result => {
-      if (!controller.signal.aborted && getSessionState().identity === sessionIdentity) setObjectType(result);
+    Promise.all([fetchPublishedOntologyType(entry.definitionId, controller.signal), fetchCurrentUserContext(controller.signal)]).then(([result, context]) => {
+      if (!controller.signal.aborted && getSessionState().identity === sessionIdentity) { setObjectType(result); setCanManage(!!context.user.is_superuser); }
     }, error => { if (!controller.signal.aborted) setMetadataError(ontologyError(error, 'Unable to load this published object type.')); });
     return () => controller.abort();
   }, [entry.definitionId, sessionIdentity, version]);
@@ -119,13 +126,16 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
     } catch (error) { setFilterError((error as Error).message); }
   }
   const error = metadataError || scopeError || currentRead?.error;
+  const objectTools = usePublishedObjectTools({ objectType, actions: result?.actions || [], record: preview, returnTo: entry.returnTo, busy: busy || !!error,
+    onChanged: () => { setPreview(undefined); setSelected({}); retry(value => value + 1); } });
   return <section className={`published-explorer${mode === 'explore' ? ' is-exploring' : ''}`} aria-label="Published Object Explorer" aria-busy={busy}>
     <fieldset className="wb-shell" disabled={busy || !!error}>
       <ExplorerWorkbenchHeader<PublishedExploration> source={{ kind: 'published', definitionId: entry.definitionId }} label={objectType?.definition.name || entry.definitionId}
         available={!!objectType} glyph={objectType && <SemanticTypeGlyph definition={objectType.definition} />}
         fields={properties.map(property => property.id)} names={Object.fromEntries(properties.map(property => [property.id, property.name]))}
         rows={rows.map(row => row.properties)} selected={chosen.map(row => ({ identity: row.identity!, record: row.properties, title: display(row.title) }))}
-        query={{ query: query || { filters: [] } }} resource="preview" admin={false} layoutControl={null} selectResource={() => {}}
+        query={{ query: query || { filters: [] } }} resource={resource} admin={canManage} layoutControl={objectTools.createButton} selectResource={setResource}
+        availableResources={objectType ? explorerResourceCapabilities(objectType.definition.source, canManage) : []} additionalTools={objectTools.tools}
         saved={activeScope?.saved} savedLoading={!activeScope && !scopeError} savedError={scopeError}
         openSavedItem={openSavedItem} closeSavedItem={() => navigate(publishedExplorerHref(entry.definitionId, { ...(entry.savedSet ? { savedSet: entry.savedSet } : { query: entry.query }), returnTo: entry.returnTo }))}
         saveCompleted={detail => openSavedItem(detail.id)} updateSavedItem={detail => setScope(previous => previous?.key === scopeKey ? { ...previous, saved: detail } : previous)}
@@ -152,11 +162,15 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
       <div className="flow-published-record-pane"><div className="flow-published-record-scroll" tabIndex={0} role="region" aria-label="Published Explorer results">
         <table style={{ width: `max(100%, ${276 + columns.length * 164}px)` }}><colgroup><col className="flow-published-select-column" /><col className="flow-published-title-column" />{columns.map(property => <col key={property.id} />)}</colgroup>
           <thead><tr><th scope="col"><input type="checkbox" aria-label="Select all objects on this page" title={pageExceedsSelectionLimit ? 'Select up to 100 objects.' : undefined} disabled={!selectable.length || (!currentAllSelected && pageExceedsSelectionLimit)} checked={currentAllSelected} onChange={event => { const checked = event.target.checked; setSelected(previous => { const next = { ...previous }; for (const row of selectable) { const key = identityKey(row)!; if (checked) next[key] = row; else delete next[key]; } return next; }); }} /></th><th scope="col">Title</th>{columns.map(property => <th scope="col" key={property.id}>{property.name}</th>)}</tr></thead>
-          <tbody>{rows.map((row, index) => <tr key={identityKey(row) || index} className={row === preview ? 'is-selected' : undefined}><td><input type="checkbox" aria-label={`Select ${display(row.title)}`} title={!row.identity ? 'A complete authorized object identity is required to save a list.' : chosen.length >= 100 && !selected[identityKey(row)!] ? 'Select up to 100 objects.' : undefined} disabled={!row.identity || (chosen.length >= 100 && !selected[identityKey(row)!])} checked={!!selected[identityKey(row) || '']} onChange={event => toggle(row, event.target.checked)} /></td><th scope="row"><button type="button" className="flow-published-record-title" onClick={() => setPreview(row)}><SemanticTypeGlyph definition={objectType.definition} /><span>{display(row.title)}</span></button></th>{columns.map(property => <td key={property.id} title={display(row.properties[property.id])}>{display(row.properties[property.id]).slice(0, 120)}</td>)}</tr>)}{!rows.length && <tr><td className="flow-published-results-empty" colSpan={columns.length + 2}>No objects match this set.</td></tr>}</tbody>
+          <tbody>{rows.map((row, index) => <tr key={identityKey(row) || index} className={row === preview ? 'is-selected' : undefined}><td><input type="checkbox" aria-label={`Select ${display(row.title)}`} title={!row.identity ? 'A complete authorized object identity is required to save a list.' : chosen.length >= 100 && !selected[identityKey(row)!] ? 'Select up to 100 objects.' : undefined} disabled={!row.identity || (chosen.length >= 100 && !selected[identityKey(row)!])} checked={!!selected[identityKey(row) || '']} onChange={event => toggle(row, event.target.checked)} /></td><th scope="row"><button type="button" className="flow-published-record-title" onClick={() => { setPreviewTab('properties'); setPreview(row); }}><SemanticTypeGlyph definition={objectType.definition} /><span>{display(row.title)}</span></button></th>{columns.map(property => <td key={property.id} title={display(row.properties[property.id])}>{display(row.properties[property.id]).slice(0, 120)}</td>)}</tr>)}{!rows.length && <tr><td className="flow-published-results-empty" colSpan={columns.length + 2}>No objects match this set.</td></tr>}</tbody>
         </table>
       </div><footer className="flow-published-results-pagination"><span>{rows.length ? `${offset + 1}–${offset + rows.length} of ${result.count.toLocaleString()}` : '0 shown'}</span><div><Button size="small" disabled={busy || !offset} onClick={() => { setPreview(undefined); setOffset(value => Math.max(0, value - pageSize)); }}>Previous page</Button><Button size="small" disabled={busy || !result.hasMore || offset + pageSize > 100000} onClick={() => { setPreview(undefined); setOffset(value => value + pageSize); }}>Next page</Button></div></footer></div>
-      {preview && <aside className="flow-published-selection" aria-label="Selection Preview"><header><h3>Selection Preview</h3><Button size="small" type="text" aria-label="Close selection preview" icon={<CloseOutlined />} onClick={() => setPreview(undefined)} /></header><div className="flow-published-selection-content"><div className="flow-published-selection-title"><SemanticTypeGlyph definition={objectType.definition} size="preview" /><div><span>{objectType.definition.name}</span><h4>{display(preview.title)}</h4></div></div><section className="flow-published-selection-properties"><h4>Properties</h4><dl>{properties.filter(property => Object.prototype.hasOwnProperty.call(preview.properties, property.id)).map(property => <div key={property.id}><dt>{property.name}</dt><dd>{display(preview.properties[property.id])}</dd></div>)}</dl></section></div></aside>}
+      {preview && <aside className="flow-published-selection" aria-label="Selection Preview"><header><h3>Selection Preview</h3><Button size="small" type="text" aria-label="Close selection preview" icon={<CloseOutlined />} onClick={() => setPreview(undefined)} /></header><div className="flow-published-selection-content"><div className="flow-published-selection-title"><SemanticTypeGlyph definition={objectType.definition} size="preview" /><div><span>{objectType.definition.name}</span><h4>{display(preview.title)}</h4></div>{objectTools.recordActions}</div>
+        <nav className="flow-published-selection-tabs" aria-label="Selection view"><button type="button" aria-pressed={previewTab === 'properties'} onClick={() => setPreviewTab('properties')}>Properties</button>{objectTools.history && <button type="button" aria-pressed={previewTab === 'history'} onClick={() => setPreviewTab('history')}>History</button>}</nav>
+        {previewTab === 'history' && objectTools.history ? objectTools.history : <section className="flow-published-selection-properties"><h4>Properties</h4><dl>{properties.filter(property => Object.prototype.hasOwnProperty.call(preview.properties, property.id)).map(property => <div key={property.id}><dt>{property.name}</dt><dd>{display(preview.properties[property.id])}</dd></div>)}</dl></section>}</div></aside>}
     </div>}
     {mode === 'results' && result && query?.groupBy && <section className="published-explorer-aggregation" aria-label="Object set aggregation"><h3>{properties.find(property => property.id === query.groupBy)?.name || query.groupBy}</h3><table><thead><tr><th>Value</th><th>Count</th>{query.sumField && <th>Sum</th>}</tr></thead><tbody>{result.groups.map((group, index) => <tr key={index}><td>{display(group.value)}</td><td>{group.count}</td>{query.sumField && <td>{display(group.sum)}</td>}</tr>)}</tbody></table>{result.groupsHasMore && <p>Showing the first 50 groups.</p>}</section>}
+    {objectType && <PublishedSourceTools objectType={objectType} resource={resource} canManage={canManage} onClose={() => setResource('preview')} />}
+    {objectTools.dialogs}
   </section>;
 }
