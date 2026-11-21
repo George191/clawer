@@ -22,7 +22,7 @@
 .explorer-filter-editor .explorer-filter-sort-field > .flow-filter-sort-direction-toggle { margin-left:auto; }
 .explorer-filter-editor .explorer-filter-sort-menu-toggle svg { display:block; width:12px; height:12px; }
 .explorer-filter-editor .explorer-sort-scroll-buttons { display:flex; align-items:center; gap:3px; }
-.explorer-filter-editor .flow-filter-apply { gap:9px; padding:7px 6px 8px; border-top:1px solid var(--ontology-border); }
+.explorer-filter-editor .flow-filter-apply { flex-wrap:wrap; gap:9px; padding:7px 6px 8px; border-top:1px solid var(--ontology-border); }
 .flow-console--ontology .explorer-filter-editor .explorer-filter-apply-button { min-height:28px; padding:3px 12px; border:1px solid var(--ui-action-bg); border-radius:3px; background:var(--ui-action-bg); color:var(--ui-action-text); font:inherit; font-size:12px; font-weight:500; line-height:20px; cursor:pointer; }
 .flow-console--ontology .explorer-filter-editor .explorer-filter-apply-button:hover { border-color:var(--ui-action-hover); background:var(--ui-action-hover); }
 .explorer-filter-editor .flow-filter-edited-hint { color:var(--ontology-muted); font-size:11px; }
