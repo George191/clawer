@@ -13,9 +13,9 @@ import './published-results.css';
 const pageSize = 25;
 const maxOffset = 100_000;
 export type PublishedCatalogPage = PublishedOntologyPage & { offset: number; keyword: string; identity: string; includeHidden: boolean; includeDeleted: boolean };
-type Props = { view: 'grid' | 'list'; includeHidden: boolean; includeDeleted: boolean; managedProjects: string[]; catalogPage?: PublishedCatalogPage; onCatalogPage: (page?: PublishedCatalogPage) => void; onSelect: (id: string) => void; onClearSearch: () => void };
+type Props = { selection: string; view: 'grid' | 'list'; includeHidden: boolean; includeDeleted: boolean; managedProjects: string[]; catalogPage?: PublishedCatalogPage; onCatalogPage: (page?: PublishedCatalogPage) => void; onSelect: (id: string) => void; onClearSearch: () => void };
 
-export default function PublishedOntology({ view, includeHidden, includeDeleted, managedProjects, catalogPage, onCatalogPage, onSelect, onClearSearch }: Props) {
+export default function PublishedOntology({ selection, view, includeHidden, includeDeleted, managedProjects, catalogPage, onCatalogPage, onSelect, onClearSearch }: Props) {
   const [params, setParams] = useSearchParams();
   const keyword = (params.get('publishedQ') || '').trim();
   const requestedOffset = Number(params.get('publishedOffset'));
@@ -63,7 +63,7 @@ export default function PublishedOntology({ view, includeHidden, includeDeleted,
         {!!catalogPage.items.length && view === 'grid' && <div className="flow-published-catalog-scroll flow-published-catalog-cards" role="region" aria-label="Published type cards" ref={element => { if (element) element.inert = loading; }}>
           <div className="flow-ontology__assets">
             {catalogPage.items.map(item => <article className="flow-ontology__asset" key={item.id}>
-              <button type="button" className="flow-ontology__asset-main" data-published-type-link aria-label={item.definition.name} disabled={item.deleted} onClick={() => onSelect(item.id)}>
+              <button type="button" className="flow-ontology__asset-main" data-published-type-link={item.id} aria-label={item.definition.name} aria-pressed={selection === item.id} disabled={item.deleted} onClick={() => onSelect(item.id)}>
                 <SemanticTypeGlyph definition={item.definition} />
                 <span className="flow-ontology__asset-name">
                   <span className="flow-ontology__asset-heading"><strong title={item.definition.name}>{item.definition.name}</strong>{(item.hidden || item.deleted) && <small className="flow-ontology__asset-visibility">{item.deleted ? 'Deleted' : 'Hidden'}</small>}</span>
@@ -78,7 +78,7 @@ export default function PublishedOntology({ view, includeHidden, includeDeleted,
           <table className="flow-published-catalog-table">
             <thead><tr><th scope="col">Object type</th><th scope="col">API ID</th><th scope="col">Datasource</th><th scope="col">Revision</th>{managedProjects.length > 0 && <th scope="col" className="flow-published-actions-heading"><span className="flow-published-sr-only">Manage type</span></th>}</tr></thead>
             <tbody>{catalogPage.items.map(item => <tr key={item.id} onClick={() => { if (!item.deleted) onSelect(item.id); }}>
-              <th scope="row"><div className="flow-published-catalog-identity"><SemanticTypeGlyph definition={item.definition} /><div><button type="button" data-published-type-link disabled={item.deleted} onClick={event => { event.stopPropagation(); onSelect(item.id); }} title={item.definition.name}>{item.definition.name}</button>{(item.deleted || item.hidden) && <small>{item.deleted ? 'Deleted' : 'Hidden'}</small>}{item.definition.description && <small title={item.definition.description}>{item.definition.description}</small>}</div></div></th>
+              <th scope="row"><div className="flow-published-catalog-identity"><SemanticTypeGlyph definition={item.definition} /><div><button type="button" data-published-type-link={item.id} aria-pressed={selection === item.id} disabled={item.deleted} onClick={event => { event.stopPropagation(); onSelect(item.id); }} title={item.definition.name}>{item.definition.name}</button>{(item.deleted || item.hidden) && <small>{item.deleted ? 'Deleted' : 'Hidden'}</small>}{item.definition.description && <small title={item.definition.description}>{item.definition.description}</small>}</div></div></th>
               <td><code title={item.definition.id}>{item.definition.id}</code></td>
               <td>{item.definition.source.mode === 'existing' ? <code title={`${item.definition.source.schema}.${item.definition.source.table}`}>{item.definition.source.schema}.{item.definition.source.table}</code> : 'Object-managed records'}</td>
               <td>{item.revision}</td>{managedProjects.length > 0 && <td>{managedProjects.includes(item.definition.projectId) && <PublishedTypeActions item={item} onChanged={reload} />}</td>}

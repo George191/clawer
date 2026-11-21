@@ -15,6 +15,7 @@ import { accentStyle, schemaColor } from '../../theme/tokens';
 import { inferSiteKind, TemplateGlyph } from '../AICollect/WorkspaceDock';
 import SemanticObjectWizard from './SemanticObjectWizard';
 import PublishedOntology, { type PublishedCatalogPage } from './PublishedOntology';
+import PublishedTypePreview from './PublishedTypePreview';
 import OntologyCatalogSkeleton from './OntologyCatalogSkeleton';
 import { listOntologyProjects } from '../../services/ontology';
 import { publishedCatalogHref, publishedExplorerHref } from '../../services/publishedExplorerHandoff';
@@ -116,6 +117,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const publishedCatalog = params.get('catalog') === 'published';
+  const publishedId = publishedCatalog ? params.get('objectType') || '' : '';
   const keyword = params.get('q') || '';
   const group: Group = groups.some((item) => item.key === params.get('group')) ? params.get('group') as Group : 'all';
   const view = params.get('view') === 'list' ? 'list' : 'grid';
@@ -431,8 +433,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     publishedCatalog ? { publishedQ: value || null, publishedOffset: null } : { q: value || null }, true,
   );
   const selectPublished = (id = '') => {
-    const returnTo = publishedCatalogHref(params.toString());
-    navigate(id ? publishedExplorerHref(id, { returnTo }) : returnTo);
+    updateQuery({ catalog: 'published', objectType: id || null, schema: null, table: null, tab: null });
   };
   const selectObject = (object: { schema: string; table: string }) => updateQuery({ schema: object.schema, table: object.table, tab: null });
   const selectLinkedObject = async (object: { id: string; schema: string; table: string }) => {
@@ -475,18 +476,19 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     if (inspectorId) inspectorRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
   }, [inspectorId]);
   useEffect(() => {
-    if (!inspectorOpen) return;
+    if (!inspectorOpen && !publishedId) return;
     const background = document.getElementById('root');
     const before = background?.inert;
     if (background) background.inert = true;
     return () => {
       if (background) background.inert = !!before;
       requestAnimationFrame(() => {
-        const target = cardRefs.current[inspectorId] || searchRef.current;
+        const target = publishedId ? rootRef.current?.querySelector<HTMLButtonElement>(`[data-published-type-link="${CSS.escape(publishedId)}"]`) || searchRef.current
+          : cardRefs.current[inspectorId] || searchRef.current;
         if (target?.isConnected) target.focus();
       });
     };
-  }, [inspectorOpen]);
+  }, [inspectorOpen, !!publishedId]);
 
   const sections = useMemo(() => {
     const resourceGroups = presentedGroup === 'all' ? groups.filter((item) => item.key !== 'all' && item.key !== 'favorites') : groups.filter((item) => item.key === presentedGroup);
@@ -567,7 +569,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
         </div>
       </header>
       <div className="flow-ontology__body">
-        {publishedCatalog ? <PublishedOntology view={view} managedProjects={managedProjects} includeHidden={publishedHidden} includeDeleted={publishedDeleted} catalogPage={publishedPage?.identity === getSessionState().identity ? publishedPage : undefined} onCatalogPage={setPublishedPage} onSelect={selectPublished} onClearSearch={() => changeCatalogSearch('')} /> : <>
+        {publishedCatalog ? <PublishedOntology selection={publishedId} view={view} managedProjects={managedProjects} includeHidden={publishedHidden} includeDeleted={publishedDeleted} catalogPage={publishedPage?.identity === getSessionState().identity ? publishedPage : undefined} onCatalogPage={setPublishedPage} onSelect={selectPublished} onClearSearch={() => changeCatalogSearch('')} /> : <>
         <aside className="flow-ontology__sidebar" aria-label="Object type groups"><nav aria-busy={loading}>
           {groups.map((item) => {
             const expanded = expandedGroup === item.key;
@@ -637,6 +639,10 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
       </div>
       <footer className="flow-ontology__inspector-footer"><button type="button" className="flow-ontology__button flow-ontology__button--primary" disabled={!data || preview.loading || !!linkedLoading} onClick={openWorkspace}>Start exploring <ArrowRightOutlined /></button></footer>
     </aside></Drawer>
+    {publishedId && <PublishedTypePreview id={publishedId} initial={publishedPage?.identity === sessionIdentity ? publishedPage.items.find(item => item.id === publishedId) : undefined}
+      allProperties={allProperties} onPropertiesToggle={() => updateQuery({ tab: allProperties ? null : 'properties' })}
+      onClose={() => updateQuery({ objectType: null, tab: null }, true)} onSelect={selectPublished}
+      onExplore={() => navigate(publishedExplorerHref(publishedId, { returnTo: publishedCatalogHref(params.toString()) }))} />}
     {createOpen && (canManage || semanticProjectAccess) && <SemanticObjectWizard allowedSource={canManage} schemas={creationSchemas} initialSchema={createSchema} onCancel={() => setCreateOpen(false)} onPublished={(object) => { setCreateOpen(false); selectPublished(object.id); }} />}
   </div>;
 }

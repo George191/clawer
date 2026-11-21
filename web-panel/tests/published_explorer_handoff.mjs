@@ -30,7 +30,7 @@ test('shared workbench search and nested filters roundtrip without replacing the
   }
 });
 
-test('catalog entry opens Explorer directly and returns to the same filters and page', () => {
+test('Start exploring opens the Published object type and returns to the same catalog filters and page', () => {
   const returnTo = publishedCatalogHref('?catalog=published&publishedQ=%E5%AA%92%E4%BD%93&publishedOffset=25&view=list&publishedHidden=true&publishedDeleted=true&objectType=' + id + '&schema=ts_ods&table=assets&tab=properties');
   const entry = parseHref(publishedExplorerHref(id, { returnTo }));
   const catalog = new URL(entry.returnTo, 'https://app.example.test');
