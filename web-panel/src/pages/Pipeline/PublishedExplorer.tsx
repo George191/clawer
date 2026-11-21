@@ -16,7 +16,7 @@ import ExplorerWorkbench, { ExplorerFilterButton, ExplorerResults, ExplorerResul
 import ExplorerFilterEditor, { normalizeFilterDepth, randomId } from './ExplorerFilterEditor';
 import ExplorerAppliedConditions from './ExplorerAppliedConditions';
 import { LayoutToolbar, useResultLayout } from './ExplorerResultLayout';
-import { appendAndFilters, blankExplorerFilter, cellFilterRows, countFilterTerms, explorerFilterTerms, type ExplorerFilter } from './explorerFilters';
+import { appendAndFilters, blankExplorerFilter, cellFilterRows, countFilterTerms, exactCellValue, explorerFilterTerms, type ExplorerFilter } from './explorerFilters';
 import { explorerResourceCapabilities } from '../../services/explorerCapabilities';
 import PublishedSourceTools from './PublishedSourceTools';
 import PublishedExplorerRelationships from './PublishedExplorerRelationships';
@@ -202,7 +202,15 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
         onSearchValues: value => {
           if (!query || !requireDraftApplied() || !requireDraftApplied(true)) return false;
           return changeQuery({ ...query, search: value.trim() }, true);
-        }, selected: chosen.filter(row => Object.keys(row.identity).length), query: { query: query || { filters: [] } }, resource, admin: canManage,
+        },
+        onExploreFilterValue: (field, value) => {
+          if (!requireDraftApplied()) return;
+          const scalar = exactCellValue(value, types[field]);
+          if (scalar !== undefined) applyRules(appendAndFilters(activeFilters, cellFilterRows(field, scalar, false, randomId()), randomId()));
+        },
+        analysisRevision: version,
+        aggregate: query ? (field, offset, signal) => queryPublishedExplorer(entry.definitionId, { ...query, groupBy: field, sumField: undefined }, 1, 0, signal, offset) : undefined,
+        selected: chosen.filter(row => Object.keys(row.identity).length), query: { query: query || { filters: [] } }, resource, admin: canManage,
         layoutControl: <><LayoutToolbar controls={resultLayout} admin={canManage} types={types} />{objectTools.createButton}</>, selectResource: setResource,
         availableResources: objectType ? explorerResourceCapabilities(objectType.definition.source, canManage) : [], additionalTools: objectTools.tools,
         saved: activeScope?.saved, savedLoading: !activeScope && !scopeError, savedError: scopeError, openSavedItem,
@@ -210,7 +218,7 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
         saveCompleted: detail => openSavedItem(detail.id), updateSavedItem: detail => setScope(previous => previous?.key === scopeKey ? { ...previous, saved: detail } : previous),
         addFilter, backToTypes: () => navigate(entry.returnTo), toggleCatalog: () => setCatalogOpen(value => !value), closeCatalog: () => setCatalogOpen(false), catalogOpen,
         mode, setMode, clearSelection: () => setChosen([]),
-        filterButton: <ExplorerFilterButton open={filtersOpen} count={filterCount + sorts.length} onClick={() => setFiltersOpen(value => !value)} />,
+        filterButton: <ExplorerFilterButton open={filtersOpen} count={filterCount + sorts.length} onClick={() => { if (mode === 'explore') { setMode('results'); setFiltersOpen(true); } else setFiltersOpen(value => !value); }} />,
       }}>
         <ExplorerResults results={objectType && query && !error ? { source: selectionSource, schema: '', table: objectType.definition.id, rows, columns: fields,
           columnTypes: types, metadata, dataColumns, selectedRows: chosen, selectionLimit: 100, onSelectedRowsChange: setChosen, onActiveRowChange: setActiveRow,

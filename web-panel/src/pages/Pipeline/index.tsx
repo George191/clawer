@@ -17,6 +17,7 @@ import PostgresIcon from './PostgresGlyph';
 import './ontology-frame.css';
 import './foundry-workbench-tokens.css';
 import './ontology-workspace.css';
+import './explorer-resource-tools.css';
 import ExplorerCatalog from './ExplorerCatalog';
 import ExplorerWorkbench, { ExplorerFilterButton, ExplorerResults, ExplorerResultsFooter, explorerResultColumns } from './ExplorerWorkbench';
 import ExplorerAppliedConditions from './ExplorerAppliedConditions';
@@ -39,7 +40,7 @@ import { useSandboxIdentity } from './SandboxMarkings';
 import { getSessionState } from '../../services/session';
 import { explorerResourceCapabilities } from '../../services/explorerCapabilities';
 import SandboxIndexPreview, { INDEX_PREVIEW_SCHEMA, INDEX_PREVIEW_TABLE } from './SandboxIndexPreview';
-import { appendAndFilters, blankExplorerFilter, cellFilterRows, countFilterTerms, explorerFilterTerms } from './explorerFilters';
+import { appendAndFilters, blankExplorerFilter, cellFilterRows, countFilterTerms, exactCellValue, explorerFilterTerms } from './explorerFilters';
 import type { ExplorerFilter } from './explorerFilters';
 import  {  TemplateGlyph,  inferSiteKind  }  from  '../AICollect/WorkspaceDock';
 import { fetchCurrentUserContext, fetchLayers, fetchLayerTables, fetchTableData, fetchHandlerCode, queryEtlTable, queryExplorerPreview, fetchRowPreviewPolicy, fetchEtlTableColumns, fetchTableStream, fetchLayerScript, setTableOffset, validateHandlerCode, saveHandlerCode, updateEtlRow, deleteEtlRow, fetchEtlApis, createEtlApi, updateEtlApi, deleteEtlApi, fetchVulnerabilityKeywords, uploadVulnerabilityKeywords, activateVulnerabilityKeywordVersion, downloadVulnerabilityKeywordVersion, downloadCurrentVulnerabilityKeywords } from '../../services/api';
@@ -972,7 +973,7 @@ const DataLayersWorkspace: React.FC = () => {
     const apiPanel = (
         <section className={`flow-filter-api-section${isSchemas ? ' is-docked' : ''}`}>
             <div className="flow-filter-api-title"><strong>{isSchemas ? 'Published APIs' : 'Open APIs'}</strong><span className="flow-api-status flow-api-status--enabled">Token required · Validity window enforced</span>{!isSchemas && <button type="button" className="flow-filter-api-close" aria-label="Close APIs" onClick={() => setApiListOpen(false)}><CloseOutlined /></button>}</div>
-            {apiCount === 0 ? <div className="flow-filter-api-empty"><span>{apisLoading ? 'Loading published APIs…' : 'No published APIs'}</span><button type="button" className="flow-filter-api-add" disabled={mutationLoading || apisLoading} onClick={addApi}><PlusOutlined /> Add API</button></div> : <>
+            {apiCount === 0 ? <div className="flow-filter-api-empty"><span>{apisLoading ? 'Loading published APIs…' : 'No published APIs'}</span><button type="button" className={isSchemas ? 'explorer-resource-add' : 'flow-filter-api-add'} disabled={mutationLoading || apisLoading} onClick={addApi}><PlusOutlined /> Add API</button></div> : <>
                 <div className="flow-filter-api-list">{openApis.map((api, index) => <div className="flow-filter-api-item" key={api.id}>
                     <div className="flow-filter-api-item-head"><strong>API {index + 1}</strong><span>Token required</span><Button size="small" danger disabled={mutationLoading || apisLoading} onClick={() => removeApi(api)}>Delete publication</Button></div>
                     <div className="flow-filter-api-grid">
@@ -990,7 +991,7 @@ const DataLayersWorkspace: React.FC = () => {
                         <p>Set <code>limit</code> (1–500, default 50) and <code>offset</code> (default 0). Use the returned <code>nextOffset</code> until it is null. Filters narrow the published data range.</p>
                     </details>
                 </div>)}</div>
-                <div className="flow-filter-api-add-row"><Button size="small" loading={mutationLoading} disabled={apisLoading || !openApis.length} onClick={saveApis}>Save API settings</Button><button type="button" className="flow-filter-api-add" disabled={mutationLoading || apisLoading} onClick={addApi}><PlusOutlined /> Add API</button></div>
+                <div className="flow-filter-api-add-row"><Button size="small" loading={mutationLoading} disabled={apisLoading || !openApis.length} onClick={saveApis}>Save API settings</Button><button type="button" className={isSchemas ? 'explorer-resource-add' : 'flow-filter-api-add'} disabled={mutationLoading || apisLoading} onClick={addApi}><PlusOutlined /> Add API</button></div>
             </>}
         </section>
     );
@@ -1091,6 +1092,10 @@ onSearchValues: value => {
     setFilterText(search); setAppliedQuery(current => ({ ...current, search })); setPageNumber(1);
     return true;
 },
+onExploreFilterValue: (field, value) => {
+    const scalar = exactCellValue(value, data?.columnTypes?.[field]);
+    if (scalar !== undefined) quickCellFilter(field, scalar, false);
+},
 names: Object.fromEntries((mapping?.properties || []).flatMap(p => p.sourceColumn ? [[p.sourceColumn, p.name]] : [])),
 rows: dataRows.map((row,i) => ({...row,...primaryKey(row,i)})),
 selected: workbenchRows,
@@ -1114,7 +1119,7 @@ closeCatalog: () => setCatalogOpen(false),
 mode: workbenchMode,
 setMode: setWorkbenchMode,
 clearSelection: () => { setWorkbenchRows([]); setSelectionEpoch(n => n + 1); },
-filterButton: showPreview && <ExplorerFilterButton open={filterOpen} count={filterCount + sortCount} onClick={() => activateTool('filter')} />} : undefined}>
+filterButton: showPreview && <ExplorerFilterButton open={filterOpen} count={filterCount + sortCount} onClick={() => { if (workbenchMode === 'explore') { setWorkbenchMode('results'); setFilterOpen(true); } else activateTool('filter'); }} />} : undefined}>
 
                     {!selectedTableAvailable ? <div className="flow-inspector-body" aria-busy={explorerLoading}>
                         {requestError ? <div className="flow-schema-state" role="alert">{requestError} <Button size="small" onClick={refreshWorkspace}>Retry</Button></div> : !explorerLoading && <div className="flow-schema-state" role="status">{requestedSchema && requestedTable ? 'Object type is unavailable.' : 'Choose an object type from the catalog.'}</div>}
@@ -1216,6 +1221,7 @@ footer: previewPage && <ExplorerResultsFooter offset={previewPage.offset} rowCou
                                 if (filterText === appliedQuery.search) setFilterText('');
                                 setAppliedQuery(current => ({ ...current, search: '' })); setPageNumber(1);
                             }} removeSort={field => { if (requireAppliedSortDraft()) updateExplorerSorts(appliedQuery.sorts.filter(item => item.field !== field)); }} />}
+                        {isSchemas && resourceView !== 'preview' && <div className={`explorer-resource-view explorer-resource-view--${resourceView}`} role="region" aria-label="Object inspection tool" tabIndex={0}>
                         {isSchemas && resourceView === 'schema' && <ExplorerTableSchema key={`${selectedSchema}.${table.name}`} schema={selectedSchema} table={table.name} canManage={canManage} onDirtyChange={setMappingDirty} onSaved={() => setPreviewRevision(v=>v+1)} />}
                         {isSchemas && resourceView === 'evidence' && <ExplorerTableEvidence key={tableDescription} schema={selectedSchema} table={table.name} canManage={canManage} />}
                         {isSchemas && resourceView === 'stream' && <section className="flow-schema-details flow-explorer-stream" aria-label="Stream status">
@@ -1234,6 +1240,8 @@ footer: previewPage && <ExplorerResultsFooter offset={previewPage.offset} rowCou
                                 : !stream?.available ? <div className="flow-schema-state" role="status"><strong>{stream?.topic ? 'Stream unavailable' : 'No active stream'}</strong><p>{stream?.reason || 'There is no stream information for this table.'}</p></div>
                                 : <ExplorerStreamPositions stream={stream} />}
                         </section>}
+                            {resourceView === 'api' && (canManage ? apiPanel : <div className="flow-schema-state" role="status">Published APIs are available to administrators only.</div>)}
+                        </div>}
                         {showPreview && !savedBlocked && queryScopeReady && previewError && <div className="flow-schema-state flow-preview-error" role="alert">
                             <strong>Data preview unavailable</strong><p>{previewError}</p>
                             {previewUnavailable && <p>For an expensive query, narrow the filters before trying again.</p>}
@@ -1254,7 +1262,6 @@ footer: previewPage && <ExplorerResultsFooter offset={previewPage.offset} rowCou
                             footerAccessory={!isSchemas && canManage && <span className="flow-api-count"><button type="button" className="flow-api-count-number" onClick={() => { setApiListOpen(true); setFilterOpen(true); }}>{apiCount}</button><span className="flow-api-count-label"> / APIs</span></span>}>
                             {!isSchemas && canManage && apiListOpen && apiPanel}
                         </ExplorerFilterEditor>}
-                            {isSchemas && resourceView === 'api' && (canManage ? apiPanel : <div className="flow-schema-state" role="status">Published APIs are available to administrators only.</div>)}
                             {showPreview && !savedBlocked && queryScopeReady && !previewError && (!isSchemas && (<ConfigProvider locale={enUS}><Table className="flow-data-table" size="small" loading={loading} pagination={{ current: pageNumber, pageSize, total: data?.total ?? data?.rowCount ?? 0, size: 'small', showTotal: (total: number, range: [number, number]) => `${range[0]}–${range[1]} / ${data?.totalEstimated ? '~' : ''}${total.toLocaleString('en-US')} rows${data?.totalEstimated ? ' (estimated)' : ''} · ${table.size} · ${fieldCount} fields`, showSizeChanger: true, pageSizeOptions: [10, 20, 50], onChange: (page, size) => { if (editingRowKey) { message.warning('Save or cancel the current row edit first'); return; } setPageNumber(size !== pageSize ? 1 : page); setPageSize(size); } }} rowKey={rowKey} scroll={{ x: 'max-content' }} dataSource={dataRows} columns={dataColumns} onRow={(row) => ({ onDoubleClick: () => startRowEdit(rowKey(row)), className: editingRowKey === rowKey(row) ? 'flow-row-editing' : undefined })} /></ConfigProvider>))}
                     </ExplorerResults>
                     <Modal  className="flow-surface-modal flow-script-modal"  title="Layer  script"  open={scriptOpen} onCancel={closeScript} keyboard={!mutationLoading} maskClosable={!mutationLoading}  footer={null}  width={720}>

@@ -120,30 +120,55 @@ function drag(field: string, controls: Controls) {
 export function LayoutHeader({ field, width, controls, children }: {
   field: string; width: number; controls: Controls; children: React.ReactNode;
 }) {
-  const start = useRef<{ x: number; width: number }>();
-  const [delta, setDelta] = useState(0);
-  return <div className="result-column-header" {...drag(field, controls)}>
+  const start = useRef<{ pointerId: number; x: number; width: number; originalWidth: number; nextWidth: number }>();
+  const frame = useRef<number>();
+  const currentControls = useRef(controls);
+  currentControls.current = controls;
+  const [resizing, setResizing] = useState(false);
+  const clampWidth = (value: number) => Math.max(80, Math.min(1200, Math.round(value)));
+  useEffect(() => () => { if (frame.current !== undefined) cancelAnimationFrame(frame.current); }, []);
+  const finishResize = (cancel: boolean, target?: HTMLElement) => {
+    const resize = start.current;
+    if (!resize) return;
+    start.current = undefined;
+    if (frame.current !== undefined) { cancelAnimationFrame(frame.current); frame.current = undefined; }
+    setResizing(false);
+    currentControls.current.column(field, { width: cancel ? resize.originalWidth : resize.nextWidth });
+    if (target?.hasPointerCapture(resize.pointerId)) target.releasePointerCapture(resize.pointerId);
+  };
+  return <div className="result-column-header" {...drag(field, controls)} draggable={controls.ready && !controls.saving && !resizing}>
     <span className="result-grip" title={'Drag to move ' + field} aria-hidden="true">⠿</span>{children}
-    <span role="separator" aria-orientation="vertical" aria-label={'Resize ' + field} aria-valuenow={width} tabIndex={0}
-      className="result-resizer" draggable={false} style={{ transform: 'translateX(' + delta + 'px)' }}
+    <span role="separator" aria-orientation="vertical" aria-label={'Resize ' + field} aria-valuenow={width} aria-valuemin={80} aria-valuemax={1200} tabIndex={0}
+      className="result-resizer" draggable={false}
       onDragStart={e => { e.stopPropagation(); e.preventDefault(); }}
       onPointerDown={e => {
-        if (!controls.ready || controls.saving || e.button !== 0) return;
-        e.preventDefault(); e.stopPropagation(); e.currentTarget.setPointerCapture(e.pointerId);
-        start.current = { x: e.clientX, width: e.currentTarget.closest('th')?.getBoundingClientRect().width || width };
+        if (start.current || !controls.ready || controls.saving || e.button !== 0) return;
+        e.preventDefault(); e.stopPropagation();
+        start.current = { pointerId: e.pointerId, x: e.clientX, width: e.currentTarget.closest('th')?.getBoundingClientRect().width || width, originalWidth: width, nextWidth: width };
+        e.currentTarget.setPointerCapture(e.pointerId);
+        setResizing(true);
       }}
-      onPointerMove={e => { if (start.current) setDelta(e.clientX - start.current.x); }}
-      onPointerCancel={() => { start.current = undefined; setDelta(0); }}
+      onPointerMove={e => {
+        const resize = start.current;
+        if (!resize || resize.pointerId !== e.pointerId) return;
+        resize.nextWidth = clampWidth(resize.width + e.clientX - resize.x);
+        if (frame.current === undefined) frame.current = requestAnimationFrame(() => {
+          frame.current = undefined;
+          if (start.current) currentControls.current.column(field, { width: start.current.nextWidth });
+        });
+      }}
+      onPointerCancel={e => { if (start.current?.pointerId === e.pointerId) finishResize(true, e.currentTarget); }}
+      onLostPointerCapture={e => { if (start.current?.pointerId === e.pointerId) finishResize(true); }}
       onPointerUp={e => {
-        if (!start.current) return;
-        const next = start.current.width + e.clientX - start.current.x;
-        start.current = undefined; setDelta(0);
-        controls.column(field, { width: Math.max(80, Math.min(1200, Math.round(next))) });
+        const resize = start.current;
+        if (!resize || resize.pointerId !== e.pointerId) return;
+        resize.nextWidth = clampWidth(resize.width + e.clientX - resize.x);
+        finishResize(false, e.currentTarget);
       }}
       onKeyDown={e => {
-        if (!['ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+        if (!['ArrowLeft', 'ArrowRight'].includes(e.key) || start.current) return;
         e.preventDefault();
-        controls.column(field, { width: Math.min(1200, Math.max(80, width + (e.key === 'ArrowLeft' ? -10 : 10))) });
+        controls.column(field, { width: clampWidth(width + (e.key === 'ArrowLeft' ? -10 : 10)) });
       }} />
   </div>;
 }

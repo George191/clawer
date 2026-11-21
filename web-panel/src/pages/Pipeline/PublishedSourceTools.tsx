@@ -9,6 +9,7 @@ import type { ResourceView } from './ExplorerWorkbenchHeader';
 import ExplorerStreamPositions, { topicRate } from './ExplorerStreamPositions';
 import ExplorerTableEvidence from './ExplorerTableEvidence';
 import './published-source-tools.css';
+import './explorer-resource-tools.css';
 
 function SourceStream({ schema, table }: { schema: string; table: string }) {
   const [result, setResult] = useState<EtlStreamState>();
@@ -60,15 +61,17 @@ export default function PublishedSourceTools({ objectType, resource, onClose, ca
   const definition = objectType.definition, source = definition.source;
   if (resource === 'preview') return null;
   const allowed = explorerResourceCapabilities(source, canManage).includes(resource);
-  return <Modal className="flow-surface-modal published-source-tools" title={titles[resource]} open onCancel={onClose} width={960} footer={<Button onClick={onClose}>Done</Button>}>
+  return <Modal className="flow-surface-modal published-source-tools explorer-resource-dialog" title={titles[resource]} open onCancel={onClose} width={960} footer={<Button onClick={onClose}>Done</Button>}>
     {!allowed ? <p role="alert">This object type does not provide the requested source tool.</p> : <>
-      <div className="published-source-context"><strong>{definition.name}</strong><span>Physical source <code>{source.schema}.{source.table}</code></span></div>
+      <div className="published-source-context explorer-resource-context"><strong>{definition.name}</strong><span>Physical source <code>{source.schema}.{source.table}</code></span></div>
+      <div className="explorer-resource-dialog-body" role="region" aria-label={titles[resource]} tabIndex={0}>
       {resource === 'stream' && <SourceStream key={objectType.id} schema={source.schema!} table={source.table!} />}
       {resource === 'evidence' && <ExplorerTableEvidence key={objectType.id} schema={source.schema!} table={source.table!} canManage={canManage} />}
       {resource === 'schema' && <section className="flow-schema-details" aria-label="Source column mapping"><header><div><h3>Source column mapping</h3><p>Published property mappings. Edit the object type through Model revisions to change this definition.</p></div></header>
-        <table><thead><tr><th scope="col">Property</th><th scope="col">Property ID</th><th scope="col">Type</th><th scope="col">Source column</th></tr></thead><tbody>{definition.properties.map(property => <tr key={property.id}><td>{property.name}</td><td><code>{property.id}</code></td><td>{property.type}</td><td><code>{property.sourceColumn || '—'}</code></td></tr>)}</tbody></table>
+        <div className="explorer-resource-table" role="region" aria-label="Published property source columns" tabIndex={0}><table><thead><tr><th scope="col">Property</th><th scope="col">Property ID</th><th scope="col">Type</th><th scope="col">Source column</th></tr></thead><tbody>{definition.properties.map(property => <tr key={property.id}><td>{property.name}</td><td><code>{property.id}</code></td><td>{property.type}</td><td><code>{property.sourceColumn || '—'}</code></td></tr>)}</tbody></table></div>
       </section>}
       {resource === 'api' && <SourceApis key={objectType.id} schema={source.schema!} table={source.table!} />}
+      </div>
     </>}
   </Modal>;
 }

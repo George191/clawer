@@ -4,6 +4,7 @@ import client from '../../services/api';
 import { fetchPublishedOntologyType, listOntologyRecords, ontologyError } from '../../services/ontology';
 import { generateOntologySdk, ontologySdkFilename, type OntologySdkFunction } from '../../services/ontology_sdk';
 import { getSessionState } from '../../services/session';
+import './explorer-resource-tools.css';
 
 type Download = { url: string; filename: string; revision: number; identity: string };
 type FunctionsPage = { revision: number; items: OntologySdkFunction[] };
@@ -62,7 +63,7 @@ export default function OntologySdkDownload({ definitionId, open, onClose }: { d
     setVersion(value => value + 1);
   };
   return <>
-    <Modal open={open} centered className="flow-surface-modal flow-published-dialog" title="TypeScript SDK" onCancel={close} footer={<>
+    <Modal open={open} centered className="flow-surface-modal flow-published-dialog explorer-resource-dialog" title="TypeScript SDK" onCancel={close} footer={<>
       <Button onClick={close}>Close</Button>
       {download && <a className="ui-btn ui-btn-primary" href={download.url} download={download.filename}
         onClick={event => {

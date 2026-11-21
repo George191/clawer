@@ -140,7 +140,7 @@ export default function ExplorerFilterEditor({ rules, setRules, search, onSearch
                 <button type="button" aria-label="Scroll right" onClick={() => sortConditionsRef.current?.scrollBy({ left: 140, behavior: 'smooth' })}>›</button>
             </div>}
         </div>
-        {coverage}
+        {coverage && (columnMode ? <details className="explorer-filter-advanced"><summary>Index coverage</summary>{coverage}</details> : coverage)}
         <div className="flow-filter-apply"><button type="button" className={columnMode ? 'explorer-filter-apply-button' : 'flow-filter-apply-button'} onClick={onApply}>Apply filters</button><span className="flow-filter-edited-hint">Apply to update filters and pending sorts</span>{footerAccessory}</div>
         {children}
     </div>;

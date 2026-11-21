@@ -42,3 +42,6 @@
 .explorer-filter-popup .explorer-filter-value-actions { display:flex; flex:none; justify-content:flex-end; gap:6px; padding-top:8px; border-top:1px solid var(--ontology-border); }
 .explorer-filter-popup.explorer-filter-operator-dropdown .ui-dropdown-menu { min-width:208px; max-height:300px; overflow:auto; }
 .explorer-filter-popup.explorer-filter-operator-dropdown .ui-dropdown-menu-item { min-height:28px; padding:4px 8px; font-size:12px; }
+
+.explorer-filter-editor .explorer-filter-advanced { margin:0; padding:7px 12px; border-top:1px solid var(--ontology-border); color:var(--ontology-muted); font-size:11px; }
+.explorer-filter-editor .explorer-filter-advanced > summary { cursor:pointer; }

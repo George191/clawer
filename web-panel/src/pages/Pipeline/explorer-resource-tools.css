@@ -1,0 +1,93 @@
+.explorer-resource-view { flex:1; min-width:0; min-height:0; padding:12px 16px 16px; overflow:auto; overscroll-behavior:contain; scroll-padding:12px; background:var(--ontology-panel); color:var(--ontology-text); font-size:12px; }
+.explorer-resource-view > .flow-schema-details { max-width:none; padding:0; overflow:visible; }
+.explorer-resource-view > .flow-schema-details > header,
+.explorer-resource-dialog-body > .flow-schema-details > header { align-items:center; gap:12px; margin:0 0 14px; padding-bottom:12px; border-bottom:1px solid var(--ontology-border); }
+.explorer-resource-view .flow-schema-details h3,
+.explorer-resource-dialog .flow-schema-details h3 { margin:0 0 4px; font-size:13px; font-weight:500; line-height:20px; }
+.explorer-resource-view .flow-schema-details p,
+.explorer-resource-dialog .flow-schema-details p { line-height:1.5; }
+.explorer-resource-view :is(table,.ui-btn,select),
+.explorer-resource-dialog :is(table,.ui-btn,select) { font-size:12px; }
+.explorer-resource-view .flow-schema-details :is(th,td) { padding:7px 10px; vertical-align:top; }
+.explorer-resource-view a { color:var(--ui-action-link); }
+.explorer-resource-view > .physical-property-workbench { flex:none; box-sizing:border-box; width:100%; min-height:0; padding:0; background:var(--ontology-panel); font-size:12px; }
+.explorer-resource-view .physical-property-workbench .flow-foundry-property-main { gap:10px; padding:0 12px 0 0; }
+.explorer-resource-view .physical-property-workbench .flow-foundry-property-header > div { padding:9px 12px; }
+.explorer-resource-view .physical-property-workbench .flow-foundry-property-header h3 { font-size:13px; font-weight:500; }
+.explorer-resource-view .physical-property-workbench .flow-foundry-property-header > div > span { color:var(--ontology-muted); font-size:11px; }
+.explorer-resource-view .physical-property-workbench .flow-foundry-property-header nav { gap:16px; padding-inline:12px; }
+.explorer-resource-view .physical-property-workbench .flow-foundry-property-header nav button[aria-pressed=true] { color:var(--ui-action-link); border-color:var(--ui-action-bg); }
+.explorer-resource-view .physical-property-workbench .flow-foundry-property-tools { min-height:36px; gap:7px; padding:5px 8px; }
+.explorer-resource-view .physical-property-workbench .flow-foundry-property-tools strong { font-size:12px; font-weight:500; }
+.explorer-resource-view .physical-property-workbench .flow-foundry-property-table-wrap table { font-size:12px; }
+.explorer-resource-view .physical-property-workbench .flow-foundry-property-list .flow-foundry-property-table-wrap { max-height:min(45vh,420px); }
+.explorer-resource-view .physical-property-workbench .flow-foundry-property-list :is(th,td) { height:30px; padding:4px 8px; }
+.explorer-resource-view .physical-property-inspector { position:sticky; top:0; min-height:0; max-height:55vh; overflow:auto; overscroll-behavior:contain; }
+.explorer-resource-view .physical-property-inspector > header { position:sticky; top:0; z-index:2; background:var(--ontology-panel); }
+.explorer-resource-view .physical-property-inspector nav { gap:12px; }
+.explorer-resource-view .physical-property-fields { gap:9px; padding:12px; font-size:12px; }
+.explorer-resource-view .physical-property-fields h4 { color:var(--ontology-muted); font-size:11px; font-weight:500; }
+.explorer-resource-view .physical-property-inspector nav [aria-pressed=true],
+.explorer-resource-view .physical-property-preview nav [aria-pressed=true] { color:var(--ui-action-link); box-shadow:inset 0 -2px var(--ui-action-bg); }
+.explorer-resource-view .physical-property-workbench .flow-foundry-property-list .visibility { background:color-mix(in srgb,var(--ui-action-bg) 12%,var(--ontology-panel)); color:var(--ui-action-link); }
+.explorer-resource-view .physical-selection { border-color:var(--ontology-control-border); }
+.explorer-resource-view .is-selected .physical-selection,
+.explorer-resource-view .physical-property-workbench .physical-property-toggle input:checked,
+.explorer-resource-view .physical-property-preview input[type=checkbox]:checked { background:var(--ui-action-bg); color:var(--ui-action-text); }
+.explorer-resource-view .physical-property-preview .flow-foundry-property-preview-tools { min-height:36px; padding:5px 8px; }
+.explorer-resource-view .flow-table-evidence .flow-evidence-card { gap:9px; padding:12px; border-radius:3px; background:var(--ontology-panel); }
+.explorer-resource-view .flow-table-evidence .flow-evidence-card h4 { font-size:12px; font-weight:500; }
+.explorer-resource-view .flow-explorer-stream-meta { gap:8px; margin:12px 0; }
+.explorer-resource-view .flow-explorer-stream-meta > div { padding:9px 12px; border-radius:3px; }
+.explorer-resource-view .flow-explorer-stream > label { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+.flow-console--ontology .explorer-resource-view > .flow-filter-api-section { width:100%; max-width:none; margin:0; padding:0; overflow:visible; border:0; border-radius:0; background:var(--ontology-panel); }
+.explorer-resource-view .flow-filter-api-title { min-height:32px; gap:10px; margin:0 0 12px; padding-bottom:9px; border-bottom:1px solid var(--ontology-border); font-size:13px; }
+.explorer-resource-view .flow-filter-api-title strong { font-weight:500; }
+.explorer-resource-view .flow-filter-api-list { max-height:none; overflow:visible; gap:12px; padding:0; }
+.explorer-resource-view .flow-filter-api-item { padding:12px; border:1px solid var(--ontology-border); border-radius:3px; }
+.explorer-resource-view .flow-filter-api-item-head { margin-bottom:10px; font-size:12px; }
+.explorer-resource-view :is(.flow-filter-api-item-head span,.flow-filter-api-grid label,.flow-filter-api-token,.flow-filter-api-range,.flow-filter-api-permissions,.flow-filter-api-permissions strong,.flow-api-status) { font-size:12px; }
+.explorer-resource-view .flow-filter-api-range { flex-wrap:wrap; }
+.explorer-resource-view .flow-filter-api-range .flow-api-filter { flex:1; min-width:140px; }
+.explorer-resource-view .flow-filter-api-section .flow-api-preview { padding:9px; overflow-wrap:anywhere; border:1px solid var(--ontology-border); background:var(--ontology-bg); font-size:12px; }
+.explorer-resource-view .flow-filter-api-section details { margin-top:10px; }
+.explorer-resource-view .flow-filter-api-section summary { color:var(--ontology-muted); font-size:12px; cursor:pointer; }
+.explorer-resource-view .explorer-resource-add { display:inline-flex; align-items:center; gap:5px; padding:4px 8px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-panel); color:var(--ui-action-link); font:inherit; cursor:pointer; }
+.explorer-resource-dialog .ui-modal-content { display:flex; flex-direction:column; max-height:calc(100dvh - 48px); min-height:0; }
+.explorer-resource-dialog :is(.ui-modal-header,.ui-modal-footer) { flex:none; }
+.explorer-resource-dialog .ui-modal-header { padding:13px 16px; }
+.explorer-resource-dialog .ui-modal-title { font-size:14px; font-weight:500; line-height:20px; }
+.explorer-resource-dialog .ui-modal-footer { padding:10px 16px; }
+.explorer-resource-dialog .ui-modal-body { display:flex; flex-direction:column; min-height:0; max-height:70vh; gap:12px; padding:12px 16px; overflow:auto; color:var(--ontology-text); font-size:12px; line-height:1.5; }
+.explorer-resource-dialog .ui-modal-body:has(> :is(.explorer-resource-dialog-body,.flow-ontology-tool-content)) { overflow:hidden; }
+.explorer-resource-dialog .explorer-resource-context { display:flex; flex:none; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:4px 12px; margin:0; padding:0 0 10px; border-bottom:1px solid var(--ontology-border); font-size:12px; }
+.explorer-resource-dialog .explorer-resource-context strong { font-weight:500; }
+.explorer-resource-context :is(span,code) { color:var(--ontology-muted); font-size:11px; overflow-wrap:anywhere; }
+.explorer-resource-dialog .explorer-resource-dialog-body,
+.explorer-resource-dialog .flow-ontology-tool-content { flex:1; min-height:0; max-height:none; padding:0; overflow:auto; border:0; overscroll-behavior:contain; scroll-padding:8px; font-size:12px; }
+.explorer-resource-dialog-body > .flow-schema-details { overflow:visible; }
+.explorer-resource-dialog-body > .flow-schema-details > header h3 { display:none; }
+.explorer-resource-dialog .explorer-resource-table { max-height:52vh; overflow:auto; border:1px solid var(--ontology-border); border-radius:3px; }
+.explorer-resource-dialog .explorer-resource-table table { min-width:550px; border:0; }
+.explorer-resource-dialog .explorer-resource-table th { position:sticky; top:0; z-index:1; background:var(--ontology-bg); }
+.explorer-resource-dialog .flow-tool-section { gap:10px; padding:12px; border-color:var(--ontology-border); }
+.explorer-resource-dialog .flow-tool-section :is(h3,h4),
+.explorer-resource-dialog .flow-ontology-tool-content .flow-create-heading h3 { font-size:13px; font-weight:500; }
+.explorer-resource-dialog .flow-tool-heading { padding-bottom:8px; border-bottom:1px solid var(--ontology-border); }
+.explorer-resource-dialog :is(.flow-tool-fields,.ontology-tx-fields) { gap:9px 12px; }
+.explorer-resource-dialog .flow-tool-section :is(th,td) { padding:7px 9px; font-size:12px; vertical-align:top; overflow-wrap:anywhere; }
+.explorer-resource-dialog .flow-tool-section th { color:var(--ontology-muted); font-weight:500; }
+.explorer-resource-dialog .flow-tool-section table { display:block; max-width:100%; overflow:auto; }
+.explorer-resource-dialog .flow-tool-section input[type=checkbox] { accent-color:var(--ui-action-bg); }
+.explorer-resource-dialog .flow-ontology-tool-content .ui-checkbox-input:checked + .ui-checkbox-inner { background:var(--ui-action-bg); border-color:var(--ui-action-bg); }
+.explorer-resource-dialog .flow-set-filters li { padding:2px 5px; border-radius:3px; background:var(--ontology-bg); }
+.explorer-resource-dialog .flow-ontology-revisions nav button[aria-pressed=true] { color:var(--ui-action-link); background:color-mix(in srgb,var(--ui-action-bg) 14%,var(--ontology-panel)); }
+@container (max-width:760px) {
+  .explorer-resource-view .physical-property-workbench .flow-foundry-property-main { padding:0; }
+  .explorer-resource-view .physical-property-inspector { position:static; max-height:50vh; }
+}
+@media (max-width:600px) {
+  .explorer-resource-view { padding:10px; }
+  .explorer-resource-dialog .ui-modal-content { max-height:calc(100dvh - 32px); }
+  .explorer-resource-dialog .ui-modal-body { max-height:calc(100dvh - 148px); padding:10px 12px; }
+}

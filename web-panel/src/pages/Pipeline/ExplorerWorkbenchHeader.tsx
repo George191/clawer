@@ -5,6 +5,9 @@ import type { SheetData } from 'write-excel-file/browser';
 import { projectHref } from '../../services/projectDomains';
 import { createSaved, listSaved, openSaved, publishedSavedPath, removeSaved, savedPath, sharing, type Exploration, type SavedDetail, type SavedKind, type SavedMeta, type WorkbenchQuery } from '../../services/explorerSaved';
 import PropertyTypeIcon from './PropertyTypeIcon';
+import ExplorerExploreView, { chooseExploreField } from './ExplorerExploreView';
+import useExplorerAggregation, { type ExplorerAggregationLoader } from './useExplorerAggregation';
+import { explorerPropertyType } from '../../services/explorerProperties';
 import './explorer-workbench.css';
 export type ResourceView = 'preview' | 'schema' | 'stream' | 'evidence' | 'api';
 export type ExplorerToolAction = { key: string; label: string; group: 'analyze' | 'inspect'; icon?: ReactNode; run: () => void };
@@ -25,6 +28,9 @@ type Props<Q extends object = WorkbenchQuery> = {
     types?: Record<string, string>;
     appliedSearch?: string;
     onSearchValues: (value: string) => boolean;
+    onExploreFilterValue: (field: string, value: unknown) => void;
+    aggregate?: ExplorerAggregationLoader;
+    analysisRevision?: number;
     rows: RecordRow[];
     selected: Selection[];
     query: Q;
@@ -80,24 +86,6 @@ async function downloadExcel(rows: RecordRow[], fields: string[], name: string) 
         return { value: text, type: String, format: '@' };
     }));
     await writeExcelFile(data, { sheet: 'Results', stickyRowsCount: 1 }).toFile(name + '.xlsx');
-}
-function ExploreChart({ field, fields, names, rows, select, onFilter }: {
-    field: string;
-    fields: string[];
-    names?: Record<string, string>;
-    rows: RecordRow[];
-    select: (s: string) => void;
-    onFilter: (s: string) => void;
-}) {
-    const counts = new Map<string, number>();
-    rows.forEach(row => { const text = textValue(row[field]); counts.set(text, (counts.get(text) ?? 0) + 1); });
-    const groups = Array.from(counts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 12);
-    return <section className="wb-explore" aria-label="Explore results"><div><h2>Explore</h2>
-        <label>Property <select value={field} onChange={e => select(e.target.value)}>{fields.map(f => <option key={f} value={f}>{names?.[f] || f}</option>)}</select></label></div>
-        <h3>{names?.[field] || field}</h3><p>Value counts across {rows.length} rows on this results page</p>
-        {groups.map(([name, count]) => <div className="wb-bar" key={name}><span title={name}>{name || 'No value'}</span>
-            <i style={{ width: Math.max(2, count / groups[0][1] * 100) + '%' }}/><strong>{count}</strong></div>)}
-        <button disabled={!field} onClick={() => onFilter(field)}>Filter by this property</button></section>;
 }
 export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuery>(p: Props<Q>) {
     const sourceKey = JSON.stringify(p.source);
@@ -160,7 +148,7 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
         if (p.savedLoading || p.savedError) return;
         setSaveKind(k); setName(''); setError(''); show(''); setDialog('save');
     }
-    function snapshot(): Exploration<Q> { return { ...p.query, chart: chart || null, view: p.mode }; }
+    function snapshot(): Exploration<Q> { return { ...p.query, chart: field || null, view: p.mode }; }
     const listKeys = p.selected.length
         ? p.selected.map(r => Object.fromEntries(Object.entries(r.identity).map(([k, v]) => [k, String(v)])))
         : saved?.kind === 'list' ? saved.content.keys ?? [] : [];
@@ -213,8 +201,13 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
             message.error({ content: `Unable to delete ${deleteTarget.kind}`, description: detail, className: 'explorer-toast' });
         } finally { setBusy(false); }
     }
-    function selectMode(mode: 'results' | 'explore') { p.selectResource('preview'); p.setMode(mode); show(''); }
-    const field = chart && p.fields.includes(chart) ? chart : p.fields[0] ?? '';
+    function selectMode(mode: 'results' | 'explore', property = chart) {
+        if (mode === 'explore') setChart(p.fields.includes(property) ? property : chooseExploreField(p.fields, p.types, p.rows, p.names));
+        p.selectResource('preview'); p.setMode(mode); show('');
+    }
+    const field = chart && p.fields.includes(chart) ? chart : chooseExploreField(p.fields, p.types, p.rows, p.names);
+    const aggregation = useExplorerAggregation(p.aggregate, JSON.stringify([p.source, p.query, p.analysisRevision]), field,
+        p.available && p.resource === 'preview' && p.mode === 'explore' && !p.savedLoading && !p.savedError && explorerPropertyType(p.types?.[field] || '') !== 'json');
     const find = p.fields.filter(f => [f, p.names?.[f]].join(' ').toLowerCase().includes(search.trim().toLowerCase()))
         .sort((a, b) => (p.names?.[a] || a).localeCompare(p.names?.[b] || b)).slice(0, 30);
     const hasValueSearch = !!search.trim();
@@ -230,12 +223,13 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
     const exportDescription = p.selected.length ? `Download ${p.selected.length} selected object${p.selected.length === 1 ? '' : 's'}.` : `Download ${p.rows.length} object${p.rows.length === 1 ? '' : 's'} on this results page.`;
     const resources = p.availableResources;
     const sourceTool = p.source.kind === 'published';
+    const resourceIsCurrent = (view: ResourceView) => p.resource === view && (view !== 'preview' || p.mode === 'results');
     const apps = [
-        ...(resources.includes('preview') ? [{ key: 'preview', group: 'analyze', label: 'Data preview', icon: <TableOutlined />, run: () => openResource('preview') }] : []),
-        ...(resources.includes('stream') ? [{ key: 'stream', group: sourceTool ? 'inspect' : 'analyze', label: sourceTool ? 'Source stream' : 'Stream', icon: <SyncOutlined />, run: () => openResource('stream') }] : []),
-        ...(resources.includes('evidence') ? [{ key: 'evidence', group: sourceTool ? 'inspect' : 'analyze', label: sourceTool ? 'Source evidence' : 'Evidence', icon: <FileSearchOutlined />, run: () => openResource('evidence') }] : []),
-        ...(resources.includes('schema') ? [{ key: 'schema', group: 'inspect', label: sourceTool ? 'Source column mapping' : 'Properties & column mapping', icon: <ProfileOutlined />, run: () => openResource('schema') }] : []),
-        ...(resources.includes('api') && p.admin ? [{ key: 'api', group: 'inspect', label: sourceTool ? 'Source APIs' : 'Published APIs', icon: <ApiOutlined />, run: () => openResource('api') }] : []),
+        ...(resources.includes('preview') ? [{ key: 'preview', current: resourceIsCurrent('preview'), group: 'analyze', label: 'Data preview', icon: <TableOutlined />, run: () => openResource('preview') }] : []),
+        ...(resources.includes('stream') ? [{ key: 'stream', current: resourceIsCurrent('stream'), group: sourceTool ? 'inspect' : 'analyze', label: sourceTool ? 'Source stream' : 'Stream', icon: <SyncOutlined />, run: () => openResource('stream') }] : []),
+        ...(resources.includes('evidence') ? [{ key: 'evidence', current: resourceIsCurrent('evidence'), group: sourceTool ? 'inspect' : 'analyze', label: sourceTool ? 'Source evidence' : 'Evidence', icon: <FileSearchOutlined />, run: () => openResource('evidence') }] : []),
+        ...(resources.includes('schema') ? [{ key: 'schema', current: resourceIsCurrent('schema'), group: 'inspect', label: sourceTool ? 'Source column mapping' : 'Properties & column mapping', icon: <ProfileOutlined />, run: () => openResource('schema') }] : []),
+        ...(resources.includes('api') && p.admin ? [{ key: 'api', current: resourceIsCurrent('api'), group: 'inspect', label: sourceTool ? 'Source APIs' : 'Published APIs', icon: <ApiOutlined />, run: () => openResource('api') }] : []),
         ...(p.additionalTools ?? []).map(tool => ({ ...tool, run: () => { closeOpenIn(); tool.run(); } })),
         { key: 'excel', group: 'export', label: 'Export as Excel', description: exportDescription, icon: exporting ? <LoadingOutlined spin /> : <DownloadCircleFilled />, disabled: exporting || !p.rows.length, run: async () => {
             if (exporting) return;
@@ -266,7 +260,11 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
         }}/></label>
         <div className="wb-open-in-body">
             <nav className="wb-open-in-categories" role="menu" aria-label="Tool categories">{[['all', 'All'], ...(apps.some(app => app.group === 'analyze') ? [['analyze', 'Analyze objects']] : []), ...(apps.some(app => app.group === 'inspect') ? [['inspect', 'Inspect']] : []), ['export', 'Export objects']].map(([key, label]) => <button type="button" role="menuitemradio" aria-checked={appGroup === key} key={key} onClick={() => setAppGroup(key)}>{label}</button>)}</nav>
-            <div className="wb-open-in-actions" role="menu" aria-label="Available tools">{matchingApps.map(app => <button type="button" role="menuitem" key={app.key} disabled={'disabled' in app && app.disabled} onClick={app.run}>{app.icon}<span>{app.label}{'description' in app && <small>{app.description}</small>}</span></button>)}{!matchingApps.length && <p role="status">No matching apps</p>}</div>
+            <div className="wb-open-in-actions" role="menu" aria-label="Available tools">{matchingApps.map(app => <button type="button" role="menuitem" key={app.key}
+                className={'current' in app && app.current ? 'is-current' : undefined} aria-current={'current' in app && app.current ? 'page' : undefined}
+                disabled={('current' in app && app.current) || ('disabled' in app && app.disabled)} onClick={app.run}>
+                {app.icon}<span>{app.label}{'description' in app && <small>{app.description}</small>}</span>{'current' in app && app.current && <small className="wb-tool-current">Current</small>}
+            </button>)}{!matchingApps.length && <p role="status">No matching apps</p>}</div>
         </div>
     </section>;
     const libraryContent = <section className="wb-library" aria-label={`Saved ${menu}`}>
@@ -323,7 +321,7 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
                             const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button'));
                             buttons[(buttons.indexOf(event.target as HTMLButtonElement) + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length]?.focus();
                         }}>
-                            <button type="button" role="menuitem" onClick={() => { setChart(choice); setSearch(''); selectMode('explore'); }}><BarChartOutlined />Add chart</button>
+                            <button type="button" role="menuitem" onClick={() => { setSearch(''); selectMode('explore', choice); }}><BarChartOutlined />Add chart</button>
                             <button type="button" role="menuitem" onClick={() => { setSearch(''); selectMode('results'); p.addFilter(choice); }}><FilterOutlined />Add filter</button>
                         </div>
                     </>}
@@ -332,9 +330,9 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
             {(['explorations', 'lists'] as const).map(entry => <Dropdown key={entry} trigger={['click']} placement="bottomRight" open={menu === entry}
                 onOpenChange={next => { if (next) openMenu(entry); else show(current => current === entry ? '' : current); }}
                 overlayClassName="flow-menu-popup wb-library-popup" popupRender={() => libraryContent}>
-                <button type="button" data-wb-menu={entry}>{entry === 'lists' ? 'Lists' : 'Explorations'} <DownOutlined /></button>
+                <button type="button" className="wb-query-action" data-wb-menu={entry}>{entry === 'lists' ? 'Lists' : 'Explorations'} <DownOutlined /></button>
             </Dropdown>)}
-            <button onClick={() => void openShare(saved)} disabled={p.savedLoading || !!p.savedError}>Share</button><button className="wb-primary" disabled={p.savedLoading || !!p.savedError} onClick={() => beginSave(saved?.kind === 'list' ? 'list' : 'exploration')}>Save</button></>}
+            <button className="wb-query-action" onClick={() => void openShare(saved)} disabled={p.savedLoading || !!p.savedError}>Share</button><button className="wb-primary wb-query-action" disabled={p.savedLoading || !!p.savedError} onClick={() => beginSave(saved?.kind === 'list' ? 'list' : 'exploration')}>Save</button></>}
         </div>
         {p.available && <><div className="wb-line wb-tools">
             <div className="wb-left">{p.layoutControl}{p.filterButton}
@@ -351,7 +349,8 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
             </Dropdown>
             </div>
         </div>
-        {p.resource === 'preview' && p.mode === 'explore' && !p.savedLoading && !p.savedError && <ExploreChart field={field} select={setChart} fields={p.fields} names={p.names} rows={p.rows} onFilter={f => { selectMode('results'); p.addFilter(f); }}/>}</>}
+        {p.resource === 'preview' && p.mode === 'explore' && !p.savedLoading && !p.savedError && <ExplorerExploreView field={field} select={setChart} fields={p.fields} names={p.names} types={p.types} rows={p.rows} aggregation={aggregation}
+            onFilter={f => { selectMode('results'); p.addFilter(f); }} onFilterValue={(field, value) => { p.onExploreFilterValue(field, value); }} />}</>}
         <Modal className="flow-surface-modal wb-saved-dialog" title="Save your work" open={dialog === 'save'} width={460} onCancel={() => { if (!busy) setDialog(''); }} keyboard={!busy} maskClosable={!busy} footer={<><Button disabled={busy} onClick={() => setDialog('')}>Cancel</Button><Button type="primary" loading={busy} disabled={!name.trim() || (saveKind === 'list' && !listKeys.length) || (saveKind === 'exploration' && saved?.kind === 'list')} onClick={() => void save()}>Save {saveKind}</Button></>}>
             <div className="wb-save-kind"><button type="button" aria-pressed={saveKind === 'exploration'} disabled={saved?.kind === 'list'} onClick={() => setSaveKind('exploration')}><BarChartOutlined /><strong>Exploration</strong><span>Search, filters, sorting and chart</span>{saveKind === 'exploration' && <CheckOutlined className="wb-save-kind-check" />}</button><button type="button" aria-pressed={saveKind === 'list'} disabled={!listKeys.length} onClick={() => setSaveKind('list')}><TableOutlined /><strong>List</strong><span>{listKeys.length} selected objects</span>{saveKind === 'list' && <CheckOutlined className="wb-save-kind-check" />}</button></div>
             {saved?.kind === 'list' && <p className="wb-dialog-help">A list keeps a fixed object selection. Return to all rows to create an exploration.</p>}

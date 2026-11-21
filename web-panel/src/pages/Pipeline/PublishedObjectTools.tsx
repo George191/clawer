@@ -14,6 +14,7 @@ import OntologySdkDownload from './OntologySdkDownload';
 import OntologyTransactions from './OntologyTransactions';
 import { parsePropertyValue } from './ontologyPropertyValue';
 import './published-tools.css';
+import './explorer-resource-tools.css';
 import './published-results.css';
 import './explorer-history.css';
 
@@ -193,8 +194,9 @@ export function usePublishedObjectTools({ objectType, actions, record, returnTo,
     createButton: create ? <Button size="small" icon={<PlusOutlined />} disabled={busy || pending} onClick={() => startAction('create', create.fields)}>Create object</Button> : null,
     actionsForRecord, renderHistory,
     dialogs: objectType ? <>
-      <Modal open={!!tool} centered width={1040} className="flow-surface-modal flow-published-dialog" title={tool} onCancel={() => setTool('')} footer={<Button onClick={() => setTool('')}>Close</Button>}>
-        <div className="flow-ontology-tool-content">
+      <Modal open={!!tool} centered width={1040} className="flow-surface-modal flow-published-dialog explorer-resource-dialog" title={tool} onCancel={() => setTool('')} footer={<Button onClick={() => setTool('')}>Close</Button>}>
+        <div className="explorer-resource-context"><strong>{objectType.definition.name}</strong><code>{objectType.definition.id}</code></div>
+        <div className="flow-ontology-tool-content" role="region" aria-label={tool || undefined} tabIndex={0}>
           {tool === 'Relationships and sets' && <OntologyGraph key={objectType.id} objectType={objectType} recordId={record?.id || undefined} returnTo={returnTo} onOpenExplorer={() => setTool('')} />}
           {tool === 'Transactions' && <OntologyTransactions key={objectType.id} objectType={objectType} onCommitted={onChanged} />}
           {tool === 'Functions' && <OntologyFunctions key={objectType.id} id={objectType.id} record={record} onCommitted={name => { message.success('Committed: ' + name); onChanged(); }} />}
