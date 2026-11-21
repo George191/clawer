@@ -1215,12 +1215,12 @@ footer: previewPage && <ExplorerResultsFooter offset={previewPage.offset} rowCou
                             <button type="button" className={`flow-tool ${scriptOpen ? 'is-active' : ''}`} onClick={() => activateTool('script')}>Layer script</button>
                         </div>}
                         {isSchemas && showPreview && !savedBlocked && queryScopeReady && <ExplorerAppliedConditions
-                            filters={appliedQuery.filters} search={appliedQuery.search} sorts={appliedQuery.sorts} removeFilters={removeFilterChip}
+                            filters={appliedQuery.filters} search={appliedQuery.search} removeFilters={removeFilterChip}
                             removeSearch={() => {
                                 if (!canChangePreview()) return;
                                 if (filterText === appliedQuery.search) setFilterText('');
                                 setAppliedQuery(current => ({ ...current, search: '' })); setPageNumber(1);
-                            }} removeSort={field => { if (requireAppliedSortDraft()) updateExplorerSorts(appliedQuery.sorts.filter(item => item.field !== field)); }} />}
+                            }} />}
                         {isSchemas && resourceView !== 'preview' && <div className={`explorer-resource-view explorer-resource-view--${resourceView}`} role="region" aria-label="Object inspection tool" tabIndex={0}>
                         {isSchemas && resourceView === 'schema' && <ExplorerTableSchema key={`${selectedSchema}.${table.name}`} schema={selectedSchema} table={table.name} canManage={canManage} onDirtyChange={setMappingDirty} onSaved={() => setPreviewRevision(v=>v+1)} />}
                         {isSchemas && resourceView === 'evidence' && <ExplorerTableEvidence key={tableDescription} schema={selectedSchema} table={table.name} canManage={canManage} />}

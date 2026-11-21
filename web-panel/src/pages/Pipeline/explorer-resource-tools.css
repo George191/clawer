@@ -81,7 +81,6 @@
 .explorer-resource-dialog .flow-tool-section input[type=checkbox] { accent-color:var(--ui-action-bg); }
 .explorer-resource-dialog .flow-ontology-tool-content .ui-checkbox-input:checked + .ui-checkbox-inner { background:var(--ui-action-bg); border-color:var(--ui-action-bg); }
 .explorer-resource-dialog .flow-set-filters li { padding:2px 5px; border-radius:3px; background:var(--ontology-bg); }
-.explorer-resource-dialog .flow-ontology-revisions nav button[aria-pressed=true] { color:var(--ui-action-link); background:color-mix(in srgb,var(--ui-action-bg) 14%,var(--ontology-panel)); }
 @container (max-width:760px) {
   .explorer-resource-view .physical-property-workbench .flow-foundry-property-main { padding:0; }
   .explorer-resource-view .physical-property-inspector { position:static; max-height:50vh; }

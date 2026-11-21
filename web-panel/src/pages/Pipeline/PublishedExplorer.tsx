@@ -240,9 +240,9 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
         } : undefined}>
           {error && <div className="flow-schema-state" role="alert">{error} <Button size="small" icon={<ReloadOutlined />} onClick={() => { if (scopeError) retryScope(value => value + 1); retry(value => value + 1); }}>Retry</Button></div>}
           {busy && !objectType && <div className="flow-schema-state" role="status">Loading published object set…</div>}
-          {query && <ExplorerAppliedConditions filters={activeFilters} search={query.search} sorts={sorts} names={names}
+          {query && <ExplorerAppliedConditions filters={activeFilters} search={query.search} names={names}
             removeFilters={(start, end) => { if (requireDraftApplied()) applyRules(activeFilters.filter((_, index) => index < start || index > end)); }}
-            removeSearch={() => { if (canChange()) changeQuery({ ...query, search: '' }); }} removeSort={field => { if (requireDraftApplied(true)) updateSorts(sorts.filter(item => item.field !== field)); }} />}
+            removeSearch={() => { if (canChange()) changeQuery({ ...query, search: '' }); }} />}
           {query?.keys && <div className="flow-schema-applied flow-query-chips" aria-label="Object set scope"><span>{query.keys.length} object references{result ? ` · ${result.count} matching objects` : ''}</span></div>}
           {filtersOpen && query && <ExplorerFilterEditor rules={filterRules} setRules={setFilterRules} sorts={draftSorts}
             onSortsChange={(next, apply) => { setDraftSorts(next); if (apply) updateSorts(next); }} fields={fields} rows={rows} formatValue={display}

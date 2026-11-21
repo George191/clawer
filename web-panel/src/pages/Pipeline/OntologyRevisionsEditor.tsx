@@ -56,7 +56,7 @@ export default function OntologyRevisionsEditor({ initial, definition, principal
     </label>
   );
 
-  return <div className="flow-semantic-saved">
+  return <div className="ontology-revisions__editor">
     <div className="flow-create-grid">
       <label className="flow-create-field"><span>Display name</span><Input maxLength={120} value={definition.name} disabled={disabled} onChange={event => change({ name: event.target.value })} /></label>
       <label className="flow-create-field"><span>Plural display name</span><Input maxLength={120} value={definition.pluralName} disabled={disabled} onChange={event => change({ pluralName: event.target.value })} /></label>

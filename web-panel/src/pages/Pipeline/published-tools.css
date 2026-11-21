@@ -14,7 +14,7 @@
 }
 .flow-published-dialog .ui-checkbox-input:checked + .ui-checkbox-inner,
 .flow-ontology-tool-content .ui-checkbox-input:checked + .ui-checkbox-inner { background: var(--ontology-muted); border-color: var(--ontology-muted); }
-.flow-tool-section, .flow-ontology-tool-content .flow-ontology-revisions {
+.flow-tool-section {
   display: grid;
   align-content: start;
   gap: 12px;
@@ -72,12 +72,6 @@
 .ontology-transaction fieldset > .ui-btn { justify-self: start; }
 .ontology-transaction fieldset > label, .flow-tool-section .flow-function-fields { max-width: 380px; }
 .flow-function-fields { display: grid; gap: 10px; }
-.flow-ontology-tool-content .flow-ontology-revisions { margin: 0; max-height: none; overflow: visible; }
-.flow-ontology-revisions .flow-create-heading, .flow-ontology-revisions .flow-ontology-revision-actions { margin-block: 0; }
-.flow-ontology-revisions nav.flow-ontology-revision-actions {
-  align-items: center; padding-block-end: 8px; border-bottom: 1px solid var(--ontology-control-border);
-}
-.flow-ontology-revisions nav button[aria-pressed="true"] { color: var(--ontology-text); background: color-mix(in srgb, var(--ontology-text) 9%, var(--ontology-panel)); }
 .flow-ontology-revision-table { font-size: 12px; }
 .flow-ontology-revision-table thead { background: var(--ontology-toolbar); color: var(--ontology-muted); }
 @container (min-width: 860px) {
@@ -85,7 +79,6 @@
   .ontology-transaction { grid-template-columns: minmax(0, 3fr) minmax(240px, 2fr); }
 }
 @container (max-width: 460px) {
-  .flow-tool-section, .flow-ontology-tool-content .flow-ontology-revisions { padding: 10px; }
+  .flow-tool-section { padding: 10px; }
   .flow-tool-fields > label { max-width: 100%; }
-  .flow-ontology-revisions :is(th, td) { overflow-wrap: anywhere; }
 }

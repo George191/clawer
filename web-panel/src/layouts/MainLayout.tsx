@@ -187,17 +187,7 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
     icon: <ApartmentOutlined />,
     defaultPath: '/ontology',
     accent: '#0EA5E9',
-    sections: [
-      {
-        key: 'lifecycle',
-        label: 'Workspace',
-        children: [
-          { key: '/ontology', icon: <SearchOutlined />, label: 'Discover' },
-          { key: '/ontology/runtime', icon: <ExperimentOutlined />, label: 'Runtime' },
-          { key: '/ontology/lineage', icon: <BranchesOutlined />, label: 'Lineage & Impact' },
-        ],
-      },
-    ],
+    sections: [],
   },
   'data-cockpit': {
     key: 'data-cockpit',
@@ -295,7 +285,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     next.delete('domain');
     navigate(`${location.pathname}${next.toString() ? `?${next.toString()}` : ''}`, { replace: true });
   }, [location.pathname, location.search, navigate]);
-  const hideSidebar = isFlowSurface || activeProjectKey === 'ai-collect' || isAtlasSurface || isGraphSurface || isAutomationSurface || isPlatformManagementSurface || isSystemSettingsSurface;
+  const hideSidebar = activeProjectKey === 'etl-pipeline' || activeProjectKey === 'ai-collect' || isAtlasSurface || isGraphSurface || isAutomationSurface || isPlatformManagementSurface || isSystemSettingsSurface;
   const palette = {
     appBg: isDark ? '#171A22' : '#F6F8FB',
     surface: isDark ? '#22262F' : '#FFFFFF',
@@ -1081,7 +1071,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                 pointerEvents: collapsed ? 'none' : 'auto',
               }}
             >
-              {!collapsed && activeProjectKey !== 'etl-pipeline' && (
+              {!collapsed && (
                 <>
                 <div style={{ display: 'flex', justifyContent: 'space-between', color: palette.secondary, fontSize: 12, marginBottom: 6 }}>
                   <span>Pipeline health today</span>

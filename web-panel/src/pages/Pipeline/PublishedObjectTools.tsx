@@ -200,7 +200,7 @@ export function usePublishedObjectTools({ objectType, actions, record, returnTo,
           {tool === 'Relationships and sets' && <OntologyGraph key={objectType.id} objectType={objectType} recordId={record?.id || undefined} returnTo={returnTo} onOpenExplorer={() => setTool('')} />}
           {tool === 'Transactions' && <OntologyTransactions key={objectType.id} objectType={objectType} onCommitted={onChanged} />}
           {tool === 'Functions' && <OntologyFunctions key={objectType.id} id={objectType.id} record={record} onCommitted={name => { message.success('Committed: ' + name); onChanged(); }} />}
-          {tool === 'Model revisions' && <OntologyRevisions key={objectType.id} definitionId={objectType.id} onMerged={onChanged} />}
+          {tool === 'Model revisions' && <OntologyRevisions key={objectType.id} showTitle={false} definitionId={objectType.id} onMerged={onChanged} />}
           {tool === 'Deleted objects' && <DeletedObjects key={objectType.id} objectType={objectType} onChanged={onChanged} />}
         </div>
       </Modal>
