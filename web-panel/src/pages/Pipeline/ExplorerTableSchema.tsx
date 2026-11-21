@@ -1,7 +1,7 @@
 import PropertyTypeIcon from './PropertyTypeIcon';
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Button } from '@/components/ui';
+import { Button, message } from '@/components/ui';
 import { FilterOutlined, PlusOutlined, SearchOutlined } from '@/components/ui/icons';
 import { fetchEtlTableColumns } from '../../services/api';
 import { explorerPropertyType, fetchExplorerProperties, saveExplorerProperties, type ExplorerMappedProperty as Property, type ExplorerPropertyMapping as Mapping } from '../../services/explorerProperties';
@@ -48,14 +48,13 @@ function Workbench({schema,table,canManage,identity,onSaved,onDirtyChange}: Prop
     const [filter,setFilter] = useState('');
     const [busy,setBusy] = useState(false);
     const [error,setError] = useState('');
-    const [notice,setNotice] = useState('');
     const [conflict,setConflict] = useState(false);
     const [reload,setReload] = useState(0);
     const alive = useRef(false), saving = useRef(false);
     useEffect(() => {
         alive.current = true;
         const read = new AbortController();
-        setError(''); setSaved(undefined); setDraft(undefined); setConflict(false); setNotice('');
+        setError(''); setSaved(undefined); setDraft(undefined); setConflict(false);
         Promise.all([fetchExplorerProperties(schema,table,read.signal),fetchEtlTableColumns(schema,table,read.signal)])
             .then(([mapping,cols]) => { if (!read.signal.aborted && getSessionState().identity===identity) {
                 setSaved(mapping); setDraft(mapping); setColumns([...cols].sort((a,b) => a.ordinalPosition-b.ordinalPosition)); setSelected(0);setNewProperties(new Set());
@@ -70,7 +69,7 @@ function Workbench({schema,table,canManage,identity,onSaved,onDirtyChange}: Prop
     if (!draft || !saved) return <section aria-label="Properties">{error ? <p role="alert">{error} <Button onClick={() => setReload(v=>v+1)}>Retry metadata</Button></p> : <p role="status">Loading properties…</p>}</section>;
     const editable = !!canManage && !busy, bound = !!draft.sourceDefinitionId, structural = editable && !bound;
     const p = draft.properties[selected];
-    const change = (next:Mapping) => {if (!editable) return;setDraft(next);setNotice('');if (!conflict) setError('');};
+    const change = (next:Mapping) => {if (!editable) return;setDraft(next);if (!conflict) setError('');};
     const patch = (i:number,delta:Partial<Property>) => change({...draft,properties:draft.properties.map((v,k)=>k===i?{...v,...delta}:v)});
     const choose = setSelected;
     const reveal = (id:string) => {setMode('properties');setTerm('');setFilter('');choose(draft.properties.findIndex(v=>v.id===id));};
@@ -102,18 +101,23 @@ function Workbench({schema,table,canManage,identity,onSaved,onDirtyChange}: Prop
         if (!editable || !dirty || saving.current || conflict) return;
         if (draft.properties.some(item=>!item.name.trim() || (!saved.properties.some(existing=>existing.id===item.id) && !/^[a-z][a-z0-9_-]{0,62}$/.test(item.id))) ||
             new Set(draft.properties.map(item=>item.id)).size!==draft.properties.length) {
-            setError('Each property needs a name and a unique ID starting with a lowercase letter.');return;
+            message.error({content:'Unable to save properties',description:'Each property needs a name and a unique ID starting with a lowercase letter.',className:'explorer-toast'});return;
         }
-        saving.current=true;setBusy(true);setError('');setNotice('');
+        saving.current=true;setBusy(true);setError('');
         try {
             const result=await saveExplorerProperties(schema,table,draft);
-            if (alive.current && getSessionState().identity===identity) {setSaved(result);setDraft(result);setNewProperties(new Set());setNotice('Property mapping saved.');onSaved?.();}
+            if (alive.current && getSessionState().identity===identity) {setSaved(result);setDraft(result);setNewProperties(new Set());message.success({content:'Property mapping saved',className:'explorer-toast'});onSaved?.();}
         } catch (e) {
             if (alive.current && getSessionState().identity===identity) {
-                setError(ontologyError(e,'Unable to save the property mapping.'));
+                message.error({content:'Unable to save properties',description:ontologyError(e,'Unable to save the property mapping.'),className:'explorer-toast'});
                 setConflict((e as {response?:{status?:number}}).response?.status===409);
             }
         } finally {saving.current=false;if (alive.current) setBusy(false);}
+    };
+    const discard = () => {
+        if (busy) return;
+        if (conflict) {setReload(v=>v+1);return;}
+        setDraft(saved);setSelected(0);setNewProperties(new Set());setError('');
     };
     const termLower=term.trim().toLowerCase();
     const matches=(item:Property|undefined) => !filter || (filter==='unmapped' ? !item?.sourceColumn : filter==='mapped' ? !!item?.sourceColumn : item?.status===filter || item?.visibility===filter);
@@ -121,11 +125,7 @@ function Workbench({schema,table,canManage,identity,onSaved,onDirtyChange}: Prop
     const cols=columns.filter(c=>matches(mapped.get(c.name)) && [c.name,c.type,mapped.get(c.name)?.name].some(v=>v?.toLowerCase().includes(termLower)));
     const switchMode=(value:typeof mode)=>{setMode(value);setTerm('');setFilter('');};
     return <section className="flow-foundry-properties physical-property-workbench" aria-label="Property workbench">
-        {(error || notice || dirty) && <div className="physical-property-changes">
-            {error && <span role="alert">{error}</span>}{notice && <span role="status">{notice}</span>}
-            {dirty && <><small>Unsaved changes</small><Button size="small" disabled={busy} onClick={()=>conflict?setReload(v=>v+1):(setDraft(saved),setSelected(0),setNewProperties(new Set()),setError(''),setNotice(''))}>{conflict?'Discard and reload':'Discard'}</Button><Button size="small" type="primary" loading={busy} disabled={conflict || !editable} onClick={()=>void save()}>Save changes</Button></>}
-        </div>}
-        <div className={'flow-foundry-property-workspace'+(p?' has-inspector':'')}>
+        <div className={'flow-foundry-property-workspace'+(p || dirty?' has-inspector':'')}>
             <div className="flow-foundry-property-main">
                 <header className="flow-foundry-property-header">
                     <nav aria-label="Property views"><button type="button" aria-pressed={mode==='properties'} onClick={()=>switchMode('properties')}>Properties ({draft.properties.length})</button>
@@ -170,7 +170,8 @@ function Workbench({schema,table,canManage,identity,onSaved,onDirtyChange}: Prop
                         {!cols.length && <tr><td colSpan={4}>No columns match the current filters.</td></tr>}</tbody></>}
                 </table></div></section>
             </div>
-            {p && <ExplorerPropertyInspector key={selected} mapping={draft} property={p} columns={columns} editable={editable}
+            {(p || dirty) && <ExplorerPropertyInspector key={selected} mapping={draft} property={p} columns={columns} editable={editable}
+                dirty={dirty} busy={busy} conflict={conflict} onSave={()=>void save()} onDiscard={discard}
                 isNew={newProperties.has(selected)} identity={identity} onPatch={delta=>patch(selected,delta)}
                 onMap={name=>patch(selected,{...sourceFields(columns.find(c=>c.name===name)),formatter:'default',presentation:'value',...(!name ? {summary:false} : {})})}
                 onTitle={enabled=>change({...draft,titleProperty:enabled?p.sourceColumn:null})}

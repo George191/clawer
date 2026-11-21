@@ -1,7 +1,7 @@
 import PropertyTypeIcon from './PropertyTypeIcon';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { DeleteOutlined, PlusOutlined } from '@/components/ui/icons';
+import { DeleteOutlined, PlusOutlined, ReloadOutlined, SaveOutlined, UndoOutlined } from '@/components/ui/icons';
 import type { EtlTableColumn } from '../../services/types';
 import type { ExplorerMappedProperty as Property, ExplorerPropertyMapping as Mapping } from '../../services/explorerProperties';
 import { canonColumn } from './ColumnLineageReferences';
@@ -23,18 +23,31 @@ export function PropertyBadges({property, title}: {property: Property; title: st
 }
 
 type Props = {
-    mapping: Mapping; property: Property; columns: EtlTableColumn[]; editable: boolean; isNew: boolean; identity: string;
+    mapping: Mapping; property?: Property; columns: EtlTableColumn[]; editable: boolean; isNew: boolean; identity: string;
+    dirty: boolean; busy: boolean; conflict: boolean; onSave: () => void; onDiscard: () => void;
     onPatch: (patch: Partial<Property>) => void; onMap: (column: string|null) => void;
     onTitle: (enabled: boolean) => void; onRemove: () => void; onGroup: (group: string|null) => void;
 };
-export default function ExplorerPropertyInspector({mapping,property:p,columns,editable,isNew,identity,onPatch,onMap,onTitle,onRemove,onGroup}: Props) {
+export default function ExplorerPropertyInspector({mapping,property:p,columns,editable,isNew,identity,dirty,busy,conflict,onSave,onDiscard,onPatch,onMap,onTitle,onRemove,onGroup}: Props) {
     const [tab, setTab] = useState<typeof tabs[number]>('General');
     const [removing, setRemoving] = useState(false);
     const [group, setGroup] = useState('');
-    const col = columns.find(c => c.name === p.sourceColumn);
     const bound = !!mapping.sourceDefinitionId;
+    const title = !!p?.sourceColumn && mapping.titleProperty === p.sourceColumn;
+    const header = <header>{p && <PropertyTypeIcon type={p.type} />}<strong>{p?.name || p?.id || 'Properties'}</strong>
+        {p && <PropertyBadges property={p} title={mapping.titleProperty}/>}
+        <div className="physical-property-actions" role="group" aria-label="Property changes">
+            {p && (editable || busy) && !bound && <button type="button" className="physical-property-delete" aria-label={`Delete property ${p.name}`} disabled={busy || title}
+                title={title ? 'Clear the title designation first' : 'Delete property'} onClick={() => setRemoving(true)}><DeleteOutlined /></button>}
+            <span className="physical-property-pending-actions" data-dirty={dirty} aria-hidden={!dirty}>
+                <button type="button" aria-label="Save changes" title={conflict ? 'Reload the property mapping before saving' : 'Save changes'} disabled={!dirty || !editable || conflict || busy} aria-busy={busy} onClick={onSave}>{busy ? <ReloadOutlined spin/> : <SaveOutlined/>}</button>
+                <button type="button" aria-label={conflict ? 'Discard and reload' : 'Discard changes'} title={conflict ? 'Discard and reload' : 'Discard changes'} disabled={!dirty || busy} onClick={onDiscard}><UndoOutlined/></button>
+            </span>
+        </div>
+    </header>;
+    if (!p) return <aside className="flow-foundry-property-inspector physical-property-inspector" aria-label="Property editor">{header}<div className="physical-property-inspector-empty">No property selected.</div></aside>;
+    const col = columns.find(c => c.name === p.sourceColumn);
     const locked = !editable || bound;
-    const title = !!p.sourceColumn && mapping.titleProperty === p.sourceColumn;
     const canReference = col && canonColumn(col.name) && canonColumn(mapping.table) &&
         /^ts_[a-z0-9_]{1,60}$/.test(mapping.schema) && mapping.schema !== 'ts_meta' && !mapping.schema.endsWith('_hist') &&
         (mapping.schema !== INDEX_PREVIEW_SCHEMA || mapping.table !== INDEX_PREVIEW_TABLE);
@@ -43,11 +56,7 @@ export default function ExplorerPropertyInspector({mapping,property:p,columns,ed
             {values.map(v => <option key={v} value={v}>{readable(v)}</option>)}
         </select></label>;
     return <aside className="flow-foundry-property-inspector physical-property-inspector" aria-label="Property editor">
-        <header><PropertyTypeIcon type={p.type} /><strong>{p.name || p.id}</strong>
-            <PropertyBadges property={p} title={mapping.titleProperty}/>
-            {editable && !bound && <button type="button" aria-label={`Delete property ${p.name}`} disabled={title}
-                title={title ? 'Clear the title designation first' : 'Delete property'} onClick={() => setRemoving(true)}><DeleteOutlined /></button>}
-        </header>
+        {header}
         <nav aria-label="Property settings">{tabs.map(t => <button type="button" key={t} aria-pressed={tab === t} onClick={() => setTab(t)}>{t}</button>)}</nav>
         <div className="physical-property-fields">
             {removing && <div role="group" aria-label="Confirm property removal"><p>Remove {p.name} from the object mapping?</p>

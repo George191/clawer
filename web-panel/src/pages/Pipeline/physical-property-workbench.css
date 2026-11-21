@@ -27,6 +27,16 @@
 .explorer-resource-view > .flow-foundry-properties.physical-property-workbench .physical-property-inspector { display:grid; grid-template-rows:36px 36px minmax(0,1fr); position:static; height:100%; min-height:0; max-height:none; overflow:hidden; border:0; border-left:1px solid var(--ontology-border); border-radius:0; }
 .physical-property-workbench .physical-property-inspector > header { box-sizing:border-box; min-height:0; height:36px; padding:4px 10px; flex-wrap:nowrap; }
 .physical-property-inspector header strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.physical-property-inspector > header .physical-property-actions { display:inline-flex; flex:none; align-items:center; gap:0; margin-left:auto; }
+.physical-property-inspector > header .physical-property-actions button { display:inline-flex; flex:none; align-items:center; justify-content:center; box-sizing:border-box; width:24px; height:24px; margin:0; padding:0; border:0; border-radius:3px; background:transparent; color:var(--ontology-muted); cursor:pointer; }
+.physical-property-inspector > header .physical-property-actions button .ui-icon { width:14px; height:14px; font-size:14px; }
+.physical-property-inspector > header .physical-property-actions button:hover:not(:disabled) { background:var(--ontology-hover); }
+.physical-property-inspector > header .physical-property-actions button:focus-visible { outline:1px solid var(--ontology-muted); outline-offset:-1px; }
+.physical-property-inspector > header .physical-property-actions button.physical-property-delete { color:var(--ui-error); }
+.physical-property-inspector > header .physical-property-actions button:disabled { opacity:.4; cursor:default; }
+.physical-property-pending-actions { display:inline-flex; flex:none; gap:2px; width:0; margin-left:0; overflow:hidden; opacity:0; transform:translateX(5px); pointer-events:none; transition:width .18s ease,margin-left .18s ease,opacity .18s ease,transform .18s ease; }
+.physical-property-pending-actions[data-dirty=true] { width:50px; margin-left:2px; opacity:1; transform:translateX(0); pointer-events:auto; }
+.physical-property-inspector-empty { grid-row:2 / -1; padding:12px; color:var(--ontology-muted); font-size:12px; }
 .physical-property-inspector nav,.physical-property-preview nav { display:flex; align-items:center; gap:8px; overflow-x:auto; }
 .physical-property-inspector nav { box-sizing:border-box; height:36px; border-bottom:1px solid var(--ontology-border); padding:0 8px; }
 .physical-property-inspector nav button,.physical-property-preview nav button {
@@ -51,7 +61,7 @@
 .physical-property-fields small,.physical-property-fields dt { font-size:11px; color:var(--ontology-muted); }
 .physical-property-fields dl,.physical-property-fields dd { margin:0; }
 .physical-property-fields dd { margin-bottom:8px; overflow-wrap:anywhere; }
-.physical-property-group,.physical-property-search,.physical-property-changes { display:flex; gap:8px; align-items:center; }
+.physical-property-group,.physical-property-search { display:flex; gap:8px; align-items:center; }
 .physical-property-group input { flex:1; }
 .physical-property-group button { display:inline-flex; flex:none; align-items:center; justify-content:center; gap:4px; box-sizing:border-box; height:30px; min-width:62px; padding:0 9px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-toolbar); color:var(--ontology-text); font:inherit; cursor:pointer; }
 .physical-property-group button:hover:not(:disabled) { border-color:var(--ontology-muted); background:var(--ontology-hover); }
@@ -62,8 +72,6 @@
 .physical-property-search :is(select,input) { box-sizing:border-box; height:30px; }
 .physical-property-search input { width:180px; }
 .physical-property-search select { max-width:150px; }
-.physical-property-changes { flex-wrap:wrap; justify-content:flex-end; padding:6px 8px; margin-bottom:8px; background:var(--ontology-toolbar); }
-.physical-property-changes [role=alert] { margin-right:auto; }
 .physical-selection { display:inline-grid; place-items:center; flex:none; width:14px; height:14px; }
 .physical-selection { border:1px solid var(--ontology-border); border-radius:2px; }
 .is-selected .physical-selection { background:var(--ontology-primary); color:var(--ontology-panel); }
@@ -123,3 +131,4 @@
   .physical-property-workbench .flow-foundry-property-tools { flex-wrap:nowrap; overflow-x:auto; }
 }
 @media (max-width:500px) { .physical-planner-metrics { grid-template-columns:minmax(0,1fr); } }
+@media (prefers-reduced-motion:reduce) { .physical-property-pending-actions { transition:none; } }
