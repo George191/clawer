@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ApiOutlined, AppstoreOutlined, ArrowLeftOutlined, BarChartOutlined, CheckOutlined, CloseOutlined, CopyOutlined, DeleteOutlined, DownOutlined, DownloadCircleFilled, FileSearchOutlined, LinkOutlined, ProfileOutlined, SearchOutlined, ShareAltOutlined, SyncOutlined, TableOutlined } from '@/components/ui/icons';
+import { ApiOutlined, AppstoreOutlined, ArrowLeftOutlined, BarChartOutlined, CheckOutlined, CloseOutlined, CopyOutlined, DeleteOutlined, DownOutlined, DownloadCircleFilled, FileSearchOutlined, LinkOutlined, LoadingOutlined, ProfileOutlined, SearchOutlined, ShareAltOutlined, SyncOutlined, TableOutlined } from '@/components/ui/icons';
 import { Button, Dropdown, Modal, message } from '@/components/ui';
+import type { SheetData } from 'write-excel-file/browser';
 import { projectHref } from '../../services/projectDomains';
 import { createSaved, listSaved, openSaved, removeSaved, savedPath, sharing, type Exploration, type SavedDetail, type SavedKind, type SavedMeta, type WorkbenchQuery } from '../../services/explorerSaved';
 import './explorer-workbench.css';
@@ -59,20 +60,19 @@ function fail(e: unknown) {
     const detail = data?.errors ?? data?.detail ?? data?.message;
     return typeof detail === 'string' ? detail : e instanceof Error ? e.message : 'Request failed';
 }
-function download(format: 'csv' | 'json', rows: RecordRow[], fields: string[], name: string) {
-    const quote = (value: unknown) => {
-        let raw = textValue(value);
-        if (typeof value === 'string' && /^[\s]*[=+@\-]/.test(raw))
-            raw = "'" + raw;
-        return '"' + raw.replace(/"/g, '""') + '"';
-    };
-    const output = format === 'json' ? JSON.stringify(rows, null, 2) : '\uFEFF' + [fields.map(quote).join(','), ...rows.map(r => fields.map(f => quote(r[f])).join(','))].join('\r\n');
-    const href = URL.createObjectURL(new Blob([output], { type: format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json' }));
-    const a = document.createElement('a');
-    a.href = href;
-    a.download = name + '.' + format;
-    a.click();
-    window.setTimeout(() => URL.revokeObjectURL(href), 1000);
+async function downloadExcel(rows: RecordRow[], fields: string[], name: string) {
+    const { default: writeExcelFile } = await import('write-excel-file/browser');
+    const data: SheetData = [fields.map(value => ({ value, type: String, fontWeight: 'bold' }))];
+    for (const [index, row] of rows.entries()) data.push(fields.map(field => {
+        const value = row[field];
+        if (value == null) return null;
+        if (typeof value === 'number' && Math.abs(value) < 1e15) return { value, type: Number };
+        if (typeof value === 'boolean') return { value, type: Boolean };
+        const text = textValue(value);
+        if (text.length > 32767) throw new Error(`Column "${field}", row ${index + 2} exceeds Excel's 32,767 character limit.`);
+        return { value: text, type: String, format: '@' };
+    }));
+    await writeExcelFile(data, { sheet: 'Results', stickyRowsCount: 1 }).toFile(name + '.xlsx');
 }
 function ExploreChart({ field, fields, names, rows, select, onFilter }: {
     field: string;
@@ -98,6 +98,7 @@ export default function ExplorerWorkbenchHeader(p: Props) {
     const [chart, setChart] = useState(''), [name, setName] = useState(''), [error, setError] = useState('');
     const [busy, setBusy] = useState(false), [dialog, setDialog] = useState<'save' | 'share' | ''>('');
     const [appSearch, setAppSearch] = useState(''), [appGroup, setAppGroup] = useState('all');
+    const [exporting, setExporting] = useState(false);
     const openInTrigger = useRef<HTMLButtonElement>(null);
     const [deleteTarget, setDeleteTarget] = useState<SavedMeta>();
     const [shareTarget, setShareTarget] = useState<SavedDetail>();
@@ -196,10 +197,15 @@ export default function ExplorerWorkbenchHeader(p: Props) {
         { key: 'evidence', group: 'analyze', label: 'Evidence', icon: <FileSearchOutlined />, run: () => openResource('evidence') },
         { key: 'schema', group: 'inspect', label: 'Properties & column mapping', icon: <ProfileOutlined />, run: () => openResource('schema') },
         ...(p.admin ? [{ key: 'api', group: 'inspect', label: 'Published APIs', icon: <ApiOutlined />, run: () => openResource('api') }] : []),
-        ...(['csv', 'json'] as const).map(format => ({ key: format, group: 'export', label: `Export as ${format.toUpperCase()}`, description: exportDescription, icon: <DownloadCircleFilled />, disabled: !p.rows.length, run: () => {
-            download(format, p.selected.length ? p.selected.map(r => ({ ...r.record, ...r.identity })) : p.rows, p.fields, p.table);
-            closeOpenIn();
-        } })),
+        { key: 'excel', group: 'export', label: 'Export as Excel', description: exportDescription, icon: exporting ? <LoadingOutlined spin /> : <DownloadCircleFilled />, disabled: exporting || !p.rows.length, run: async () => {
+            if (exporting) return;
+            setExporting(true);
+            try {
+                await downloadExcel(p.selected.length ? p.selected.map(r => ({ ...r.record, ...r.identity })) : p.rows, p.fields, p.table);
+                closeOpenIn();
+            } catch (e) { message.error({ content: 'Excel export failed', description: fail(e), className: 'explorer-toast' }); }
+            finally { setExporting(false); }
+        } },
     ];
     const matchingApps = apps.filter(app => (appGroup === 'all' || app.group === appGroup) && app.label.toLowerCase().includes(appSearch.toLowerCase().trim()));
     const appMenu = <section className="wb-open-in" aria-label="Open in tools" onBlurCapture={event => {

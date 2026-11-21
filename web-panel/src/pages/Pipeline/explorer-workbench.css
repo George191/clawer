@@ -65,7 +65,9 @@
 .wb-open-in-categories button[aria-checked=true] { background:var(--ontology-selected); color:var(--ontology-link); }
 .wb-open-in-actions { min-width:0; padding:0 3px; }
 .wb-open-in-actions button { padding-inline:5px; }
-.wb-open-in-actions .ui-icon { flex:none; margin-top:1px; color:var(--ontology-muted); font-size:16px; }
+.wb-open-in-actions .ui-icon { flex:none; width:16px; height:18px; color:var(--ontology-muted); font-size:16px; }
+.wb-open-in-actions .ui-icon svg { width:16px; height:16px; }
+.wb-open-in-actions .ui-icon-download-circle svg { width:14px; height:14px; }
 .wb-open-in-actions button > span:not(.ui-icon) { min-width:0; overflow-wrap:anywhere; }
 .wb-open-in-actions small { display:block; margin-top:1px; color:var(--ontology-muted); font-size:12px; line-height:20px; }
 .wb-open-in-actions p { margin:10px 8px; color:var(--ontology-muted); }
