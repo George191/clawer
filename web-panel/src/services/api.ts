@@ -489,6 +489,7 @@ export const fetchExplorerTableEvidence = (schema: string, table: string, signal
 export type ExplorerRecordDetails = {
   row: Record<string, unknown>; identity: Record<string, string>; primaryKey: string[];
   columnTypes: Record<string, string>; rowVersion?: string; rowActions?: {edit: boolean; delete: boolean};
+  columnNullable?: Record<string, boolean>;
 };
 
 export const fetchExplorerRowByKey = (schema: string, table: string, key: Record<string, unknown>, signal?: AbortSignal) =>

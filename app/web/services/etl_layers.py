@@ -1218,6 +1218,7 @@ class EtlLayers:
                 "rowCount": len(rows), **page, **edit_metadata,
                 "primaryKey": primary_key,
                 "columnTypes": {column["name"]: column["type"] for column in columns},
+                "columnNullable": {column["name"]: column["nullable"] for column in columns},
                 "elapsed": round(perf_counter() - started, 4)}
 
     async def query(self, sql: str) -> dict[str, Any]:

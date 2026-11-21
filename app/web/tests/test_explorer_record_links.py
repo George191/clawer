@@ -76,6 +76,23 @@ class ExplorerRecordLinks(unittest.IsolatedAsyncioTestCase):
     async def post(self, table, action, key, **params):
         return await self.client.post(f"/etl/ts_creation/{table}/{action}", json={"key": key, **params})
 
+    async def test_preview_and_record_nullability_follow_catalog_not_current_values(self):
+        expected = {"tenant": False, "id": False, "amount": True, "area": True}
+        for admin in (False, True):
+            self.actor.is_superuser = admin
+            for tenant in ("a", "b"):
+                response = await self.post("parents", "row-by-key", {**self.parent, "tenant": tenant})
+                self.assertEqual(response.status_code, 200, response.text)
+                details = response.json()
+                self.assertEqual(details["columnNullable"], expected)
+                self.assertEqual("rowVersion" in details, admin)
+        for filters in ([], [{"field": "tenant", "operator": "=", "value": "missing"}]):
+            preview = await self.layers.data("ts_creation", "parents", {
+                "withIdentity": True, "forEditing": True, "filters": filters,
+            }, preview_rows=True)
+            self.assertEqual(preview["columnNullable"], expected)
+            self.assertEqual(preview["rowCount"], 0 if filters else 2)
+
     async def test_exact_rows_both_directions_and_composite_identity(self):
         details = await self.post("parents", "row-by-key", self.parent)
         self.assertEqual(details.status_code, 200, details.text)

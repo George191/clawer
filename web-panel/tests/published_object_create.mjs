@@ -17,7 +17,7 @@ function compile(name, require) {
 const values = compile('ontologyPropertyValue.ts', () => ({}));
 const mutations = compile('ExplorerRecordMutation.tsx', name => {
   if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
-  if (name === '@/components/ui') return { Button: 'Button', Checkbox: 'Checkbox' };
+  if (name === '@/components/ui') return { Button: 'Button', Checkbox: 'Checkbox', Modal: 'Modal' };
   if (name === '@/components/ui/icons') return new Proxy({}, { get: (_, key) => String(key) });
   if (name === './PropertyTypeIcon') return { PropertyLabel: 'PropertyLabel' };
   return { default: name };
@@ -114,7 +114,7 @@ test('the create control follows Open in without occupying the left toolbar', ()
   assert.ok(!nodes(nodes(tree).find(node => node.props?.className === 'wb-left')).includes(control));
 });
 
-test('edit and delete use the common inline editor and confirmation without a second modal flow', () => {
+test('edit uses the common inline editor while delete uses its independent confirmation dialog', () => {
   const record = { id: 'record', revision: 1, title: 'Photo', properties: { metadata: { tags: ['photo'] } } };
   for (const kind of ['modify', 'delete']) {
     const ui = mountTools({ actions: [{ kind, fields: kind === 'modify' ? ['metadata'] : [] }] });
@@ -123,19 +123,26 @@ test('edit and delete use the common inline editor and confirmation without a se
     assert.equal(action.icon.type, kind === 'modify' ? 'EditOutlined' : 'DeleteOutlined');
     action.onClick(); ui.render();
     assert.equal(nodes(ui.result().dialogs).some(node => node.type === 'Modal' && node.props.open), false);
-    const mutation = ui.result().renderMutation(record);
+    const inline = ui.result().renderMutation(record);
+    const mutation = kind === 'delete'
+      ? nodes(ui.result().dialogs).find(node => node.type === mutations.default && node.props.mode === 'delete')
+      : inline;
+    if (kind === 'delete') assert.equal(inline, null);
     assert.equal(mutation.type, mutations.default);
     assert.equal(ui.result().mutationOpen, true);
     assert.equal(ui.result().renderMutation({ ...record, id: 'another-record' }), null);
     const tree = mutation.type(mutation.props);
-    assert.equal(tree.props['aria-label'], kind === 'modify' ? 'Edit object' : 'Confirm object deletion');
-    assert.ok(nodes(tree).some(node => node.type === 'Button' && text(node) === 'Cancel'));
     if (kind === 'modify') {
+      assert.equal(tree.props['aria-label'], 'Edit object');
+      assert.ok(nodes(tree).some(node => node.type === 'Button' && text(node) === 'Cancel'));
       const editor = nodes(tree).find(node => node.type === './ExplorerFieldEditor');
       assert.equal(editor.props.type, 'json');
       assert.equal(editor.props.value, '{"tags":["photo"]}');
       assert.ok(nodes(tree).some(node => node.type === 'footer' && nodes(node).some(button => text(button) === 'Save changes')));
-    } else assert.ok(text(tree).includes('Delete Photo?'));
+    } else {
+      assert.equal(tree.type, 'Modal'); assert.equal(tree.props.open, true); assert.equal(tree.props.cancelText, 'Cancel');
+      assert.ok(text(tree).includes('Delete Photo?'));
+    }
   }
 });
 
@@ -221,7 +228,9 @@ test('delete submits the object revision only after common confirmation and stal
   const ui = mountTools({ actions: [{ kind: 'delete', fields: [] }] });
   ui.result().actionsForRecord(record)[0].onClick(); ui.render();
   assert.equal(ui.calls.length, 0);
-  await ui.result().renderMutation(record).props.onSubmit(); ui.render();
+  assert.equal(ui.result().renderMutation(record), null);
+  const confirmation = nodes(ui.result().dialogs).find(node => node.type === mutations.default && node.props.mode === 'delete');
+  await confirmation.type(confirmation.props).props.onOk(); ui.render();
   assert.deepEqual(ui.calls, [[objectType.id, 'delete', { recordId: record.id, expectedRevision: 7 }]]);
   for (const change of [session => { session.identity = 'another'; }, session => { session.locked = true; }]) {
     const stale = mountTools({ actions: [editAction] }), editor = startEdit(stale);

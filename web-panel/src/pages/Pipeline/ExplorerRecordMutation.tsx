@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Button, Checkbox, type MenuItem } from '@/components/ui';
+import { Button, Checkbox, Modal, type MenuItem } from '@/components/ui';
 import { DeleteOutlined, EditOutlined } from '@/components/ui/icons';
 import ExplorerFieldEditor from './ExplorerFieldEditor';
 import { PropertyLabel } from './PropertyTypeIcon';
@@ -25,9 +25,16 @@ export default function ExplorerRecordMutation({ mode, title, identity, fields =
   error?: string; busy?: boolean; disabled?: boolean;
   onSubmit: () => void | Promise<void>; onCancel: () => void;
 }) {
-  return <section className="flow-explorer-row-mutation" aria-label={mode === 'edit' ? 'Edit object' : 'Confirm object deletion'}>
+  if (mode === 'delete') return <Modal open centered width={440} className="flow-surface-modal explorer-delete-object-dialog"
+    title="Delete object?" okText="Delete object" cancelText="Cancel" confirmLoading={busy}
+    closable={!busy} maskClosable={!busy} keyboard={!busy} okButtonProps={{ danger: true, disabled }} cancelButtonProps={{ disabled: busy }}
+    onOk={() => { if (!busy && !disabled) return onSubmit(); }} onCancel={() => { if (!busy) onCancel(); }}>
+    <p>Delete <strong>{title}</strong>?</p>
+    <code className="flow-explorer-row-key">{JSON.stringify(identity)}</code>
+  </Modal>;
+  return <section className="flow-explorer-row-mutation" aria-label="Edit object">
     {error && <p role="alert" className="flow-explorer-row-error">{error}</p>}
-    {mode === 'edit' ? <form onSubmit={event => { event.preventDefault(); if (!busy && !disabled) void onSubmit(); }}>
+    <form onSubmit={event => { event.preventDefault(); if (!busy && !disabled) void onSubmit(); }}>
       <div className="flow-explorer-row-fields">{fields.map(field => <div key={field.key} className="flow-explorer-row-field">
         <PropertyLabel type={field.type}>{field.label}</PropertyLabel>
         <div className="flow-explorer-row-control"><ExplorerFieldEditor name={field.label} type={field.type} value={field.value}
@@ -38,11 +45,6 @@ export default function ExplorerRecordMutation({ mode, title, identity, fields =
       </div>)}</div>
       <footer className="flow-explorer-row-tools"><Button disabled={busy} onClick={onCancel}>Cancel</Button>
         <Button htmlType="submit" type="primary" loading={busy} disabled={disabled}>Save changes</Button></footer>
-    </form> : <>
-      <p>Delete <strong>{title}</strong>?</p>
-      <code className="flow-explorer-row-key">{JSON.stringify(identity)}</code>
-      <div className="flow-explorer-row-tools"><Button disabled={busy} onClick={onCancel}>Cancel</Button>
-        <Button danger type="primary" loading={busy} disabled={disabled} onClick={() => { if (!busy && !disabled) void onSubmit(); }}>Delete</Button></div>
-    </>}
+    </form>
   </section>;
 }

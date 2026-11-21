@@ -339,6 +339,7 @@ class ObjectCatalogTests(unittest.IsolatedAsyncioTestCase):
         result = await instance.data("ods", "objects", {"limit": 1})
         self.assertEqual(result["columns"], ["id", "name"])
         self.assertEqual(result["columnTypes"], {"id": "bigint", "name": "text"})
+        self.assertEqual(result["columnNullable"], {"id": False, "name": True})
         self.assertEqual(result["primaryKey"], ["id"])
         self.assertEqual(result["rows"], [{"id": 1, "name": "Fixture row"}])
         self.assertEqual(result["total"], 25)

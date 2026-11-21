@@ -1,7 +1,7 @@
 import ExplorerFieldEditor from './ExplorerFieldEditor';
 import ExplorerFilterEditor, { normalizeFilterDepth, randomId, SortDirectionIcon, type ExplorerSort as SortCondition } from './ExplorerFilterEditor';
 import { JsonTreeValue } from './ExplorerJsonValue';
-import { editorValue, rowChanges } from './explorerRowEditing';
+import { editorValue, rowChanges, rowNullControl, type RowDraft } from './explorerRowEditing';
 import  React,  {  useCallback,  useEffect,  useRef,  useState  }  from  'react';
 import  {  Link,  matchPath,  Navigate,  useLocation,  useNavigate  }  from  'react-router-dom';
 import  {  Button,  Checkbox,  ConfigProvider,  Dropdown,  Input,  InputNumber,  Modal,  Select,  Space,  Spin,  Table,  Tag,  Upload,  message  }  from  '@/components/ui';
@@ -25,7 +25,7 @@ import PublishedExplorer from './PublishedExplorer';
 import { openSaved, savedPath, type SavedDetail } from '../../services/explorerSaved';
 import { catalogReturnHref, compactExplorerSearch } from '../../services/explorerNavigation';
 import { ExplorerTypeIcon } from './ExplorerObjectOverview';
-import { useExplorerPresentation, type ExplorerPreviewRow } from './ExplorerSelection';
+import { explorerRowTitle, useExplorerPresentation, type ExplorerPreviewRow } from './ExplorerSelection';
 import ExplorerRecordLink from './ExplorerRecordLink';
 import ExplorerRowLinks from './ExplorerRowLinks';
 import NewObjectType from './NewObjectType';
@@ -258,6 +258,7 @@ const DataLayersWorkspace: React.FC = () => {
     const  [closedTables,  setClosedTables]  =  useState<Set<string>>(new  Set());
     const  [editingRowKey,  setEditingRowKey]  =  useState<string>();
     const [editingDraft, setEditingDraft] = useState<Record<string, string | null> | null>(null);
+    const rememberedEditValues = useRef<RowDraft>({});
     const  [jsonRow,  setJsonRow]  =  useState<Record<string,  unknown>  |  null>(null);
     const [deleteSnapshot, setDeleteSnapshot] = useState<RowSnapshot>();
     const [conflictedRows, setConflictedRows] = useState<Set<Record<string, unknown>>>(() => new Set());
@@ -506,6 +507,7 @@ const DataLayersWorkspace: React.FC = () => {
         if (editingRowKey && editingRowKey !== key) { message.warning('Save or cancel the current row edit first'); return; }
         setRowDetailsError('');
         editSnapshot.current = { data, row, version };
+        rememberedEditValues.current = {};
         setEditingRowKey(key); setEditingDraft(Object.fromEntries(Object.entries(exactEditorRow(row)).map(([column, value]) => [column, editCell(column, value)])));
     };
     const cancelRowEdit = () => {
@@ -561,7 +563,7 @@ const DataLayersWorkspace: React.FC = () => {
             const identity = getSessionState().identity;
             try {
                 await deleteEtlRow(selectedSchema, table.name, key, version);
-                if (selection.current === target) { setDeleteSnapshot(undefined); setRefreshVersion((value) => value + 1); }
+                if (selection.current === target) { setDeleteSnapshot(undefined); setRefreshVersion((value) => value + 1); message.success('Object deleted.'); }
             } catch (error) {
                 const session = getSessionState();
                 if (!workspaceActive.current || selection.current !== target || !session.authenticated || session.locked || session.identity !== identity || (error as { code?: string })?.code === 'ERR_CANCELED') return;
@@ -586,17 +588,17 @@ const DataLayersWorkspace: React.FC = () => {
         });
     };
     const rowMutation = (row: ExplorerPreviewRow) => {
-        const deleting = deleteSnapshot?.data === data && deleteSnapshot?.row === row.record;
         const editing = editingDraft && editSnapshot.current?.data === data && editSnapshot.current?.row === row.record;
-        if (!editing && !deleting) return null;
-        return <ExplorerRecordMutation mode={editing ? 'edit' : 'delete'} title={row.title} identity={row.identity} error={rowDetailsError}
-            busy={mutationLoading} disabled={loading || (editing ? !canEditRows || rowVersion(row.record) !== editSnapshot.current?.version : !canDeleteRows || rowVersion(row.record) !== deleteSnapshot?.version)}
-            fields={editing ? data?.columns.filter(key => !Object.prototype.hasOwnProperty.call(row.identity, key)).map(key => ({
+        if (!editing) return null;
+        return <ExplorerRecordMutation mode="edit" title={row.title} identity={row.identity} error={rowDetailsError}
+            busy={mutationLoading} disabled={loading || !canEditRows || rowVersion(row.record) !== editSnapshot.current?.version}
+            fields={data?.columns.filter(key => !Object.prototype.hasOwnProperty.call(row.identity, key)).map(key => ({
                 key, label: key, type: data.columnTypes?.[key] || 'string', value: editingDraft?.[key] ?? null,
                 onChange: value => setEditingDraft(current => current ? { ...current, [key]: value } : current),
-            })) : undefined}
-            onSubmit={editing ? saveRowEdit : () => removeRow(row.record)}
-            onCancel={editing ? cancelRowEdit : () => { if (!mutationPending.current) { setDeleteSnapshot(undefined); setRowDetailsError(''); } }} />;
+                nullControl: data.columnNullable?.[key] === true ? rowNullControl(key, editingDraft?.[key] ?? null, rememberedEditValues.current,
+                    value => setEditingDraft(current => current ? { ...current, [key]: value } : current)) : undefined,
+            }))}
+            onSubmit={saveRowEdit} onCancel={cancelRowEdit} />;
     };
     const appliedSort = appliedQuery.sorts[0];
     const toggleHeaderSort = (field: string) => {
@@ -1346,6 +1348,11 @@ footer: previewPage && <ExplorerResultsFooter offset={previewPage.offset} rowCou
             </section>
         </div>
         {isSchemas && canManage && createTableSchema && creationSchemas.some((item) => item.key === createTableSchema) && <NewObjectType variant="storage" schemas={creationSchemas.filter((item) => item.key === createTableSchema)} initialSchema={createTableSchema} onCancel={() => setCreateTableSchema('')} onOpenExisting={(object) => openWizardTable(object.schema, object.table)} onCreated={(schema, created) => openWizardTable(schema, created.name)} />}
+        {isSchemas && deleteSnapshot?.data === data && deleteSnapshot && <ExplorerRecordMutation mode="delete"
+            title={explorerRowTitle(deleteSnapshot.row, primaryKey(deleteSnapshot.row), explorerPresentation?.presentation?.titleProperty, data?.primaryKey)}
+            identity={primaryKey(deleteSnapshot.row)} busy={mutationLoading}
+            disabled={loading || !canDeleteRows || rowVersion(deleteSnapshot.row) !== deleteSnapshot.version}
+            onSubmit={() => removeRow(deleteSnapshot.row)} onCancel={() => { if (!mutationPending.current) { setDeleteSnapshot(undefined); setRowDetailsError(''); } }} />}
         <Modal  className="flow-surface-modal flow-offset-modal"  title="Adjust  Kafka  offset"  open={offsetOpen}  onCancel={() => { if (!mutationPending.current) setOffsetOpen(false); }}  cancelText="Cancel"  onOk={saveOffset} confirmLoading={mutationLoading} okButtonProps={{ disabled: !canManage || !stream?.available || offsetPartition === undefined || offset === undefined || offset < 0 || !Number.isSafeInteger(offset) }}  okText="Confirm  SET  OFFSET"  width={460}>
             <div  className="flow-offset-modal-body">
                 <div  className="flow-offset-modal-info">

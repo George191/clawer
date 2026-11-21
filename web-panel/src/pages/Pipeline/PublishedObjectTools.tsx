@@ -113,15 +113,15 @@ export function usePublishedObjectTools({ objectType, actions, record, returnTo,
     });
   };
   const renderMutation = (selected?: OntologyRecord) => {
-    if (!objectType || !selected?.id || !operation || operation.kind === 'create' || operation.record?.id !== selected.id) return null;
-    return <ExplorerRecordMutation mode={operation.kind === 'modify' ? 'edit' : 'delete'} title={title(selected.title)} identity={{ $recordId: selected.id }}
-      error={error} busy={pending} disabled={busy} fields={operation.kind === 'modify' ? operation.fields.map(id => {
+    if (!objectType || !selected?.id || operation?.kind !== 'modify' || operation.record?.id !== selected.id) return null;
+    return <ExplorerRecordMutation mode="edit" title={title(selected.title)} identity={{ $recordId: selected.id }}
+      error={error} busy={pending} disabled={busy} fields={operation.fields.map(id => {
         const property = objectType.definition.properties.find(item => item.id === id);
         const input = inputs[id];
         return { key: id, label: property?.name || id, type: property?.type || 'string', value: input?.text || '',
           onChange: (value: string | null) => setInputs(previous => ({ ...previous, [id]: { text: value ?? '', isNull: value === null } })),
           nullControl: !property?.required ? { checked: !!input?.isNull, onChange: (isNull: boolean) => setInputs(previous => ({ ...previous, [id]: { text: previous[id]?.text || '', isNull } })) } : undefined };
-      }) : undefined} onSubmit={applyAction} onCancel={() => { if (!locked.current) { setOperation(undefined); setError(''); } }} />;
+      })} onSubmit={applyAction} onCancel={() => { if (!locked.current) { setOperation(undefined); setError(''); } }} />;
   };
   const renderHistory = (selected?: OntologyRecord) => objectType && native && selected?.id
     ? <RecordHistory key={selected.id} objectType={objectType.id} recordId={selected.id} onChanged={onChanged} /> : null;
@@ -130,6 +130,9 @@ export function usePublishedObjectTools({ objectType, actions, record, returnTo,
     createButton: create ? <Button size="small" className="wb-create-object" icon={<PlusOutlined />} disabled={busy || pending} onClick={() => startAction('create', create.fields)}>Create object</Button> : null,
     actionsForRecord, renderHistory, renderMutation, mutationOpen: !!operation && !creating,
     dialogs: objectType ? <>
+      {operation?.kind === 'delete' && operation.record && <ExplorerRecordMutation mode="delete" title={title(operation.record.title)}
+        identity={{ $recordId: operation.record.id }} busy={pending} disabled={busy} onSubmit={applyAction}
+        onCancel={() => { if (!locked.current) { setOperation(undefined); setError(''); } }} />}
       <Modal open={!!tool} centered width={1040} className="flow-surface-modal flow-published-dialog explorer-resource-dialog" title={tool} onCancel={() => setTool('')} footer={<Button onClick={() => setTool('')}>Close</Button>}>
         <div className="explorer-resource-context"><strong>{objectType.definition.name}</strong><code>{objectType.definition.id}</code></div>
         <div className="flow-ontology-tool-content" role="region" aria-label={tool || undefined} tabIndex={0}>

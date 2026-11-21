@@ -49,7 +49,7 @@ async def _asset(session, schema, table):
     columns = (await session.execute(text("""
         SELECT a.attname AS name, format_type(a.atttypid,a.atttypmod) AS type,
                format_type(a.atttypid,-1) AS comparison_type, a.atttypid AS type_id,
-               a.attcollation AS collation,
+               a.attcollation AS collation, NOT a.attnotnull AS nullable,
                CASE WHEN k.position <= i.indnkeyatts THEN k.position END AS pk
         FROM pg_attribute a LEFT JOIN pg_index i ON i.indrelid=a.attrelid AND i.indisprimary AND i.indisvalid
         LEFT JOIN LATERAL unnest(i.indkey) WITH ORDINALITY k(attnum,position) ON k.attnum=a.attnum
@@ -167,7 +167,8 @@ async def row_by_key(layer, table, key, *, editable):
                 if native.is_finite():
                     row[name] = float(native)
         result = {"row": row, "identity": record[1], "primaryKey": asset["primary"],
-                  "columnTypes": {k: v["type"] for k, v in asset["columns"].items()}}
+                  "columnTypes": {k: v["type"] for k, v in asset["columns"].items()},
+                  "columnNullable": {k: v["nullable"] for k, v in asset["columns"].items()}}
         if editable:
             result.update(rowVersion=record[2], rowActions={"edit": True, "delete": allows_physical_delete(schema)})
         return result

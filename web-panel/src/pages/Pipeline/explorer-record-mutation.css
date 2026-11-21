@@ -5,6 +5,9 @@
 .flow-explorer-row-control { display:grid; gap:6px; min-width:0; }
 .flow-explorer-row-error { color:var(--ui-error); }
 .flow-explorer-row-key { overflow-wrap:anywhere; }
+.explorer-delete-object-dialog p { margin:0 0 12px; color:var(--ontology-muted); font-size:13px; line-height:1.6; }
+.explorer-delete-object-dialog strong { color:var(--ontology-text); overflow-wrap:anywhere; }
+.explorer-delete-object-dialog .flow-explorer-row-key { display:block; padding:8px 10px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-bg); overflow-wrap:anywhere; font-size:11px; }
 .flow-explorer-row-mutation > form { display:flex; flex:1; flex-direction:column; min-height:0; overflow:hidden; }
 .flow-explorer-row-mutation > form > .flow-explorer-row-fields { flex:1; min-height:0; overflow:auto; align-content:start; overscroll-behavior:contain; padding:0 var(--explorer-detail-inset,0px) 16px; scrollbar-width:none; }
 .flow-explorer-row-mutation > form > .flow-explorer-row-fields::-webkit-scrollbar { display:none; }

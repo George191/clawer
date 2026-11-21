@@ -240,6 +240,7 @@ export interface QueryResult {
   total?: number;
   totalEstimated?: boolean;
   columnTypes?: Record<string, string>;
+  columnNullable?: Record<string, boolean>;
   columns: string[];
   rows: Record<string, unknown>[];
   rowCount: number;

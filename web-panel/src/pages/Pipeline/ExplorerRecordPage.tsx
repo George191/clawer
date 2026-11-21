@@ -16,7 +16,7 @@ import { usePublishedObjectTools } from './PublishedObjectTools';
 import PublishedExplorerRelationships from './PublishedExplorerRelationships';
 import SemanticTypeGlyph from './SemanticTypeGlyph';
 import type { ExplorerPresentationRead } from './ExplorerObjectOverview';
-import { editorValue, rowChanges, type RowDraft } from './explorerRowEditing';
+import { editorValue, rowChanges, rowNullControl, type RowDraft } from './explorerRowEditing';
 import {
     ExplorerObjectOverview, ExplorerProperties, ExplorerRecordActions, ExplorerTypeIcon, explorerRowTitle, useExplorerPresentation,
 } from './ExplorerSelection';
@@ -71,6 +71,7 @@ function RecordPage({ source, identity }: { source: ExplorerDetailSource; identi
     const [revision, reload] = useState(0);
     const [mode, setMode] = useState<'overview'|'properties'|'links'|'history'|`group:${string}`>('overview');
     const [draft, setDraft] = useState<RowDraft>();
+    const rememberedEditValues = useRef<RowDraft>({});
     const [confirmDelete, setConfirmDelete] = useState(false);
     const [busy, setBusy] = useState(false);
     const [stale, setStale] = useState(false);
@@ -167,17 +168,20 @@ function RecordPage({ source, identity }: { source: ExplorerDetailSource; identi
     const actions = source.kind === 'published' && publishedRecord ? objectTools.actionsForRecord(publishedRecord) : recordMutationActions({
         edit: result?.rowVersion && result.rowActions?.edit && editFields.length > 0 ? ()=>{
             setMode('properties');setMutationError('');setValidationError('');
+            rememberedEditValues.current = {};
             setDraft(Object.fromEntries(editFields.map(name=>[name,editorValue(result.columnTypes[name],result.row[name])])));
         } : undefined,
         remove: result?.rowVersion && result.rowActions?.delete ? ()=>{
             setMutationError('');setValidationError('');setConfirmDelete(true);
         } : undefined,
     });
-    const mutation = source.kind === 'published' ? objectTools.renderMutation(publishedRecord) : result && (draft || confirmDelete)
-        ? <ExplorerRecordMutation mode={draft ? 'edit' : 'delete'} title={title} identity={result.identity} error={validationError}
-            busy={busy} disabled={stale} fields={draft ? editFields.map(name => ({ key:name, label:name, type:result.columnTypes[name], value:draft[name],
-                onChange:(value:string | null)=>setDraft(current=>current ? {...current,[name]:value} : current) })) : undefined}
-            onSubmit={()=>mutate(confirmDelete)} onCancel={()=>{ if (!busy) { setDraft(undefined);setConfirmDelete(false);setValidationError(''); } }} /> : null;
+    const mutation = source.kind === 'published' ? objectTools.renderMutation(publishedRecord) : result && draft
+        ? <ExplorerRecordMutation mode="edit" title={title} identity={result.identity} error={validationError}
+            busy={busy} disabled={stale} fields={editFields.map(name => ({ key:name, label:name, type:result.columnTypes[name], value:draft[name],
+                onChange:(value:string | null)=>setDraft(current=>current ? {...current,[name]:value} : current),
+                nullControl:result.columnNullable?.[name] === true ? rowNullControl(name, draft[name], rememberedEditValues.current,
+                    value=>setDraft(current=>current ? {...current,[name]:value} : current)) : undefined }))}
+            onSubmit={()=>mutate(false)} onCancel={()=>{ if (!busy) { setDraft(undefined);setValidationError(''); } }} /> : null;
     return <article className="flow-console--ontology explorer-object-workspace explorer-full-record">
         <nav aria-label="Object location"><Link to="/ontology">Ontology</Link><span>/</span>
             <Link to={tablePath}>{source.kind === 'published' ? typeName : `${schema}.${table}`}</Link></nav>
@@ -213,6 +217,8 @@ function RecordPage({ source, identity }: { source: ExplorerDetailSource; identi
                 <ExplorerObjectOverview row={row} presentation={presentation} presentations={presentations} typeName={typeName} group={currentGroup}/>)}</div>
         </>}
         {objectTools.dialogs}
+        {source.kind === 'backed' && result && confirmDelete && <ExplorerRecordMutation mode="delete" title={title} identity={result.identity}
+            busy={busy} disabled={stale} onSubmit={()=>mutate(true)} onCancel={()=>{ if (!busy) setConfirmDelete(false); }} />}
     </article>;
 }
 

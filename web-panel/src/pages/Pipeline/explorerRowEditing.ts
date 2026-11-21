@@ -1,5 +1,12 @@
 export type RowDraft = Record<string, string | null>;
 
+export function rowNullControl(key: string, value: string | null, remembered: RowDraft, onChange: (value: string | null) => void) {
+    return { checked: value === null, onChange: (isNull: boolean) => {
+        if (isNull) { remembered[key] = value; onChange(null); }
+        else onChange(remembered[key] ?? '');
+    } };
+}
+
 export function editorValue(type: string | undefined, value: unknown): string | null {
     if (value == null) return null;
     if (/^jsonb?(?:\s|$)|\[\]$/.test(type?.toLowerCase() || '') || typeof value === 'object') {
