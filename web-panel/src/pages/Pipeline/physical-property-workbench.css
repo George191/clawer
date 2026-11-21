@@ -33,6 +33,8 @@
 .physical-property-inspector > header .physical-property-actions button:hover:not(:disabled) { background:var(--ontology-hover); }
 .physical-property-inspector > header .physical-property-actions button:focus-visible { outline:1px solid var(--ontology-muted); outline-offset:-1px; }
 .physical-property-inspector > header .physical-property-actions button.physical-property-delete { color:var(--ui-error); }
+.physical-property-inspector > header .physical-property-actions button.physical-property-save { color:#8abbff; }
+.physical-property-inspector > header .physical-property-actions button.physical-property-discard { color:var(--ui-warning); }
 .physical-property-inspector > header .physical-property-actions button:disabled { opacity:.4; cursor:default; }
 .physical-property-pending-actions { display:inline-flex; flex:none; gap:2px; width:0; margin-left:0; overflow:hidden; opacity:0; transform:translateX(5px); pointer-events:none; transition:width .18s ease,margin-left .18s ease,opacity .18s ease,transform .18s ease; }
 .physical-property-pending-actions[data-dirty=true] { width:50px; margin-left:2px; opacity:1; transform:translateX(0); pointer-events:auto; }
