@@ -53,16 +53,17 @@ export function RecordHistory({ objectType, recordId, onChanged }: { objectType:
           <span className="explorer-history-marker" aria-hidden="true">{event.kind === 'modify' ? <EditOutlined /> : event.kind === 'delete' ? <DeleteOutlined /> : <PlusOutlined />}</span>
           <details open><summary><span><strong>{{ create: 'Created', modify: 'Modified', delete: 'Deleted' }[event.kind]}</strong><small>Revision {event.revision}</small></span>
             <time dateTime={event.createdAt}>{new Date(event.createdAt).toLocaleString()}</time></summary>
-            {event.changes && Object.keys(event.changes).length ? <div className="explorer-history-changes"><table><thead><tr><th>Property</th><th>Previous value</th><th>Updated value</th></tr></thead>
-              <tbody>{Object.entries(event.changes).map(([field, delta]) => <tr key={field}><th scope="row">{field}</th><td>{historyValue(delta, 'before')}</td><td>{historyValue(delta, 'after')}</td></tr>)}</tbody></table></div>
-              : <p>{event.changes ? 'No readable property changes.' : 'Property changes are restricted by the current access policy.'}</p>}
-            {event.canUndo && <footer><Button icon={<UndoOutlined />} disabled={undoing} size="small" onClick={async () => {
+            {event.canUndo && <footer><Button type={event.kind === 'delete' ? 'primary' : 'default'} icon={<UndoOutlined />} disabled={undoing} size="small" onClick={async () => {
               if (!current() || undoLock.current) return;
               undoLock.current = true; setUndoing(true);
               try { await undoOntologyEdit(objectType, recordId, event.revision); if (current()) { message.success('Edit undone.'); setVersion(value => value + 1); onChanged(); } }
               catch (failure) { if (current()) message.error({ content: 'Unable to undo this edit', description: describe(failure, 'Unable to undo this edit.'), className: 'explorer-toast' }); }
               finally { undoLock.current = false; if (current()) setUndoing(false); }
             }}>{event.kind === 'delete' ? 'Restore object' : 'Undo edit'}</Button></footer>}
+            {event.changes && Object.keys(event.changes).length ? <div className="explorer-history-changes"><table><thead><tr><th>Property</th><th>Previous value</th><th>Updated value</th></tr></thead>
+              <tbody>{Object.entries(event.changes).map(([field, delta]) => <tr key={field}><th scope="row">{field}</th><td>{historyValue(delta, 'before')}</td><td>{historyValue(delta, 'after')}</td></tr>)}</tbody></table></div>
+              : <p>{event.changes ? 'No readable property changes.' : 'Property changes are restricted by the current access policy.'}</p>}
+
           </details>
         </li>)}</ol> : <p>No action history on this page.</p>}
         {(offset > 0 || page.hasMore) && <footer className="flow-published-results-pagination" aria-label="Action history pagination"><div>

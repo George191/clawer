@@ -15,7 +15,7 @@
 .ontology-tool-catalog-list strong { overflow-wrap:anywhere; font-size:12px; font-weight:400; }
 .ontology-tool-catalog-list small { color:var(--ontology-muted); font-size:11px; }
 .ontology-tool-catalog-list > button:hover { background:var(--ontology-hover); }
-.ontology-tool-catalog-list > button[aria-pressed=true] { background:var(--ontology-selected); color:var(--ui-action-link); }
+.ontology-tool-catalog-list > button[aria-pressed=true] { background:color-mix(in srgb,var(--ui-action-bg) 14%,var(--ontology-panel)); color:var(--ui-action-link); }
 .ontology-tool-catalog-list > button:disabled { cursor:default; opacity:.5; }
 .ontology-tool-detail { display:flex; flex-direction:column; min-width:0; min-height:0; background:var(--ontology-panel); }
 .ontology-tool-detail-header { display:flex; flex:none; align-items:flex-start; justify-content:space-between; gap:12px; padding:12px 14px; border-bottom:1px solid var(--ontology-border); }
@@ -66,3 +66,8 @@
   .ontology-tool-form { max-height:45dvh; }
   .ontology-tool-footer { align-items:flex-start; flex-wrap:wrap; }
 }
+
+.explorer-resource-dialog .flow-ontology-tool-content:has(> :is(.ontology-tool-workbench,.ontology-revisions)) { display:flex; flex-direction:column; overflow:hidden; }
+.explorer-resource-dialog .flow-ontology-tool-content > :is(.ontology-tool-workbench,.ontology-revisions) { flex:1; min-height:0; }
+
+.ontology-deleted-workbench .explorer-history details > footer .ui-btn-primary { color:var(--ui-action-text); }

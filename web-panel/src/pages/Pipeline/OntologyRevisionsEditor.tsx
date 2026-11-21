@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { DeleteOutlined, PlusOutlined } from '@/components/ui/icons';
 import { Button, Checkbox, Input, Select } from '@/components/ui';
 import type { OntologyPrincipal, Principal, SemanticAction, SemanticDefinition, SemanticProperty } from '../../services/ontology';
 import OntologyMarkingsEditor from './OntologyMarkingsEditor';
@@ -77,20 +78,21 @@ export default function OntologyRevisionsEditor({ initial, definition, principal
       <header><h4>Properties</h4><p>Manage display names, required values and the title used to identify objects.</p></header>
       <p className="flow-create-help">Existing IDs, types and source mappings are fixed. Primary key: <code>{definition.primaryKey.join(', ')}</code>.</p>
       <label className="flow-create-field"><span>Title property</span><Select aria-label="Title property" value={definition.titleKey || undefined} disabled={disabled} options={fieldOptions} onChange={(titleKey: string) => change({ titleKey })} /></label>
-      {definition.properties.map((property, index) => {
-        const saved = initial.properties.some(original => original.id === property.id);
-        return <section className="flow-semantic-config" key={index}>
-          <div className="flow-create-grid">
-            <label className="flow-create-field"><span>Property ID</span><Input maxLength={63} value={property.id} disabled={disabled || saved} onChange={event => changeProperty(index, { id: event.target.value })} /></label>
-            <label className="flow-create-field"><span>Property name</span><Input maxLength={120} value={property.name} disabled={disabled} onChange={event => changeProperty(index, { name: event.target.value })} /></label>
-            <label className="flow-create-field"><span>Property type</span><Select aria-label="Property type" options={propertyTypes.map(value => ({ value, label: value }))} value={property.type} disabled={disabled || saved} onChange={(type: string) => changeProperty(index, { type })} /></label>
-            {definition.source.mode === 'existing' && <label className="flow-create-field"><span>Source column</span><Input maxLength={63} value={property.sourceColumn ?? ''} disabled={disabled || saved} onChange={event => changeProperty(index, { sourceColumn: event.target.value })} /></label>}
-          </div>
-          <Checkbox checked={property.required} disabled={disabled || primary.has(property.id)} onChange={event => changeProperty(index, { required: event.target.checked })}>Required</Checkbox>
-          <Button size="small" disabled={disabled || primary.has(property.id)} onClick={() => removeProperty(index)}>Remove property</Button>
-        </section>;
-      })}
-      <Button className="ontology-revisions__add-property" size="small" disabled={disabled || definition.properties.length >= 200} onClick={() => change({ properties: [...definition.properties, { id: '', name: '', type: 'string', required: false }] })}>Add property</Button>
+      <div className="ontology-revisions__property-table"><table>
+        <thead><tr><th scope="col">ID</th><th scope="col">Display name</th><th scope="col">Type</th>{definition.source.mode === 'existing' && <th scope="col">Source column</th>}<th scope="col">Required</th><th scope="col"><span className="ontology-revisions__sr-only">Remove</span></th></tr></thead>
+        <tbody>{definition.properties.map((property, index) => {
+          const saved = initial.properties.some(original => original.id === property.id);
+          return <tr key={index}>
+            <td><label><span>Property ID</span><Input maxLength={63} value={property.id} disabled={disabled || saved} onChange={event => changeProperty(index, { id: event.target.value })} /></label></td>
+            <td><label><span>Property name</span><Input maxLength={120} value={property.name} disabled={disabled} onChange={event => changeProperty(index, { name: event.target.value })} /></label></td>
+            <td><Select aria-label={'Property type ' + (property.name || index + 1)} options={propertyTypes.map(value => ({ value, label: value }))} value={property.type} disabled={disabled || saved} onChange={(type: string) => changeProperty(index, { type })} /></td>
+            {definition.source.mode === 'existing' && <td><label><span>Source column</span><Input maxLength={63} value={property.sourceColumn ?? ''} disabled={disabled || saved} onChange={event => changeProperty(index, { sourceColumn: event.target.value })} /></label></td>}
+            <td><Checkbox aria-label={'Required ' + (property.name || index + 1)} checked={property.required} disabled={disabled || primary.has(property.id)} onChange={event => changeProperty(index, { required: event.target.checked })} /></td>
+            <td><Button type="text" size="small" icon={<DeleteOutlined />} aria-label={'Remove property ' + (property.name || index + 1)} disabled={disabled || primary.has(property.id)} onClick={() => removeProperty(index)} /></td>
+          </tr>;
+        })}</tbody>
+      </table></div>
+      <Button className="ontology-revisions__add-property" size="small" icon={<PlusOutlined />} disabled={disabled || definition.properties.length >= 200} onClick={() => change({ properties: [...definition.properties, { id: '', name: '', type: 'string', required: false }] })}>Add property</Button>
     </>}
 
     {section === 'actions' && definition.source.mode === 'none' && <>
