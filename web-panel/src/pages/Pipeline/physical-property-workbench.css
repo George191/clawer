@@ -24,7 +24,7 @@
 .physical-property-mapping { display:flex; align-items:center; gap:6px; }
 .physical-property-mapping > .ui-select { flex:1; }
 .physical-property-inspect { display:inline-flex; flex:none; align-items:center; justify-content:center; width:24px; height:24px; padding:0; border:0; border-radius:3px; background:transparent; color:var(--ontology-muted); cursor:pointer; }
-.physical-property-inspect:hover { background:var(--ontology-hover); color:var(--ontology-link); }
+.physical-property-inspect:hover { background:var(--ontology-hover); color:var(--ontology-text); }
 .physical-property-inspect .ui-icon { font-size:14px; }
 .physical-property-workbench .flow-foundry-property-list tbody > tr td:first-child { min-width: 120px; }
 .physical-property-workbench .flow-foundry-property-table-wrap table { line-height: 1.3; }
