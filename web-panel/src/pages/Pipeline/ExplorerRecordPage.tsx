@@ -1,6 +1,7 @@
 import ExplorerRecordMutation, { recordMutationActions } from './ExplorerRecordMutation';
 import { PropertyLabel } from './PropertyTypeIcon';
 import { ExplorerValueProvider } from './ExplorerValue';
+import { ExplorerSelectionOverlayContext, useExplorerSelectionOverlay } from './ExplorerSelectionOverlayContext';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Button, message } from '@/components/ui';
@@ -56,6 +57,7 @@ function requestError(error: unknown) {
 }
 
 function RecordPage({ source, identity }: { source: ExplorerDetailSource; identity: Identity }) {
+    const overlay = useExplorerSelectionOverlay();
     const schema = source.kind === 'backed' ? source.schema : '';
     const table = source.kind === 'backed' ? source.table : '';
     const sourceKey = JSON.stringify(source);
@@ -182,10 +184,10 @@ function RecordPage({ source, identity }: { source: ExplorerDetailSource; identi
                 nullControl:result.columnNullable?.[name] === true ? rowNullControl(name, draft[name], rememberedEditValues.current,
                     value=>setDraft(current=>current ? {...current,[name]:value} : current)) : undefined }))}
             onSubmit={()=>mutate(false)} onCancel={()=>{ if (!busy) { setDraft(undefined);setValidationError(''); } }} /> : null;
-    return <article className="flow-console--ontology explorer-object-workspace explorer-full-record">
-        <nav aria-label="Object location"><Link to="/ontology">Ontology</Link><span>/</span>
+    return <ExplorerSelectionOverlayContext.Provider value={overlay}><article className="flow-console--ontology explorer-object-workspace explorer-full-record">
+        <nav aria-label="Object location" {...(overlay.active ? { inert: '' } : {})}><Link to="/ontology">Ontology</Link><span>/</span>
             <Link to={tablePath}>{source.kind === 'published' ? typeName : `${schema}.${table}`}</Link></nav>
-        <header><div className="record-heading">
+        <header {...(overlay.active ? { inert: '' } : {})}><div className="record-heading">
             <div className="record-type">{objectType ? <SemanticTypeGlyph definition={objectType.definition} /> : <ExplorerTypeIcon dataType={presentation?.dataType} table={table} />}<span>{typeName}</span></div>
             <h1>{title}</h1>
         </div><div className="record-operations">
@@ -197,7 +199,7 @@ function RecordPage({ source, identity }: { source: ExplorerDetailSource; identi
         {result && row && <>
             <dl className="record-identity">{Object.entries(result.identity).map(([name,value])=>
                 <div key={name}><dt><PropertyLabel type={result.columnTypes[name] || 'string'}>{name}</PropertyLabel></dt><dd>{String(value)}</dd></div>)}</dl>
-            <div className="record-tabs" aria-label="Object views">{(['overview','properties'] as const).map(tab=>
+            <div className="record-tabs" aria-label="Object views" {...(overlay.active ? { inert: '' } : {})}>{(['overview','properties'] as const).map(tab=>
                 <button type="button" key={tab} aria-pressed={tab===currentMode} disabled={locked} onClick={()=>setMode(tab)}>
                     {{overview:'Overview',properties:'Properties'}[tab]}</button>)}
                 {groups.map(name => <button type="button" key={name} disabled={locked} aria-pressed={currentMode === 'group:' + name}
@@ -205,7 +207,7 @@ function RecordPage({ source, identity }: { source: ExplorerDetailSource; identi
                 {hasLinks && <button type="button" aria-pressed={currentMode==='links'} disabled={locked} onClick={()=>setMode('links')}>Links</button>}
                 {publishedRecord?.hasHistory && <button type="button" aria-pressed={currentMode==='history'} disabled={locked} onClick={()=>setMode('history')}>History</button>}
             </div>
-            <div className="record-content">{mutation ?? (currentMode==='links' ? source.kind === 'published'
+            <div className="record-content" ref={overlay.setHost}><div className="record-content-source" {...(overlay.active ? { inert: '', 'aria-hidden': true } : {})}>{mutation ?? (currentMode==='links' ? source.kind === 'published'
                 ? <PublishedExplorerRelationships definitionId={source.definitionId} recordId={publishedRecord!.id!} sourceTitle={title} />
                 : <ExplorerRowLinks schema={schema} table={table} primaryKey={result.identity} sourceTitle={title} initialPage={links.page}/> :
                 currentMode === 'history' && publishedRecord ? objectTools.renderHistory(publishedRecord) :
@@ -214,12 +216,12 @@ function RecordPage({ source, identity }: { source: ExplorerDetailSource; identi
                 !metadata ? <p role="status">Loading object presentation…</p> :
                 metadata.error ? null :
                 currentMode==='properties' ? <ExplorerProperties presentation={presentation} presentations={presentations} row={row}/> :
-                <ExplorerObjectOverview row={row} presentation={presentation} presentations={presentations} typeName={typeName} group={currentGroup}/>)}</div>
+                <ExplorerObjectOverview row={row} presentation={presentation} presentations={presentations} typeName={typeName} group={currentGroup}/>)}</div></div>
         </>}
         {objectTools.dialogs}
         {source.kind === 'backed' && result && confirmDelete && <ExplorerRecordMutation mode="delete" title={title}
             busy={busy} disabled={stale} onSubmit={()=>mutate(true)} onCancel={()=>{ if (!busy) setConfirmDelete(false); }} />}
-    </article>;
+    </article></ExplorerSelectionOverlayContext.Provider>;
 }
 
 export default function ExplorerRecordPage() {

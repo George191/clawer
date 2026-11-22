@@ -4,6 +4,7 @@ import type { ColumnsType } from '@/components/ui';
 import { ArrowDownOutlined, ArrowUpOutlined, DownOutlined, FilterOutlined, PlusOutlined } from '@/components/ui/icons';
 import ExplorerWorkbenchHeader from './ExplorerWorkbenchHeader';
 import ExplorerSelection from './ExplorerSelection';
+import { ExplorerSelectionOverlayContext, useExplorerSelectionOverlay } from './ExplorerSelectionOverlayContext';
 import { LayoutHeader, type useResultLayout } from './ExplorerResultLayout';
 import { activeExplorerFilters, exactCellValue, type ExplorerFilter } from './explorerFilters';
 import type { ExplorerSort } from '../../services/explorerLayouts';
@@ -73,8 +74,9 @@ export function ExplorerResults({ results, children, viewportRef, selectionKey }
 export default function ExplorerWorkbench<Q extends object>({ header, children, locked }: {
   header?: ComponentProps<typeof ExplorerWorkbenchHeader<Q>>; children?: ReactNode; locked?: boolean;
 }) {
-  return <div className="flow-inspector explorer-workbench">
-    {header && <fieldset className="wb-shell" disabled={locked}><ExplorerWorkbenchHeader key={JSON.stringify(header.source)} {...header} /></fieldset>}
+  const overlay = useExplorerSelectionOverlay();
+  return <ExplorerSelectionOverlayContext.Provider value={overlay}><div className="flow-inspector explorer-workbench">
+    {header && <fieldset className="wb-shell" disabled={locked || overlay.active} {...(overlay.active ? { inert: '' } : {})}><ExplorerWorkbenchHeader key={JSON.stringify(header.source)} {...header} /></fieldset>}
     {children}
-  </div>;
+  </div></ExplorerSelectionOverlayContext.Provider>;
 }

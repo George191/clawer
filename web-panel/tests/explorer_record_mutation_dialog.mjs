@@ -50,7 +50,7 @@ function publishedTools(request = async () => {}, actions = [{ kind: 'delete', f
 
 function selection(tools, record) {
   const module = compile('ExplorerSelection', name => {
-    if (name === 'react') return { useState: initial => [initial, () => {}], useRef: current => ({ current }), useEffect() {}, useId: () => 'panel' };
+    if (name === 'react') return { useContext: () => null, useCallback: callback => callback, useState: initial => [initial, () => {}], useRef: current => ({ current }), useEffect() {}, useId: () => 'panel' };
     if (name === './ExplorerObjectOverview') return { ExplorerObjectOverview: 'Overview', ExplorerTypeIcon: 'TypeIcon' };
     if (name === './ExplorerRowLinks') return { useExplorerLinkAvailability: () => ({}) };
     if (name === './useExplorerErrorToast') return { default() {} };

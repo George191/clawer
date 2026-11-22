@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
-import { Button, Drawer, Input, message } from '@/components/ui';
-import { LinkOutlined, SearchOutlined } from '@/components/ui/icons';
+import { useContext, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { ExplorerSelectionOverlayContext } from './ExplorerSelectionOverlayContext';
+import { Button, message } from '@/components/ui';
 import { createExplorerRowLink, fetchExplorerRowLinks, queryExplorerPreview } from '../../services/api';
 import { fetchExplorerProperties } from '../../services/explorerProperties';
 import { createPublishedRelationship, fetchPublishedRelationships, type ExplorerDetailSource } from '../../services/publishedExplorerDetails';
@@ -19,8 +20,8 @@ import './explorer-link-object-picker.css';
 
 type Props = { open: boolean; source: ExplorerDetailSource; sourceRow: Pick<ExplorerPreviewRow, 'identity' | 'key' | 'title'>;
   relation: LinkSelectionRelation; onClose: () => void; onCreated: () => void };
-type ObjectPage = { choices: ExplorerPreviewRow[]; typeName: string; dataType?: string; definition?: PublishedOntologyType['definition'];
-  columns: string[]; columnTypes: Record<string, string>; names: Record<string, string>; widths: Record<string, number>; wrap: boolean;
+type ObjectPage = { choices: ExplorerPreviewRow[]; dataType?: string; definition?: PublishedOntologyType['definition'];
+  columns: string[]; names: Record<string, string>; widths: Record<string, number>; wrap: boolean;
   hasMore: boolean; limited: boolean };
 function displayedColumns(fields: string[], layout: ResultLayout | null) {
   const configured = layout?.columns ?? [], available = new Set(fields), known = new Set(configured.map(column => column.field));
@@ -31,11 +32,9 @@ const exactKey = (key: unknown): key is Record<string, string> => !!key && typeo
   && Object.keys(key).length > 0 && Object.values(key).every(value => typeof value === 'string');
 const validKey = (source: ExplorerDetailSource, key: unknown) => exactKey(key)
   && (source.kind === 'backed' || Object.keys(key).length === 1 && typeof key.$recordId === 'string' && !!key.$recordId);
-const keyText = (key: Record<string, unknown>) => Object.entries(key).map(([field, value]) => `${field}: ${value}`).join(' · ');
-const sourceText = (source: ExplorerDetailSource) => source.kind === 'backed' ? `${source.schema}.${source.table}` : 'Published object';
-
-function ObjectPicker({ source, sourceRow, relation, onClose, onCreated }: Props) {
-  const [text, setText] = useState('');
+function ObjectPicker({ source, sourceRow, relation, onClose, onCreated, host }: Props & { host: HTMLDivElement }) {
+  const overlay = useContext(ExplorerSelectionOverlayContext);
+  useEffect(() => { overlay?.setActive(true); return () => overlay?.setActive(false); }, [overlay?.setActive]);
   const [query, setQuery] = useState({ search: '', offset: 0 });
   const [pageSize, setPageSize] = useState(10);
   const [revision, refresh] = useState(0);
@@ -70,8 +69,8 @@ function ObjectPicker({ source, sourceRow, relation, onClose, onCreated }: Props
         return { choices: page.rows.map((row, index) => {
           const identity = page.rowIdentities![index];
           return { record: row, identity, key: JSON.stringify(identity), columnTypes: page.columnTypes ?? {}, title: explorerRowTitle(row, identity, presentation.titleProperty, page.primaryKey) };
-        }), typeName: presentation.displayName || target.table, dataType: presentation.dataType,
-        ...displayedColumns(page.columns, layouts.personal.layout ?? layouts.default.layout), columnTypes: page.columnTypes ?? {},
+        }), dataType: presentation.dataType,
+        ...displayedColumns(page.columns, layouts.personal.layout ?? layouts.default.layout),
         names: Object.fromEntries(presentation.properties.filter(property => property.sourceColumn).map(property => [property.sourceColumn!, property.name])),
         hasMore: page.hasMore && page.canPageFurther, limited: page.hasMore && !page.canPageFurther };
       }
@@ -87,8 +86,8 @@ function ObjectPicker({ source, sourceRow, relation, onClose, onCreated }: Props
       const hasMore = page.hasMore && query.offset + pageSize <= 100_000;
       const columnTypes = publishedColumnTypes(type);
       return { choices: page.items.map(row => ({ record: row.properties, identity: row.identity!, key: row.id!, columnTypes, title: String(row.title ?? row.id) })),
-        typeName: type.definition.name, definition: type.definition,
-        ...displayedColumns(type.definition.properties.map(property => property.id), layouts.personal.layout ?? layouts.default.layout), columnTypes,
+        definition: type.definition,
+        ...displayedColumns(type.definition.properties.map(property => property.id), layouts.personal.layout ?? layouts.default.layout),
         names: Object.fromEntries(type.definition.properties.map(property => [property.id, property.name])),
         hasMore, limited: page.hasMore && !hasMore };
     }
@@ -105,10 +104,6 @@ function ObjectPicker({ source, sourceRow, relation, onClose, onCreated }: Props
   useExplorerErrorToast(snapshot?.error, 'Objects unavailable', () => refresh(value => value + 1));
   const close = () => { if (!writing.current && current()) onClose(); };
   const choose = (key: string) => { if (!writing.current && !loading && current()) setSelected(key); };
-  const search = (value: string) => {
-    if (writing.current || !current()) return;
-    setText(value); setSelected(''); setQuery({ search: value.trim(), offset: 0 });
-  };
   const turnPage = (offset: number) => {
     if (writing.current || loading || !current()) return;
     setSelected(''); setQuery(previous => ({ ...previous, offset }));
@@ -148,34 +143,22 @@ function ObjectPicker({ source, sourceRow, relation, onClose, onCreated }: Props
       if (current()) setBusy(false);
     }
   }
-  return <Drawer open placement="right" width="min(1440px, calc(100vw - 24px))" rootClassName="flow-surface-modal explorer-link-object-root" className="explorer-link-object-drawer" title="Add link"
-    onClose={close} closable={!busy} keyboard={!busy} maskClosable={!busy} footer={<div className="explorer-link-picker-footer">
-      <div className="explorer-link-picker-selected"><span>Target object</span><strong title={choice?.title}>{choice?.title || 'No object selected'}</strong></div>
-      <div><Button disabled={busy} onClick={close}>Cancel</Button>
-        <Button type="primary" loading={busy} disabled={loading || !choice || !relation.canLink} onClick={add}>Add link</Button></div>
-    </div>}>
-    <div className="explorer-link-picker">
-      <div className="explorer-link-picker-context">
-        <div><span>Current object</span><strong>{sourceRow.title}</strong><small title={keyText(sourceRow.identity)}>{sourceText(source)}</small></div>
-        <div className="explorer-link-picker-relation"><div><LinkOutlined /><strong>{relation.name}</strong></div><small>{relation.direction}</small></div>
-        <div><span>Target object type</span><strong>{page?.typeName || (target.kind === 'backed' ? target.table : 'Published objects')}</strong><small>{sourceText(target)}</small></div>
-      </div>
-      <Input aria-label="Find objects to link" placeholder="Search objects" prefix={<SearchOutlined />} allowClear value={text}
-        disabled={busy} onChange={event => search(event.target.value)} />
-      <div className="explorer-link-picker-browser">
-        <ExplorerLinkTargetTable source={target} label={page?.typeName || (target.kind === 'backed' ? target.table : 'Published objects')}
-          rows={page?.choices ?? []} columns={page?.columns ?? []} columnTypes={page?.columnTypes ?? {}} names={page?.names} widths={page?.widths} wrap={page?.wrap}
-          glyph={page?.definition ? <SemanticTypeGlyph definition={page.definition} size="row" /> : <ExplorerTypeIcon compact dataType={page?.dataType} table={target.kind === 'backed' ? target.table : ''} />}
-          selectedKey={selected} loading={loading} busy={busy} onSelect={choose} />
-        <ExplorerResultsFooter offset={query.offset} rowCount={page?.choices.length ?? 0} pageSize={pageSize} loading={loading} locked={busy}
-          canPageFurther={!!page?.hasMore} onPrevious={() => turnPage(query.offset - pageSize)} onNext={() => turnPage(query.offset + pageSize)}
-          onPageSize={size => { if (!writing.current && !loading && current()) { setSelected(''); setPageSize(size); setQuery(previous => ({ ...previous, offset: 0 })); } }}
-          notices={page?.limited ? 'Refine your search to see more objects.' : undefined} />
-      </div>
-    </div>
-  </Drawer>;
+  return createPortal(<section className="explorer-link-object-layer" role="region" aria-label="Link object selection"
+    onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); } }}>
+    <ExplorerLinkTargetTable rows={page?.choices ?? []} columns={page?.columns ?? []} names={page?.names} widths={page?.widths} wrap={page?.wrap}
+      glyph={page?.definition ? <SemanticTypeGlyph definition={page.definition} size="row" /> : <ExplorerTypeIcon compact dataType={page?.dataType} table={target.kind === 'backed' ? target.table : ''} />}
+      selectedKey={selected} loading={loading} busy={busy} onSelect={choose} />
+    <ExplorerResultsFooter offset={query.offset} rowCount={page?.choices.length ?? 0} pageSize={pageSize} loading={loading} locked={busy}
+      canPageFurther={!!page?.hasMore} onPrevious={() => turnPage(query.offset - pageSize)} onNext={() => turnPage(query.offset + pageSize)}
+      onPageSize={size => { if (!writing.current && !loading && current()) { setSelected(''); setPageSize(size); setQuery(previous => ({ ...previous, offset: 0 })); } }}
+      notices={page?.limited ? 'Object preview limit reached.' : undefined}>
+      <Button size="small" disabled={busy} onClick={close}>Cancel</Button>
+      <Button size="small" type="primary" loading={busy} disabled={loading || !choice || !relation.canLink} onClick={add}>Add link</Button>
+    </ExplorerResultsFooter>
+  </section>, host);
 }
 
 export default function ExplorerLinkObjectPicker(props: Props) {
-  return props.open ? <ObjectPicker key={JSON.stringify([props.source, props.sourceRow.identity, props.relation.id, props.relation.target, getSessionState().identity])} {...props} /> : null;
+  const overlay = useContext(ExplorerSelectionOverlayContext);
+  return props.open && overlay?.host ? <ObjectPicker host={overlay.host} key={JSON.stringify([props.source, props.sourceRow.identity, props.relation.id, props.relation.target, getSessionState().identity])} {...props} /> : null;
 }

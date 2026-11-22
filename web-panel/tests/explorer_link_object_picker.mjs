@@ -38,21 +38,23 @@ const overview = compile('pages/Pipeline/ExplorerObjectOverview.tsx', name => na
 const publishedPresentation = compile('services/publishedExplorerPresentation.ts', () => ({}));
 
 function mount({ native = false, direction = 'incoming', canLink = true, read, metadata, layouts, fresh, write = async () => {} } = {}) {
-  const states = [], refs = [], effects = [], scheduled = [], reads = [], metadataReads = [], layoutReads = [], checks = [], writes = [], notifications = [], errors = [];
+  const states = [], refs = [], effects = [], scheduled = [], reads = [], metadataReads = [], layoutReads = [], checks = [], writes = [], notifications = [], errors = [], activity = [], portals = [];
+  const overlay = { host: { id: 'results-host' }, setActive: value => activity.push(value) };
   const session = { identity: 'test-account', authenticated: true, locked: false };
   let cursor = 0, tree, closed = 0, created = 0;
   const relation = native ? normalizers.publishedLinkRelation(nativeRelation(direction), canLink)
     : { ...normalizers.storageLinkRelation(physicalRelation(direction)), canLink };
-  const props = { open: true, source: native ? { kind: 'published', definitionId: 'employee-type' } : { kind: 'backed', schema: 'ts_ods', table: 'employees' },
+  const props = { open: true, host: overlay.host, source: native ? { kind: 'published', definitionId: 'employee-type' } : { kind: 'backed', schema: 'ts_ods', table: 'employees' },
     sourceRow: { key: 'source-key', title: 'Reviewed source', identity: native ? { $recordId: 'source-native' } : { tenant: 'anchor', id: '9007199254740997' } },
     relation, onClose: () => closed++, onCreated: () => created++ };
   const available = native ? { canManage: true, relations: [nativeRelation(direction)] } : { canManage: true, relations: [physicalRelation(direction)] };
   const module = compile('pages/Pipeline/ExplorerLinkObjectPicker.tsx', name => {
     if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
+    if (name === 'react-dom') return { createPortal: (node, host) => { portals.push(host); return node; } };
     if (name === 'react') return {
       useState(initial) { const i = cursor++; if (!(i in states)) states[i] = typeof initial === 'function' ? initial() : initial;
         return [states[i], next => { states[i] = typeof next === 'function' ? next(states[i]) : next; }]; },
-      useRef(initial) { return refs[cursor++] ||= { current: initial }; }, useId: () => 'target-radio-group',
+      useRef(initial) { return refs[cursor++] ||= { current: initial }; }, useContext: () => overlay,
       useEffect(effect, deps) { const i = cursor++; if (!effects[i] || deps.some((value, j) => !Object.is(value, effects[i].deps[j]))) scheduled.push([i, effect, deps]); },
     };
     if (name === '@/components/ui') return { Button: 'Button', Input: 'Input', Drawer: 'Drawer', message: Object.fromEntries(['success', 'error'].map(kind => [kind, value => notifications.push({ kind, value })])) };
@@ -85,6 +87,7 @@ function mount({ native = false, direction = 'incoming', canLink = true, read, m
     if (name === './SemanticTypeGlyph') return { default: 'SemanticTypeIcon' };
     if (name === './ExplorerLinkTargetTable') return { default: 'TargetTable' };
     if (name === './ExplorerResultsFooter') return { ExplorerResultsFooter: 'ResultsFooter' };
+    if (name === './ExplorerSelectionOverlayContext') return { ExplorerSelectionOverlayContext: 'SelectionOverlayContext' };
     if (name === './useExplorerErrorToast') return { default: (...args) => errors.push(args) };
     if (name.endsWith('.css')) return {};
     throw new Error('Unexpected dependency ' + name);
@@ -95,10 +98,10 @@ function mount({ native = false, direction = 'incoming', canLink = true, read, m
     return tree;
   };
   render();
-  const all = () => nodes([tree, tree.props.footer]);
+  const all = () => nodes(tree);
   const table = () => nodes(tree).find(node => node.type === 'TargetTable');
   const footer = () => nodes(tree).find(node => node.type === 'ResultsFooter');
-  return { props, session, reads, checks, metadataReads, layoutReads, writes, notifications, errors, render, drawer: () => tree, table, footer,
+  return { props, session, reads, checks, metadataReads, layoutReads, writes, notifications, errors, activity, portals, overlay, render, layer: () => tree, table, footer,
     closed: () => closed, created: () => created, rows: () => table()?.props.rows || [], selected: () => table()?.props.selectedKey,
     button: label => all().find(node => node.type === 'Button' && node.props.children === label),
     search: () => nodes(tree).find(node => node.type === 'Input'),
@@ -118,10 +121,11 @@ test('the physical picker reads only the peer type and submits canonical composi
     assert.deepEqual(ui.reads[0].slice(0, 3), ['ts_dwd', 'companies', { search: '', offset: 0, limit: 10, filters: [], sorts: [], withIdentity: true }]);
     assert.equal(ui.reads[0][3], ui.metadataReads[0][2]);
     assert.deepEqual(ui.metadataReads[0].slice(0, 2), ['ts_dwd', 'companies']);
-    assert.equal(ui.drawer().type, 'Drawer'); assert.equal(ui.rows().length, 2);
+    assert.equal(ui.layer().props['aria-label'], 'Link object selection'); assert.equal(ui.rows().length, 2);
+    assert.equal(ui.portals.at(-1), ui.overlay.host);
     assert.equal(ui.layoutReads[0][0], '/layout/ts_dwd/companies'); assert.equal(ui.layoutReads[0][1], ui.reads[0][3]);
     assert.deepEqual(ui.table().props.columns, physicalPage().columns);
-    assert.equal(ui.table().props.columnTypes.id, 'bigint');
+    assert.equal(ui.rows()[0].columnTypes.id, 'bigint');
     assert.deepEqual(ui.rows()[1].record.tags, { group: 'b' });
     assert.equal(ui.rows()[1].identity.id, '9007199254740995');
     assert.equal(ui.button('Add link').props.disabled, true);
@@ -133,7 +137,7 @@ test('the physical picker reads only the peer type and submits canonical composi
   }
 });
 
-test('Published native search and linking use record identities rather than physical property values', async () => {
+test('Published native linking uses record identities rather than physical property values', async () => {
   for (const direction of ['incoming', 'outgoing']) {
     const ui = mount({ native: true, direction }); await ui.flush();
     assert.deepEqual(ui.reads[0].slice(0, 4), ['company-type', { filters: [], search: '' }, 10, 0]);
@@ -142,9 +146,8 @@ test('Published native search and linking use record identities rather than phys
     assert.deepEqual(ui.checks[0].slice(0, 4), ['employee-type', 'source-native', 'relation-uuid:' + direction, 0]);
     assert.deepEqual(ui.writes[0].slice(0, 4), ['relation-uuid', direction, 'source-native', 'native-b']);
     assert.equal(ui.created(), 1);
-    assert.equal(ui.table().props.source.kind, 'published');
     assert.deepEqual(ui.table().props.columns, ['id', 'name', 'employees']);
-    assert.deepEqual(ui.table().props.columnTypes, { id: 'text', name: 'text', employees: 'bigint' });
+    assert.deepEqual(ui.rows()[0].columnTypes, { id: 'text', name: 'text', employees: 'bigint' });
     assert.equal(ui.layoutReads[0][0], '/published-layout/company-type');
   }
 });
@@ -194,8 +197,7 @@ test('the shared pagination footer changes between 10, 20 and 50 rows and clears
     ui.choose(); ui.resize(50); await ui.flush();
     assert.equal(ui.footer().props.pageSize, 50); assert.equal(ui.footer().props.offset, 0); assert.ok(!ui.selected());
     if (native) assert.equal(ui.reads.at(-1)[2], 50); else assert.equal(ui.reads.at(-1)[2].limit, 50);
-    ui.search().props.onChange({ target: { value: 'New query' } }); await ui.flush();
-    assert.equal(ui.footer().props.pageSize, 50); assert.equal(ui.footer().props.offset, 0);
+    ui.next(); await ui.flush(); assert.equal(ui.footer().props.offset, 50);
   }
 });
 
@@ -207,33 +209,60 @@ test('a missing saved layout fails explicitly through Toast and never presents a
   failed = false; failure[2](); ui.render(); await ui.flush(); assert.equal(ui.rows().length, 2);
 });
 
-test('a pending request locks duplicate adds, closing, searching, paging and target changes', async () => {
+test('a pending request locks duplicate adds, cancellation, paging and target changes', async () => {
   const pending = deferred(), ui = mount({ write: () => pending.promise }); await ui.flush(); ui.choose();
   const adding = ui.button('Add link').props.onClick(); await ui.flush();
-  assert.equal(ui.drawer().props.closable, false); assert.equal(ui.drawer().props.keyboard, false); assert.equal(ui.drawer().props.maskClosable, false);
   assert.equal(ui.button('Cancel').props.disabled, true); assert.equal(ui.table().props.busy, true); assert.equal(ui.footer().props.locked, true);
-  await ui.button('Add link').props.onClick(); ui.drawer().props.onClose();
-  ui.search().props.onChange({ target: { value: 'blocked' } }); ui.next(); ui.resize(50); ui.choose(1); await ui.flush();
+  await ui.button('Add link').props.onClick(); ui.button('Cancel').props.onClick();
+  ui.next(); ui.resize(50); ui.choose(1); await ui.flush();
   assert.equal(ui.writes.length, 1); assert.equal(ui.checks.length, 1); assert.equal(ui.closed(), 0); assert.equal(ui.reads.length, 1);
   assert.equal(ui.selected(), ui.rows()[0].key);
   pending.resolve(); await adding; await ui.flush();
   assert.equal(ui.created(), 1); assert.equal(ui.notifications.length, 1);
 });
 
-test('live search and pagination clear the old target and discard late previous-query results', async () => {
+test('pagination clears the target, blocks queued navigation and refreshes selection after changing page size', async () => {
   const old = deferred(); let requests = 0;
   const ui = mount({ read: async () => ++requests === 2 ? old.promise : physicalPage(requests === 1 ? 'Initial' : 'Newest') });
   await ui.flush(); ui.choose();
-  ui.search().props.onChange({ target: { value: '  Old search  ' } }); ui.render();
+  ui.next();
   await ui.button('Add link').props.onClick(); assert.equal(ui.writes.length, 0);
-  ui.search().props.onChange({ target: { value: ' Newest search ' } }); ui.render(); await ui.flush();
-  old.resolve(physicalPage('Stale')); await ui.flush();
+  ui.resize(20); ui.next(); await ui.flush(); assert.equal(ui.reads.length, 2);
+  old.resolve(physicalPage('Second page')); await ui.flush();
+  assert.equal(ui.rows()[0].title, 'Second page A');
+  ui.choose(); ui.resize(20); assert.equal(ui.button('Add link').props.disabled, true); await ui.flush();
   assert.equal(ui.rows()[0].title, 'Newest A');
   assert.ok(!ui.selected());
-  assert.deepEqual(ui.reads[2][2], { search: 'Newest search', offset: 0, limit: 10, filters: [], sorts: [], withIdentity: true });
+  assert.deepEqual(ui.reads[2][2], { search: '', offset: 0, limit: 20, filters: [], sorts: [], withIdentity: true });
   ui.choose(); ui.next();
   await ui.button('Add link').props.onClick(); await ui.flush();
-  assert.equal(ui.reads[3][2].offset, 10); assert.ok(!ui.selected());
+  assert.equal(ui.reads[3][2].offset, 20); assert.ok(!ui.selected());
+});
+
+test('the local layer activates only its host and has no independent search, dialog or toolbar', async () => {
+  const ui = mount(); await ui.flush();
+  assert.deepEqual(ui.activity, [true]);
+  assert.equal(ui.search(), undefined);
+  assert.ok(nodes(ui.layer()).every(node => node.type !== 'Drawer' && node.type !== 'Modal'));
+  ui.button('Cancel').props.onClick(); ui.unmount();
+  assert.deepEqual(ui.activity, [true, false]);
+  assert.equal(ui.closed(), 1);
+});
+
+test('Retry clears old rows and ignores a late earlier request', async () => {
+  const pending = deferred(); let count = 0;
+  const ui = mount({ read: async () => {
+    if (++count === 1) throw new Error('Initial read failed');
+    return count === 2 ? pending.promise : physicalPage('Fresh');
+  } }); await ui.flush();
+  const retry = ui.errors.findLast(([error]) => error)[2];
+  retry(); ui.render(); await ui.flush();
+  assert.equal(ui.rows().length, 0); assert.equal(ui.button('Add link').props.disabled, true);
+  retry(); ui.render(); await ui.flush();
+  assert.equal(ui.reads[1][3].aborted, true);
+  pending.resolve(physicalPage('Old')); await ui.flush();
+  assert.equal(ui.rows()[0].title, 'Fresh A');
+  assert.ok(!ui.selected());
 });
 
 test('physical objects with absent, rounded or extra primary-key fields fail explicitly', async () => {
@@ -311,7 +340,7 @@ test('read failures can be retried from Toast, while empty and bounded results d
     const result = limited ? { ...physicalPage(), canPageFurther: false } : { ...physicalPage(), rows: [], rowIdentities: [], hasMore: false };
     const ui = mount({ read: async () => result }); await ui.flush();
     assert.equal(ui.footer().props.canPageFurther, false); assert.equal(ui.footer().props.offset, 0);
-    if (limited) assert.equal(ui.footer().props.notices, 'Refine your search to see more objects.');
+    if (limited) assert.equal(ui.footer().props.notices, 'Object preview limit reached.');
     else assert.equal(ui.button('Add link').props.disabled, true);
   }
 });
@@ -320,7 +349,7 @@ test('unselected, read-only, closed and cancelled pickers never create links', a
   for (const canLink of [true, false]) {
     const ui = mount({ canLink }); await ui.flush(); await ui.button('Add link').props.onClick();
     if (!canLink) { ui.choose(); await ui.button('Add link').props.onClick(); }
-    ui.drawer().props.onClose(); assert.equal(ui.closed(), 1); assert.equal(ui.writes.length, 0); assert.equal(ui.checks.length, 0);
+    ui.button('Cancel').props.onClick(); assert.equal(ui.closed(), 1); assert.equal(ui.writes.length, 0); assert.equal(ui.checks.length, 0);
     assert.equal(ui.wrapper({ ...ui.props, open: false }), null);
   }
 });

@@ -28,6 +28,7 @@ function mount(kind = 'Comparison') {
   vm.runInThisContext('(function(require,exports){' + code + '\nexports.Comparison=Comparison;\n})')(name => {
     if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx, Fragment: 'Fragment' };
     if (name === 'react') return {
+      useContext: () => null, useCallback: callback => callback,
       useState(initial) { const i = cursor++; if (!(i in states)) states[i] = typeof initial === 'function' ? initial() : initial;
         return [states[i], value => { states[i] = typeof value === 'function' ? value(states[i]) : value; }]; },
       useRef(initial) { return refs[cursor++] ||= { current: initial }; }, useId() { cursor++; return 'comparison'; },

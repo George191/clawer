@@ -34,8 +34,10 @@
 .record-tabs button:disabled { cursor: default; }
 
 .explorer-full-record > :not([data-ui-popup]) { flex-shrink: 0; width: 100%; }
-.explorer-full-record > .record-content { display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden; }
-.explorer-full-record > .record-content > :is(.flow-explorer-overview,.explorer-row-links,.explorer-history) { flex:1; min-height:0; overflow:auto; }
-.record-content > .flow-explorer-row-mutation { flex:1; min-height:0; overflow:auto; margin:0; }
-.record-content > .flow-explorer-row-mutation:has(> form) { display:flex; flex-direction:column; overflow:hidden; }
+.explorer-full-record > .record-content { position:relative; display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden; }
+.record-content-source > :is(.flow-explorer-overview,.explorer-row-links,.explorer-history) { flex:1; min-height:0; overflow:auto; }
+.record-content-source > .flow-explorer-row-mutation { flex:1; min-height:0; overflow:auto; margin:0; }
+.record-content-source > .flow-explorer-row-mutation:has(> form) { display:flex; flex-direction:column; overflow:hidden; }
 .explorer-full-record:has(.flow-explorer-row-mutation > form) { padding-bottom:0; }
+
+.record-content-source { display:flex; flex:1; flex-direction:column; min-height:0; overflow:hidden; }

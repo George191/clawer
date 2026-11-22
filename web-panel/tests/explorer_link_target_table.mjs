@@ -25,41 +25,27 @@ const row = (key, title) => ({ key, title, identity: { id: key, tenant: 'canonic
 const module = compile('ExplorerLinkTargetTable', name => {
   if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
   if (name === '@/components/ui') return { Table: 'Table' };
-  if (name === '@/components/ui/icons') return { FilterOutlined: 'FilterIcon' };
   if (name === './ExplorerObjectOverview') return overview;
-  if (name === './ExplorerWorkbenchHeader') return { default: 'WorkbenchHeader' };
   if (name.endsWith('.css')) return {};
   throw new Error('Unexpected target table dependency ' + name);
 });
 function mount(overrides = {}) {
   const selected = [];
-  const props = { source: { kind: 'backed', schema: 'ts_ods', table: 'target_people' }, label: 'Target people',
-    rows: [row('9007199254740993', 'Alice'), row('9007199254740995', 'Bob')],
-    columns: ['id', 'tenant', 'name', 'active', 'note', 'payload'], columnTypes: { id: 'bigint', active: 'boolean', payload: 'jsonb' },
+  const props = { rows: [row('9007199254740993', 'Alice'), row('9007199254740995', 'Bob')],
+    columns: ['id', 'tenant', 'name', 'active', 'note', 'payload'],
     names: { name: 'Name' }, widths: { id: 240 }, glyph: jsx('TypeIcon', {}), selectedKey: '', loading: false, busy: false,
     onSelect: key => selected.push(key), ...overrides };
   let tree;
   const render = () => tree = module.default(props);
   render();
-  return { props, selected, render, all: () => nodes(tree), table: () => nodes(tree).find(node => node.type === 'Table'),
-    header: () => nodes(tree).find(node => node.type === 'WorkbenchHeader') };
+  return { props, selected, render, all: () => nodes(tree), table: () => nodes(tree).find(node => node.type === 'Table') };
 }
 
-test('target table reuses the Explorer header and keeps every toolbar action inert', () => {
-  const ui = mount(), header = ui.header().props;
-  const fieldset = ui.all().find(node => node.type === 'fieldset');
-  assert.equal(fieldset.props.disabled, true); assert.equal(fieldset.props['aria-disabled'], 'true');
-  assert.equal(fieldset.props.children.props.inert, '');
-  assert.equal(header.source, ui.props.source); assert.equal(header.label, 'Target people');
-  assert.equal(header.mode, 'results'); assert.equal(header.resource, 'preview'); assert.equal(header.admin, false);
-  assert.deepEqual(header.availableResources, ['preview']); assert.deepEqual(header.selected, []);
-  assert.equal(header.aggregate, undefined); assert.equal(header.onSearchValues('ignored'), false);
-  for (const method of ['backToTypes', 'toggleCatalog', 'selectResource', 'setMode', 'openSavedItem', 'saveCompleted', 'updateSavedItem']) {
-    assert.equal(header[method]('ignored'), undefined);
-  }
-  assert.equal(header.layoutControl.props.disabled, true); assert.equal(header.filterButton.props.disabled, true);
-  assert.equal(header.rows[0].id, '9007199254740993'); assert.equal(header.rows[0].tenant, 'canonical-tenant');
-  assert.equal(ui.props.rows[0].record.id, 9007199254740992);
+test('the target results layer contains only the shared table with no duplicate toolbar or search', () => {
+  const ui = mount();
+  assert.equal(ui.all().filter(node => node.type === 'Table').length, 1);
+  assert.equal(ui.all().some(node => ['WorkbenchHeader', 'fieldset', 'header', 'nav', 'input', 'button'].includes(node.type)), false);
+  assert.equal(ui.table().props.dataSource, ui.props.rows);
 });
 
 test('all fields share the Explorer table while title and single selection columns stay frozen', () => {
@@ -78,11 +64,10 @@ test('all fields share the Explorer table while title and single selection colum
 test('physical and native cell rendering preserves exact identity and scalar JSON values', () => {
   const ui = mount(), columns = ui.table().props.columns;
   const rendered = field => text(columns.find(column => column.key === field).render(undefined, ui.props.rows[0]));
+  assert.equal(ui.props.rows[0].record.id, 9007199254740992);
   assert.equal(rendered('id'), '9007199254740993'); assert.equal(rendered('tenant'), 'canonical-tenant');
   assert.equal(rendered('active'), 'false'); assert.equal(rendered('note'), 'null'); assert.equal(rendered('payload'), '{"tags":["demo"]}');
-  const native = mount({ source: { kind: 'published', definitionId: 'equipment-type' }, label: 'Equipment',
-    columns: ['id'], rows: [{ ...row('record-a', 'Native record'), identity: { $recordId: 'record-a' }, record: { id: 'business-id' } }] });
-  assert.equal(native.header().props.source.definitionId, 'equipment-type');
+  const native = mount({ columns: ['id'], rows: [{ ...row('record-a', 'Native record'), identity: { $recordId: 'record-a' }, record: { id: 'business-id' } }] });
   assert.equal(text(native.table().props.columns[1].render(undefined, native.props.rows[0])), 'business-id');
 });
 

@@ -3,7 +3,8 @@ import { ExplorerValueProvider } from './ExplorerValue';
 import { useExplorerLinkAvailability } from './ExplorerRowLinks';
 import type { ExplorerRowLinkPage } from '../../services/api';
 import type { ExplorerDetailSource } from '../../services/publishedExplorerDetails';
-import { useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useId, useRef, useState } from 'react';
+import { ExplorerSelectionOverlayContext } from './ExplorerSelectionOverlayContext';
 import type { KeyboardEvent, ReactNode } from 'react';
 import { Button, Checkbox, Dropdown, Input, Select, Table, message } from '@/components/ui';
 import type { ColumnsType, MenuItem, TableProps } from '@/components/ui';
@@ -157,7 +158,10 @@ export default function ExplorerSelection({
   selectedRows, selectionLimit = Infinity, renderGlyph, extraViews = [], renderPublishedRelationships, onActiveRowChange,
 }: Props) {
   const panelId = useId();
-  const results = useRef<HTMLDivElement>(null);
+  const results = useRef<HTMLDivElement | null>(null);
+  const overlay = useContext(ExplorerSelectionOverlayContext);
+  const setHost = overlay?.setHost;
+  const attachResults = useCallback((node: HTMLDivElement | null) => { results.current = node; setHost?.(node); }, [setHost]);
   const cards = useRef<HTMLDivElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const restore = useRef<HTMLButtonElement>(null);
@@ -361,7 +365,8 @@ export default function ExplorerSelection({
     onRefresh();
   };
   return <div className={`flow-explorer-selection${panelOpen ? ' is-open' : ''}`}>
-    <div ref={results} role="region" aria-label="Object results" className="flow-explorer-selection__results">
+    <div ref={attachResults} role="region" aria-label="Object results" className="flow-explorer-selection__results">
+      <div className="flow-explorer-selection__source" {...(overlay?.active ? { inert: '', 'aria-hidden': true } : {})}>
       {current?.collapsed && active && <header className="flow-explorer-selection__results-header">
           <button ref={restore} type="button" className="flow-explorer-selection__control"
             aria-controls={panelId} aria-expanded={false} onClick={show}>Show selection preview</button>
@@ -370,8 +375,9 @@ export default function ExplorerSelection({
       <Table<RecordRow> className="flow-data-table" size="small" loading={loading && !columns.length} pagination={false} rowKey={(record, index = 0) => rowKey(record, index)}
         scroll={{ x: 'max-content' }} dataSource={rows} columns={tableColumns} rowSelection={checkboxProps} onRow={rowProps} />
       {footer}
+      </div>
     </div>
-    {panelOpen && active && <ExplorerValueProvider schema={schema} table={table} source={source}><aside className="flow-explorer-selection__panel" id={panelId} aria-labelledby={panelId + '-heading'}
+    {panelOpen && active && <ExplorerValueProvider schema={schema} table={table} source={source}><aside className="flow-explorer-selection__panel" id={panelId} aria-labelledby={panelId + '-heading'} {...(overlay?.active ? { inert: '' } : {})}
       onKeyDown={event => { if (event.key === 'Escape' && !event.defaultPrevented && !disabled) { event.preventDefault(); collapse(); } }}>
       <header className="flow-explorer-selection__panel-header">
         <button className="flow-explorer-selection__control" type="button" aria-label="Collapse selection preview" aria-controls={panelId}
