@@ -4,10 +4,11 @@
 }
 .ontology-connectors.ontology-connections-workspace,
 .ontology-connectors.ontology-connectors__wizard {
-  --ui-primary: var(--ui-action-bg);
-  --ontology-primary: var(--ui-action-bg);
-  --ontology-link: var(--ui-action-link);
-  --ontology-selected: color-mix(in srgb, var(--ui-action-bg) 14%, var(--ontology-panel));
+  --ui-primary: var(--ui-muted);
+  --ui-focus-ring: var(--ui-muted);
+  --ontology-primary: var(--ui-muted);
+  --ontology-link: var(--ontology-text);
+  --ontology-selected: color-mix(in srgb, var(--ontology-text) 9%, var(--ontology-panel));
 }
 .ontology-connectors .ui-btn { min-height: 31px; border-radius: 4px; font-size: 12px; }
 .ontology-connectors button:focus-visible { outline: 2px solid var(--ui-focus-ring); outline-offset: 2px; }

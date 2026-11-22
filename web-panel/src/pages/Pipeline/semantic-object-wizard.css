@@ -1,4 +1,4 @@
-.flow-semantic-wizard { --wizard-inset: clamp(14px, 1.6vw, 20px); --ui-primary: var(--ui-action-bg); --ontology-link: var(--ui-action-link); font: 400 12px/1.5 var(--ontology-font); }
+.flow-semantic-wizard { --wizard-inset: clamp(14px, 1.6vw, 20px); --ui-primary: var(--ui-muted); --ui-focus-ring: var(--ui-muted); --ontology-link: var(--ontology-text); font: 400 12px/1.5 var(--ontology-font); }
 .flow-source-dataset { display: grid; gap: 10px; }
 .flow-source-connection-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; }
 .flow-source-connection-label { font-weight: 500; white-space: nowrap; }
@@ -34,6 +34,7 @@
   min-height: 38px; gap: 8px; padding: 5px 12px; border-bottom: 1px solid var(--ontology-border); font-size: 12px;
 }
 .flow-semantic-wizard .flow-create-steps > li > span:first-child { width: 20px; height: 20px; font-size: 11px; }
+.flow-semantic-wizard .flow-create-steps > li.is-current > span:first-child { color: var(--ontology-panel); }
 .flow-semantic-wizard .flow-create-steps button {
   border: 0; padding: 0; background: transparent; color: var(--ontology-text); font: inherit; text-align: left; cursor: pointer;
 }
