@@ -67,11 +67,11 @@ with (ARTIFACTS / 'vite.log').open('w') as log:
                 surface = control.evaluate('''node => {
                   const inner = getComputedStyle(node.querySelector('.ui-select-selector'));
                   const arrow = node.querySelector('.ui-select-arrow').getBoundingClientRect();
-                  return { border: getComputedStyle(node).borderTopWidth, innerBorder: inner.borderTopWidth, innerBackground: inner.backgroundColor, arrowInset: node.getBoundingClientRect().right - arrow.right };
+                  return { border: getComputedStyle(node).borderTopWidth, innerBorder: inner.borderTopWidth, innerBackground: inner.backgroundColor, arrowInset: node.getBoundingClientRect().right - arrow.right, leadingInset: node.querySelector('.ui-select-selector').getBoundingClientRect().left - node.getBoundingClientRect().left };
                 }''')
                 assert surface['border'] == '1px' and surface['innerBorder'] == '0px', surface
                 assert surface['innerBackground'] == 'rgba(0, 0, 0, 0)', surface
-                assert 12 <= surface['arrowInset'] <= 13, surface
+                assert abs(surface['arrowInset'] - surface['leadingInset']) < 1, surface
                 page.screenshot(path=str(ARTIFACTS / f'{mode}-open.png'))
                 page.get_by_role('option', name='Beta', exact=True).click()
                 expect(control).to_contain_text('Beta')
@@ -115,6 +115,25 @@ with (ARTIFACTS / 'vite.log').open('w') as log:
                 multi.press('Escape')
                 page.get_by_role('button', name='Remove Alpha', exact=True).click()
                 expect(page.get_by_role('button', name='Remove Beta', exact=True)).to_be_visible()
+                adaptive = page.get_by_role('combobox', name='Adaptive height')
+                configured = page.get_by_role('combobox', name='Configured dimensions')
+                compact = page.get_by_role('combobox', name='Compact dimensions')
+                assert adaptive.bounding_box()['height'] > configured.bounding_box()['height']
+                assert configured.bounding_box()['height'] == 40
+                assert compact.bounding_box()['height'] == 24
+                for sized, leading, trailing in [(configured, 12, 3), (compact, 5, 5)]:
+                    insets = sized.evaluate('''node => {
+                      const box = node.getBoundingClientRect(), style = getComputedStyle(node);
+                      const arrow = node.querySelector('.ui-select-arrow').getBoundingClientRect();
+                      return { leading: node.querySelector('.ui-select-selector').getBoundingClientRect().left - box.left - parseFloat(style.borderLeftWidth), trailing: box.right - arrow.right - parseFloat(style.borderRightWidth), gap: arrow.left - node.querySelector('.ui-select-selection-wrap').getBoundingClientRect().right, paddingEnd: parseFloat(style.paddingInlineEnd) };
+                    }''')
+                    assert abs(insets['leading'] - leading) < 1 and abs(insets['trailing'] - trailing) < 1, insets
+                    assert abs(insets['paddingEnd'] - trailing) < 1 and insets['gap'] >= 6, insets
+                compact.click()
+                page.wait_for_timeout(200)
+                check_geometry(compact, page.locator('.ui-select-dropdown[data-state=open]'))
+                page.get_by_role('option', name='Beta', exact=True).click()
+                expect(compact).to_contain_text('Beta')
                 category = page.get_by_role('combobox', name='Filter connector category')
                 category.click()
                 page.wait_for_timeout(200)

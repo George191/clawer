@@ -149,11 +149,11 @@ function Workbench({schema,table,canManage,identity,onSaved,onDirtyChange}: Prop
                                 <span className="physical-selection" aria-hidden="true"/><PropertyTypeIcon type={item.type} /><span className="physical-property-name" title={item.name || item.id}>{item.name || item.id}</span>
                                 <PropertyBadges property={item} title={draft.titleProperty}/></button></td>
                             <td><span className={'physical-chip status-'+item.status}>{readable(item.status)}</span></td>
-                            <td>{editable ? <NativeSelect className="physical-chip visibility" aria-label={'Visibility for '+item.name} value={item.visibility}
+                            <td>{editable ? <NativeSelect className="physical-chip visibility" height={24} paddingInlineStart={5} paddingInlineEnd={5} aria-label={'Visibility for '+item.name} value={item.visibility}
                                 onChange={e=>patch(index,{visibility:e.target.value as Property['visibility'], ...(e.target.value==='hidden'?{summary:false}:{})})}>
                                 {(draft.titleProperty && item.sourceColumn===draft.titleProperty?['normal','prominent']:['normal','prominent','hidden']).map(v=><option key={v} value={v}>{readable(v)}</option>)}
                             </NativeSelect> : <span className="physical-chip visibility">{readable(item.visibility)}</span>}</td>
-                            <td>{editable && propertyFormatters(item.type).length>1 ? <span className="physical-formatter-select"><NativeSelect className="physical-chip formatter" aria-label={'Formatter for '+item.name} value={item.formatter}
+                            <td>{editable && propertyFormatters(item.type).length>1 ? <span className="physical-formatter-select"><NativeSelect className="physical-chip formatter" height={24} paddingInlineStart={5} paddingInlineEnd={5} aria-label={'Formatter for '+item.name} value={item.formatter}
                                 onChange={e=>patch(index,{formatter:e.target.value as Property['formatter']})}>
                                 {propertyFormatters(item.type).map(v=><option key={v} value={v}>{readable(v)}</option>)}
                             </NativeSelect></span> : <span className="physical-chip formatter">{readable(item.formatter)}</span>}</td>
@@ -161,10 +161,10 @@ function Workbench({schema,table,canManage,identity,onSaved,onDirtyChange}: Prop
                         {!items.length && <tr><td colSpan={5}>{draft.properties.length?'No properties match the current filters.':'No properties registered.'}</td></tr>}</tbody></>
                     : <><thead><tr>{['Source column','PostgreSQL type','Mapped property','Constraints'].map(s=><th key={s} scope="col">{s}</th>)}</tr></thead><tbody>
                         {cols.map(c=>{const target=mapped.get(c.name);return <tr key={c.name} className={p && p.sourceColumn===c.name?'is-selected':''}>
-                            <td><code>{c.name}</code></td><td>{c.type}</td><td><NativeSelect aria-label={'Mapping for '+c.name} disabled={!structural || draft.titleProperty===c.name} value={target?.id || ''} onChange={e=>mapColumn(c,e.target.value)}>
+                            <td><code>{c.name}</code></td><td>{c.type}</td><td><div className="physical-property-mapping"><NativeSelect height={24} paddingInlineStart={5} paddingInlineEnd={5} aria-label={'Mapping for '+c.name} disabled={!structural || draft.titleProperty===c.name} value={target?.id || ''} onChange={e=>mapColumn(c,e.target.value)}>
                                 <option value="">Unmapped</option>{draft.properties.filter(v=>!v.sourceColumn||v.sourceColumn===c.name).map(v=><option value={v.id} key={v.id}>{v.name}</option>)}
                                 {!target && <option value=":create">Create mapped property</option>}</NativeSelect>
-                                {target && <button type="button" className="flow-foundry-property-link" onClick={()=>reveal(target.id)}>Inspect property</button>}</td>
+                                {target && <button type="button" className="physical-property-inspect" aria-label={'Inspect property '+target.name} title="Inspect property" onClick={()=>reveal(target.id)}><SearchOutlined/></button>}</div></td>
                             <td>{[c.primary?'Primary key':'',c.nullable?'Nullable':'NOT NULL'].filter(Boolean).join(' · ')}</td></tr>;})}
                         {!cols.length && <tr><td colSpan={4}>No columns match the current filters.</td></tr>}</tbody></>}
                 </table></div></section>
