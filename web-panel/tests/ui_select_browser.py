@@ -138,6 +138,16 @@ with (ARTIFACTS / 'vite.log').open('w') as log:
                 dialog_control.press('Escape')
                 expect(page.get_by_role('dialog')).to_be_visible()
                 page.get_by_role('button', name='Close dialog', exact=True).click()
+                footer = page.get_by_role('combobox', name='Footer page size')
+                footer.click()
+                page.wait_for_timeout(200)
+                footer_menu = page.locator('.ui-select-dropdown[data-state=open]')
+                anchor_box, menu_box = footer.bounding_box(), footer_menu.bounding_box()
+                assert menu_box['height'] >= 90, menu_box
+                assert abs(menu_box['x'] - anchor_box['x']) < 1 and abs(menu_box['width'] - anchor_box['width']) < 1
+                assert abs(anchor_box['y'] - menu_box['y'] - menu_box['height'] - 4) < 1
+                page.get_by_role('option', name='50 / page', exact=True).click()
+                expect(footer).to_contain_text('50 / page')
                 assert not errors, errors
                 results.append({'theme': mode, 'geometry': geometry, 'surface': surface, 'form_values': values, 'page_errors': errors})
                 page.close()
