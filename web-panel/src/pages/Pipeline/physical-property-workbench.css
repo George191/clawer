@@ -92,6 +92,7 @@
 .physical-property-workbench .flow-foundry-property-list .visibility { background:var(--ontology-selected); color:var(--ontology-link); }
 .physical-property-workbench .flow-foundry-property-list .formatter { background:var(--ontology-bg); }
 .physical-formatter-select { display:inline-flex; position:relative; max-width:100%; vertical-align:middle; }
+.physical-formatter-select > .ui-select { width:140px; }
 .physical-property-workbench .flow-foundry-property-list tbody tr.is-selected td { background:var(--ontology-bg); }
 .physical-property-preview .flow-foundry-property-preview-tools strong { margin-right:6px; }
 .physical-property-workbench .physical-property-toggle input,.physical-property-preview input[type=checkbox] {
