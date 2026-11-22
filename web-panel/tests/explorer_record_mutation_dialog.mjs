@@ -104,11 +104,12 @@ test('shared editors expose null only through field capability and lock nullable
   ];
   const props = { mode: 'edit', title: 'Synthetic object', fields, onSubmit() {}, onCancel() {} };
   const tree = mutation.default(props);
-  const controls = nodes(tree).filter(node => node.type === 'Checkbox');
-  assert.equal(controls.length, 1); assert.equal(controls[0].props['aria-label'], 'Set Optional field to null');
-  controls[0].props.onChange({ target: { checked: true } }); assert.equal(nullValue, true);
+  const controls = nodes(tree).filter(node => node.type === './ExplorerFieldEditor');
+  assert.equal(controls[0].props.nullControl, undefined);
+  assert.equal(controls[1].props.nullControl.checked, false);
+  controls[1].props.nullControl.onChange(true); assert.equal(nullValue, true);
   const saving = mutation.default({ ...props, busy: true });
-  assert.equal(nodes(saving).find(node => node.type === 'Checkbox').props.disabled, true);
+  assert.equal(nodes(saving).find(node => node.type === './ExplorerFieldEditor').props.disabled, true);
 });
 
 test('Published delete keeps the actual selection Overview while using the separate dialog slot', () => {

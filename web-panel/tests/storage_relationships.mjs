@@ -9,6 +9,7 @@ const code = ts.transpileModule(readFileSync(new URL('../src/pages/Pipeline/Expl
 }).outputText;
 const jsx = (type, props) => ({ type, props });
 const page = (direction = 'outgoing', canUnlink = true) => ({
+  canManage: canUnlink,
   relations: [{ id: 'selector', relationId: '18', name: 'local_demo_expert_company', direction, kind: 'logical',
     schema: 'ts_ods', table: 'local_demo_companies', fields: ['company_id'], targetFields: ['id'], canLink: canUnlink }],
   selected: 'selector', links: [{ linkId: 'edge-instance', version: '7', identity: { id: 'LOCAL-CO-001' }, canUnlink }],
@@ -17,7 +18,7 @@ const page = (direction = 'outgoing', canUnlink = true) => ({
 
 function workspace(initial = page(), fresh = initial) {
   let cursor = 0, tree, reads = 0, current = fresh, failure;
-  const states = [], effects = [], scheduled = [], calls = [];
+  const states = [], effects = [], scheduled = [], calls = [], lookups = [];
   const session = { authenticated: true, locked: false, identity: 'qa' };
   const exports = {};
   vm.runInThisContext('(function(require,exports){' + code + '\n})')(name => {
@@ -25,6 +26,7 @@ function workspace(initial = page(), fresh = initial) {
     if (name === '@/components/ui') return { Button: 'Button' };
     if (name === '@/components/ui/icons') return { SettingOutlined: 'SettingsIcon' };
     if (name === './StorageRelationshipTypes') return { default: 'RelationshipManager' };
+    if (name === './StorageLinkObjectPicker') return { default: 'ObjectPicker' };
     if (name === 'react') return {
       useState(initial) { const index = cursor++; if (!(index in states)) states[index] = initial;
         return [states[index], value => { states[index] = typeof value === 'function' ? value(states[index]) : value; }]; },
@@ -32,7 +34,7 @@ function workspace(initial = page(), fresh = initial) {
     };
     if (name === '../../services/session') return { getSessionState: () => session };
     if (name === '../../services/api') return {
-      fetchExplorerRowLinks: async () => { reads++; return current; },
+      fetchExplorerRowLinks: async (...args) => { reads++; lookups.push(args); return current; },
       fetchExplorerRowByKey: async (_schema, _table, identity) => ({ row: { name: 'Physical company' }, identity, columnTypes: { name: 'text' } }),
       unlinkExplorerRowLink: async (...args) => { calls.push(args); if (failure) throw failure; current = { ...current, links: [], identities: [] }; },
     };
@@ -52,7 +54,7 @@ function workspace(initial = page(), fresh = initial) {
   };
   const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); return render(); };
   render();
-  return { flush, render, calls, tree: () => tree, reads: () => reads, reject: value => { failure = value; } };
+  return { flush, render, calls, lookups, tree: () => tree, reads: () => reads, reject: value => { failure = value; } };
 }
 
 for (const direction of ['outgoing', 'incoming']) test('storage unlink retains exact edge version and ' + direction + ' endpoints', async () => {
@@ -76,16 +78,17 @@ test('read-only storage capabilities do not expose unlink actions', async () => 
 
 test('storage managers open the active relationship definition and refresh its links after saving', async () => {
   const ui = workspace(); await ui.flush();
-  const management = () => ui.tree().props.management.props.children;
-  assert.equal(management()[1].props.initialRelationId, '18');
-  assert.equal(management()[1].props.open, false);
-  management()[0].props.onClick(); ui.render();
-  assert.equal(management()[1].props.open, true);
-  management()[1].props.onChanged('18'); ui.render(); await ui.flush();
+  const controls = () => ui.tree().props.management.props.children;
+  const manager = () => controls().find(node => node?.type === 'RelationshipManager');
+  assert.equal(manager().props.initialRelationId, '18');
+  assert.equal(manager().props.open, false);
+  controls().find(node => node?.props?.['aria-label'] === 'Manage relationship types').props.onClick(); ui.render();
+  assert.equal(manager().props.open, true);
+  manager().props.onChanged('18', 'outgoing'); ui.render(); await ui.flush();
   assert.equal(ui.reads(), 2);
   assert.equal(ui.tree().props.selectedId, 'selector');
-  management()[1].props.onClose(); ui.render();
-  assert.equal(management()[1].props.open, false);
+  manager().props.onClose(); ui.render();
+  assert.equal(manager().props.open, false);
 });
 
 test('stale edge denial propagates without deleting the displayed relationship or reporting success', async () => {
@@ -102,4 +105,46 @@ test('reopening a prefetched link page verifies the stored edges instead of revi
   const ui = workspace(old, fresh); await ui.flush();
   assert.equal(ui.reads(), 1);
   assert.equal(ui.tree().props.records.length, 0);
+});
+
+test('defined relationship types and manager access expose Links before the first object link exists', async () => {
+  for (const [result, available] of [
+    [{ ...page(), links: [], identities: [] }, true],
+    [{ ...page(), relations: [], selected: null, links: [], identities: [] }, true],
+    [{ ...page('outgoing', false), relations: [], selected: null, links: [], identities: [] }, false],
+  ]) {
+    const state = [], effects = [], scheduled = [];
+    let cursor = 0, reads = 0, value;
+    const exports = {};
+    vm.runInThisContext('(function(require,exports){' + code + '\n})')(name => {
+      if (name === 'react') return {
+        useState(initial) { const i = cursor++; if (!(i in state)) state[i] = initial; return [state[i], next => { state[i] = typeof next === 'function' ? next(state[i]) : next; }]; },
+        useEffect(effect, deps) { const i = cursor++; if (!effects[i] || deps.some((next, j) => !Object.is(next, effects[i].deps[j]))) scheduled.push([i, effect, deps]); },
+      };
+      if (name === '../../services/session') return { getSessionState: () => ({ authenticated: true, locked: false, identity: 'qa' }) };
+      if (name === '../../services/api') return { fetchExplorerRowLinks: async () => { reads++; return result; } };
+      if (name === './useExplorerErrorToast') return { default() {} };
+      return {};
+    }, exports);
+    const render = () => {
+      cursor = 0; scheduled.length = 0;
+      value = exports.useExplorerLinkAvailability('ts_ods', 'anchor', { id: 'record' });
+      for (const [i, effect, deps] of scheduled) effects[i] = { deps, cleanup: effect() };
+    };
+    render(); await Promise.resolve(); await Promise.resolve(); render();
+    assert.equal(Boolean(value.page), available);
+    assert.equal(reads, 1);
+    if (available) assert.equal(value.page.links.length, 0);
+    effects.forEach(effect => effect.cleanup?.());
+  }
+});
+
+test('a newly created type becomes the active direction and empty import rules stay out of the object Links view', async () => {
+  const emptyRule = page(); emptyRule.relations[0].fields = []; emptyRule.relations[0].targetFields = [];
+  const ui = workspace(emptyRule); await ui.flush();
+  assert.equal(ui.tree().props.relations[0].fieldMapping, undefined);
+  const manager = ui.tree().props.management.props.children.find(node => node?.type === 'RelationshipManager');
+  manager.props.onChanged('19', 'incoming'); ui.render(); await ui.flush();
+  assert.equal(ui.reads(), 2);
+  assert.equal(ui.lookups.at(-1)[3], '19:incoming');
 });

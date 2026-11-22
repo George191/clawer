@@ -497,6 +497,7 @@ export const fetchExplorerRowByKey = (schema: string, table: string, key: Record
     .then(r => unwrap<ExplorerRecordDetails>(r.data));
 
 export type ExplorerRowLinkPage = {
+  canManage: boolean;
   relations: {id: string; relationId: string; name: string; direction: 'outgoing'|'incoming'; kind: 'logical'; canLink: boolean;
     schema: string; table: string; fields: string[]; targetFields: string[]}[];
   links: {linkId: string; version: string; identity: Record<string,string>; canUnlink: boolean}[];
@@ -512,6 +513,12 @@ export const unlinkExplorerRowLink = (schema: string, table: string, linkId: str
 }, signal: AbortSignal): Promise<void> =>
   client.delete(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/row-links/${encodeURIComponent(linkId)}`, { data: payload, signal })
     .then(() => undefined);
+
+export const createExplorerRowLink = (schema: string, table: string, payload: {
+  key: Record<string, unknown>; relationId: string; direction: 'outgoing' | 'incoming'; targetKey: Record<string, string>;
+}, signal: AbortSignal): Promise<{ linkId: string; version: string; removed: false }> =>
+  client.post(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/row-links/edges`, payload, { signal })
+    .then(result => unwrap<{ linkId: string; version: string; removed: false }>(result.data));
 
 export type CdcTableCapture = ({
   state: 'observed'; topic: string; partition: number; offset: number; operation: string;

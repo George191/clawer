@@ -1,6 +1,6 @@
 import type { ComponentProps, ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
-import { Button, Modal, message } from '@/components/ui';
+import { Button, Modal, message, NativeSelect } from '@/components/ui';
 import { DeleteOutlined, LinkOutlined } from '@/components/ui/icons';
 import { ExplorerFieldValue, type explorerFields } from './ExplorerObjectOverview';
 import { PropertyLabel } from './PropertyTypeIcon';
@@ -62,19 +62,22 @@ export default function ExplorerRelationshipsView({ relations, selectedId, recor
       if (current() && (error as { code?: string })?.code !== 'ERR_CANCELED') message.error({ content: 'Unable to remove relationship', description: ontologyError(error, 'The relationship could not be removed.'), className: 'explorer-toast' });
     } finally { if (pending.current === controller) pending.current = undefined; if (alive.current) setBusy(false); }
   }
-  if (!selected) return <section className="explorer-row-links explorer-links-empty" role="status"><LinkOutlined /><strong>No relationships</strong><p>No declared relationships are available for this record.</p></section>;
+  if (!selected) return <section className="explorer-row-links" aria-label="Related records">
+    <header className="explorer-links-heading"><LinkOutlined /><strong>Relationships</strong>{management}</header>
+    <div className="explorer-links-empty" role="status"><LinkOutlined /><strong>No relationship types</strong><p>Define a relationship type before linking objects.</p></div>
+  </section>;
   return <section className="explorer-row-links" aria-label="Related records" aria-busy={loading || busy}>
     <header className="explorer-links-heading"><LinkOutlined /><label><span>Relationships</span>
-      <select aria-label="Relationship" value={selected.id} disabled={loading || busy} onChange={event => onSelect(event.target.value)}>
+      <NativeSelect aria-label="Relationship" value={selected.id} disabled={loading || busy} onChange={event => onSelect(event.target.value)}>
         {relations.map(item => <option key={item.id} value={item.id}>{item.name} · {item.direction}</option>)}
-      </select></label>{management}
+      </NativeSelect></label>{management}
     </header>
     {selected.fieldMapping && <details className="explorer-links-mapping"><summary>{selected.fieldMapping.label}</summary>
       <div className="explorer-links-field-mapping">
         <div className="explorer-links-fields">{selected.fieldMapping.fields.map(field => <span key={field.source}><code>{field.source}</code><span aria-hidden="true">→</span><code>{field.target}</code></span>)}</div>
       </div>
     </details>}
-    {emptyReason || !records.length ? <div className="explorer-links-empty" role="status"><LinkOutlined /><strong>No matching records</strong><p>{emptyReason || 'No objects match this relationship for the selected record.'}</p></div> :
+    {emptyReason || !records.length ? <div className="explorer-links-empty" role="status"><LinkOutlined /><strong>No linked objects</strong><p>{emptyReason || 'No objects have been linked through this relationship yet.'}</p></div> :
       <ul>{records.map(record => <li key={record.key}>
         <div className="explorer-linked-object">{record.icon}<div className="explorer-linked-object__identity">
           {record.typeName && <span className="explorer-linked-object__type">{record.typeName}</span>}{record.link}

@@ -1,5 +1,19 @@
 .explorer-field-editor { display:grid; min-width:0; width:100%; gap:4px; }
+.explorer-field-editor__control { display:grid; position:relative; min-width:0; }
 .explorer-field-editor :is(input,select,textarea) { width:100%; min-width:0; min-height:30px; padding:5px 8px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-panel); color:var(--ontology-text); font:inherit; font-size:12px; }
+.explorer-field-editor__control.has-null-control > :is(input,textarea) { padding-inline-end:50px; }
+.explorer-field-editor__control > select { appearance:none; padding-inline-end:30px; }
+.explorer-field-editor__control.is-select::after { content:''; position:absolute; inset-inline-end:12px; top:11px; width:6px; height:6px; border-right:1px solid var(--ontology-muted); border-bottom:1px solid var(--ontology-muted); transform:rotate(45deg); pointer-events:none; }
+.explorer-field-editor__control.has-null-control > select { padding-inline-end:76px; }
+.explorer-field-editor__null { position:absolute; inset-inline-end:5px; top:4px; width:38px; height:22px; padding:0; border:0; border-radius:2px; background:var(--ontology-panel); color:var(--ontology-muted); font:500 10px/1 ui-monospace,SFMono-Regular,Consolas,monospace; cursor:pointer; opacity:0; pointer-events:none; transform:translateX(3px); transition:opacity .14s ease,transform .14s ease; }
+.explorer-field-editor__control.is-select > .explorer-field-editor__null { inset-inline-end:29px; }
+.explorer-field-editor__control:hover > .explorer-field-editor__null,
+.explorer-field-editor__control:focus-within > .explorer-field-editor__null,
+.explorer-field-editor__null[aria-pressed=true] { opacity:1; pointer-events:auto; transform:translateX(0); }
+.explorer-field-editor__null:hover:not(:disabled),.explorer-field-editor__null[aria-pressed=true] { background:var(--ontology-hover); color:var(--ontology-text); }
+.explorer-field-editor__null:focus-visible { outline:1px solid var(--ontology-muted); outline-offset:1px; }
+@media (hover:none) { .explorer-field-editor__null { opacity:1; pointer-events:auto; transform:none; } }
+@media (prefers-reduced-motion:reduce) { .explorer-field-editor__null { transition:none; } }
 .explorer-field-editor textarea { resize:vertical; min-height:90px; font:11px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace; tab-size:2; }
 .explorer-field-editor :disabled { opacity:.5; cursor:default; }
 .explorer-field-editor small { color:var(--ontology-muted); font-size:10px; }

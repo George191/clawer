@@ -30,7 +30,7 @@ function mount(kind, requests = {}) {
   const props = kind === 'backed' ? { schema: 'ts_ods', table: 'anchor', primaryKey: { id: 'anchor' } } : { definitionId: 'anchor-type', recordId: 'anchor' };
   const relation = { id: 'relation', relationId: '12', name: 'Owns', direction: 'outgoing', schema: 'ts_ods', table: 'media', targetDefinitionId: 'target-type', fields: ['id'], targetFields: ['id'] };
   const page = kind === 'backed'
-    ? { relations: [relation], selected: 'relation', links: [{ linkId: 'edge', version: '3', identity: { id: '9007199254740993' }, canUnlink: true }], offset: 0, hasMore: false }
+    ? { canManage: true, relations: [relation], selected: 'relation', links: [{ linkId: 'edge', version: '3', identity: { id: '9007199254740993' }, canUnlink: true }], offset: 0, hasMore: false }
     : { relations: [relation], selected: 'relation:outgoing', items: [{ id: 'native-record', linkId: 'edge', canUnlink: true, title: 'Native title', properties: { caption: 'A property', secret: 'hidden' } }], offset: 0, hasMore: false };
   const api = {
     fetchExplorerRowLinks: async () => page,
@@ -47,6 +47,7 @@ function mount(kind, requests = {}) {
     if (name === '@/components/ui') return { Button: 'Button' };
     if (name === '@/components/ui/icons') return { SettingOutlined: 'SettingsIcon' };
     if (name === './StorageRelationshipTypes') return { default: 'RelationshipManager' };
+    if (name === './StorageLinkObjectPicker') return { default: 'ObjectPicker' };
     if (name === 'react') return {
       useState(initial) { const i = cursor++; if (!(i in state)) state[i] = initial; return [state[i], next => { state[i] = typeof next === 'function' ? next(state[i]) : next; }]; },
       useRef(initial) { return refs[cursor++] ||= { current: initial }; },

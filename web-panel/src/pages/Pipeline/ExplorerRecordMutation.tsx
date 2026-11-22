@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Button, Checkbox, Modal, type MenuItem } from '@/components/ui';
+import { Button, Modal, type MenuItem } from '@/components/ui';
 import { DeleteOutlined, EditOutlined } from '@/components/ui/icons';
 import ExplorerFieldEditor from './ExplorerFieldEditor';
 import { PropertyLabel } from './PropertyTypeIcon';
@@ -37,9 +37,7 @@ export default function ExplorerRecordMutation({ mode, title, fields = [], error
       <div className="flow-explorer-row-fields">{fields.map(field => <div key={field.key} className="flow-explorer-row-field">
         <PropertyLabel type={field.type}>{field.label}</PropertyLabel>
         <div className="flow-explorer-row-control"><ExplorerFieldEditor name={field.label} type={field.type} value={field.value}
-          disabled={busy || disabled || field.nullControl?.checked} onChange={field.onChange} />
-          {field.nullControl && <Checkbox aria-label={`Set ${field.label} to null`} checked={field.nullControl.checked} disabled={busy || disabled}
-            onChange={event => field.nullControl!.onChange(event.target.checked)}>Set to null</Checkbox>}
+          disabled={busy || disabled} onChange={field.onChange} nullControl={field.nullControl} />
         </div>
       </div>)}</div>
       <footer className="flow-explorer-row-tools"><Button disabled={busy} onClick={onCancel}>Cancel</Button>

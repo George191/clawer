@@ -1,0 +1,16 @@
+.storage-link-object-context { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+.storage-link-object-context > .ui-icon { color:var(--ontology-muted); font-size:18px; }
+.storage-link-object-context > div { display:grid; gap:3px; min-width:0; }
+.storage-link-object-context strong { font-size:12px; font-weight:500; overflow-wrap:anywhere; }
+.storage-link-object-context span { color:var(--ontology-muted); font-size:11px; overflow-wrap:anywhere; }
+.storage-link-object-choices { display:grid; align-content:start; gap:5px; max-height:330px; min-height:160px; overflow:auto; overscroll-behavior:contain; margin-top:12px; padding:1px; scrollbar-width:none; }
+.storage-link-object-choices::-webkit-scrollbar { display:none; }
+.storage-link-object-choices > button { display:flex; align-items:center; gap:9px; padding:9px; min-width:0; border:1px solid transparent; border-radius:3px; background:var(--ontology-bg); color:var(--ontology-text); text-align:left; cursor:pointer; }
+.storage-link-object-choices > button:hover { background:var(--ontology-hover); }
+.storage-link-object-choices > button[aria-pressed=true] { border-color:var(--ui-action-bg); background:var(--ontology-selected); }
+.storage-link-object-choices > button > span:last-child { display:grid; gap:3px; min-width:0; }
+.storage-link-object-choices strong { font-size:12px; font-weight:500; overflow-wrap:anywhere; }
+.storage-link-object-choices small,.storage-link-object-choices > p { color:var(--ontology-muted); font-size:11px; overflow-wrap:anywhere; }
+.storage-link-object-pages { display:flex; justify-content:flex-end; align-items:center; gap:7px; margin-top:12px; }
+.storage-link-object-pages > span { margin-right:auto; color:var(--ontology-muted); font-size:11px; }
+.storage-link-object-limit { margin:8px 0 0; color:var(--ontology-muted); font-size:11px; }

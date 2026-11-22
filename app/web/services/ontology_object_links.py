@@ -66,7 +66,7 @@ async def read_row_links(layer, table, query, *, can_manage=False):
         selected = next((item for item in choices if item["id"] == query.relation), None) if query.relation else next(iter(choices), None)
         if query.relation and not selected:
             raise HTTPException(404, "Relationship not available")
-        result = {"relations": choices, "selected": selected["id"] if selected else None,
+        result = {"relations": choices, "selected": selected["id"] if selected else None, "canManage": can_manage,
                   "identities": [], "links": [], "hasMore": False, "offset": query.offset}
         if not selected:
             return result

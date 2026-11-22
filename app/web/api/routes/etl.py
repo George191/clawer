@@ -109,7 +109,7 @@ from app.web.api.models.etl import (
 from app.web.api.models.data_connections import (
     DataConnectionDraftPayload, DataConnectionPauseChange, DataConnectionPayload, SourceCatalog, SourceColumns, SourceReferenceDirection, SourceReferences,
 )
-from app.web.api.models.storage_relationship_types import StorageRelationshipTypeUpdate
+from app.web.api.models.storage_relationship_types import StorageRelationshipTypeCreate, StorageRelationshipTypeUpdate
 from app.web.api.models.transfer_plans import (
     TableName, TransferAttempt, TransferPlan, TransferPlanPayload, TransferPreflight, TransferRun, TransferRunCapabilities,
     TransferRunRequest, WarehouseSchema,
@@ -1987,6 +1987,15 @@ async def storage_relationship_types(layer: str, table: str, response: Response,
 
     response.headers["Cache-Control"] = "private, no-store"
     return await read_relationship_types(layer, table, can_manage=current_user.is_superuser)
+
+
+@write.post("/{layer}/{table}/relationship-types", status_code=201)
+async def create_storage_relationship_type(layer: str, table: str, payload: StorageRelationshipTypeCreate,
+                                           response: Response, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+    from app.web.services.storage_relationship_types import create_relationship_type
+
+    response.headers["Cache-Control"] = "private, no-store"
+    return await create_relationship_type(layer, table, payload, current_user)
 
 
 @write.patch("/{layer}/{table}/relationship-types/{relation_id}")

@@ -2,7 +2,7 @@
 .flow-explorer-row-tools { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-block:12px; }
 .flow-explorer-row-fields { display:grid; margin:0; }
 .flow-explorer-row-field { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,2fr); gap:10px; align-items:start; min-width:0; padding:8px 0; border-bottom:1px solid var(--ontology-control-border); overflow-wrap:anywhere; }
-.flow-explorer-row-control { display:grid; gap:6px; min-width:0; }
+.flow-explorer-row-control { min-width:0; }
 .flow-explorer-row-error { color:var(--ui-error); }
 .explorer-delete-object-dialog p { margin:0; color:var(--ontology-muted); font-size:13px; line-height:1.6; }
 .explorer-delete-object-dialog strong { color:var(--ontology-text); overflow-wrap:anywhere; }

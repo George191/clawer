@@ -12,9 +12,14 @@ CARDINALITIES = {"one_to_one", "one_to_many", "many_to_one", "many_to_many"}
 _FIELDS = ("name", "source_schema", "source_table", "source_fields", "target_schema",
            "target_table", "target_fields", "relationship_kind", "cardinality", "description",
            "provenance", "enabled")
+RELATION_IMPORT_FIELDS_CHECK = """cardinality(source_fields) = cardinality(target_fields)
+    AND (cardinality(source_fields) = 0 OR
+        (array_ndims(source_fields) = 1 AND array_ndims(target_fields) = 1))
+    AND array_position(source_fields, NULL) IS NULL
+    AND array_position(target_fields, NULL) IS NULL"""
 OBJECT_RELATIONS_DDL_STATEMENTS = (
     "CREATE SCHEMA IF NOT EXISTS public",
-    """CREATE TABLE IF NOT EXISTS public.ontology_object_relations (
+    f"""CREATE TABLE IF NOT EXISTS public.ontology_object_relations (
         id BIGSERIAL PRIMARY KEY,
         name TEXT NOT NULL UNIQUE,
         source_schema TEXT NOT NULL,
@@ -30,20 +35,15 @@ OBJECT_RELATIONS_DDL_STATEMENTS = (
         enabled BOOLEAN NOT NULL DEFAULT TRUE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        CHECK (source_schema ~ '^ts_[a-z0-9_]{1,60}$'
+        CHECK (source_schema ~ '^ts_[a-z0-9_]{{1,60}}$'
             AND source_schema NOT IN ('ts_meta','ts_meta_hist')),
-        CHECK (target_schema ~ '^ts_[a-z0-9_]{1,60}$'
+        CHECK (target_schema ~ '^ts_[a-z0-9_]{{1,60}}$'
             AND target_schema NOT IN ('ts_meta','ts_meta_hist')),
-        CHECK (source_table ~ '^[a-z_][a-z0-9_]{0,62}$'),
-        CHECK (target_table ~ '^[a-z_][a-z0-9_]{0,62}$'),
-        CHECK (cardinality(source_fields) > 0
-            AND cardinality(source_fields) = cardinality(target_fields)
-            AND array_ndims(source_fields) = 1 AND array_ndims(target_fields) = 1
-            AND array_position(source_fields, NULL) IS NULL
-            AND array_position(target_fields, NULL) IS NULL),
+        CHECK (source_table ~ '^[a-z_][a-z0-9_]{{0,62}}$'),
+        CHECK (target_table ~ '^[a-z_][a-z0-9_]{{0,62}}$'),
+        CONSTRAINT ck_ontology_relation_import_fields CHECK ({RELATION_IMPORT_FIELDS_CHECK}),
         CHECK (cardinality IN ('one_to_one','one_to_many','many_to_one','many_to_many')),
-        CHECK (length(provenance) > 0),
-        UNIQUE (source_schema, source_table, source_fields, target_schema, target_table, target_fields)
+        CHECK (length(provenance) > 0)
     )""",
     """CREATE INDEX IF NOT EXISTS idx_ontology_object_relations_target
         ON public.ontology_object_relations (target_schema, target_table) WHERE enabled""",
@@ -129,7 +129,6 @@ async def read_object_relations(session, schema: str, table: str) -> list[dict[s
           AND NOT sc.relispartition AND NOT tc.relispartition
           AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = sc.oid)
           AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = tc.oid)
-          AND cardinality(r.source_fields) > 0
           AND cardinality(r.source_fields) = cardinality(r.target_fields)
           AND NOT EXISTS (SELECT 1 FROM unnest(r.source_fields) f(name)
               WHERE NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = sc.oid
