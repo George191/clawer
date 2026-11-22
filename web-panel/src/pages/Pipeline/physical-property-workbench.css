@@ -3,14 +3,15 @@
   container-type: inline-size; min-width: 0; padding: 0 0 12px; background:var(--ontology-bg);
 }
 .physical-property-workbench .flow-foundry-property-main {
-  min-height:0; gap:0; padding:0; grid-template-rows:36px minmax(0,1fr); overflow:hidden;
+  min-height:0; gap:0; padding:0; grid-template-rows:minmax(0,1fr); overflow:hidden;
 }
-.physical-property-workbench .flow-foundry-property-header { align-self:stretch; border:0; border-bottom:1px solid var(--ontology-border); border-radius:0; }
-.physical-property-workbench .flow-foundry-property-header nav { height:35px; box-sizing:border-box; }
+.physical-property-workbench .flow-foundry-property-header { flex:none; margin-right:auto; border:0; border-radius:0; }
+.physical-property-workbench .flow-foundry-property-tools .flow-foundry-property-header nav { height:35px; box-sizing:border-box; padding-inline:0; white-space:nowrap; }
 .physical-property-workbench .flow-foundry-property-header nav button { height:35px; min-height:35px; font-size:12px; }
 .physical-property-workbench .flow-foundry-property-list { display:flex; flex-direction:column; min-height:0; align-self:stretch; border:0; border-radius:0; overflow:hidden; }
 .physical-property-workbench .flow-foundry-property-workspace.has-inspector { grid-template-columns:minmax(0,1fr) minmax(255px,28%); }
 .physical-property-workbench .flow-foundry-property-tools { flex:none; box-sizing:border-box; height:36px; flex-wrap:nowrap; }
+.physical-property-workbench .flow-foundry-property-list .flow-foundry-property-tools { padding-block:0; }
 .physical-property-workbench .flow-foundry-property-workspace { height:var(--physical-workspace-height); min-height:0; grid-template-rows:minmax(0,1fr); align-items:stretch; border:1px solid var(--ontology-border); border-radius:3px; overflow:hidden; }
 .explorer-resource-view > .flow-foundry-properties.physical-property-workbench .flow-foundry-property-main { gap:0; padding:0; }
 .explorer-resource-view > .flow-foundry-properties.physical-property-workbench .flow-foundry-property-list .flow-foundry-property-table-wrap { flex:1; min-height:0; max-height:none; overflow:auto; scrollbar-gutter:stable; }

@@ -127,12 +127,11 @@ function Workbench({schema,table,canManage,identity,onSaved,onDirtyChange}: Prop
     return <section className="flow-foundry-properties physical-property-workbench" aria-label="Property workbench">
         <div className={'flow-foundry-property-workspace'+(p || dirty?' has-inspector':'')}>
             <div className="flow-foundry-property-main">
-                <header className="flow-foundry-property-header">
-                    <nav aria-label="Property views"><button type="button" aria-pressed={mode==='properties'} onClick={()=>switchMode('properties')}>Properties ({draft.properties.length})</button>
-                        <button type="button" aria-pressed={mode==='mapping'} onClick={()=>switchMode('mapping')}>Column mapping</button></nav>
-                </header>
                 <section className="flow-foundry-property-list"><div className="flow-foundry-property-tools">
-                    <strong>{mode==='properties'?'Properties':'Source columns'} <span>{mode==='properties'?draft.properties.length:columns.length}</span></strong>
+                    <header className="flow-foundry-property-header">
+                        <nav aria-label="Property views"><button type="button" aria-pressed={mode==='properties'} onClick={()=>switchMode('properties')}>Properties ({draft.properties.length})</button>
+                            <button type="button" aria-pressed={mode==='mapping'} onClick={()=>switchMode('mapping')}>Column mapping</button></nav>
+                    </header>
                     {bound ? <Link to={publishedExplorerHref(draft.sourceDefinitionId!)}>Open published type</Link>
                         : canManage && <Button size="small" icon={<PlusOutlined/>} disabled={!structural} onClick={()=>create()}>Create property</Button>}
                     <Button size="small" aria-label="Search properties and columns" aria-expanded={searching} icon={<SearchOutlined/>}
