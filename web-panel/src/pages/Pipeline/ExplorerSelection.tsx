@@ -16,6 +16,8 @@ import {
 import './explorer-selection.css';
 import { selectedPageRows } from './explorerSelectionState';
 import useExplorerErrorToast from './useExplorerErrorToast';
+import { ExplorerLinkForm, createLinkSelection, storageLinkRelation, publishedLinkRelation, type LinkSelectionContext } from './ExplorerLinkSelection';
+import type { PublishedRelationship } from '../../services/publishedExplorerDetails';
 
 type RecordRow = Record<string, unknown>;
 export { ExplorerObjectOverview, ExplorerTypeIcon, explorerRowTitle, useExplorerPresentation } from './ExplorerObjectOverview';
@@ -135,7 +137,7 @@ type Props = {
   footer?: ReactNode;
   renderTitleLink?: (row: ExplorerPreviewRow) => ReactNode;
   renderFullDetails?: (row: ExplorerPreviewRow) => ReactNode;
-  renderRelationships?: (row: ExplorerPreviewRow, page?: ExplorerRowLinkPage) => ReactNode;
+  renderRelationships?: (row: ExplorerPreviewRow, page?: ExplorerRowLinkPage, onAddLink?: (relation: ExplorerRowLinkPage['relations'][number]) => void) => ReactNode;
   rowActions?: (row: ExplorerPreviewRow) => MenuItem[];
   renderMutation?: (row: ExplorerPreviewRow) => ReactNode;
   onRefresh?: () => void;
@@ -144,17 +146,23 @@ type Props = {
   selectionLimit?: number;
   renderGlyph?: (compact: boolean) => ReactNode;
   extraViews?: { key: string; label: ReactNode; render: (row: ExplorerPreviewRow) => ReactNode; available?: (row: ExplorerPreviewRow) => boolean }[];
-  renderPublishedRelationships?: (row: ExplorerPreviewRow) => ReactNode;
+  renderPublishedRelationships?: (row: ExplorerPreviewRow, onAddLink?: (relation: PublishedRelationship) => void) => ReactNode;
   onActiveRowChange?: (row?: ExplorerPreviewRow) => void;
+  canLink?: boolean;
+  linkContext?: LinkSelectionContext;
+  onChooseLinkTarget?: (context: LinkSelectionContext) => void;
+  onCancelLink?: () => void;
+  onLinkBusyChange?: (busy: boolean) => void;
 };
 
 type Selection = { rows: RecordRow[]; picked: number[]; active: number; anchor: number; collapsed: boolean };
-type View = 'overview' | 'properties' | 'links' | 'compare' | `group:${string}` | `extra:${string}`;
+type View = 'overview' | 'properties' | 'links' | 'compare' | 'link' | `group:${string}` | `extra:${string}`;
 
 export default function ExplorerSelection({
   source, schema, table, dataType, rows, columns, columnTypes = noTypes, presentations, metadata, dataColumns, rowKey, rowIdentity, rowVersion, loading, locked, footer,
   renderTitleLink, renderFullDetails, renderRelationships, rowActions, renderMutation, onRefresh, onSelectedRowsChange,
   selectedRows, selectionLimit = Infinity, renderGlyph, extraViews = [], renderPublishedRelationships, onActiveRowChange,
+  canLink = false, linkContext, onChooseLinkTarget, onCancelLink, onLinkBusyChange,
 }: Props) {
   const panelId = useId();
   const results = useRef<HTMLDivElement>(null);
@@ -168,7 +176,9 @@ export default function ExplorerSelection({
   const typeName = presentation?.displayName || table;
   const [selection, setSelection] = useState<Selection>();
   const [activeKey, setActiveKey] = useState('');
-  const [view, setView] = useState<View>('overview');
+  const [view, setView] = useState<View>(linkContext ? 'link' : 'overview');
+  const [linkBusy, setLinkBusy] = useState(false);
+  const linkSource: ExplorerDetailSource = source ?? { kind: 'backed', schema, table };
   const current = selection?.rows === rows ? selection : undefined;
   const controlled = selectedRows !== undefined;
   const controlledKeys = new Set(selectedRows?.map(row => row.key));
@@ -176,7 +186,7 @@ export default function ExplorerSelection({
   const selected = new Set(picked);
   const previewIndices = picked.slice(0, previewLimit);
   const activeIndex = previewIndices.includes(current?.active ?? -1) ? current!.active : previewIndices[0];
-  const disabled = loading || locked;
+  const disabled = loading || locked || linkBusy;
 
   function describeRow(record: RecordRow, index: number): ExplorerPreviewRow {
     const identity = rowIdentity(record);
@@ -232,7 +242,8 @@ export default function ExplorerSelection({
     if (controlled) onSelectedRowsChange?.(combined);
     setActiveKey(rows[active] ? rowKey(rows[active], active) : '');
     setSelection({ rows, picked: unique, active, anchor, collapsed: false });
-    if (!picked.length || unique.length < 2 && view === 'compare') setView('overview');
+    if (linkContext) setView('link');
+    else if (!picked.length || unique.length < 2 && view === 'compare') setView('overview');
   };
   const selectIndex = (index: number, mode: 'row' | 'toggle' | 'range') => {
     if (mode === 'range' && current && picked.length) {
@@ -243,7 +254,7 @@ export default function ExplorerSelection({
       select(selected.has(index) ? picked.filter(item => item !== index) : [...picked, index], index, index, true);
     } else {
       select(selected.has(index) ? picked : [index], index, index, selected.has(index));
-      if (!selected.has(index)) setView('overview');
+      if (!selected.has(index)) setView(linkContext ? 'link' : 'overview');
     }
   };
   const collapse = () => {
@@ -362,6 +373,10 @@ export default function ExplorerSelection({
   };
   return <div className={`flow-explorer-selection${panelOpen ? ' is-open' : ''}`}>
     <div ref={results} role="region" aria-label="Object results" className="flow-explorer-selection__results">
+      {linkContext && <div className="explorer-link-selection-banner" role="region" aria-label="Relationship selection">
+        <LinkOutlined /><div><strong>{linkContext.sourceRow.title}</strong><span>{linkContext.relation.name} · {linkContext.relation.direction} — select a target in this table</span></div>
+        <Button size="small" disabled={linkBusy} onClick={() => { onCancelLink?.(); setView('overview'); }}>Cancel</Button>
+      </div>}
       {current?.collapsed && active && <header className="flow-explorer-selection__results-header">
           <button ref={restore} type="button" className="flow-explorer-selection__control"
             aria-controls={panelId} aria-expanded={false} onClick={show}>Show selection preview</button>
@@ -379,6 +394,8 @@ export default function ExplorerSelection({
         <h3 ref={heading} id={panelId + '-heading'} tabIndex={-1}>Selection Preview</h3>
         {choices.length > 1 && <Button size="small" disabled={disabled} aria-pressed={displayView === 'compare'}
           onClick={() => setView(displayView === 'compare' ? 'overview' : 'compare')}>Compare objects</Button>}
+        {canLink && onChooseLinkTarget && <Button size="small" disabled={disabled} aria-pressed={displayView === 'link'}
+          onClick={() => setView(displayView === 'link' ? 'overview' : 'link')}>Add link</Button>}
         <Button size="small" disabled={disabled} onClick={clear}>Clear selection</Button>
       </header>
       {choices.length > 0 && <div className="flow-explorer-selection__picked">
@@ -400,7 +417,15 @@ export default function ExplorerSelection({
         {choices.length > shownCount && <p>Showing the first {shownCount} of {choices.length} selected objects.</p>}
       </div>}
       <div className="flow-explorer-selection__content">
-        {displayView === 'compare' && displayed.length > 1
+        {displayView === 'link' && canLink && onChooseLinkTarget
+          ? <ExplorerLinkForm source={linkSource} choices={displayed} active={active} context={linkContext}
+              disabled={loading || locked && !linkBusy}
+              onChooseTarget={onChooseLinkTarget} onBusyChange={busy => { setLinkBusy(busy); onLinkBusyChange?.(busy); }}
+              onCancel={() => { onCancelLink?.(); setView('overview'); }} onCreated={() => {
+                refreshState.current = { from: rows, keys: new Set(choices.map(row => row.key)), active: active.key };
+                onCancelLink?.(); setView('links'); onRefresh?.();
+              }} />
+          : displayView === 'compare' && displayed.length > 1
           ? <Comparison columns={columns} presentations={presentations} choices={displayed} />
           : <>
             <div className="flow-explorer-selection__object">
@@ -426,7 +451,8 @@ export default function ExplorerSelection({
                   {availableViews.map(view => <button type="button" key={view.key} aria-pressed={displayView === `extra:${view.key}`} onClick={() => setView(`extra:${view.key}`)}>{view.label}</button>)}
                 </nav>
               </div>
-              {displayView === 'links' ? renderPublishedRelationships?.(active) ?? renderRelationships?.(active, links.page)
+              {displayView === 'links' ? renderPublishedRelationships?.(active, onChooseLinkTarget ? relation => onChooseLinkTarget(createLinkSelection(linkSource, active, publishedLinkRelation(relation, canLink))) : undefined)
+                ?? renderRelationships?.(active, links.page, onChooseLinkTarget ? relation => onChooseLinkTarget(createLinkSelection(linkSource, active, storageLinkRelation(relation))) : undefined)
                 : displayView.startsWith('extra:') ? availableViews.find(view => `extra:${view.key}` === displayView)?.render(active)
                 : !metadata ? <p role="status">Loading object presentation…</p>
                 : metadata.error ? <p>Properties are unavailable until the object presentation loads.</p>

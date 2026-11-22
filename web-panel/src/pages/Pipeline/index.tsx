@@ -28,6 +28,7 @@ import { ExplorerTypeIcon } from './ExplorerObjectOverview';
 import { explorerRowTitle, useExplorerPresentation, type ExplorerPreviewRow } from './ExplorerSelection';
 import ExplorerRecordLink from './ExplorerRecordLink';
 import ExplorerRowLinks from './ExplorerRowLinks';
+import useExplorerLinkRoute from './useExplorerLinkRoute';
 import StorageRelationshipTypes from './StorageRelationshipTypes';
 import NewObjectType from './NewObjectType';
 import ExplorerTableSchema from './ExplorerTableSchema';
@@ -380,6 +381,7 @@ const DataLayersWorkspace: React.FC = () => {
         (isSchemas ? requestedSchema === selectedSchema : !requestedSchema || requestedSchema === selectedSchema);
     const visibleSchemas = schemas.filter((item) => `${item.key} ${item.label} ${item.alias || ''} ${item.database || ''}`.toLowerCase().includes(schemaSearch.trim().toLowerCase()));
     const requestedTable = new URLSearchParams(search).get('table');
+    const linkRoute = useExplorerLinkRoute({ kind: 'backed', schema: requestedSchema || '', table: requestedTable || '' });
     const loadExplorerCatalog = !isSchemas || !!requestedSchema || catalogOpen;
     const selectedTableAvailable = selectedSchemaAvailable && tablesLoadedSchema === selectedSchema
         && (!isSchemas || !!requestedTable && requestedTable === table.name)
@@ -1222,6 +1224,11 @@ filterButton: showPreview && <ExplorerFilterButton open={filterOpen} count={filt
                         {canManage && <button type="button" aria-pressed={resourceView === 'api'} onClick={() => selectResourceView('api')}><CodeOutlined /> Published APIs</button>}
                     </nav>}
                     <ExplorerResults viewportRef={previewViewport} selectionKey={JSON.stringify([selectionEpoch, policyKey])} results={isSchemas && showPreview && !savedBlocked && queryScopeReady && !previewError ? {onSelectedRowsChange: setWorkbenchRows,
+canLink: canManage,
+linkContext: linkRoute.context,
+onChooseLinkTarget: context => { if (!canChangePreview()) return; setWorkbenchRows([]); setSelectionEpoch(value => value + 1); linkRoute.chooseTarget(context); },
+onCancelLink: linkRoute.finish,
+onLinkBusyChange: busy => { mutationPending.current = busy; setMutationLoading(busy); },
 schema: selectedSchema,
 table: table.name,
 dataType: mapping?.dataType ?? table.dataType,
@@ -1238,7 +1245,7 @@ loading: loading,
 locked: !!editingRowKey || !!deleteSnapshot || mutationLoading,
 renderTitleLink: row => <ExplorerRecordLink schema={selectedSchema} table={table.name} identity={row.identity}>{row.title}</ExplorerRecordLink>,
 renderFullDetails: row => <ExplorerRecordLink schema={selectedSchema} table={table.name} identity={row.identity} />,
-renderRelationships: (row, page) => <ExplorerRowLinks schema={selectedSchema} table={table.name} primaryKey={row.identity} initialPage={page} revision={relationshipRevision} />,
+renderRelationships: (row, page, onAddLink) => <ExplorerRowLinks schema={selectedSchema} table={table.name} primaryKey={row.identity} initialPage={page} revision={relationshipRevision} onAddLink={onAddLink} />,
 rowActions: rowActions,
 renderMutation: rowMutation,
 onRefresh: () => setPreviewRevision(value => value + 1),

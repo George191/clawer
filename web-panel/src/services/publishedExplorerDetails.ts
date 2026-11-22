@@ -21,12 +21,14 @@ export async function fetchPublishedFile(definitionId: string, key: Record<strin
 
 export type PublishedRelationship = LinkType & { direction: 'incoming' | 'outgoing'; targetDefinitionId: string };
 export type PublishedLinkedRecord = OntologyRecord & { id: string; linkId: string; canUnlink: boolean };
-export type PublishedRelationships = { relations: PublishedRelationship[]; items: PublishedLinkedRecord[]; selected?: string; hasMore: boolean; offset: number };
+export type PublishedRelationships = { relations: PublishedRelationship[]; items: PublishedLinkedRecord[]; selected?: string; hasMore: boolean; offset: number; canManage: boolean };
 export async function fetchPublishedRelationships(definitionId: string, recordId: string, relation: string | undefined, offset: number, signal: AbortSignal): Promise<PublishedRelationships> {
   const types: LinkType[] = [];
   let more = true;
+  let canManage = false;
   while (more) {
-    const page = await graphRequest<Page<LinkType>>('get', '/object-types/' + encodeURIComponent(definitionId) + '/link-types', { params: { limit: 100, offset: types.length }, signal });
+    const page = await graphRequest<Page<LinkType> & { canManage: boolean }>('get', '/object-types/' + encodeURIComponent(definitionId) + '/link-types', { params: { limit: 100, offset: types.length }, signal });
+    canManage = page.canManage;
     types.push(...page.items); more = page.hasMore;
   }
   const relations = types.flatMap(item => [
@@ -34,10 +36,15 @@ export async function fetchPublishedRelationships(definitionId: string, recordId
     ...(item.targetDefinitionId === definitionId ? [{ ...item, direction: 'incoming' as const, targetDefinitionId: item.sourceDefinitionId }] : []),
   ]);
   const selected = relations.find(item => item.id + ':' + item.direction === relation) ?? (relation ? undefined : relations[0]);
-  if (!selected) return { relations, items: [], hasMore: false, offset };
+  if (!selected) return { relations, items: [], hasMore: false, offset, canManage };
   const page = await graphRequest<Page<Neighbor>>('get', '/link-types/' + selected.id + '/records/' + recordId + '/neighbors', { params: { direction: selected.direction, limit: 10, offset }, signal });
-  return { relations, items: page.items.map(item => ({ ...item.record, linkId: item.linkId, canUnlink: item.canUnlink })), selected: selected.id + ':' + selected.direction, hasMore: page.hasMore, offset };
+  return { relations, items: page.items.map(item => ({ ...item.record, linkId: item.linkId, canUnlink: item.canUnlink })), selected: selected.id + ':' + selected.direction, hasMore: page.hasMore, offset, canManage };
 }
+
+export const createPublishedRelationship = (relationId: string, direction: 'incoming' | 'outgoing', recordId: string, targetRecordId: string, signal: AbortSignal) =>
+  graphRequest<void>('post', '/link-types/' + encodeURIComponent(relationId) + '/links', {
+    data: direction === 'outgoing' ? { sourceRecordId: recordId, targetRecordId: targetRecordId } : { sourceRecordId: targetRecordId, targetRecordId: recordId }, signal,
+  });
 
 export const unlinkPublishedRelationship = (relation: PublishedRelationship, recordId: string, linked: PublishedLinkedRecord, signal?: AbortSignal) =>
   graphRequest<void>('delete', '/link-types/' + encodeURIComponent(relation.id) + '/links/' + encodeURIComponent(linked.linkId), {

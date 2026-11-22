@@ -21,6 +21,7 @@ import {
     ExplorerObjectOverview, ExplorerProperties, ExplorerRecordActions, ExplorerTypeIcon, explorerRowTitle, useExplorerPresentation,
 } from './ExplorerSelection';
 import ExplorerRowLinks, { useExplorerLinkAvailability } from './ExplorerRowLinks';
+import { beginLinkSelection, createLinkSelection, publishedLinkRelation, storageLinkRelation } from './ExplorerLinkSelection';
 import useExplorerErrorToast from './useExplorerErrorToast';
 import { getSessionState } from '../../services/session';
 import './ontology-frame.css';
@@ -206,8 +207,11 @@ function RecordPage({ source, identity }: { source: ExplorerDetailSource; identi
                 {publishedRecord?.hasHistory && <button type="button" aria-pressed={currentMode==='history'} disabled={locked} onClick={()=>setMode('history')}>History</button>}
             </div>
             <div className="record-content">{mutation ?? (currentMode==='links' ? source.kind === 'published'
-                ? <PublishedExplorerRelationships definitionId={source.definitionId} recordId={publishedRecord!.id!} />
-                : <ExplorerRowLinks schema={schema} table={table} primaryKey={result.identity} initialPage={links.page}/> :
+                ? <PublishedExplorerRelationships definitionId={source.definitionId} recordId={publishedRecord!.id!}
+                    onAddLink={relation => beginLinkSelection(navigate, createLinkSelection(source,
+                        { ...row, identity: { $recordId: publishedRecord!.id! } }, publishedLinkRelation(relation, true)))} />
+                : <ExplorerRowLinks schema={schema} table={table} primaryKey={result.identity} initialPage={links.page}
+                    onAddLink={relation => beginLinkSelection(navigate, createLinkSelection(source, row, storageLinkRelation(relation)))}/> :
                 currentMode === 'history' && publishedRecord ? objectTools.renderHistory(publishedRecord) :
                 !layouts && !layoutError ? <p role="status">Loading property layout…</p> :
                 layoutError ? null :

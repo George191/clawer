@@ -11,12 +11,12 @@ import ExplorerRelationshipsView, { ExplorerLinkedProperties } from './ExplorerR
 import useExplorerErrorToast from './useExplorerErrorToast';
 import { getSessionState } from '../../services/session';
 import StorageRelationshipTypes from './StorageRelationshipTypes';
-import StorageLinkObjectPicker from './StorageLinkObjectPicker';
 
-type Props = { schema: string; table: string; primaryKey: Record<string,unknown>; initialPage?: ExplorerRowLinkPage; revision?: number };
-const live = (signal: AbortSignal, identity: string) => {
+type Props = { schema: string; table: string; primaryKey: Record<string,unknown>; initialPage?: ExplorerRowLinkPage; revision?: number;
+    onAddLink?: (relation: ExplorerRowLinkPage['relations'][number]) => void };
+const live = (signal: AbortSignal | undefined, identity: string) => {
     const session = getSessionState();
-    return !signal.aborted && session.authenticated && !session.locked && session.identity === identity;
+    return !signal?.aborted && session.authenticated && !session.locked && session.identity === identity;
 };
 
 export function useExplorerLinkAvailability(schema: string, table: string, identity?: Record<string, unknown>, revision: string | number = 0) {
@@ -53,7 +53,7 @@ function LinkedProperties({ schema, table, row, layout, presentation }: {schema:
     </ExplorerValueProvider>;
 }
 
-function LinkPage({ schema, table, primaryKey, initialPage, revision = 0 }: Props) {
+function LinkPage({ schema, table, primaryKey, initialPage, revision = 0, onAddLink }: Props) {
     const [relation, setRelation] = useState<string | null>(initialPage?.selected ?? null);
     const [offset, setOffset] = useState(0);
     const [retry, setRetry] = useState(0);
@@ -63,7 +63,6 @@ function LinkPage({ schema, table, primaryKey, initialPage, revision = 0 }: Prop
     const [error, setError] = useState('');
     const [expanded, setExpanded] = useState('');
     const [managementOpen, setManagementOpen] = useState(false);
-    const [linkPickerOpen, setLinkPickerOpen] = useState(false);
     const key = JSON.stringify(primaryKey);
     const sessionIdentity = getSessionState().identity;
     useEffect(() => {
@@ -91,13 +90,12 @@ function LinkPage({ schema, table, primaryKey, initialPage, revision = 0 }: Prop
     if (page.relations.length && !selected) return null;
     return <ExplorerRelationshipsView loading={loading} selectedId={page.selected}
         management={page.canManage ? <>
-            <Button size="small" icon={<PlusOutlined />} disabled={loading || !selected} onClick={() => setLinkPickerOpen(true)}>Add link</Button>
+            {onAddLink && <Button size="small" icon={<PlusOutlined />} disabled={loading || !selected?.canLink}
+                onClick={() => { if (!loading && selected?.canLink && live(undefined, sessionIdentity)) onAddLink(selected); }}>Add link</Button>}
             <Button type="text" size="small" className="explorer-links-manage" icon={<SettingOutlined />} aria-label="Manage relationship types"
                 title="Manage relationship types" disabled={loading} onClick={() => setManagementOpen(true)} />
             <StorageRelationshipTypes schema={schema} table={table} open={managementOpen} initialRelationId={selected?.relationId}
                 onClose={() => setManagementOpen(false)} onChanged={(id, direction) => { setRelation(selected?.relationId === id ? page.selected : `${id}:${direction}`); setRetry(value => value + 1); }} />
-            {selected && <StorageLinkObjectPicker schema={schema} table={table} sourceKey={primaryKey} relation={selected} open={linkPickerOpen}
-                onClose={() => setLinkPickerOpen(false)} onCreated={() => { setLinkPickerOpen(false); setRelation(page.selected); setOffset(0); setRetry(value => value + 1); }} />}
         </> : undefined}
         relations={page.relations.map(item => ({ id: item.id, name: item.name, direction: item.direction,
             fieldMapping: item.fields.length ? { label: 'Import rule',

@@ -26,6 +26,7 @@ import ExplorerRecordLink from './ExplorerRecordLink';
 import ExplorerCatalog from './ExplorerCatalog';
 import './published-explorer.css';
 import useExplorerErrorToast from './useExplorerErrorToast';
+import useExplorerLinkRoute from './useExplorerLinkRoute';
 
 const display = (value: unknown): string => value == null ? 'null' : typeof value === 'object' ? JSON.stringify(value) : String(value);
 const identityKey = (row: PublishedExplorerRecord, index: number) => row.identity ? JSON.stringify(Object.entries(row.identity).sort(([a], [b]) => a.localeCompare(b))) : 'row:' + index;
@@ -58,6 +59,9 @@ export default function PublishedExplorer() {
 
 function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKey: string }) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const linkRoute = useExplorerLinkRoute({ kind: 'published', definitionId: entry.definitionId });
+  const [linkBusy, setLinkBusy] = useState(false);
   const [objectType, setObjectType] = useState<PublishedOntologyType>();
   const [canManage, setCanManage] = useState(false);
   const [metadataError, setMetadataError] = useState('');
@@ -165,7 +169,7 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
     setChosen(previous => previous.map(row => current.get(row.key) || row));
   }, [previewRows, result]);
   const original = (row?: ExplorerPreviewRow) => row ? originals.current.get(row.key) : undefined;
-  const objectTools = usePublishedObjectTools({ objectType, actions: result?.actions || [], record: original(activeRow), returnTo: entry.returnTo, busy: busy || !!error,
+  const objectTools = usePublishedObjectTools({ objectType, actions: result?.actions || [], record: original(activeRow), returnTo: entry.returnTo, busy: busy || linkBusy || !!error,
     onChanged: () => { setActiveRow(undefined); setChosen([]); retry(value => value + 1); } });
   const activeFilters = useMemo(() => query && objectType ? commonFilters(query, objectType) : [], [query, objectType]);
   const sorts = query?.sorts || [];
@@ -176,10 +180,10 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
     catch (error) { message.error((error as Error).message); return false; }
     const url = new URL(href, window.location.origin);
     navigationDraft.current = { route: url.search + url.hash, mode, ...(keepDraft ? { rules: filterRules } : {}) };
-    navigate(href, { replace: true });
+    navigate(href, { replace: true, state: linkRoute.context ? location.state : undefined });
     return true;
   }
-  const canChange = () => !!query && !busy && !fatalError && !objectTools.mutationOpen;
+  const canChange = () => !!query && !busy && !linkBusy && !fatalError && !objectTools.mutationOpen;
   function requireDraftApplied(sorting = false) {
     if (!canChange()) return false;
     const pending = sorting ? JSON.stringify(draftSorts.filter(item => item.field)) !== JSON.stringify(sorts)
@@ -230,7 +234,7 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
   const selectionSource = { kind: 'published' as const, definitionId: entry.definitionId };
   return <div className={`flow-layers flow-layers--tagged flow-schema-workbench explorer-object-workspace has-asset${catalogOpen ? ' is-catalog-open' : ''}${mode === 'explore' && resource === 'preview' ? ' is-exploring' : ''}`}>
     <div className="flow-layer-layout"><ExplorerCatalog published={{ selectedId: entry.definitionId, onSelect: id => { if (canChange()) navigate(publishedExplorerHref(id)); } }} overlayOpen={catalogOpen} onDismiss={() => setCatalogOpen(false)} /><section className="flow-layer-main">
-      <ExplorerWorkbench<PublishedExploration> locked={busy || !!fatalError || objectTools.mutationOpen} header={{ source: selectionSource,
+      <ExplorerWorkbench<PublishedExploration> locked={busy || linkBusy || !!fatalError || objectTools.mutationOpen} header={{ source: selectionSource,
         label: objectType?.definition.name || entry.definitionId, available: !!objectType, glyph: objectType && <SemanticTypeGlyph definition={objectType.definition} />,
         fields, names, types, rows, appliedSearch: query?.search,
         onClearSearch: () => { if (query && canChange()) changeQuery({ ...query, search: '' }); },
@@ -256,10 +260,13 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
         filterButton: <ExplorerFilterButton open={filtersOpen} count={filterCount + sorts.length} onClick={() => { if (mode === 'explore') { setMode('results'); setFiltersOpen(true); } else setFiltersOpen(value => !value); }} />,
       }}>
         <ExplorerResults results={objectType && query && !error ? { source: selectionSource, schema: '', table: objectType.definition.id, rows, columns: fields,
+          canLink: canManage && objectType.definition.source.mode === 'none', linkContext: linkRoute.context,
+          onChooseLinkTarget: context => { if (canChange()) { setChosen([]); linkRoute.chooseTarget(context); } },
+          onCancelLink: linkRoute.finish, onLinkBusyChange: setLinkBusy,
           columnTypes: types, metadata, dataColumns, selectedRows: chosen, selectionLimit: 100, onSelectedRowsChange: setChosen, onActiveRowChange: setActiveRow,
           rowKey: (record, index) => previewRows[index]?.key || 'row:' + (offset + index),
           rowIdentity: record => previewRows[rows.indexOf(record)]?.identity || {}, rowVersion: record => previewRows[rows.indexOf(record)]?.version,
-          loading: busy, locked: objectTools.mutationOpen, onRefresh: () => retry(value => value + 1),
+          loading: busy, locked: objectTools.mutationOpen || linkBusy, onRefresh: () => retry(value => value + 1),
           presentations: Object.fromEntries(resultLayout.columns.map(column => [column.field, column.presentation])),
           renderGlyph: compact => <SemanticTypeGlyph definition={objectType.definition} size={compact ? 'row' : 'preview'} />,
           renderTitleLink: row => <ExplorerRecordLink definitionId={entry.definitionId} identity={row.identity}>{row.title}</ExplorerRecordLink>,
@@ -267,7 +274,7 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
           rowActions: row => objectTools.actionsForRecord(original(row)),
           renderMutation: row => objectTools.renderMutation(original(row)),
           extraViews: [{ key: 'history', label: 'History', available: row => !!original(row)?.hasHistory, render: row => objectTools.renderHistory(original(row)) }],
-          renderPublishedRelationships: objectType.definition.source.mode === 'none' ? row => <PublishedExplorerRelationships definitionId={entry.definitionId} recordId={String(row.identity.$recordId)} /> : undefined,
+          renderPublishedRelationships: objectType.definition.source.mode === 'none' ? (row, onAddLink) => <PublishedExplorerRelationships definitionId={entry.definitionId} recordId={String(row.identity.$recordId)} onAddLink={onAddLink} /> : undefined,
           footer: <>{result && query.groupBy && <section className="published-explorer-aggregation" aria-label="Object set aggregation"><h3>{names[query.groupBy] || query.groupBy}</h3>
             <p>{result.count.toLocaleString()} matching objects{query.sumField ? ` · Sum: ${display(result.sum)}` : ''}</p>
             <table><thead><tr><th>Value</th><th>Count</th>{query.sumField && <th>Sum</th>}</tr></thead><tbody>{result.groups.map((group, index) => <tr key={index}><td>{display(group.value)}</td><td>{group.count}</td>{query.sumField && <td>{display(group.sum)}</td>}</tr>)}</tbody></table>

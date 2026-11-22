@@ -24,14 +24,15 @@ const physical = profile('Physical media'), published = profile('Published media
 const layouts = { personal: { layout: { columns: [{ field: 'caption', presentation: 'value' }] } }, default: { layout: null } };
 
 function mount(kind, requests = {}) {
-  const state = [], refs = [], effects = [], scheduled = [], calls = [], errors = [];
+  const state = [], refs = [], effects = [], scheduled = [], calls = [], errors = [], additions = [];
   const session = { identity: 'synthetic', authenticated: true, locked: false };
   let cursor = 0, tree;
   const props = kind === 'backed' ? { schema: 'ts_ods', table: 'anchor', primaryKey: { id: 'anchor' } } : { definitionId: 'anchor-type', recordId: 'anchor' };
+  props.onAddLink = relation => additions.push(relation);
   const relation = { id: 'relation', relationId: '12', name: 'Owns', direction: 'outgoing', schema: 'ts_ods', table: 'media', targetDefinitionId: 'target-type', fields: ['id'], targetFields: ['id'] };
   const page = kind === 'backed'
     ? { canManage: true, relations: [relation], selected: 'relation', links: [{ linkId: 'edge', version: '3', identity: { id: '9007199254740993' }, canUnlink: true }], offset: 0, hasMore: false }
-    : { relations: [relation], selected: 'relation:outgoing', items: [{ id: 'native-record', linkId: 'edge', canUnlink: true, title: 'Native title', properties: { caption: 'A property', secret: 'hidden' } }], offset: 0, hasMore: false };
+    : { canManage: true, relations: [relation], selected: 'relation:outgoing', items: [{ id: 'native-record', linkId: 'edge', canUnlink: true, title: 'Native title', properties: { caption: 'A property', secret: 'hidden' } }], offset: 0, hasMore: false };
   const api = {
     fetchExplorerRowLinks: async () => page,
     fetchExplorerRowByKey: async () => ({ row: { caption: 'Physical title', secret: 'hidden' }, identity: { id: '9007199254740993' }, columnTypes: { caption: 'text', secret: 'text' } }),
@@ -45,9 +46,10 @@ function mount(kind, requests = {}) {
   const require = name => {
     if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx, Fragment: 'Fragment' };
     if (name === '@/components/ui') return { Button: 'Button' };
+    if (name === '@/components/ui/icons') return { PlusOutlined: 'PlusIcon' };
+    if (name === '@/components/ui') return { Button: 'Button' };
     if (name === '@/components/ui/icons') return { SettingOutlined: 'SettingsIcon' };
     if (name === './StorageRelationshipTypes') return { default: 'RelationshipManager' };
-    if (name === './StorageLinkObjectPicker') return { default: 'ObjectPicker' };
     if (name === 'react') return {
       useState(initial) { const i = cursor++; if (!(i in state)) state[i] = initial; return [state[i], next => { state[i] = typeof next === 'function' ? next(state[i]) : next; }]; },
       useRef(initial) { return refs[cursor++] ||= { current: initial }; },
@@ -69,7 +71,7 @@ function mount(kind, requests = {}) {
   const component = compile(kind === 'backed' ? 'ExplorerRowLinks' : 'PublishedExplorerRelationships', require, kind === 'backed' ? 'LinkPage' : 'RelationshipPage').component;
   const render = () => { cursor = 0; scheduled.length = 0; tree = component(props); for (const [i, effect, deps] of scheduled) { effects[i]?.cleanup?.(); effects[i] = { deps, cleanup: effect() }; } return tree; };
   render();
-  return { props, calls, errors, session, render, tree: () => tree,
+  return { props, calls, errors, additions, session, render, tree: () => tree,
     async flush() { for (let i = 0; i < 12; i++) { await Promise.resolve(); render(); } return tree; },
     unmount: () => effects.forEach(effect => effect?.cleanup?.()) };
 }
@@ -105,6 +107,26 @@ test('Published links retain native titles and metadata while using the same rec
   assert.equal(ui.calls.filter(call => call.name === 'fetchPublishedOntologyType').length, 1);
   assert.equal(ui.calls.filter(call => call.name === 'readLayouts').length, 1);
   assert.equal(ui.calls.filter(call => call.name === 'fetchExplorerRowByKey' || call.name === 'fetchExplorerProperties').length, 0);
+});
+
+test('Published Add link uses the same selected relationship handoff and server manage capability', async () => {
+  const ui = mount('published'); await ui.flush();
+  const button = ui.tree().props.management;
+  assert.equal(button.props.children, 'Add link');
+  assert.equal(button.props.disabled, false);
+  button.props.onClick();
+  assert.equal(ui.additions[0].id, 'relation');
+  assert.equal(ui.additions[0].direction, 'outgoing');
+  ui.session.locked = true;
+  button.props.onClick(); assert.equal(ui.additions.length, 1);
+  ui.session.locked = false; ui.session.identity = 'different-session';
+  button.props.onClick(); assert.equal(ui.additions.length, 1);
+  ui.session.identity = 'synthetic';
+  ui.props.onAddLink = undefined; ui.render();
+  assert.equal(ui.tree().props.management, undefined);
+  const denied = mount('published', { fetchPublishedRelationships: async () => ({ canManage: false, relations: [], items: [], hasMore: false, offset: 0 }) });
+  await denied.flush();
+  assert.equal(denied.tree().props.management, undefined);
 });
 
 test('related metadata failures block misleading cards and expired requests cannot populate another session', async () => {

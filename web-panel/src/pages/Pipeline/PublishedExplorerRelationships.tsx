@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
-import { fetchPublishedRelationships, unlinkPublishedRelationship, type PublishedRelationships } from '../../services/publishedExplorerDetails';
+import { Button } from '@/components/ui';
+import { PlusOutlined } from '@/components/ui/icons';
+import { fetchPublishedRelationships, unlinkPublishedRelationship, type PublishedRelationship, type PublishedRelationships } from '../../services/publishedExplorerDetails';
 import { fetchPublishedOntologyType, ontologyError, type OntologyRecord, type PublishedOntologyType } from '../../services/ontology';
 import { publishedLayoutPath, readLayouts, type Layouts } from '../../services/explorerLayouts';
 import { publishedColumnTypes, publishedPresentation } from '../../services/publishedExplorerPresentation';
@@ -11,9 +13,9 @@ import useExplorerErrorToast from './useExplorerErrorToast';
 import { getSessionState } from '../../services/session';
 import SemanticTypeGlyph from './SemanticTypeGlyph';
 
-const live = (signal: AbortSignal, identity: string) => {
+const live = (signal: AbortSignal | undefined, identity: string) => {
   const session = getSessionState();
-  return !signal.aborted && session.authenticated && !session.locked && session.identity === identity;
+  return !signal?.aborted && session.authenticated && !session.locked && session.identity === identity;
 };
 
 function LinkedProperties({ definitionId, record, type, layouts }: { definitionId: string; record: OntologyRecord; type: PublishedOntologyType; layouts: Layouts }) {
@@ -25,8 +27,8 @@ function LinkedProperties({ definitionId, record, type, layouts }: { definitionI
   </ExplorerValueProvider>;
 }
 
-type Props = { definitionId: string; recordId: string };
-function RelationshipPage({ definitionId, recordId }: Props) {
+type Props = { definitionId: string; recordId: string; onAddLink?: (relation: PublishedRelationship) => void };
+function RelationshipPage({ definitionId, recordId, onAddLink }: Props) {
   const [relation, setRelation] = useState<string>();
   const [offset, setOffset] = useState(0);
   const [version, reload] = useState(0);
@@ -55,6 +57,8 @@ function RelationshipPage({ definitionId, recordId }: Props) {
   if (current?.error) return null;
   if (!page) return <p role="status">Loading relationships…</p>;
   return <ExplorerRelationshipsView loading={loading} selectedId={page.selected}
+    management={page.canManage && onAddLink ? <Button size="small" icon={<PlusOutlined />} disabled={loading || !selected}
+      onClick={() => { if (!loading && selected && live(undefined, identity)) onAddLink(selected); }}>Add link</Button> : undefined}
     relations={page.relations.map(item => ({ id: item.id + ':' + item.direction, name: item.name, direction: item.direction }))}
     records={selected ? page.items.map(record => ({ key: record.linkId, typeName: read!.type!.definition.name, icon: <SemanticTypeGlyph definition={read!.type!.definition} />,
       link: <ExplorerRecordLink definitionId={selected.targetDefinitionId} identity={{ $recordId: record.id! }}>{String(record.title ?? 'Untitled object')}</ExplorerRecordLink>,

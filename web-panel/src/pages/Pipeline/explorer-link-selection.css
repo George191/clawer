@@ -1,0 +1,19 @@
+.explorer-link-selection { display:flex; flex-direction:column; gap:15px; min-height:0; overflow:auto; color:var(--ontology-text); font-size:12px; }
+.explorer-link-selection > header { display:flex; align-items:flex-start; gap:9px; }
+.explorer-link-selection > header > .ui-icon { margin-top:2px; color:var(--ontology-muted); font-size:15px; }
+.explorer-link-selection h4 { margin:0; font-size:13px; font-weight:600; line-height:1.4; }
+.explorer-link-selection p { margin:3px 0 0; color:var(--ontology-muted); font-size:11px; line-height:1.5; }
+.explorer-link-selection > label { display:flex; flex-direction:column; gap:6px; min-width:0; }
+.explorer-link-selection > label > span:first-child,
+.explorer-link-selection__source > span { color:var(--ontology-muted); font-size:11px; }
+.explorer-link-selection .ui-select { width:100%; min-width:0; }
+.explorer-link-selection__source { display:flex; flex-direction:column; gap:4px; padding:10px 12px; border:1px solid var(--ontology-control-border); border-radius:3px; }
+.explorer-link-selection__source strong { font-size:12px; font-weight:500; overflow-wrap:anywhere; }
+.explorer-link-selection__source small { color:var(--ontology-muted); font-size:11px; overflow-wrap:anywhere; }
+.explorer-link-selection > footer { display:flex; flex:none; justify-content:flex-end; gap:6px; margin-top:2px; padding-top:12px; border-top:1px solid var(--ontology-control-border); }
+.explorer-link-selection-banner { display:flex; flex:none; align-items:center; gap:8px; min-width:0; padding:9px 12px; border-bottom:1px solid var(--ontology-control-border); background:var(--explorer-selection-bg); font-size:11px; }
+.explorer-link-selection-banner > .ui-icon { flex:none; color:var(--ontology-muted); font-size:14px; }
+.explorer-link-selection-banner > div { display:flex; flex:1; flex-direction:column; gap:3px; min-width:0; }
+.explorer-link-selection-banner strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; font-weight:500; }
+.explorer-link-selection-banner span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ontology-muted); }
+.explorer-link-selection-banner > button { flex:none; }
