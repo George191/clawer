@@ -134,6 +134,15 @@ with (ARTIFACTS / 'vite.log').open('w') as log:
                 check_geometry(compact, page.locator('.ui-select-dropdown[data-state=open]'))
                 page.get_by_role('option', name='Beta', exact=True).click()
                 expect(compact).to_contain_text('Beta')
+                formatter = page.get_by_role('combobox', name='Compact formatter')
+                assert formatter.bounding_box()['width'] < 140
+                formatter.click()
+                formatter_menu = page.locator('.ui-select-dropdown[data-state=open]')
+                expect(formatter_menu).to_be_visible()
+                page.wait_for_timeout(200)
+                assert formatter_menu.bounding_box()['width'] == 140
+                assert formatter_menu.locator('.ui-select-item-option-content').evaluate_all('nodes => nodes.every(node => node.scrollWidth <= node.clientWidth)')
+                formatter.press('Escape')
                 category = page.get_by_role('combobox', name='Filter connector category')
                 category.click()
                 page.wait_for_timeout(200)

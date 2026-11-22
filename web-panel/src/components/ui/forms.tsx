@@ -226,10 +226,10 @@ export function InputNumber<T extends string | number = number>(props: InputNumb
 }
 
 export type SelectOption = { value: string | number; label?: React.ReactNode; title?: string; disabled?: boolean; [key: string]: any };
-export interface SelectSizingProps { height?: React.CSSProperties['height']; paddingInlineStart?: React.CSSProperties['paddingInlineStart']; paddingInlineEnd?: React.CSSProperties['paddingInlineEnd']; }
+export interface SelectSizingProps { popupWidth?: number; height?: React.CSSProperties['height']; paddingInlineStart?: React.CSSProperties['paddingInlineStart']; paddingInlineEnd?: React.CSSProperties['paddingInlineEnd']; }
 export interface SelectProps<T = any> extends Omit<React.HTMLAttributes<HTMLDivElement>, 'onChange' | 'defaultValue' | 'onSelect' | 'prefix'>, SelectSizingProps { controlRef?: React.Ref<HTMLDivElement>; formControl?: React.ReactNode; value?: T; defaultValue?: T; options?: SelectOption[]; children?: React.ReactNode; onChange?: (value: T, option?: SelectOption | SelectOption[]) => void; onSelect?: (value: any, option: SelectOption) => void; onDeselect?: (value: any, option: SelectOption) => void; mode?: 'multiple' | 'tags'; showSearch?: boolean; filterOption?: boolean | ((input: string, option?: SelectOption) => boolean); optionFilterProp?: string; onSearch?: (value: string) => void; placeholder?: React.ReactNode; allowClear?: boolean; disabled?: boolean; loading?: boolean; size?: string; open?: boolean; onOpenChange?: (open: boolean) => void; onDropdownVisibleChange?: (open: boolean) => void; popupClassName?: string; dropdownClassName?: string; listHeight?: number; onPopupScroll?: (event: React.UIEvent<HTMLDivElement>) => void; suffixIcon?: React.ReactNode; maxTagCount?: number | 'responsive'; notFoundContent?: React.ReactNode; labelInValue?: boolean; }
 function SelectRoot<T = any>(props: SelectProps<T>) {
-  const { value, defaultValue, options: supplied, children, onChange, onSelect, onDeselect, mode, showSearch, filterOption, optionFilterProp = 'label', onSearch, placeholder, allowClear, loading, size, height, paddingInlineStart, paddingInlineEnd, open, onOpenChange, onDropdownVisibleChange, popupClassName, dropdownClassName, listHeight = 256, onPopupScroll, suffixIcon, maxTagCount, notFoundContent, labelInValue, controlRef, formControl, className, style, disabled: providedDisabled, onKeyDown, onClick, ...rest } = props;
+  const { value, defaultValue, options: supplied, children, onChange, onSelect, onDeselect, mode, showSearch, filterOption, optionFilterProp = 'label', onSearch, placeholder, allowClear, loading, size, height, popupWidth, paddingInlineStart, paddingInlineEnd, open, onOpenChange, onDropdownVisibleChange, popupClassName, dropdownClassName, listHeight = 256, onPopupScroll, suffixIcon, maxTagCount, notFoundContent, labelInValue, controlRef, formControl, className, style, disabled: providedDisabled, onKeyDown, onClick, ...rest } = props;
   const controlStyle: React.CSSProperties = { ...style, ...(height !== undefined ? { height, minHeight: 0 } : {}),
     paddingInlineStart: paddingInlineStart ?? style?.paddingInlineStart,
     paddingInlineEnd: paddingInlineEnd ?? style?.paddingInlineEnd };
@@ -268,7 +268,7 @@ function SelectRoot<T = any>(props: SelectProps<T>) {
     if (!present || !isOpen || !wrapper.current) return;
     const place = () => {
       const rect = wrapper.current!.getBoundingClientRect();
-      const width = Math.min(innerWidth - 16, rect.width);
+      const width = Math.min(innerWidth - 16, popupWidth ?? rect.width);
       const below = innerHeight - rect.bottom - 12, above = rect.top - 12;
       const menuHeight = Math.min(listHeight, popup.current!.scrollHeight + 2);
       const upward = below < Math.min(menuHeight, 80) && above > below;
@@ -280,7 +280,7 @@ function SelectRoot<T = any>(props: SelectProps<T>) {
     resize.observe(wrapper.current);
     place(); window.addEventListener('resize', place); window.addEventListener('scroll', place, true);
     return () => { resize.disconnect(); window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true); };
-  }, [isOpen, present, listHeight]);
+  }, [isOpen, present, listHeight, popupWidth]);
   useEffect(() => { if (!isOpen) return; const outside = (event: PointerEvent) => { if (!wrapper.current?.contains(event.target as Node) && !popup.current?.contains(event.target as Node)) changeOpen(false); }; document.addEventListener('pointerdown', outside); return () => document.removeEventListener('pointerdown', outside); }, [isOpen]);
   useEffect(() => { setActive(0); }, [query]);
   const keyboard = (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -345,7 +345,7 @@ export const Select = SelectRoot;
 
 // Keep browser form values and validation while sharing the same visible menu.
 export const NativeSelect = forwardRef<HTMLSelectElement, React.SelectHTMLAttributes<HTMLSelectElement> & SelectSizingProps>((props, ref) => {
-  const { children, className, style, height, paddingInlineStart, paddingInlineEnd, value, defaultValue, multiple, disabled: providedDisabled, onChange, onInvalid, onFocus, onBlur, ...rest } = props;
+  const { children, className, style, height, popupWidth, paddingInlineStart, paddingInlineEnd, value, defaultValue, multiple, disabled: providedDisabled, onChange, onInvalid, onFocus, onBlur, ...rest } = props;
   const native = useRef<HTMLSelectElement>(null), control = useRef<HTMLDivElement>(null);
   const disabled = useDisabled(providedDisabled), controlled = value !== undefined;
   const [fieldsetDisabled, setFieldsetDisabled] = useState(false);
@@ -395,7 +395,7 @@ export const NativeSelect = forwardRef<HTMLSelectElement, React.SelectHTMLAttrib
     Array.from(native.current.options).forEach(option => { option.selected = values.includes(option.value); });
     native.current.dispatchEvent(new Event('change', { bubbles: true }));
   };
-  return <Select controlRef={control} id={rest.id ? `${rest.id}-control` : undefined} className={cx('ui-native-select', className)} style={style} height={height} paddingInlineStart={paddingInlineStart} paddingInlineEnd={paddingInlineEnd} value={selection} options={options} mode={multiple ? 'multiple' : undefined} disabled={disabled || fieldsetDisabled} onChange={change}
+  return <Select controlRef={control} id={rest.id ? `${rest.id}-control` : undefined} className={cx('ui-native-select', className)} style={style} height={height} popupWidth={popupWidth} paddingInlineStart={paddingInlineStart} paddingInlineEnd={paddingInlineEnd} value={selection} options={options} mode={multiple ? 'multiple' : undefined} disabled={disabled || fieldsetDisabled} onChange={change}
       aria-label={props['aria-label'] || label} aria-labelledby={props['aria-labelledby']} aria-describedby={props['aria-describedby']} aria-invalid={props['aria-invalid'] || invalid || undefined} aria-required={props.required}
       onFocus={event => { if ((event.target as EventTarget) !== native.current) native.current?.dispatchEvent(new FocusEvent('focusin', { bubbles: true })); }} onBlur={event => { if ((event.target as EventTarget) !== native.current) native.current?.dispatchEvent(new FocusEvent('focusout', { bubbles: true })); }}
       formControl={<select {...rest} ref={native} hidden tabIndex={-1} aria-hidden="true" style={{ display: 'none' }} multiple={multiple} disabled={disabled} value={value} defaultValue={defaultValue}
