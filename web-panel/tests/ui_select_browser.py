@@ -62,6 +62,8 @@ with (ARTIFACTS / 'vite.log').open('w') as log:
                 expect(popup).to_be_visible()
                 page.wait_for_timeout(200)
                 geometry = check_geometry(control, popup)
+                assert popup.locator('.ui-select-item-option-content').first.evaluate('node => getComputedStyle(node).whiteSpace') == 'nowrap'
+                expect(popup.locator('.ui-select-item-option-content').first).to_have_attribute('title', 'Select a connection')
                 surface = control.evaluate('''node => {
                   const inner = getComputedStyle(node.querySelector('.ui-select-selector'));
                   const arrow = node.querySelector('.ui-select-arrow').getBoundingClientRect();
@@ -113,6 +115,15 @@ with (ARTIFACTS / 'vite.log').open('w') as log:
                 multi.press('Escape')
                 page.get_by_role('button', name='Remove Alpha', exact=True).click()
                 expect(page.get_by_role('button', name='Remove Beta', exact=True)).to_be_visible()
+                category = page.get_by_role('combobox', name='Filter connector category')
+                category.click()
+                page.wait_for_timeout(200)
+                category_popup = page.locator('.ui-select-dropdown[data-state=open]')
+                check_geometry(category, category_popup)
+                assert category.bounding_box()['width'] == 224
+                assert category_popup.locator('.ui-select-item-option-content').evaluate_all('nodes => nodes.every(node => node.scrollWidth <= node.clientWidth)')
+                page.screenshot(path=str(ARTIFACTS / f'{mode}-category-wide.png'))
+                category.press('Escape')
                 actions = page.get_by_role('button', name='Actions', exact=True)
                 actions.click()
                 page.wait_for_timeout(200)

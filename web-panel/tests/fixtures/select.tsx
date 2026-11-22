@@ -26,6 +26,7 @@ function Fixture() {
         <button type="submit">Submit</button><button type="reset">Reset defaults</button>
       </form>
       <output aria-label="Change count">{changes}</output><output aria-label="Submitted values">{submitted}</output>
+      <section className="ontology-connectors ontology-connections-workspace" style={{ maxWidth: 380, marginTop: 16 }}><div className="ontology-connectors__picker-tools"><label>Category <NativeSelect aria-label="Filter connector category" value="all"><option value="all">All connectors</option><option value="relational">Relational databases</option><option value="non_relational">Non-relational databases</option><option value="vector">Vector databases</option></NativeSelect></label></div></section>
       <div style={{ marginTop: 24 }}><Dropdown trigger={['click']} overlayClassName="flow-menu-popup" menu={{ items: [{ key: 'open', label: 'Open dialog' }, { key: 'disabled', label: 'Disabled action', disabled: true }], onClick: () => setDialog(true) }}><button type="button" style={{ width: 220 }}>Actions</button></Dropdown></div>
       <Modal open={dialog} title="Selection dialog" onCancel={() => setDialog(false)} footer={null} className="flow-surface-modal flow-semantic-wizard"><Select popupClassName="flow-select-popup" aria-label="Dialog connection" options={options} style={{ width: '100%' }} /></Modal>
     </main>

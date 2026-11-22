@@ -52,6 +52,8 @@
 .ontology-connections-inventory__filter, .ontology-connectors__picker-tools > label {
   display: inline-flex; align-items: center; gap: 7px; color: var(--ontology-muted);
 }
+.ontology-connectors__picker-tools > label { min-width: 0; max-width: 100%; }
+.ontology-connectors__picker-tools > label > .ui-native-select { width: 224px; min-width: 0; }
 .ontology-connections-inventory__table {
   min-width: 0; overflow-x: auto; border: 1px solid var(--ontology-border); border-radius: 4px;
 }
