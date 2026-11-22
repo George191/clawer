@@ -162,7 +162,9 @@ test('footer actions share the original pagination nav and keep existing range a
   const items = nav.props.children;
   assert.equal(items[0].props.className, 'flow-preview-range'); assert.equal(items[0].props.children, 'Rows 11–12');
   assert.equal(items[1].props.className, 'flow-preview-page-controls');
-  assert.equal(items.at(-1).props.className, 'flow-preview-page-actions'); assert.equal(items.at(-1).props.children, actions);
+  const controls = items[1].props.children;
+  assert.equal(controls.at(-1).props.className, 'flow-preview-page-actions'); assert.equal(controls.at(-1).props.children, actions);
+  assert.equal(controls.at(-2).props.children, 'Next');
   const select = nodes(result).find(node => node.type === 'NativeSelect'); select.props.onChange({ target: { value: '20' } });
   assert.deepEqual(resized, [20]);
   const regular = ui.footer.ExplorerResultsFooter({ ...props, children: undefined });

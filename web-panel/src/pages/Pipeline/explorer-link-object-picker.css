@@ -1,6 +1,6 @@
 .explorer-link-object-layer { position:absolute; inset:0; z-index:5; display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden; background:var(--ontology-panel); animation:explorer-link-table-in 180ms cubic-bezier(.2,.8,.2,1); }
 .explorer-link-object-layer > .flow-preview-pager { margin:0; border:0; border-top:1px solid var(--ontology-control-border); border-radius:0; }
-.explorer-link-object-layer .flow-preview-pager > nav { justify-content:flex-start; gap:5px 10px; padding:4px 7px 4px 10px; }
-.explorer-link-object-layer .flow-preview-page-actions { display:flex; align-items:center; gap:6px; margin-inline-start:auto; }
+.explorer-link-object-layer .flow-preview-pager > nav { gap:5px 10px; padding:4px 7px 4px 10px; }
+.explorer-link-object-layer .flow-preview-page-actions { display:flex; align-items:center; gap:6px; }
 @keyframes explorer-link-table-in { from { transform:translateX(100%); } to { transform:translateX(0); } }
 @media(prefers-reduced-motion:reduce) { .explorer-link-object-layer { animation:none; } }
