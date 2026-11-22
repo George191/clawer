@@ -1,0 +1,275 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import test from 'node:test';
+import vm from 'node:vm';
+import ts from 'typescript';
+
+const jsx = (type, props) => ({ type, props });
+const nodes = tree => Array.isArray(tree) ? tree.flatMap(nodes) : tree && typeof tree === 'object' ? [tree, ...[tree.props?.children].flat(Infinity).flatMap(nodes)] : [];
+const compile = (file, require, suffix = '') => {
+  const source = ts.transpileModule(readFileSync(new URL('../src/' + file, import.meta.url), 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
+  }).outputText;
+  const exports = {};
+  vm.runInThisContext('(function(require,exports){' + source + suffix + '\n})')(require, exports);
+  return exports;
+};
+const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
+const physicalPage = (title = 'Company') => ({ primaryKey: ['tenant', 'id'], rows: [
+  { tenant: 'a', id: 9007199254740992, name: title + ' A' }, { tenant: 'b', id: 9007199254740992, name: title + ' B' },
+], rowIdentities: [{ tenant: 'a', id: '9007199254740993' }, { tenant: 'b', id: '9007199254740995' }], hasMore: true, canPageFurther: true });
+const nativePage = () => ({ count: 22, hasMore: true, items: [
+  { id: 'native-a', identity: { $recordId: 'native-a' }, title: 'Native company A', properties: { id: 'physical-a' } },
+  { id: 'native-b', identity: { $recordId: 'native-b' }, title: 'Native company B', properties: { id: 'physical-b' } },
+] });
+const physicalRelation = direction => ({ id: '18:' + direction, relationId: '18', name: 'Works for', direction,
+  kind: 'logical', canLink: true, schema: 'ts_dwd', table: 'companies', fields: ['company_id'], targetFields: ['id'] });
+const nativeRelation = direction => ({ id: 'relation-uuid', name: 'Works for', direction, targetDefinitionId: 'company-type' });
+const normalizers = compile('services/explorerRelationshipLinks.ts', () => ({}));
+const overview = compile('pages/Pipeline/ExplorerObjectOverview.tsx', name => name === 'react' ? { lazy: () => 'Preview' }
+  : name === 'react/jsx-runtime' ? { jsx, jsxs: jsx } : {});
+
+function mount({ native = false, direction = 'incoming', canLink = true, read, metadata, fresh, write = async () => {} } = {}) {
+  const states = [], refs = [], effects = [], scheduled = [], reads = [], metadataReads = [], checks = [], writes = [], notifications = [], errors = [];
+  const session = { identity: 'test-account', authenticated: true, locked: false };
+  let cursor = 0, tree, closed = 0, created = 0;
+  const relation = native ? normalizers.publishedLinkRelation(nativeRelation(direction), canLink)
+    : { ...normalizers.storageLinkRelation(physicalRelation(direction)), canLink };
+  const props = { open: true, source: native ? { kind: 'published', definitionId: 'employee-type' } : { kind: 'backed', schema: 'ts_ods', table: 'employees' },
+    sourceRow: { key: 'source-key', title: 'Reviewed source', identity: native ? { $recordId: 'source-native' } : { tenant: 'anchor', id: '9007199254740997' } },
+    relation, onClose: () => closed++, onCreated: () => created++ };
+  const available = native ? { canManage: true, relations: [nativeRelation(direction)] } : { canManage: true, relations: [physicalRelation(direction)] };
+  const module = compile('pages/Pipeline/ExplorerLinkObjectPicker.tsx', name => {
+    if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
+    if (name === 'react') return {
+      useState(initial) { const i = cursor++; if (!(i in states)) states[i] = typeof initial === 'function' ? initial() : initial;
+        return [states[i], next => { states[i] = typeof next === 'function' ? next(states[i]) : next; }]; },
+      useRef(initial) { return refs[cursor++] ||= { current: initial }; }, useId: () => 'target-radio-group',
+      useEffect(effect, deps) { const i = cursor++; if (!effects[i] || deps.some((value, j) => !Object.is(value, effects[i].deps[j]))) scheduled.push([i, effect, deps]); },
+    };
+    if (name === '@/components/ui') return { Button: 'Button', Input: 'Input', Modal: 'Modal', message: Object.fromEntries(['success', 'error'].map(kind => [kind, value => notifications.push({ kind, value })])) };
+    if (name === '@/components/ui/icons') return { LinkOutlined: 'LinkIcon', SearchOutlined: 'SearchIcon' };
+    if (name === '../../services/session') return { getSessionState: () => session };
+    if (name === '../../services/ontology') return { ontologyError: (error, fallback) => error.message || fallback,
+      fetchPublishedOntologyType: async (...args) => { metadataReads.push(args); return metadata ? metadata(...args) : { definition: { name: 'Native companies', source: { mode: 'none' } } }; } };
+    if (name === '../../services/explorerProperties') return { fetchExplorerProperties: async (...args) => { metadataReads.push(args); return metadata ? metadata(...args) : { displayName: 'Companies', titleProperty: 'name', dataType: 'company' }; } };
+    if (name === '../../services/api') return {
+      queryExplorerPreview: async (...args) => { reads.push(args); return read ? read(...args) : physicalPage(); },
+      fetchExplorerRowLinks: async (...args) => { checks.push(args); return fresh ? fresh(...args) : available; },
+      createExplorerRowLink: async (...args) => { writes.push(args); return write(...args); },
+    };
+    if (name === '../../services/publishedExplorer') return { queryPublishedExplorer: async (...args) => { reads.push(args); return read ? read(...args) : nativePage(); } };
+    if (name === '../../services/publishedExplorerDetails') return {
+      fetchPublishedRelationships: async (...args) => { checks.push(args); return fresh ? fresh(...args) : available; },
+      createPublishedRelationship: async (...args) => { writes.push(args); return write(...args); },
+    };
+    if (name === './ExplorerObjectOverview') return { ...overview, ExplorerTypeIcon: 'TypeIcon' };
+    if (name === './SemanticTypeGlyph') return { default: 'SemanticTypeIcon' };
+    if (name === './useExplorerErrorToast') return { default: (...args) => errors.push(args) };
+    if (name.endsWith('.css')) return {};
+    throw new Error('Unexpected dependency ' + name);
+  }, '\nexports.Picker=ObjectPicker;');
+  const render = () => {
+    cursor = 0; scheduled.length = 0; tree = module.Picker(props);
+    for (const [i, effect, deps] of scheduled) { effects[i]?.cleanup?.(); effects[i] = { deps, cleanup: effect() }; }
+    return tree;
+  };
+  render();
+  const all = () => nodes([tree, tree.props.footer]);
+  const radio = () => nodes(tree).filter(node => node.type === 'input' && node.props.type === 'radio');
+  return { props, session, reads, checks, metadataReads, writes, notifications, errors, render, modal: () => tree,
+    closed: () => closed, created: () => created, radios: radio,
+    button: label => all().find(node => node.type === 'Button' && node.props.children === label),
+    search: () => nodes(tree).find(node => node.type === 'Input'),
+    choose(index = 0) { radio()[index].props.onChange(); render(); },
+    async flush() { for (let i = 0; i < 16; i++) { await Promise.resolve(); render(); } },
+    unmount: () => effects.forEach(effect => effect?.cleanup?.()),
+    wrapper: module.default,
+  };
+}
+
+test('the physical picker reads only the peer type and submits canonical composite keys in both directions', async () => {
+  for (const direction of ['incoming', 'outgoing']) {
+    const ui = mount({ direction }); await ui.flush();
+    assert.deepEqual(ui.reads[0].slice(0, 3), ['ts_dwd', 'companies', { search: '', offset: 0, limit: 10, filters: [], sorts: [], withIdentity: true }]);
+    assert.equal(ui.reads[0][3], ui.metadataReads[0][2]);
+    assert.deepEqual(ui.metadataReads[0].slice(0, 2), ['ts_dwd', 'companies']);
+    assert.equal(ui.modal().props.width, 720); assert.equal(ui.radios().length, 2);
+    assert.equal(ui.button('Add link').props.disabled, true);
+    ui.choose(1); await ui.button('Add link').props.onClick(); await ui.flush();
+    assert.deepEqual(ui.checks[0].slice(0, 5), ['ts_ods', 'employees', ui.props.sourceRow.identity, '18:' + direction, 0]);
+    assert.deepEqual(ui.writes[0].slice(0, 3), ['ts_ods', 'employees', { key: { tenant: 'anchor', id: '9007199254740997' }, relationId: '18', direction, targetKey: { tenant: 'b', id: '9007199254740995' } }]);
+    assert.equal(ui.checks[0][5], ui.writes[0][3]); assert.equal(ui.created(), 1);
+    assert.equal(ui.notifications[0].value.className, 'explorer-toast');
+  }
+});
+
+test('Published native search and linking use record identities rather than physical property values', async () => {
+  for (const direction of ['incoming', 'outgoing']) {
+    const ui = mount({ native: true, direction }); await ui.flush();
+    assert.deepEqual(ui.reads[0].slice(0, 4), ['company-type', { filters: [], search: '' }, 10, 0]);
+    assert.equal(ui.reads[0][4], ui.metadataReads[0][1]);
+    ui.choose(1); await ui.button('Add link').props.onClick(); await ui.flush();
+    assert.deepEqual(ui.checks[0].slice(0, 4), ['employee-type', 'source-native', 'relation-uuid:' + direction, 0]);
+    assert.deepEqual(ui.writes[0].slice(0, 4), ['relation-uuid', direction, 'source-native', 'native-b']);
+    assert.equal(ui.created(), 1);
+    assert.ok(nodes(ui.modal()).some(node => node.type === 'table'));
+  }
+});
+
+test('Published relationship services expose management capability and orient the actual native create request', async () => {
+  const requests = [];
+  const api = compile('services/publishedExplorerDetails.ts', name => name === './endpoints' ? { apiUrl: value => value } : {
+    graphRequest: async (...args) => { requests.push(args); return args[1].endsWith('/link-types') ? { items: [], hasMore: false, canManage: true } : {}; },
+  });
+  const signal = new AbortController().signal;
+  assert.equal((await api.fetchPublishedRelationships('employees', 'record-a', undefined, 0, signal)).canManage, true);
+  for (const direction of ['incoming', 'outgoing']) {
+    await api.createPublishedRelationship('link/type', direction, 'record-a', 'record-b', signal);
+    assert.equal(requests.at(-1)[1], '/link-types/link%2Ftype/links');
+    assert.equal(requests.at(-1)[2].signal, signal);
+    assert.deepEqual(requests.at(-1)[2].data, direction === 'outgoing' ? { sourceRecordId: 'record-a', targetRecordId: 'record-b' } : { sourceRecordId: 'record-b', targetRecordId: 'record-a' });
+  }
+});
+
+test('a pending request locks duplicate adds, closing, searching, paging and target changes', async () => {
+  const pending = deferred(), ui = mount({ write: () => pending.promise }); await ui.flush(); ui.choose();
+  const adding = ui.button('Add link').props.onClick(); await ui.flush();
+  assert.equal(ui.modal().props.closable, false); assert.equal(ui.modal().props.keyboard, false); assert.equal(ui.modal().props.maskClosable, false);
+  assert.equal(ui.button('Cancel').props.disabled, true); assert.equal(ui.radios()[1].props.disabled, true);
+  await ui.button('Add link').props.onClick(); ui.modal().props.onCancel();
+  ui.search().props.onChange({ target: { value: 'blocked' } }); ui.button('Next').props.onClick(); ui.choose(1); await ui.flush();
+  assert.equal(ui.writes.length, 1); assert.equal(ui.checks.length, 1); assert.equal(ui.closed(), 0); assert.equal(ui.reads.length, 1);
+  assert.equal(ui.radios()[0].props.checked, true);
+  pending.resolve(); await adding; await ui.flush();
+  assert.equal(ui.created(), 1); assert.equal(ui.notifications.length, 1);
+});
+
+test('live search and pagination clear the old target and discard late previous-query results', async () => {
+  const old = deferred(); let requests = 0;
+  const ui = mount({ read: async () => ++requests === 2 ? old.promise : physicalPage(requests === 1 ? 'Initial' : 'Newest') });
+  await ui.flush(); ui.choose();
+  ui.search().props.onChange({ target: { value: '  Old search  ' } }); ui.render();
+  await ui.button('Add link').props.onClick(); assert.equal(ui.writes.length, 0);
+  ui.search().props.onChange({ target: { value: ' Newest search ' } }); ui.render(); await ui.flush();
+  old.resolve(physicalPage('Stale')); await ui.flush();
+  assert.equal(ui.radios()[0].props['aria-label'], 'Select Newest A');
+  assert.equal(ui.radios().some(radio => radio.props.checked), false);
+  assert.deepEqual(ui.reads[2][2], { search: 'Newest search', offset: 0, limit: 10, filters: [], sorts: [], withIdentity: true });
+  ui.choose(); ui.button('Next').props.onClick(); ui.render();
+  await ui.button('Add link').props.onClick(); await ui.flush();
+  assert.equal(ui.reads[3][2].offset, 10); assert.equal(ui.radios().some(radio => radio.props.checked), false);
+});
+
+test('physical objects with absent, rounded or extra primary-key fields fail explicitly', async () => {
+  const initial = physicalPage();
+  for (const result of [
+    { ...initial, primaryKey: [] }, { ...initial, rowIdentities: undefined },
+    { ...initial, rowIdentities: [{ tenant: 'a', id: 9007199254740992 }, initial.rowIdentities[1]] },
+    { ...initial, rowIdentities: [{ id: '9007199254740993' }, initial.rowIdentities[1]] },
+    { ...initial, rowIdentities: [{ ...initial.rowIdentities[0], unexpected: 'field' }, initial.rowIdentities[1]] },
+  ]) {
+    const ui = mount({ read: async () => result }); await ui.flush();
+    assert.equal(ui.radios().length, 0); assert.equal(ui.button('Add link').props.disabled, true);
+    assert.ok(ui.errors.some(([error]) => error?.includes('stable primary key')));
+    await ui.button('Add link').props.onClick(); assert.equal(ui.writes.length, 0);
+  }
+});
+
+test('Published mapped types or inconsistent record identities never become selectable targets', async () => {
+  for (const options of [
+    { metadata: async () => ({ definition: { name: 'Mapped companies', source: { mode: 'existing' } } }) },
+    { read: async () => ({ ...nativePage(), items: [{ id: 'native-a', title: 'Mismatch', identity: { $recordId: 'other-native' } }] }) },
+    { read: async () => ({ ...nativePage(), items: [{ id: 'native-a', title: 'Physical key', identity: { id: 'physical-id' } }] }) },
+    { read: async () => ({ ...nativePage(), items: [{ id: null, title: 'No record', identity: { $recordId: 'native-a' } }] }) },
+  ]) {
+    const ui = mount({ native: true, ...options }); await ui.flush();
+    assert.equal(ui.radios().length, 0); assert.equal(ui.button('Add link').props.disabled, true);
+    assert.ok(ui.errors.some(([error]) => error));
+    await ui.button('Add link').props.onClick(); assert.equal(ui.writes.length, 0);
+  }
+});
+
+test('Published mapped types and inconsistent native record identities cannot be linked', async () => {
+  for (const variant of ['mapped', 'missing', 'wrong-key', 'mismatch']) {
+    const ui = mount({ native: true,
+      metadata: async () => ({ definition: { name: 'Companies', source: { mode: variant === 'mapped' ? 'existing' : 'none' } } }),
+      read: async () => ({ ...nativePage(), items: [{ ...nativePage().items[0],
+        ...(variant === 'missing' ? { id: undefined } : variant === 'wrong-key' ? { identity: { id: 'physical-a' } }
+          : variant === 'mismatch' ? { identity: { $recordId: 'another-native' } } : {}),
+      }] }),
+    }); await ui.flush();
+    assert.equal(ui.radios().length, 0); assert.equal(ui.button('Add link').props.disabled, true);
+    assert.ok(ui.errors.some(([error]) => !!error)); assert.equal(ui.writes.length, 0);
+  }
+});
+
+test('fresh source permissions, relation direction and peer endpoints are reviewed before any write', async () => {
+  for (const native of [false, true]) {
+    for (const changed of ['permission', 'removed', 'endpoint', 'direction']) {
+      const relation = native ? nativeRelation('incoming') : physicalRelation('incoming');
+      const ui = mount({ native, fresh: async () => ({ canManage: changed !== 'permission', relations: changed === 'removed' ? [] : [{ ...relation,
+        ...(changed === 'direction' ? { direction: 'outgoing' } : changed === 'endpoint' ? native ? { targetDefinitionId: 'different' } : { table: 'different' } : {}),
+      }] }) }); await ui.flush(); ui.choose(); await ui.button('Add link').props.onClick(); await ui.flush();
+      assert.equal(ui.writes.length, 0); assert.equal(ui.created(), 0); assert.equal(ui.radios()[0].props.checked, true);
+      assert.equal(ui.notifications[0].kind, 'error'); assert.equal(ui.notifications[0].value.className, 'explorer-toast');
+    }
+  }
+});
+
+test('duplicate and cardinality denials retain the reviewed target and use the shared Toast', async () => {
+  for (const description of ['Objects already linked', 'Declared relationship cardinality exceeded']) {
+    const ui = mount({ write: async () => { throw new Error(description); } }); await ui.flush(); ui.choose(1);
+    await ui.button('Add link').props.onClick(); await ui.flush();
+    assert.equal(ui.created(), 0); assert.equal(ui.closed(), 0); assert.equal(ui.radios()[1].props.checked, true);
+    assert.equal(ui.notifications.length, 1); assert.equal(ui.notifications[0].kind, 'error');
+    assert.equal(ui.notifications[0].value.description, description); assert.equal(ui.button('Add link').props.disabled, false);
+  }
+});
+
+test('read failures can be retried from Toast, while empty and bounded results have no useless paging actions', async () => {
+  let count = 0;
+  const ui = mount({ read: async () => { if (++count === 1) throw new Error('Object read denied'); return physicalPage(); } }); await ui.flush();
+  const error = ui.errors.findLast(([error]) => error); assert.equal(error[0], 'Object read denied');
+  error[2](); ui.render(); await ui.flush(); assert.equal(ui.radios().length, 2);
+  for (const limited of [false, true]) {
+    const result = limited ? { ...physicalPage(), canPageFurther: false } : { ...physicalPage(), rows: [], rowIdentities: [], hasMore: false };
+    const ui = mount({ read: async () => result }); await ui.flush();
+    assert.equal(ui.button('Next'), undefined); assert.equal(ui.button('Previous'), undefined);
+    if (limited) assert.ok(nodes(ui.modal()).some(node => node.props?.className === 'explorer-link-picker-limit'));
+    else assert.equal(ui.button('Add link').props.disabled, true);
+  }
+});
+
+test('unselected, read-only, closed and cancelled pickers never create links', async () => {
+  for (const canLink of [true, false]) {
+    const ui = mount({ canLink }); await ui.flush(); await ui.button('Add link').props.onClick();
+    if (!canLink) { ui.choose(); await ui.button('Add link').props.onClick(); }
+    ui.modal().props.onCancel(); assert.equal(ui.closed(), 1); assert.equal(ui.writes.length, 0); assert.equal(ui.checks.length, 0);
+    assert.equal(ui.wrapper({ ...ui.props, open: false }), null);
+  }
+});
+
+test('late reads, permission checks and writes cannot cross a locked session or unmounted dialog', async () => {
+  const pendingRead = deferred(), reading = mount({ read: () => pendingRead.promise });
+  reading.session.identity = 'another-account'; pendingRead.resolve(physicalPage()); await reading.flush();
+  assert.equal(reading.radios().length, 0); assert.equal(reading.notifications.length, 0);
+  for (const native of [false, true]) for (const leave of ['lock', 'session', 'unmount']) {
+    const permission = deferred(), checking = mount({ native, fresh: () => permission.promise }); await checking.flush(); checking.choose();
+    const beforeWrite = checking.button('Add link').props.onClick(); await checking.flush();
+    await checking.button('Add link').props.onClick(); assert.equal(checking.checks.length, 1);
+    if (leave === 'unmount') { checking.unmount(); assert.equal(checking.checks[0][native ? 4 : 5].aborted, true); }
+    else if (leave === 'lock') checking.session.locked = true;
+    else checking.session.identity = 'another-account';
+    permission.resolve({ canManage: true, relations: [native ? nativeRelation('incoming') : physicalRelation('incoming')] }); await beforeWrite;
+    assert.equal(checking.writes.length, 0); assert.equal(checking.created(), 0); assert.equal(checking.notifications.length, 0);
+  }
+  for (const leave of ['lock', 'unmount']) {
+    const pending = deferred(), ui = mount({ write: () => pending.promise }); await ui.flush(); ui.choose();
+    const adding = ui.button('Add link').props.onClick(); await ui.flush();
+    if (leave === 'lock') ui.session.locked = true; else ui.unmount();
+    if (leave === 'unmount') assert.equal(ui.writes[0][3].aborted, true);
+    pending.resolve(); await adding; await ui.flush();
+    assert.equal(ui.created(), 0); assert.equal(ui.notifications.length, 0);
+  }
+});

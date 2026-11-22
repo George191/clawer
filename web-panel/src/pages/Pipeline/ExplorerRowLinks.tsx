@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui';
-import { SettingOutlined } from '@/components/ui/icons';
+import { PlusOutlined, SettingOutlined } from '@/components/ui/icons';
 import { ExplorerTypeIcon, explorerFields, explorerRowTitle } from './ExplorerObjectOverview';
 import { ExplorerValueProvider } from './ExplorerValue';
 import { fetchExplorerRowByKey, fetchExplorerRowLinks, unlinkExplorerRowLink, type ExplorerRowLinkPage } from '../../services/api';
@@ -11,11 +11,13 @@ import ExplorerRelationshipsView, { ExplorerLinkedProperties } from './ExplorerR
 import useExplorerErrorToast from './useExplorerErrorToast';
 import { getSessionState } from '../../services/session';
 import StorageRelationshipTypes from './StorageRelationshipTypes';
+import ExplorerLinkObjectPicker from './ExplorerLinkObjectPicker';
+import { storageLinkRelation } from '../../services/explorerRelationshipLinks';
 
-type Props = { schema: string; table: string; primaryKey: Record<string,unknown>; initialPage?: ExplorerRowLinkPage; revision?: number };
-const live = (signal: AbortSignal, identity: string) => {
+type Props = { schema: string; table: string; primaryKey: Record<string,unknown>; sourceTitle: string; initialPage?: ExplorerRowLinkPage; revision?: number };
+const live = (signal: AbortSignal | undefined, identity: string) => {
     const session = getSessionState();
-    return !signal.aborted && session.authenticated && !session.locked && session.identity === identity;
+    return !signal?.aborted && session.authenticated && !session.locked && session.identity === identity;
 };
 
 export function useExplorerLinkAvailability(schema: string, table: string, identity?: Record<string, unknown>, revision: string | number = 0) {
@@ -52,7 +54,7 @@ function LinkedProperties({ schema, table, row, layout, presentation }: {schema:
     </ExplorerValueProvider>;
 }
 
-function LinkPage({ schema, table, primaryKey, initialPage, revision = 0 }: Props) {
+function LinkPage({ schema, table, primaryKey, sourceTitle, initialPage, revision = 0 }: Props) {
     const [relation, setRelation] = useState<string | null>(initialPage?.selected ?? null);
     const [offset, setOffset] = useState(0);
     const [retry, setRetry] = useState(0);
@@ -62,6 +64,7 @@ function LinkPage({ schema, table, primaryKey, initialPage, revision = 0 }: Prop
     const [error, setError] = useState('');
     const [expanded, setExpanded] = useState('');
     const [managementOpen, setManagementOpen] = useState(false);
+    const [linkPickerOpen, setLinkPickerOpen] = useState(false);
     const key = JSON.stringify(primaryKey);
     const sessionIdentity = getSessionState().identity;
     useEffect(() => {
@@ -89,10 +92,18 @@ function LinkPage({ schema, table, primaryKey, initialPage, revision = 0 }: Prop
     if (page.relations.length && !selected) return null;
     return <ExplorerRelationshipsView loading={loading} selectedId={page.selected}
         management={page.canManage ? <>
+            <Button size="small" icon={<PlusOutlined />} disabled={loading || !selected?.canLink}
+                onClick={() => { if (!loading && selected?.canLink && live(undefined, sessionIdentity)) setLinkPickerOpen(true); }}>Add link</Button>
             <Button type="text" size="small" className="explorer-links-manage" icon={<SettingOutlined />} aria-label="Manage relationship types"
                 title="Manage relationship types" disabled={loading} onClick={() => setManagementOpen(true)} />
             <StorageRelationshipTypes schema={schema} table={table} open={managementOpen} initialRelationId={selected?.relationId}
                 onClose={() => setManagementOpen(false)} onChanged={(id, direction) => { setRelation(selected?.relationId === id ? page.selected : `${id}:${direction}`); setRetry(value => value + 1); }} />
+            {selected && <ExplorerLinkObjectPicker open={linkPickerOpen} source={{ kind: 'backed', schema, table }}
+                sourceRow={{ identity: primaryKey, key, title: sourceTitle }} relation={storageLinkRelation(selected)}
+                onClose={() => setLinkPickerOpen(false)} onCreated={() => {
+                    if (!live(undefined, sessionIdentity)) return;
+                    setLinkPickerOpen(false); setRelation(page.selected); setOffset(0); setRetry(value => value + 1);
+                }} />}
         </> : undefined}
         relations={page.relations.map(item => ({ id: item.id, name: item.name, direction: item.direction,
             fieldMapping: item.fields.length ? { label: 'Import rule',

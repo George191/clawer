@@ -16,6 +16,10 @@ const compile = (file, require, component) => {
 };
 const overview = compile('ExplorerObjectOverview', name => name === 'react' ? { lazy: () => 'Preview' }
   : name === 'react/jsx-runtime' ? { jsx, jsxs: jsx } : {});
+const relationshipLinks = {};
+vm.runInThisContext('(function(require,exports){' + ts.transpileModule(readFileSync(new URL('../src/services/explorerRelationshipLinks.ts', import.meta.url), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText + '\n})')(() => ({}), relationshipLinks);
 const profile = name => ({ displayName: name, titleProperty: 'caption', primaryKey: ['id'], dataType: 'media', properties: [
   { id: 'caption', sourceColumn: 'caption', name: name + ' title', visibility: 'normal', type: 'string', formatter: 'default' },
   { id: 'secret', sourceColumn: 'secret', name: 'Hidden field', visibility: 'hidden', type: 'string', formatter: 'default' },
@@ -27,7 +31,7 @@ function mount(kind, requests = {}) {
   const state = [], refs = [], effects = [], scheduled = [], calls = [], errors = [];
   const session = { identity: 'synthetic', authenticated: true, locked: false };
   let cursor = 0, tree;
-  const props = kind === 'backed' ? { schema: 'ts_ods', table: 'anchor', primaryKey: { id: 'anchor' } } : { definitionId: 'anchor-type', recordId: 'anchor' };
+  const props = { ...(kind === 'backed' ? { schema: 'ts_ods', table: 'anchor', primaryKey: { id: 'anchor' } } : { definitionId: 'anchor-type', recordId: 'anchor' }), sourceTitle: 'Anchor title' };
   const relation = { id: 'relation', relationId: '12', name: 'Owns', direction: 'outgoing', schema: 'ts_ods', table: 'media', targetDefinitionId: 'target-type', fields: ['id'], targetFields: ['id'] };
   const page = kind === 'backed'
     ? { canManage: true, relations: [relation], selected: 'relation', links: [{ linkId: 'edge', version: '3', identity: { id: '9007199254740993' }, canUnlink: true }], offset: 0, hasMore: false }
@@ -47,6 +51,8 @@ function mount(kind, requests = {}) {
     if (name === '@/components/ui') return { Button: 'Button' };
     if (name === '@/components/ui/icons') return { SettingOutlined: 'SettingsIcon' };
     if (name === './StorageRelationshipTypes') return { default: 'RelationshipManager' };
+    if (name === './ExplorerLinkObjectPicker') return { default: 'ObjectPicker' };
+    if (name === '../../services/explorerRelationshipLinks') return relationshipLinks;
     if (name === 'react') return {
       useState(initial) { const i = cursor++; if (!(i in state)) state[i] = initial; return [state[i], next => { state[i] = typeof next === 'function' ? next(state[i]) : next; }]; },
       useRef(initial) { return refs[cursor++] ||= { current: initial }; },
@@ -106,13 +112,40 @@ test('Published links retain native titles and metadata while using the same rec
   assert.equal(ui.calls.filter(call => call.name === 'fetchExplorerRowByKey' || call.name === 'fetchExplorerProperties').length, 0);
 });
 
-test('Published Links has no Add link entry and preserves safe unlink capabilities', async () => {
+test('Published Add link uses the shared picker and native record identities, then refreshes its Links', async () => {
   const ui = mount('published'); await ui.flush();
-  assert.equal(ui.tree().props.management, undefined);
+  const controls = () => nodes(ui.tree().props.management);
+  const add = () => controls().find(node => node?.type === 'Button' && node.props.children === 'Add link');
+  const picker = () => controls().find(node => node?.type === 'ObjectPicker');
+  assert.equal(add().props.disabled, false); assert.equal(picker().props.open, false);
+  add().props.onClick(); ui.render(); assert.equal(picker().props.open, true);
+  assert.deepEqual(picker().props.source, { kind: 'published', definitionId: 'anchor-type' });
+  assert.deepEqual(picker().props.sourceRow, { identity: { $recordId: 'anchor' }, key: 'anchor', title: 'Anchor title' });
+  assert.deepEqual(picker().props.relation, { id: 'relation:outgoing', relationId: 'relation', name: 'Owns', direction: 'outgoing',
+    target: { kind: 'published', definitionId: 'target-type' }, canLink: true });
   assert.equal(typeof ui.tree().props.records[0].unlink.run, 'function');
+  picker().props.onClose(); ui.render(); assert.equal(picker().props.open, false);
+  assert.equal(ui.calls.filter(call => call.name === 'fetchPublishedRelationships').length, 1);
+  ui.tree().props.onPage(20); ui.render(); await ui.flush();
+  add().props.onClick(); ui.render(); picker().props.onCreated(); ui.render(); await ui.flush();
+  assert.equal(picker().props.open, false);
+  const reads = ui.calls.filter(call => call.name === 'fetchPublishedRelationships');
+  assert.equal(reads.length, 3); assert.deepEqual(reads.at(-1).args.slice(0, 4), ['anchor-type', 'anchor', 'relation:outgoing', 0]);
+});
+
+test('Published Add link is absent for viewers and cannot open while loading or outside its live session', async () => {
   const denied = mount('published', { fetchPublishedRelationships: async () => ({ canManage: false, relations: [], items: [], hasMore: false, offset: 0 }) });
   await denied.flush();
   assert.equal(denied.tree().props.management, undefined);
+  const ui = mount('published'); await ui.flush();
+  const add = () => nodes(ui.tree().props.management).find(node => node?.type === 'Button' && node.props.children === 'Add link');
+  const picker = () => nodes(ui.tree().props.management).find(node => node?.type === 'ObjectPicker');
+  ui.tree().props.onPage(20); ui.render();
+  assert.equal(add().props.disabled, true); add().props.onClick(); ui.render(); assert.equal(picker().props.open, false);
+  await ui.flush(); ui.session.locked = true;
+  add().props.onClick(); ui.render(); assert.equal(picker().props.open, false);
+  ui.session.locked = false; ui.session.identity = 'other-session'; add().props.onClick();
+  picker().props.onCreated(); assert.equal(ui.calls.filter(call => call.name === 'fetchPublishedRelationships').length, 2);
 });
 
 test('related metadata failures block misleading cards and expired requests cannot populate another session', async () => {

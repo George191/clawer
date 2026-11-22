@@ -8,6 +8,10 @@ const code = ts.transpileModule(readFileSync(new URL('../src/pages/Pipeline/Expl
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
 }).outputText;
 const jsx = (type, props) => ({ type, props });
+const relationshipLinks = {};
+vm.runInThisContext('(function(require,exports){' + ts.transpileModule(readFileSync(new URL('../src/services/explorerRelationshipLinks.ts', import.meta.url), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText + '\n})')(() => ({}), relationshipLinks);
 const page = (direction = 'outgoing', canUnlink = true) => ({
   canManage: canUnlink,
   relations: [{ id: 'selector', relationId: '18', name: 'local_demo_expert_company', direction, kind: 'logical',
@@ -26,6 +30,8 @@ function workspace(initial = page(), fresh = initial) {
     if (name === '@/components/ui') return { Button: 'Button' };
     if (name === '@/components/ui/icons') return { SettingOutlined: 'SettingsIcon' };
     if (name === './StorageRelationshipTypes') return { default: 'RelationshipManager' };
+    if (name === './ExplorerLinkObjectPicker') return { default: 'ObjectPicker' };
+    if (name === '../../services/explorerRelationshipLinks') return relationshipLinks;
     if (name === 'react') return {
       useState(initial) { const index = cursor++; if (!(index in states)) states[index] = initial;
         return [states[index], value => { states[index] = typeof value === 'function' ? value(states[index]) : value; }]; },
@@ -46,14 +52,14 @@ function workspace(initial = page(), fresh = initial) {
   }, exports);
   const render = () => {
     cursor = 0; scheduled.length = 0;
-    const root = exports.default({ schema: 'ts_ods', table: 'local_demo_experts', primaryKey: { id: 'LOCAL-EX-001' }, initialPage: initial });
+    const root = exports.default({ schema: 'ts_ods', table: 'local_demo_experts', primaryKey: { id: 'LOCAL-EX-001' }, sourceTitle: 'Selected expert', initialPage: initial });
     tree = root.type(root.props);
     for (const [index, effect, deps] of scheduled) { effects[index]?.cleanup?.(); effects[index] = { deps, cleanup: effect() }; }
     return tree;
   };
   const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); return render(); };
   render();
-  return { flush, render, calls, lookups, tree: () => tree, reads: () => reads, reject: value => { failure = value; } };
+  return { flush, render, calls, lookups, session, tree: () => tree, reads: () => reads, reject: value => { failure = value; } };
 }
 
 for (const direction of ['outgoing', 'incoming']) test('storage unlink retains exact edge version and ' + direction + ' endpoints', async () => {
@@ -90,23 +96,48 @@ test('storage managers open the active relationship definition and refresh its l
   assert.equal(manager().props.open, false);
 });
 
-test('storage Links keeps relationship management and safe unlink without an Add link entry', async () => {
+test('storage Add link opens the shared target picker with the selected direction and closes after creation', async () => {
   const ui = workspace(page('incoming')); await ui.flush();
-  const controls = ui.tree().props.management.props.children;
-  const buttons = controls.filter(node => node?.type === 'Button');
-  assert.deepEqual(buttons.map(node => node.props['aria-label']), ['Manage relationship types']);
+  const controls = () => ui.tree().props.management.props.children;
+  const add = () => controls().find(node => node?.props?.children === 'Add link');
+  const picker = () => controls().find(node => node?.type === 'ObjectPicker');
+  assert.equal(picker().props.open, false);
+  assert.equal(add().props.disabled, false);
+  add().props.onClick(); ui.render();
+  assert.equal(picker().props.open, true);
+  assert.deepEqual(picker().props.source, { kind: 'backed', schema: 'ts_ods', table: 'local_demo_experts' });
+  assert.deepEqual(picker().props.sourceRow, { identity: { id: 'LOCAL-EX-001' }, key: '{"id":"LOCAL-EX-001"}', title: 'Selected expert' });
+  assert.deepEqual(picker().props.relation, { id: 'selector', relationId: '18', name: 'local_demo_expert_company', direction: 'incoming',
+    target: { kind: 'backed', schema: 'ts_ods', table: 'local_demo_companies' }, canLink: true });
   assert.equal(typeof ui.tree().props.records[0].unlink.run, 'function');
   assert.equal(ui.reads(), 1);
-  assert.ok(controls.every(node => node?.type !== 'ObjectPicker'));
+  picker().props.onClose(); ui.render();
+  assert.equal(picker().props.open, false); assert.equal(ui.reads(), 1);
+  ui.tree().props.onPage(20); ui.render(); await ui.flush();
+  add().props.onClick(); ui.render();
+  picker().props.onCreated(); ui.render(); await ui.flush();
+  assert.equal(picker().props.open, false); assert.equal(ui.reads(), 3);
+  assert.equal(ui.lookups.at(-1)[4], 0); assert.equal(ui.calls.length, 0);
 });
 
-test('relationship type settings remain available for non-linkable relationships and lock during refresh', async () => {
+test('storage Add link respects link capability, loading and current session while settings remain available', async () => {
   const denied = page(); denied.relations[0].canLink = false;
   const ui = workspace(denied); await ui.flush();
   const button = () => ui.tree().props.management.props.children.find(node => node?.props?.['aria-label'] === 'Manage relationship types');
+  const add = () => ui.tree().props.management.props.children.find(node => node?.props?.children === 'Add link');
+  const picker = () => ui.tree().props.management.props.children.find(node => node?.type === 'ObjectPicker');
   assert.equal(button().props.disabled, false);
+  assert.equal(add().props.disabled, true); add().props.onClick(); ui.render(); assert.equal(picker().props.open, false);
   ui.tree().props.onPage(10); ui.render(); ui.render();
   assert.equal(button().props.disabled, true);
+  assert.equal(add().props.disabled, true); add().props.onClick(); ui.render(); assert.equal(picker().props.open, false);
+  const owner = workspace(); await owner.flush();
+  const ownerControls = () => owner.tree().props.management.props.children;
+  const ownerAdd = () => ownerControls().find(node => node?.props?.children === 'Add link');
+  const ownerPicker = () => ownerControls().find(node => node?.type === 'ObjectPicker');
+  owner.session.locked = true; ownerAdd().props.onClick(); owner.render(); assert.equal(ownerPicker().props.open, false);
+  owner.session.locked = false; owner.session.identity = 'different-session';
+  ownerAdd().props.onClick(); ownerPicker().props.onCreated(); assert.equal(owner.reads(), 1);
 });
 
 test('stale edge denial propagates without deleting the displayed relationship or reporting success', async () => {

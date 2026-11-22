@@ -206,8 +206,8 @@ function RecordPage({ source, identity }: { source: ExplorerDetailSource; identi
                 {publishedRecord?.hasHistory && <button type="button" aria-pressed={currentMode==='history'} disabled={locked} onClick={()=>setMode('history')}>History</button>}
             </div>
             <div className="record-content">{mutation ?? (currentMode==='links' ? source.kind === 'published'
-                ? <PublishedExplorerRelationships definitionId={source.definitionId} recordId={publishedRecord!.id!} />
-                : <ExplorerRowLinks schema={schema} table={table} primaryKey={result.identity} initialPage={links.page}/> :
+                ? <PublishedExplorerRelationships definitionId={source.definitionId} recordId={publishedRecord!.id!} sourceTitle={title} />
+                : <ExplorerRowLinks schema={schema} table={table} primaryKey={result.identity} sourceTitle={title} initialPage={links.page}/> :
                 currentMode === 'history' && publishedRecord ? objectTools.renderHistory(publishedRecord) :
                 !layouts && !layoutError ? <p role="status">Loading property layout…</p> :
                 layoutError ? null :

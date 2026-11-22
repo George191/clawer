@@ -16,7 +16,6 @@ import {
 import './explorer-selection.css';
 import { selectedPageRows } from './explorerSelectionState';
 import useExplorerErrorToast from './useExplorerErrorToast';
-import { ExplorerLinkForm, type LinkSelectionContext } from './ExplorerLinkSelection';
 
 type RecordRow = Record<string, unknown>;
 export { ExplorerObjectOverview, ExplorerTypeIcon, explorerRowTitle, useExplorerPresentation } from './ExplorerObjectOverview';
@@ -101,8 +100,8 @@ function Comparison({ columns, choices, presentations }: { columns: readonly str
   }
   return <section aria-label="Object comparison" className="flow-explorer-selection__comparison">
     <div className="flow-explorer-selection__comparison-controls">
-      {objectPicker('First object', left, right, setLeft)}
-      {objectPicker('Second object', right, left, setRight)}
+      {objectPicker('Current object', left, right, setLeft)}
+      {objectPicker('Target object', right, left, setRight)}
       <Checkbox checked={differencesOnly} onChange={event => setDifferencesOnly(event.target.checked)}>Differences only</Checkbox>
     </div>
     {fields.length ? <div className="flow-explorer-selection__comparison-body"><table><thead><tr><th scope="col">Property</th><th scope="col">{left.title}</th><th scope="col">{right.title}</th></tr></thead>
@@ -147,21 +146,15 @@ type Props = {
   extraViews?: { key: string; label: ReactNode; render: (row: ExplorerPreviewRow) => ReactNode; available?: (row: ExplorerPreviewRow) => boolean }[];
   renderPublishedRelationships?: (row: ExplorerPreviewRow) => ReactNode;
   onActiveRowChange?: (row?: ExplorerPreviewRow) => void;
-  canLink?: boolean;
-  linkContext?: LinkSelectionContext;
-  onChooseLinkTarget?: (context: LinkSelectionContext) => void;
-  onCancelLink?: () => void;
-  onLinkBusyChange?: (busy: boolean) => void;
 };
 
 type Selection = { rows: RecordRow[]; picked: number[]; active: number; anchor: number; collapsed: boolean };
-type View = 'overview' | 'properties' | 'links' | 'compare' | 'link' | `group:${string}` | `extra:${string}`;
+type View = 'overview' | 'properties' | 'links' | 'compare' | `group:${string}` | `extra:${string}`;
 
 export default function ExplorerSelection({
   source, schema, table, dataType, rows, columns, columnTypes = noTypes, presentations, metadata, dataColumns, rowKey, rowIdentity, rowVersion, loading, locked, footer,
   renderTitleLink, renderFullDetails, renderRelationships, rowActions, renderMutation, onRefresh, onSelectedRowsChange,
   selectedRows, selectionLimit = Infinity, renderGlyph, extraViews = [], renderPublishedRelationships, onActiveRowChange,
-  canLink = false, linkContext, onChooseLinkTarget, onCancelLink, onLinkBusyChange,
 }: Props) {
   const panelId = useId();
   const results = useRef<HTMLDivElement>(null);
@@ -175,9 +168,7 @@ export default function ExplorerSelection({
   const typeName = presentation?.displayName || table;
   const [selection, setSelection] = useState<Selection>();
   const [activeKey, setActiveKey] = useState('');
-  const [view, setView] = useState<View>(linkContext ? 'link' : 'overview');
-  const [linkBusy, setLinkBusy] = useState(false);
-  const linkSource: ExplorerDetailSource = source ?? { kind: 'backed', schema, table };
+  const [view, setView] = useState<View>('overview');
   const current = selection?.rows === rows ? selection : undefined;
   const controlled = selectedRows !== undefined;
   const controlledKeys = new Set(selectedRows?.map(row => row.key));
@@ -185,7 +176,7 @@ export default function ExplorerSelection({
   const selected = new Set(picked);
   const previewIndices = picked.slice(0, previewLimit);
   const activeIndex = previewIndices.includes(current?.active ?? -1) ? current!.active : previewIndices[0];
-  const disabled = loading || locked || linkBusy;
+  const disabled = loading || locked;
 
   function describeRow(record: RecordRow, index: number): ExplorerPreviewRow {
     const identity = rowIdentity(record);
@@ -241,8 +232,7 @@ export default function ExplorerSelection({
     if (controlled) onSelectedRowsChange?.(combined);
     setActiveKey(rows[active] ? rowKey(rows[active], active) : '');
     setSelection({ rows, picked: unique, active, anchor, collapsed: false });
-    if (linkContext) setView('link');
-    else if (!picked.length || unique.length < 2 && view === 'compare' || combined.length < 2 && view === 'link') setView('overview');
+    if (!picked.length || unique.length < 2 && view === 'compare') setView('overview');
   };
   const selectIndex = (index: number, mode: 'row' | 'toggle' | 'range') => {
     if (mode === 'range' && current && picked.length) {
@@ -253,7 +243,7 @@ export default function ExplorerSelection({
       select(selected.has(index) ? picked.filter(item => item !== index) : [...picked, index], index, index, true);
     } else {
       select(selected.has(index) ? picked : [index], index, index, selected.has(index));
-      if (!selected.has(index)) setView(linkContext ? 'link' : 'overview');
+      if (!selected.has(index)) setView('overview');
     }
   };
   const collapse = () => {
@@ -284,7 +274,7 @@ export default function ExplorerSelection({
     if (controlled) onSelectedRowsChange?.(remaining);
     setActiveKey(nextActive?.key || '');
     setSelection(remaining.length ? { rows, picked: nextPicked, active: index, anchor, collapsed: false } : undefined);
-    if (!remaining.length || remaining.length < 2 && (view === 'compare' || view === 'link' && !linkContext)) setView('overview');
+    if (!remaining.length || remaining.length < 2 && view === 'compare') setView('overview');
     requestAnimationFrame(() => {
       if (nextActive) cards.current?.querySelector<HTMLButtonElement>(`[data-object-key="${CSS.escape(nextActive.key)}"]`)?.focus();
       else findRow(activeIndex)?.focus({ preventScroll: true });
@@ -358,7 +348,6 @@ export default function ExplorerSelection({
   const group = view.startsWith('group:') ? view.slice(6) : undefined;
   const availableViews = active ? extraViews.filter(view => !view.available || view.available(active)) : [];
   const displayView = view === 'links' && !hasLinks || group && !groups.includes(group)
-    || view === 'link' && !linkContext && choices.length < 2
     || view.startsWith('extra:') && !availableViews.some(item => `extra:${item.key}` === view) ? 'overview' : view;
   const shownCount = Math.min(choices.length, previewLimit);
   const actions = active && choices.length === 1 ? rowActions?.(active) ?? [] : [];
@@ -373,10 +362,6 @@ export default function ExplorerSelection({
   };
   return <div className={`flow-explorer-selection${panelOpen ? ' is-open' : ''}`}>
     <div ref={results} role="region" aria-label="Object results" className="flow-explorer-selection__results">
-      {linkContext && <div className="explorer-link-selection-banner" role="region" aria-label="Relationship selection">
-        <LinkOutlined /><div><strong>{linkContext.sourceRow.title}</strong><span>{linkContext.relation.name} · {linkContext.relation.direction} — select a target in this table</span></div>
-        <Button size="small" disabled={linkBusy} onClick={() => { onCancelLink?.(); setView('overview'); }}>Cancel</Button>
-      </div>}
       {current?.collapsed && active && <header className="flow-explorer-selection__results-header">
           <button ref={restore} type="button" className="flow-explorer-selection__control"
             aria-controls={panelId} aria-expanded={false} onClick={show}>Show selection preview</button>
@@ -394,8 +379,6 @@ export default function ExplorerSelection({
         <h3 ref={heading} id={panelId + '-heading'} tabIndex={-1}>Selection Preview</h3>
         {choices.length > 1 && <Button size="small" disabled={disabled} aria-pressed={displayView === 'compare'}
           onClick={() => setView(displayView === 'compare' ? 'overview' : 'compare')}>Compare objects</Button>}
-        {choices.length > 1 && canLink && onChooseLinkTarget && <Button size="small" disabled={disabled} aria-pressed={displayView === 'link'}
-          onClick={() => setView(displayView === 'link' ? 'overview' : 'link')}>Add link</Button>}
         <Button size="small" disabled={disabled} onClick={clear}>Clear selection</Button>
       </header>
       {choices.length > 0 && <div className="flow-explorer-selection__picked">
@@ -417,15 +400,7 @@ export default function ExplorerSelection({
         {choices.length > shownCount && <p>Showing the first {shownCount} of {choices.length} selected objects.</p>}
       </div>}
       <div className="flow-explorer-selection__content">
-        {displayView === 'link' && canLink && onChooseLinkTarget
-          ? <ExplorerLinkForm source={linkSource} choices={displayed} active={active} context={linkContext}
-              disabled={loading || locked && !linkBusy}
-              onChooseTarget={onChooseLinkTarget} onBusyChange={busy => { setLinkBusy(busy); onLinkBusyChange?.(busy); }}
-              onCancel={() => { onCancelLink?.(); setView('overview'); }} onCreated={() => {
-                refreshState.current = { from: rows, keys: new Set(choices.map(row => row.key)), active: active.key };
-                onCancelLink?.(); setView('links'); onRefresh?.();
-              }} />
-          : displayView === 'compare' && displayed.length > 1
+        {displayView === 'compare' && displayed.length > 1
           ? <Comparison columns={columns} presentations={presentations} choices={displayed} />
           : <>
             <div className="flow-explorer-selection__object">
