@@ -173,7 +173,7 @@
 .ontology-connectors__wizard .ui-modal-content { border: 1px solid var(--ontology-control-border); border-radius: 7px; background: var(--ontology-panel); }
 .ontology-connectors__wizard .ui-modal-header { padding: 13px 17px; border-bottom: 1px solid var(--ontology-border); }
 .ontology-connectors__wizard .ui-modal-body { padding: 0; }
-.ontology-connectors__content { min-width: 0; padding: 16px 18px 14px; overflow: auto; max-height: calc(100dvh - 135px); }
+.ontology-connectors__content { min-width: 0; padding: 16px 18px 14px; overflow: auto; max-height: calc(100dvh - 100px); }
 .ontology-connectors__steps {
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px 20px;
   margin: 0 0 16px; padding: 0 0 12px; border-bottom: 1px solid var(--ontology-border); list-style: none;
@@ -222,11 +222,13 @@
 .ontology-connectors__form-heading > div, .ontology-connectors__form-heading > div > span { min-width: 0; }
 .ontology-connectors__form-heading h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ontology-connectors__form fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
-.ontology-connectors__section { display: flex; flex-direction: column; gap: 8px; padding: 10px 0; border-top: 1px solid var(--ontology-border); }
+.ontology-connectors__section { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; border-top: 1px solid var(--ontology-border); }
 .ontology-connectors__section h3 { margin: 0; font-size: 12px; }
 .ontology-connectors__section label:not(.ui-checkbox-wrapper) { display: flex; flex-direction: column; gap: 4px; font-size: 11px; }
 .ontology-connectors__section .ui-input { width: 100%; min-height: 31px; }
 .ontology-connectors__endpoint { display: grid; grid-template-columns: minmax(0, 1fr) 90px; gap: 9px; }
+.ontology-connectors__credentials { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.ontology-connectors__credentials > label:only-child { grid-column: 1 / -1; }
 .ontology-connectors__help { margin: 0; color: var(--ontology-muted); font-size: 11px; }
 .ontology-connectors__status p, .ontology-connectors__test-result p, .ontology-connectors__prerequisite {
   display: flex; align-items: center; gap: 8px; margin: 0 0 12px; padding: 8px 10px;
@@ -252,6 +254,7 @@
 }
 @media (max-width: 520px) {
   .ontology-connectors__grid { grid-template-columns: 1fr; }
+  .ontology-connectors__credentials { grid-template-columns: minmax(0, 1fr); }
   .ontology-connectors__card { min-height: 110px; }
   .ontology-connections-inventory__count { margin-left: 0; }
   .ontology-connections-detail__actions { gap: 6px; }
