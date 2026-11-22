@@ -1,7 +1,5 @@
 """Stored logical links between safely addressed warehouse rows."""
 
-import hashlib
-import json
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -35,8 +33,7 @@ def _choice(relation, direction, peer):
     left, right = relation["source_fields"], relation["target_fields"]
     if direction == "incoming":
         left, right = right, left
-    opaque = hashlib.sha256(json.dumps([relation["name"], direction, peer, left, right]).encode()).hexdigest()
-    return {"id": opaque, "relationId": str(relation["id"]), "name": relation["name"],
+    return {"id": str(relation["id"]) + ":" + direction, "relationId": str(relation["id"]), "name": relation["name"],
             "direction": direction, "kind": "logical", "schema": peer[0], "table": peer[1],
             "fields": left, "targetFields": right}
 

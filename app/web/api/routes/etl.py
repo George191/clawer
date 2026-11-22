@@ -109,6 +109,7 @@ from app.web.api.models.etl import (
 from app.web.api.models.data_connections import (
     DataConnectionDraftPayload, DataConnectionPauseChange, DataConnectionPayload, SourceCatalog, SourceColumns, SourceReferenceDirection, SourceReferences,
 )
+from app.web.api.models.storage_relationship_types import StorageRelationshipTypeUpdate
 from app.web.api.models.transfer_plans import (
     TableName, TransferAttempt, TransferPlan, TransferPlanPayload, TransferPreflight, TransferRun, TransferRunCapabilities,
     TransferRunRequest, WarehouseSchema,
@@ -1977,6 +1978,26 @@ async def explorer_row_links(layer: str, table: str, payload: ExplorerRowLinksQu
 
     response.headers["Cache-Control"] = "no-store"
     return await row_links(layer, table, payload, can_manage=current_user.is_superuser)
+
+
+@read.get("/{layer}/{table}/relationship-types")
+async def storage_relationship_types(layer: str, table: str, response: Response,
+                                     current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+    from app.web.services.storage_relationship_types import read_relationship_types
+
+    response.headers["Cache-Control"] = "private, no-store"
+    return await read_relationship_types(layer, table, can_manage=current_user.is_superuser)
+
+
+@write.patch("/{layer}/{table}/relationship-types/{relation_id}")
+async def update_storage_relationship_type(layer: str, table: str,
+                                           relation_id: Annotated[str, Path(pattern=r"^[1-9][0-9]{0,18}$")],
+                                           payload: StorageRelationshipTypeUpdate, response: Response,
+                                           current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+    from app.web.services.storage_relationship_types import update_relationship_type
+
+    response.headers["Cache-Control"] = "private, no-store"
+    return await update_relationship_type(layer, table, relation_id, payload, current_user)
 
 
 @write.post("/{layer}/{table}/row-links/edges", status_code=201)

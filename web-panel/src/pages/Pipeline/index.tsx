@@ -6,7 +6,7 @@ import  React,  {  useCallback,  useEffect,  useRef,  useState  }  from  'react'
 import  {  Link,  matchPath,  Navigate,  useLocation,  useNavigate  }  from  'react-router-dom';
 import  {  Button,  Checkbox,  ConfigProvider,  Dropdown,  Input,  InputNumber,  Modal,  Select,  Space,  Spin,  Table,  Tag,  Upload,  message  }  from  '@/components/ui';
 import  enUS  from  '@/components/ui/locale';
-import  {  AlertOutlined,  ArrowDownOutlined,  CheckOutlined,  CloseOutlined,  CodeOutlined,  DatabaseOutlined,  DeleteOutlined,  DownOutlined,  DownloadOutlined,  EditOutlined,  PlusOutlined,  ReloadOutlined,  RightOutlined,  SearchOutlined,  SettingOutlined,  TableOutlined,  UploadOutlined  }  from  '@/components/ui/icons';
+import  {  AlertOutlined,  ArrowDownOutlined,  BranchesOutlined,  CheckOutlined,  CloseOutlined,  CodeOutlined,  DatabaseOutlined,  DeleteOutlined,  DownOutlined,  DownloadOutlined,  EditOutlined,  PlusOutlined,  ReloadOutlined,  RightOutlined,  SearchOutlined,  SettingOutlined,  TableOutlined,  UploadOutlined  }  from  '@/components/ui/icons';
 import  '../ProductWorkspace/workspace.css';
 import CdcStatusPanel from './CdcStatusPanel';
 import OntologyExplorer, { schemaColor } from './OntologyExplorer';
@@ -28,6 +28,7 @@ import { ExplorerTypeIcon } from './ExplorerObjectOverview';
 import { explorerRowTitle, useExplorerPresentation, type ExplorerPreviewRow } from './ExplorerSelection';
 import ExplorerRecordLink from './ExplorerRecordLink';
 import ExplorerRowLinks from './ExplorerRowLinks';
+import StorageRelationshipTypes from './StorageRelationshipTypes';
 import NewObjectType from './NewObjectType';
 import ExplorerTableSchema from './ExplorerTableSchema';
 import ExplorerRecordMutation, { recordMutationActions } from './ExplorerRecordMutation';
@@ -223,6 +224,8 @@ const DataLayersWorkspace: React.FC = () => {
 
     const [selectedSchema, setSelectedSchema] = useState('');
     const [createTableSchema, setCreateTableSchema] = useState('');
+    const [relationshipTypesOpen, setRelationshipTypesOpen] = useState(false);
+    const [relationshipRevision, setRelationshipRevision] = useState(0);
     const creationSchemas = schemas.filter((item) => item.status === 'running' && !['ts_meta', 'ts_meta_hist'].includes(item.key));
     const canCreateTable = isSchemas && canManage && creationSchemas.some((item) => item.key === selectedSchema);
     const openTableWizard = () => {
@@ -1160,6 +1163,7 @@ query: { ...appliedQuery, partition },
 resource: resourceView,
 availableResources: explorerResourceCapabilities({ mode: 'existing', schema: requestedSchema, table: requestedTable }, canManage),
 admin: canManage,
+additionalTools: [{ key: 'relationship-types', label: 'Relationship types', group: 'inspect', icon: <BranchesOutlined />, run: () => setRelationshipTypesOpen(true) }],
 layoutControl: showPreview && <LayoutToolbar controls={resultLayout} admin={canManage} types={data?.columnTypes} />,
 selectResource: selectResourceView,
 saved: activeSaved,
@@ -1234,7 +1238,7 @@ loading: loading,
 locked: !!editingRowKey || !!deleteSnapshot || mutationLoading,
 renderTitleLink: row => <ExplorerRecordLink schema={selectedSchema} table={table.name} identity={row.identity}>{row.title}</ExplorerRecordLink>,
 renderFullDetails: row => <ExplorerRecordLink schema={selectedSchema} table={table.name} identity={row.identity} />,
-renderRelationships: (row, page) => <ExplorerRowLinks schema={selectedSchema} table={table.name} primaryKey={row.identity} initialPage={page} />,
+renderRelationships: (row, page) => <ExplorerRowLinks schema={selectedSchema} table={table.name} primaryKey={row.identity} initialPage={page} revision={relationshipRevision} />,
 rowActions: rowActions,
 renderMutation: rowMutation,
 onRefresh: () => setPreviewRevision(value => value + 1),
@@ -1350,6 +1354,8 @@ footer: previewPage && <ExplorerResultsFooter offset={previewPage.offset} rowCou
             </section>
         </div>
         {isSchemas && canManage && createTableSchema && creationSchemas.some((item) => item.key === createTableSchema) && <NewObjectType variant="storage" schemas={creationSchemas.filter((item) => item.key === createTableSchema)} initialSchema={createTableSchema} onCancel={() => setCreateTableSchema('')} onOpenExisting={(object) => openWizardTable(object.schema, object.table)} onCreated={(schema, created) => openWizardTable(schema, created.name)} />}
+        {isSchemas && selectedTableAvailable && <StorageRelationshipTypes key={`${selectedSchema}.${table.name}`} schema={selectedSchema} table={table.name}
+            open={relationshipTypesOpen} onClose={() => setRelationshipTypesOpen(false)} onChanged={() => setRelationshipRevision(value => value + 1)} />}
         {isSchemas && deleteSnapshot?.data === data && deleteSnapshot && <ExplorerRecordMutation mode="delete"
             title={explorerRowTitle(deleteSnapshot.row, primaryKey(deleteSnapshot.row), explorerPresentation?.presentation?.titleProperty, data?.primaryKey)}
             busy={mutationLoading}

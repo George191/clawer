@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { Button } from '@/components/ui';
+import { SettingOutlined } from '@/components/ui/icons';
 import { ExplorerTypeIcon, explorerFields, explorerRowTitle } from './ExplorerObjectOverview';
 import { ExplorerValueProvider } from './ExplorerValue';
 import { fetchExplorerRowByKey, fetchExplorerRowLinks, unlinkExplorerRowLink, type ExplorerRowLinkPage } from '../../services/api';
@@ -8,8 +10,9 @@ import { fetchExplorerProperties, type ExplorerPropertyMapping } from '../../ser
 import ExplorerRelationshipsView, { ExplorerLinkedProperties } from './ExplorerRelationshipsView';
 import useExplorerErrorToast from './useExplorerErrorToast';
 import { getSessionState } from '../../services/session';
+import StorageRelationshipTypes from './StorageRelationshipTypes';
 
-type Props = { schema: string; table: string; primaryKey: Record<string,unknown>; initialPage?: ExplorerRowLinkPage };
+type Props = { schema: string; table: string; primaryKey: Record<string,unknown>; initialPage?: ExplorerRowLinkPage; revision?: number };
 const live = (signal: AbortSignal, identity: string) => {
     const session = getSessionState();
     return !signal.aborted && session.authenticated && !session.locked && session.identity === identity;
@@ -57,7 +60,7 @@ function LinkedProperties({ schema, table, row, layout, presentation }: {schema:
     </ExplorerValueProvider>;
 }
 
-function LinkPage({ schema, table, primaryKey, initialPage }: Props) {
+function LinkPage({ schema, table, primaryKey, initialPage, revision = 0 }: Props) {
     const [relation, setRelation] = useState<string | null>(initialPage?.selected ?? null);
     const [offset, setOffset] = useState(0);
     const [retry, setRetry] = useState(0);
@@ -66,6 +69,7 @@ function LinkPage({ schema, table, primaryKey, initialPage }: Props) {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [expanded, setExpanded] = useState('');
+    const [managementOpen, setManagementOpen] = useState(false);
     const key = JSON.stringify(primaryKey);
     const sessionIdentity = getSessionState().identity;
     useEffect(() => {
@@ -84,7 +88,7 @@ function LinkPage({ schema, table, primaryKey, initialPage }: Props) {
         }).then(value => { if (value && live(controller.signal, sessionIdentity)) { setRead(value); setLoading(false); } })
             .catch(error => { if (live(controller.signal, sessionIdentity) && error?.code !== 'ERR_CANCELED') { setError('Unable to read related records.'); setLoading(false); } });
         return () => controller.abort();
-    }, [schema, table, key, relation, offset, retry, sessionIdentity]);
+    }, [schema, table, key, relation, offset, retry, revision, sessionIdentity]);
     useExplorerErrorToast(error, 'Unable to read related records', () => setRetry(v => v + 1));
     if (error) return null;
     const page = read?.page;
@@ -92,6 +96,12 @@ function LinkPage({ schema, table, primaryKey, initialPage }: Props) {
     const selected = page.relations.find(item => item.id === page.selected);
     if (page.relations.length && !selected) return null;
     return <ExplorerRelationshipsView loading={loading} selectedId={page.selected}
+        management={selected?.canLink ? <>
+            <Button type="text" size="small" className="explorer-links-manage" icon={<SettingOutlined />} aria-label="Manage relationship types"
+                title="Manage relationship types" disabled={loading} onClick={() => setManagementOpen(true)} />
+            <StorageRelationshipTypes schema={schema} table={table} open={managementOpen} initialRelationId={selected.relationId}
+                onClose={() => setManagementOpen(false)} onChanged={() => { setRelation(page.selected); setRetry(value => value + 1); }} />
+        </> : undefined}
         relations={page.relations.map(item => ({ id: item.id, name: item.name, direction: item.direction,
             fieldMapping: { label: 'Import rule',
                 fields: item.fields.map((field, index) => ({ source: field, target: item.targetFields[index] })) } }))}

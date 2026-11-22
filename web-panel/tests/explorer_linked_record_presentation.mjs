@@ -43,7 +43,10 @@ function mount(kind, requests = {}) {
   };
   const tracked = Object.fromEntries(Object.entries(api).map(([name, run]) => [name, (...args) => { calls.push({ name, args }); return run(...args); }]));
   const require = name => {
-    if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
+    if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx, Fragment: 'Fragment' };
+    if (name === '@/components/ui') return { Button: 'Button' };
+    if (name === '@/components/ui/icons') return { SettingOutlined: 'SettingsIcon' };
+    if (name === './StorageRelationshipTypes') return { default: 'RelationshipManager' };
     if (name === 'react') return {
       useState(initial) { const i = cursor++; if (!(i in state)) state[i] = initial; return [state[i], next => { state[i] = typeof next === 'function' ? next(state[i]) : next; }]; },
       useRef(initial) { return refs[cursor++] ||= { current: initial }; },

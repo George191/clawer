@@ -30,11 +30,12 @@ export function ExplorerLinkedProperties({ row, fields }: {
 }
 
 export default function ExplorerRelationshipsView({ relations, selectedId, records, loading, emptyReason, expanded, onToggle, onSelect,
-  offset, hasMore, pageLimit, onPage }: {
+  offset, hasMore, pageLimit, onPage, management }: {
   relations: Relationship[]; selectedId?: string | null;
   records: LinkedRecord[];
   loading: boolean; emptyReason?: string; expanded: string; onToggle: (key: string) => void; onSelect: (id: string) => void;
   offset: number; hasMore: boolean; pageLimit: number; onPage: (offset: number) => void;
+  management?: ReactNode;
 }) {
   const [confirmation, setConfirmation] = useState<{ relation: string; record: string }>();
   const [busy, setBusy] = useState(false);
@@ -66,7 +67,7 @@ export default function ExplorerRelationshipsView({ relations, selectedId, recor
     <header className="explorer-links-heading"><LinkOutlined /><label><span>Relationships</span>
       <select aria-label="Relationship" value={selected.id} disabled={loading || busy} onChange={event => onSelect(event.target.value)}>
         {relations.map(item => <option key={item.id} value={item.id}>{item.name} · {item.direction}</option>)}
-      </select></label>
+      </select></label>{management}
     </header>
     {selected.fieldMapping && <details className="explorer-links-mapping"><summary>{selected.fieldMapping.label}</summary>
       <div className="explorer-links-field-mapping">

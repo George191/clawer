@@ -21,7 +21,10 @@ function workspace(initial = page(), fresh = initial) {
   const session = { authenticated: true, locked: false, identity: 'qa' };
   const exports = {};
   vm.runInThisContext('(function(require,exports){' + code + '\n})')(name => {
-    if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
+    if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx, Fragment: 'Fragment' };
+    if (name === '@/components/ui') return { Button: 'Button' };
+    if (name === '@/components/ui/icons') return { SettingOutlined: 'SettingsIcon' };
+    if (name === './StorageRelationshipTypes') return { default: 'RelationshipManager' };
     if (name === 'react') return {
       useState(initial) { const index = cursor++; if (!(index in states)) states[index] = initial;
         return [states[index], value => { states[index] = typeof value === 'function' ? value(states[index]) : value; }]; },
@@ -68,6 +71,21 @@ test('read-only storage capabilities do not expose unlink actions', async () => 
   const ui = workspace(page('outgoing', false)); await ui.flush();
   assert.equal(ui.tree().props.records[0].unlink, undefined);
   assert.equal(ui.calls.length, 0);
+  assert.equal(ui.tree().props.management, undefined);
+});
+
+test('storage managers open the active relationship definition and refresh its links after saving', async () => {
+  const ui = workspace(); await ui.flush();
+  const management = () => ui.tree().props.management.props.children;
+  assert.equal(management()[1].props.initialRelationId, '18');
+  assert.equal(management()[1].props.open, false);
+  management()[0].props.onClick(); ui.render();
+  assert.equal(management()[1].props.open, true);
+  management()[1].props.onChanged('18'); ui.render(); await ui.flush();
+  assert.equal(ui.reads(), 2);
+  assert.equal(ui.tree().props.selectedId, 'selector');
+  management()[1].props.onClose(); ui.render();
+  assert.equal(management()[1].props.open, false);
 });
 
 test('stale edge denial propagates without deleting the displayed relationship or reporting success', async () => {
