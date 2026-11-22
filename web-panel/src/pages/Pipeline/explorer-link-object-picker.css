@@ -17,7 +17,7 @@
 .explorer-link-picker-results tbody tr[aria-selected=true] { background:var(--ontology-selected); }
 .explorer-link-picker-results tbody tr[tabindex]:hover { background:var(--ontology-hover); }
 .explorer-link-picker-results tbody tr[tabindex]:focus-visible { outline:1px solid var(--ontology-control-border); outline-offset:-1px; }
-.explorer-link-picker-results input { margin:0; accent-color:var(--ontology-link); cursor:pointer; }
+.explorer-link-picker-results input { margin:0; accent-color:var(--ui-action-bg); cursor:pointer; }
 .explorer-link-picker-title { display:flex; align-items:center; gap:8px; min-width:0; }
 .explorer-link-picker-title strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; font-weight:500; }
 .explorer-link-picker-results code { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ontology-muted); font-size:11px; }
