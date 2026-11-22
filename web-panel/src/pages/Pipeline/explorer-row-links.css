@@ -5,7 +5,7 @@
 .explorer-links-heading label > span { flex:none; }
 .explorer-links-heading .ui-native-select { flex:1; }
 .explorer-links-heading .ui-btn.explorer-links-manage { flex:none; width:26px; min-height:26px; height:26px; padding:0; color:var(--ontology-muted); }
-.explorer-row-links .ui-native-select { width:100%; min-width:0; min-height:30px; padding:4px 30px 4px 8px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-panel); color:var(--ontology-text); font:inherit; }
+.explorer-row-links .ui-native-select { width:100%; min-width:0; min-height:30px; padding:4px 8px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-panel); color:var(--ontology-text); font:inherit; }
 .explorer-links-mapping { margin-bottom:12px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-panel); }
 .explorer-links-mapping > summary { padding:6px 9px; color:var(--ontology-muted); font-size:11px; cursor:pointer; }
 .explorer-links-mapping[open] > summary { border-bottom:1px solid var(--ontology-border); }

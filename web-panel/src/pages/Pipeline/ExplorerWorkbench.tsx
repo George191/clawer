@@ -1,5 +1,5 @@
 import type { ComponentProps, ReactNode, Ref } from 'react';
-import { Button, Dropdown, NativeSelect } from '@/components/ui';
+import { Dropdown } from '@/components/ui';
 import type { ColumnsType } from '@/components/ui';
 import { ArrowDownOutlined, ArrowUpOutlined, DownOutlined, FilterOutlined, PlusOutlined } from '@/components/ui/icons';
 import ExplorerWorkbenchHeader from './ExplorerWorkbenchHeader';
@@ -7,6 +7,7 @@ import ExplorerSelection from './ExplorerSelection';
 import { LayoutHeader, type useResultLayout } from './ExplorerResultLayout';
 import { activeExplorerFilters, exactCellValue, type ExplorerFilter } from './explorerFilters';
 import type { ExplorerSort } from '../../services/explorerLayouts';
+export { ExplorerResultsFooter } from './ExplorerResultsFooter';
 
 type Row = Record<string, unknown>;
 type Layout = ReturnType<typeof useResultLayout>;
@@ -67,22 +68,6 @@ export function ExplorerResults({ results, children, viewportRef, selectionKey }
   children?: ReactNode; viewportRef?: Ref<HTMLDivElement>; selectionKey?: string;
 }) {
   return <div className="flow-inspector-body" ref={viewportRef}>{children}{results && <ExplorerSelection key={selectionKey} {...results} />}</div>;
-}
-
-export function ExplorerResultsFooter({ offset, rowCount, pageSize, loading, locked = false, canPageFurther, onPageSize, onPrevious, onNext, notices }: {
-  offset: number; rowCount: number; pageSize: number; loading: boolean; locked?: boolean; canPageFurther: boolean;
-  onPageSize: (size: number) => void; onPrevious: () => void; onNext: () => void; notices?: ReactNode;
-}) {
-  return <footer className="flow-preview-pager">
-    {notices && <div className="flow-preview-pager-notices" role="status">{notices}</div>}
-    <nav aria-label="Preview pagination"><span className="flow-preview-range" aria-live="polite">{loading ? 'Loading preview…' : rowCount
-      ? `Rows ${(offset + 1).toLocaleString('en-US')}–${(offset + rowCount).toLocaleString('en-US')}` : 'No rows on this page'}</span>
-      <div className="flow-preview-page-controls"><label>Rows per page <NativeSelect aria-label="Rows per page" value={pageSize} disabled={loading || locked} onChange={event => { if (!loading && !locked) onPageSize(Number(event.target.value)); }}>
-        {[10, 20, 50].map(count => <option key={count} value={count}>{count}</option>)}
-      </NativeSelect></label><Button size="small" disabled={loading || locked || !offset} onClick={onPrevious}>Previous</Button>
-        <Button size="small" disabled={loading || locked || !canPageFurther} onClick={onNext}>Next</Button></div>
-    </nav>
-  </footer>;
 }
 
 export default function ExplorerWorkbench<Q extends object>({ header, children, locked }: {

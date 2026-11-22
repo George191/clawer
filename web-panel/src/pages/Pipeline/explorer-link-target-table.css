@@ -1,0 +1,6 @@
+.explorer-link-target-table { display:flex; flex:1; flex-direction:column; min-width:0; min-height:0; overflow:hidden; }
+.explorer-link-target-table__tools { margin:0; padding:0; border:0; min-width:0; flex:none; }
+.explorer-link-target-table__tools > div { pointer-events:none; }
+.explorer-link-target-table__tools .wb-property-search { opacity:.45; }
+.explorer-link-target-table .flow-explorer-selection { border-radius:0; border-inline:0; border-bottom:0; }
+.explorer-link-target-table .flow-explorer-selection__table-title > span:last-child { color:var(--ontology-text); }
