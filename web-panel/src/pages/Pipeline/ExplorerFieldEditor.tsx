@@ -12,11 +12,11 @@ export default function ExplorerFieldEditor({ name, type = 'text', value, onChan
   const structured = kind === 'json';
   const number = kind === 'integer' || kind === 'number';
   const fieldDisabled = disabled || nullControl?.checked;
-  const change = (next: string) => { if (!fieldDisabled) onChange(next === '' && (structured || number || kind === 'date' || kind === 'datetime') ? null : next); };
+  const change = (next: string) => { if (!fieldDisabled) onChange(next); };
   const props = { 'aria-label': 'Edit ' + name, disabled: fieldDisabled, value: nullControl?.checked ? '' : value ?? '', onChange: (event: { target: { value: string } }) => change(event.target.value) };
   return <div className="explorer-field-editor" onKeyDown={onKeyDown}>
     <div className={`explorer-field-editor__control${nullControl ? ' has-null-control' : ''}${kind === 'boolean' || kind === 'date' ? ' has-trailing-icon' : ''}`}>
-      {kind === 'boolean' ? <NativeSelect {...props} onChange={event => { if (!fieldDisabled) onChange(event.target.value || null); }}>
+      {kind === 'boolean' ? <NativeSelect {...props} onChange={event => { if (!fieldDisabled) onChange(event.target.value); }}>
         <option value="">No value</option><option value="true">True</option><option value="false">False</option>
       </NativeSelect> : structured ? <textarea {...props} rows={5} spellCheck={false} placeholder={nullControl?.checked ? 'Null' : 'No value · enter JSON'} />
         : <input {...props} type={number ? 'number' : kind === 'date' ? 'date' : 'text'} step={kind === 'integer' ? '1' : 'any'}

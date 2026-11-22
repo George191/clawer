@@ -83,8 +83,8 @@ test('the shared native and null controls both reject edits while their save is 
   }
 });
 
-test('inline null controls preserve empty string, scalar clearing, JSON and exact numeric input semantics', () => {
-  for (const [type, expected] of [['text', ''], ['numeric', null], ['integer', null], ['date', null], ['timestamp with time zone', null], ['jsonb', null], ['boolean', null]]) {
+test('clearing inputs preserves empty strings across field types and exact numeric input semantics', () => {
+  for (const [type, expected] of [['text', ''], ['numeric', ''], ['integer', ''], ['date', ''], ['timestamp with time zone', ''], ['jsonb', ''], ['boolean', '']]) {
     let value;
     const editor = field({ name: 'Value', type, value: '', onChange: next => { value = next; }, nullControl: { checked: false, onChange() {} } });
     native(editor).props.onChange(event(''));
@@ -118,4 +118,19 @@ test('select and date actions reserve the trailing icon slot', () => {
     const control = nodes(editor).find(node => node.props?.className?.includes('explorer-field-editor__control'));
     assert.equal(control.props.className.includes('has-trailing-icon'), type !== 'text');
   }
+});
+
+test('clearing and Set NULL remain distinct through row changes', () => {
+  const remembered = {}; let draft = 'Original';
+  const render = () => field({ name: 'Caption', type: 'text', value: draft,
+    onChange: value => { draft = value; },
+    nullControl: editing.rowNullControl('caption', draft, remembered, value => { draft = value; }) });
+  const changes = () => ({ ...editing.rowChanges({ caption: draft }, { caption: 'Original' }, { caption: 'text' }) });
+  native(render()).props.onChange(event(''));
+  assert.deepEqual(changes(), { caption: '' });
+  assert.equal(toggle(render()).props['aria-pressed'], false);
+  toggle(render()).props.onClick();
+  assert.deepEqual(changes(), { caption: null });
+  toggle(render()).props.onClick();
+  assert.deepEqual(changes(), { caption: '' });
 });
