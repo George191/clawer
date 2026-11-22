@@ -29,7 +29,7 @@ function selection(overrides = {}) {
     onChooseLinkTarget: context => calls.choose.push(context), onCancelLink: () => calls.cancel++,
     onLinkBusyChange: busy => calls.busy.push(busy), onRefresh: () => calls.refresh++,
     onSelectedRowsChange: rows => { calls.selections.push(rows); if (props.selectedRows !== undefined) props.selectedRows = rows; },
-    renderRelationships: (row, page, onAddLink) => jsx('Relationships', { row, page, onAddLink }), ...overrides };
+    renderRelationships: (row, page) => jsx('Relationships', { row, page }), ...overrides };
   const module = compile('ExplorerSelection.tsx', name => {
     if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
     if (name === 'react') return {
@@ -49,9 +49,7 @@ function selection(overrides = {}) {
     if (name === './ExplorerValue') return { ExplorerValueProvider: 'ValueProvider' };
     if (name === './ExplorerRowLinks') return { useExplorerLinkAvailability: () => ({ page: { relations: [], selected: null } }) };
     if (name === './explorerSelectionState') return { selectedPageRows: (previous, keys, next, preserve) => preserve ? [...previous.filter(row => !keys.has(row.key)), ...next] : next };
-    if (name === './ExplorerLinkSelection') return { ExplorerLinkForm: 'ExplorerLinkForm',
-      createLinkSelection: (source, sourceRow, relation) => ({ source, sourceRow, relation, sessionIdentity: 'test-user' }),
-      storageLinkRelation: relation => relation, publishedLinkRelation: relation => relation };
+    if (name === './ExplorerLinkSelection') return { ExplorerLinkForm: 'ExplorerLinkForm' };
     return { default() {} };
   });
   const render = () => { cursor = 0; tree = module.default(props); while (scheduled.length) scheduled.shift()(); return tree; };
@@ -77,15 +75,24 @@ test('Add link is adjacent to Compare and uses the existing selected objects inl
   assert.equal(ui.find(node => node.type === 'Modal'), undefined);
 });
 
-test('one selected source can hand off cross-type target selection without Compare or an object picker', () => {
+test('Add link and Compare both require at least two selected objects', () => {
   const ui = selection(); ui.select([ui.props.rows[0]]);
   assert.equal(ui.button('Compare objects'), undefined);
+  assert.equal(ui.button('Add link'), undefined);
+  ui.select(ui.props.rows);
+  ui.button('Add link').props.onClick(); ui.render(); assert.ok(ui.form());
+  ui.select([ui.props.rows[0]]);
+  assert.equal(ui.button('Add link'), undefined); assert.equal(ui.form(), undefined);
+});
+
+test('selected objects hand off cross-type target selection without another object picker', () => {
+  const ui = selection(); ui.select(ui.props.rows);
   ui.button('Add link').props.onClick(); ui.render();
   const context = { source: ui.props.source, sourceRow: ui.form().props.active,
     relation: { id: '7:outgoing', target: { kind: 'backed', schema: 'ts_ods', table: 'children' } } };
   ui.form().props.onChooseTarget(context);
   assert.equal(ui.calls.choose[0], context);
-  assert.equal(ui.form().props.choices.length, 1);
+  assert.equal(ui.form().props.choices.length, 2);
 });
 
 test('pinned cross-type context opens the link form when a target row is selected', () => {

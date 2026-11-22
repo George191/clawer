@@ -51,21 +51,33 @@ function mount(file, name, props, api) {
 
 const relation = { id: 'synthetic-link-type', name: 'Synthetic relation', sourceDefinitionId: 'source-type', targetDefinitionId: 'target-type' };
 const neighbor = { linkId: 'synthetic-edge', canUnlink: true, record: { id: 'target-record', title: 'Synthetic neighbor', revision: 3, properties: {} } };
-function graphLinks(mutate = async () => {}, canUnlink = true, direction = 'outgoing') {
-  const writes = [];
-  const ui = mount('OntologyGraph', 'Links', { anchor: { type: direction === 'outgoing' ? 'source-type' : 'target-type', record: 'anchor-record', title: 'Anchor' }, move() {} }, {
-    listOntologyRecords: async () => ({ items: [], hasMore: false }),
+function graphLinks(mutate = async () => {}, canUnlink = true, direction = 'outgoing', canManage = false) {
+  const writes = [], recordReads = [], moves = [];
+  const ui = mount('OntologyGraph', 'Links', { anchor: { type: direction === 'outgoing' ? 'source-type' : 'target-type', record: 'anchor-record', title: 'Anchor' }, move: item => moves.push(item) }, {
+    listOntologyRecords: async (...args) => { recordReads.push(args); return { items: [], hasMore: false }; },
     graphRequest: async (...args) => {
       if (args[0] !== 'get') { writes.push(args); return mutate(...args); }
-      return args[1].endsWith('/link-types') ? { items: [relation], hasMore: false, canManage: false } : { items: [{ ...neighbor, canUnlink }], hasMore: false };
+      return args[1].endsWith('/link-types') ? { items: [relation], hasMore: false, canManage } : { items: [{ ...neighbor, canUnlink }], hasMore: false };
     },
   });
-  return { ...ui, writes, async select() {
+  return { ...ui, writes, recordReads, moves, async select() {
     await ui.flush();
     nodes(ui.tree()).find(node => node.type === 'NativeSelect').props.onChange({ target: { value: relation.id + ':' + direction } });
     await ui.flush();
   }, confirmation: () => nodes(ui.tree()).find(node => node.type === 'Modal') };
 }
+
+test('graph Links has no independent object picker or Add link action for managers', async () => {
+  const ui = graphLinks(undefined, true, 'outgoing', true); await ui.select();
+  assert.equal(button(ui.tree(), 'Add link'), undefined);
+  assert.ok(!text(ui.tree()).includes('Record to link'));
+  assert.equal(nodes(ui.tree()).filter(node => node.type === 'NativeSelect').length, 1);
+  assert.deepEqual(ui.recordReads, []);
+  button(ui.tree(), 'Synthetic neighbor').props.onClick();
+  assert.deepEqual(ui.moves, [{ type: 'target-type', record: 'target-record', title: 'Synthetic neighbor' }]);
+  assert.ok(button(ui.tree(), 'Remove link'));
+  assert.equal(ui.writes.length, 0);
+});
 
 test('graph unlink honors per-edge capability and requires application confirmation', async () => {
   const denied = graphLinks(undefined, false); await denied.select();

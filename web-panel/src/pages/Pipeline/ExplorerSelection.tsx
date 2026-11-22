@@ -16,8 +16,7 @@ import {
 import './explorer-selection.css';
 import { selectedPageRows } from './explorerSelectionState';
 import useExplorerErrorToast from './useExplorerErrorToast';
-import { ExplorerLinkForm, createLinkSelection, storageLinkRelation, publishedLinkRelation, type LinkSelectionContext } from './ExplorerLinkSelection';
-import type { PublishedRelationship } from '../../services/publishedExplorerDetails';
+import { ExplorerLinkForm, type LinkSelectionContext } from './ExplorerLinkSelection';
 
 type RecordRow = Record<string, unknown>;
 export { ExplorerObjectOverview, ExplorerTypeIcon, explorerRowTitle, useExplorerPresentation } from './ExplorerObjectOverview';
@@ -137,7 +136,7 @@ type Props = {
   footer?: ReactNode;
   renderTitleLink?: (row: ExplorerPreviewRow) => ReactNode;
   renderFullDetails?: (row: ExplorerPreviewRow) => ReactNode;
-  renderRelationships?: (row: ExplorerPreviewRow, page?: ExplorerRowLinkPage, onAddLink?: (relation: ExplorerRowLinkPage['relations'][number]) => void) => ReactNode;
+  renderRelationships?: (row: ExplorerPreviewRow, page?: ExplorerRowLinkPage) => ReactNode;
   rowActions?: (row: ExplorerPreviewRow) => MenuItem[];
   renderMutation?: (row: ExplorerPreviewRow) => ReactNode;
   onRefresh?: () => void;
@@ -146,7 +145,7 @@ type Props = {
   selectionLimit?: number;
   renderGlyph?: (compact: boolean) => ReactNode;
   extraViews?: { key: string; label: ReactNode; render: (row: ExplorerPreviewRow) => ReactNode; available?: (row: ExplorerPreviewRow) => boolean }[];
-  renderPublishedRelationships?: (row: ExplorerPreviewRow, onAddLink?: (relation: PublishedRelationship) => void) => ReactNode;
+  renderPublishedRelationships?: (row: ExplorerPreviewRow) => ReactNode;
   onActiveRowChange?: (row?: ExplorerPreviewRow) => void;
   canLink?: boolean;
   linkContext?: LinkSelectionContext;
@@ -243,7 +242,7 @@ export default function ExplorerSelection({
     setActiveKey(rows[active] ? rowKey(rows[active], active) : '');
     setSelection({ rows, picked: unique, active, anchor, collapsed: false });
     if (linkContext) setView('link');
-    else if (!picked.length || unique.length < 2 && view === 'compare') setView('overview');
+    else if (!picked.length || unique.length < 2 && view === 'compare' || combined.length < 2 && view === 'link') setView('overview');
   };
   const selectIndex = (index: number, mode: 'row' | 'toggle' | 'range') => {
     if (mode === 'range' && current && picked.length) {
@@ -285,7 +284,7 @@ export default function ExplorerSelection({
     if (controlled) onSelectedRowsChange?.(remaining);
     setActiveKey(nextActive?.key || '');
     setSelection(remaining.length ? { rows, picked: nextPicked, active: index, anchor, collapsed: false } : undefined);
-    if (!remaining.length || remaining.length < 2 && view === 'compare') setView('overview');
+    if (!remaining.length || remaining.length < 2 && (view === 'compare' || view === 'link' && !linkContext)) setView('overview');
     requestAnimationFrame(() => {
       if (nextActive) cards.current?.querySelector<HTMLButtonElement>(`[data-object-key="${CSS.escape(nextActive.key)}"]`)?.focus();
       else findRow(activeIndex)?.focus({ preventScroll: true });
@@ -359,6 +358,7 @@ export default function ExplorerSelection({
   const group = view.startsWith('group:') ? view.slice(6) : undefined;
   const availableViews = active ? extraViews.filter(view => !view.available || view.available(active)) : [];
   const displayView = view === 'links' && !hasLinks || group && !groups.includes(group)
+    || view === 'link' && !linkContext && choices.length < 2
     || view.startsWith('extra:') && !availableViews.some(item => `extra:${item.key}` === view) ? 'overview' : view;
   const shownCount = Math.min(choices.length, previewLimit);
   const actions = active && choices.length === 1 ? rowActions?.(active) ?? [] : [];
@@ -394,7 +394,7 @@ export default function ExplorerSelection({
         <h3 ref={heading} id={panelId + '-heading'} tabIndex={-1}>Selection Preview</h3>
         {choices.length > 1 && <Button size="small" disabled={disabled} aria-pressed={displayView === 'compare'}
           onClick={() => setView(displayView === 'compare' ? 'overview' : 'compare')}>Compare objects</Button>}
-        {canLink && onChooseLinkTarget && <Button size="small" disabled={disabled} aria-pressed={displayView === 'link'}
+        {choices.length > 1 && canLink && onChooseLinkTarget && <Button size="small" disabled={disabled} aria-pressed={displayView === 'link'}
           onClick={() => setView(displayView === 'link' ? 'overview' : 'link')}>Add link</Button>}
         <Button size="small" disabled={disabled} onClick={clear}>Clear selection</Button>
       </header>
@@ -451,8 +451,7 @@ export default function ExplorerSelection({
                   {availableViews.map(view => <button type="button" key={view.key} aria-pressed={displayView === `extra:${view.key}`} onClick={() => setView(`extra:${view.key}`)}>{view.label}</button>)}
                 </nav>
               </div>
-              {displayView === 'links' ? renderPublishedRelationships?.(active, onChooseLinkTarget ? relation => onChooseLinkTarget(createLinkSelection(linkSource, active, publishedLinkRelation(relation, canLink))) : undefined)
-                ?? renderRelationships?.(active, links.page, onChooseLinkTarget ? relation => onChooseLinkTarget(createLinkSelection(linkSource, active, storageLinkRelation(relation))) : undefined)
+              {displayView === 'links' ? renderPublishedRelationships?.(active) ?? renderRelationships?.(active, links.page)
                 : displayView.startsWith('extra:') ? availableViews.find(view => `extra:${view.key}` === displayView)?.render(active)
                 : !metadata ? <p role="status">Loading object presentation…</p>
                 : metadata.error ? <p>Properties are unavailable until the object presentation loads.</p>

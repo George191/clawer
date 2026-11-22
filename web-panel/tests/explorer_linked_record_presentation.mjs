@@ -24,11 +24,10 @@ const physical = profile('Physical media'), published = profile('Published media
 const layouts = { personal: { layout: { columns: [{ field: 'caption', presentation: 'value' }] } }, default: { layout: null } };
 
 function mount(kind, requests = {}) {
-  const state = [], refs = [], effects = [], scheduled = [], calls = [], errors = [], additions = [];
+  const state = [], refs = [], effects = [], scheduled = [], calls = [], errors = [];
   const session = { identity: 'synthetic', authenticated: true, locked: false };
   let cursor = 0, tree;
   const props = kind === 'backed' ? { schema: 'ts_ods', table: 'anchor', primaryKey: { id: 'anchor' } } : { definitionId: 'anchor-type', recordId: 'anchor' };
-  props.onAddLink = relation => additions.push(relation);
   const relation = { id: 'relation', relationId: '12', name: 'Owns', direction: 'outgoing', schema: 'ts_ods', table: 'media', targetDefinitionId: 'target-type', fields: ['id'], targetFields: ['id'] };
   const page = kind === 'backed'
     ? { canManage: true, relations: [relation], selected: 'relation', links: [{ linkId: 'edge', version: '3', identity: { id: '9007199254740993' }, canUnlink: true }], offset: 0, hasMore: false }
@@ -45,8 +44,6 @@ function mount(kind, requests = {}) {
   const tracked = Object.fromEntries(Object.entries(api).map(([name, run]) => [name, (...args) => { calls.push({ name, args }); return run(...args); }]));
   const require = name => {
     if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx, Fragment: 'Fragment' };
-    if (name === '@/components/ui') return { Button: 'Button' };
-    if (name === '@/components/ui/icons') return { PlusOutlined: 'PlusIcon' };
     if (name === '@/components/ui') return { Button: 'Button' };
     if (name === '@/components/ui/icons') return { SettingOutlined: 'SettingsIcon' };
     if (name === './StorageRelationshipTypes') return { default: 'RelationshipManager' };
@@ -71,7 +68,7 @@ function mount(kind, requests = {}) {
   const component = compile(kind === 'backed' ? 'ExplorerRowLinks' : 'PublishedExplorerRelationships', require, kind === 'backed' ? 'LinkPage' : 'RelationshipPage').component;
   const render = () => { cursor = 0; scheduled.length = 0; tree = component(props); for (const [i, effect, deps] of scheduled) { effects[i]?.cleanup?.(); effects[i] = { deps, cleanup: effect() }; } return tree; };
   render();
-  return { props, calls, errors, additions, session, render, tree: () => tree,
+  return { props, calls, errors, session, render, tree: () => tree,
     async flush() { for (let i = 0; i < 12; i++) { await Promise.resolve(); render(); } return tree; },
     unmount: () => effects.forEach(effect => effect?.cleanup?.()) };
 }
@@ -109,21 +106,10 @@ test('Published links retain native titles and metadata while using the same rec
   assert.equal(ui.calls.filter(call => call.name === 'fetchExplorerRowByKey' || call.name === 'fetchExplorerProperties').length, 0);
 });
 
-test('Published Add link uses the same selected relationship handoff and server manage capability', async () => {
+test('Published Links has no Add link entry and preserves safe unlink capabilities', async () => {
   const ui = mount('published'); await ui.flush();
-  const button = ui.tree().props.management;
-  assert.equal(button.props.children, 'Add link');
-  assert.equal(button.props.disabled, false);
-  button.props.onClick();
-  assert.equal(ui.additions[0].id, 'relation');
-  assert.equal(ui.additions[0].direction, 'outgoing');
-  ui.session.locked = true;
-  button.props.onClick(); assert.equal(ui.additions.length, 1);
-  ui.session.locked = false; ui.session.identity = 'different-session';
-  button.props.onClick(); assert.equal(ui.additions.length, 1);
-  ui.session.identity = 'synthetic';
-  ui.props.onAddLink = undefined; ui.render();
   assert.equal(ui.tree().props.management, undefined);
+  assert.equal(typeof ui.tree().props.records[0].unlink.run, 'function');
   const denied = mount('published', { fetchPublishedRelationships: async () => ({ canManage: false, relations: [], items: [], hasMore: false, offset: 0 }) });
   await denied.flush();
   assert.equal(denied.tree().props.management, undefined);

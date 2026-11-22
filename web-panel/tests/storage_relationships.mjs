@@ -18,7 +18,7 @@ const page = (direction = 'outgoing', canUnlink = true) => ({
 
 function workspace(initial = page(), fresh = initial) {
   let cursor = 0, tree, reads = 0, current = fresh, failure;
-  const states = [], effects = [], scheduled = [], calls = [], lookups = [], additions = [];
+  const states = [], effects = [], scheduled = [], calls = [], lookups = [];
   const session = { authenticated: true, locked: false, identity: 'qa' };
   const exports = {};
   vm.runInThisContext('(function(require,exports){' + code + '\n})')(name => {
@@ -46,15 +46,14 @@ function workspace(initial = page(), fresh = initial) {
   }, exports);
   const render = () => {
     cursor = 0; scheduled.length = 0;
-    const root = exports.default({ schema: 'ts_ods', table: 'local_demo_experts', primaryKey: { id: 'LOCAL-EX-001' }, initialPage: initial,
-      onAddLink: relation => additions.push(relation) });
+    const root = exports.default({ schema: 'ts_ods', table: 'local_demo_experts', primaryKey: { id: 'LOCAL-EX-001' }, initialPage: initial });
     tree = root.type(root.props);
     for (const [index, effect, deps] of scheduled) { effects[index]?.cleanup?.(); effects[index] = { deps, cleanup: effect() }; }
     return tree;
   };
   const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); return render(); };
   render();
-  return { flush, render, calls, lookups, additions, session, tree: () => tree, reads: () => reads, reject: value => { failure = value; } };
+  return { flush, render, calls, lookups, tree: () => tree, reads: () => reads, reject: value => { failure = value; } };
 }
 
 for (const direction of ['outgoing', 'incoming']) test('storage unlink retains exact edge version and ' + direction + ' endpoints', async () => {
@@ -91,30 +90,23 @@ test('storage managers open the active relationship definition and refresh its l
   assert.equal(manager().props.open, false);
 });
 
-test('Add link hands the selected relationship to the main Explorer selection instead of opening an object picker', async () => {
+test('storage Links keeps relationship management and safe unlink without an Add link entry', async () => {
   const ui = workspace(page('incoming')); await ui.flush();
   const controls = ui.tree().props.management.props.children;
-  const add = controls.find(node => node?.props?.children === 'Add link');
-  assert.equal(add.props.disabled, false);
-  add.props.onClick(); ui.render();
-  assert.deepEqual(ui.additions, [page('incoming').relations[0]]);
+  const buttons = controls.filter(node => node?.type === 'Button');
+  assert.deepEqual(buttons.map(node => node.props['aria-label']), ['Manage relationship types']);
+  assert.equal(typeof ui.tree().props.records[0].unlink.run, 'function');
   assert.equal(ui.reads(), 1);
   assert.ok(controls.every(node => node?.type !== 'ObjectPicker'));
-  ui.session.locked = true;
-  add.props.onClick(); assert.equal(ui.additions.length, 1);
-  ui.session.locked = false; ui.session.identity = 'different-session';
-  add.props.onClick(); assert.equal(ui.additions.length, 1);
 });
 
-test('Add link remains disabled when the active relationship cannot be linked or is being refreshed', async () => {
+test('relationship type settings remain available for non-linkable relationships and lock during refresh', async () => {
   const denied = page(); denied.relations[0].canLink = false;
   const ui = workspace(denied); await ui.flush();
-  const button = () => ui.tree().props.management.props.children.find(node => node?.props?.children === 'Add link');
+  const button = () => ui.tree().props.management.props.children.find(node => node?.props?.['aria-label'] === 'Manage relationship types');
+  assert.equal(button().props.disabled, false);
+  ui.tree().props.onPage(10); ui.render(); ui.render();
   assert.equal(button().props.disabled, true);
-  button().props.onClick(); assert.equal(ui.additions.length, 0);
-  ui.tree().props.onSelect('other'); ui.render();
-  assert.equal(button().props.disabled, true);
-  button().props.onClick(); assert.equal(ui.additions.length, 0);
 });
 
 test('stale edge denial propagates without deleting the displayed relationship or reporting success', async () => {

@@ -5,7 +5,6 @@ import {
   listOntologyRecords,
   ontologyError,
   type PublishedOntologyType,
-  type OntologyRecord,
 } from '../../services/ontology';
 import {
   graphRequest as api,
@@ -179,9 +178,7 @@ function Links({ anchor, move }: { anchor: Anchor; move: (a: Anchor) => void }) 
   const [typeId, pickType] = useState(''),
     [direction, setDirection] = useState<'incoming' | 'outgoing'>('outgoing');
   const [toff, typePage] = useState(0),
-    [off, page] = useState(0),
-    [coff, choicesPage] = useState(0),
-    [choice, pick] = useState('');
+    [off, page] = useState(0);
   const [version, reload] = useState(0),
     [error, fail] = useState(''),
     [busy, pending] = useState(false);
@@ -203,12 +200,9 @@ function Links({ anchor, move }: { anchor: Anchor; move: (a: Anchor) => void }) 
         })
       : Promise.resolve({ items: [], hasMore: false }),
   );
-  const choices = usePage([target, coff, version].join('/'), () =>
-    target && types?.data?.canManage ? listOntologyRecords(target, size, coff) : Promise.resolve({ items: [], hasMore: false }),
-  );
   const {locked, current} = useGraphOperation();
   const [removing, setRemoving] = useState<Neighbor>();
-  async function mutate(id: string, linkId?: string) {
+  async function removeLink(id: string, linkId: string) {
     if (locked.current || !current()) return;
     locked.current = true;
     const pair =
@@ -218,11 +212,9 @@ function Links({ anchor, move }: { anchor: Anchor; move: (a: Anchor) => void }) 
     pending(true);
     fail('');
     try {
-      if (linkId) await api('delete', base + '/links/' + linkId, { params: pair });
-      else await api('post', base + '/links', { data: pair });
+      await api('delete', base + '/links/' + linkId, { params: pair });
       if (!current()) return;
       setRemoving(undefined);
-      pick('');
       page(0);
       reload((n) => n + 1);
     } catch (e) {
@@ -243,8 +235,6 @@ function Links({ anchor, move }: { anchor: Anchor; move: (a: Anchor) => void }) 
             pickType(id);
             setDirection(dir as 'incoming' | 'outgoing');
             page(0);
-            choicesPage(0);
-            pick('');
           }}
         >
           <option value="">Select relationship</option>
@@ -293,36 +283,10 @@ function Links({ anchor, move }: { anchor: Anchor; move: (a: Anchor) => void }) 
           </ul>
           {relations?.data && !relations.data.items.length && <p>No linked records.</p>}
           <Pages offset={off} more={relations?.data?.hasMore} change={page} />
-          {types?.data?.canManage && (
-            <>
-              <label>
-                Record to link
-                <NativeSelect value={choice} onChange={(e) => pick(e.target.value)}>
-                  <option value="">Select record</option>
-                  {choices?.data?.items.map((r: OntologyRecord) => (
-                    <option value={r.id!} key={r.id}>
-                      {display(r.title ?? r.id)}
-                    </option>
-                  ))}
-                </NativeSelect>
-              </label>
-              <Pages
-                offset={coff}
-                more={choices?.data?.hasMore}
-                change={(n) => {
-                  choicesPage(n);
-                  pick('');
-                }}
-              />
-              <Button disabled={!choice || busy} onClick={() => void mutate(choice)}>
-                Add link
-              </Button>
-            </>
-          )}
         </>
       )}
-      <Message text={error || types?.error || choices?.error || relations?.error} />
-      <Modal open={!!removing} title="Remove relationship" okText="Remove relationship" confirmLoading={busy} closable={!busy} maskClosable={!busy} okButtonProps={{danger: true}} onCancel={() => { if (!busy) setRemoving(undefined); }} onOk={() => removing?.canUnlink ? mutate(removing.record.id, removing.linkId) : undefined}>
+      <Message text={error || types?.error || relations?.error} />
+      <Modal open={!!removing} title="Remove relationship" okText="Remove relationship" confirmLoading={busy} closable={!busy} maskClosable={!busy} okButtonProps={{danger: true}} onCancel={() => { if (!busy) setRemoving(undefined); }} onOk={() => removing?.canUnlink ? removeLink(removing.record.id, removing.linkId) : undefined}>
         <p>Remove the link between <strong>{anchor.title}</strong> and <strong>{display(removing?.record.title)}</strong>?</p><p>The two objects and their property values will be preserved.</p>
       </Modal>
     </div>

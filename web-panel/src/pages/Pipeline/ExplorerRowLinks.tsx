@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui';
-import { PlusOutlined, SettingOutlined } from '@/components/ui/icons';
+import { SettingOutlined } from '@/components/ui/icons';
 import { ExplorerTypeIcon, explorerFields, explorerRowTitle } from './ExplorerObjectOverview';
 import { ExplorerValueProvider } from './ExplorerValue';
 import { fetchExplorerRowByKey, fetchExplorerRowLinks, unlinkExplorerRowLink, type ExplorerRowLinkPage } from '../../services/api';
@@ -12,11 +12,10 @@ import useExplorerErrorToast from './useExplorerErrorToast';
 import { getSessionState } from '../../services/session';
 import StorageRelationshipTypes from './StorageRelationshipTypes';
 
-type Props = { schema: string; table: string; primaryKey: Record<string,unknown>; initialPage?: ExplorerRowLinkPage; revision?: number;
-    onAddLink?: (relation: ExplorerRowLinkPage['relations'][number]) => void };
-const live = (signal: AbortSignal | undefined, identity: string) => {
+type Props = { schema: string; table: string; primaryKey: Record<string,unknown>; initialPage?: ExplorerRowLinkPage; revision?: number };
+const live = (signal: AbortSignal, identity: string) => {
     const session = getSessionState();
-    return !signal?.aborted && session.authenticated && !session.locked && session.identity === identity;
+    return !signal.aborted && session.authenticated && !session.locked && session.identity === identity;
 };
 
 export function useExplorerLinkAvailability(schema: string, table: string, identity?: Record<string, unknown>, revision: string | number = 0) {
@@ -53,7 +52,7 @@ function LinkedProperties({ schema, table, row, layout, presentation }: {schema:
     </ExplorerValueProvider>;
 }
 
-function LinkPage({ schema, table, primaryKey, initialPage, revision = 0, onAddLink }: Props) {
+function LinkPage({ schema, table, primaryKey, initialPage, revision = 0 }: Props) {
     const [relation, setRelation] = useState<string | null>(initialPage?.selected ?? null);
     const [offset, setOffset] = useState(0);
     const [retry, setRetry] = useState(0);
@@ -90,8 +89,6 @@ function LinkPage({ schema, table, primaryKey, initialPage, revision = 0, onAddL
     if (page.relations.length && !selected) return null;
     return <ExplorerRelationshipsView loading={loading} selectedId={page.selected}
         management={page.canManage ? <>
-            {onAddLink && <Button size="small" icon={<PlusOutlined />} disabled={loading || !selected?.canLink}
-                onClick={() => { if (!loading && selected?.canLink && live(undefined, sessionIdentity)) onAddLink(selected); }}>Add link</Button>}
             <Button type="text" size="small" className="explorer-links-manage" icon={<SettingOutlined />} aria-label="Manage relationship types"
                 title="Manage relationship types" disabled={loading} onClick={() => setManagementOpen(true)} />
             <StorageRelationshipTypes schema={schema} table={table} open={managementOpen} initialRelationId={selected?.relationId}

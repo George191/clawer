@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, Input, Modal, message, NativeSelect } from '@/components/ui';
+import { Button, Input, Modal, Select, message, NativeSelect } from '@/components/ui';
 import { ApartmentOutlined, ArrowRightOutlined, PlusOutlined, SearchOutlined } from '@/components/ui/icons';
 import { fetchEtlObjectTypes } from '../../services/api';
 import type { EtlObjectCatalog, EtlObjectType } from '../../services/types';
@@ -84,7 +84,10 @@ function RelationshipManager({ schema, table, initialRelationId, onClose, onChan
     setTargetsLoading(true); setTargetError('');
     fetchEtlObjectTypes({ search: targetSearch.trim(), limit: targetPageSize, offset: targetOffset }, controller.signal).then(result => {
       if (controller.signal.aborted || !current()) return;
-      setTargetPage(result); setTargetsLoading(false);
+      setTargetPage(previous => targetOffset === 0 ? result : { ...result,
+        items: [...new Map([...previous!.items, ...result.items].map(item => [item.id, item])).values()],
+      });
+      setTargetsLoading(false);
     }).catch(failure => {
       if (!controller.signal.aborted && current() && failure?.code !== 'ERR_CANCELED') {
         setTargetsLoading(false); setTargetError(ontologyError(failure, 'Unable to read target object types.'));
@@ -96,14 +99,17 @@ function RelationshipManager({ schema, table, initialRelationId, onClose, onChan
 
   const beginCreate = () => {
     setCreating(true); setDraft({ name: '', description: '' }); setConflict(false);
-    setDirection('outgoing'); setCardinality('many_to_many'); setTarget(undefined); setTargetSearch(''); setTargetOffset(0); setTargetPage(undefined);
+    setDirection('outgoing'); setCardinality('many_to_many'); setTarget(undefined); setTargetSearch(''); setTargetOffset(0); setTargetPage(undefined); setTargetsLoading(true); setTargetError('');
   };
   const newType = () => {
     if (!canEdit || loading || writing.current || !current() || creating) return;
     if (dirty) setDecision({ create: true }); else beginCreate();
   };
   const cancelCreate = () => { if (selected) select(selected); else { setCreating(false); setDraft({ name: '', description: '' }); } };
-  const changeTargetPage = (offset: number) => { setTargetOffset(offset); setTarget(undefined); };
+  const searchTargets = (value: string) => {
+    if (writing.current || !current() || value.trim() === targetSearch.trim()) return;
+    setTargetSearch(value); setTargetOffset(0); setTargetPage(undefined); setTargetsLoading(true); setTargetError('');
+  };
 
   const close = () => { if (!writing.current && current()) { if (dirty) setDecision({}); else onClose(); } };
   const choose = (item: StorageRelationshipType) => {
@@ -165,6 +171,9 @@ function RelationshipManager({ schema, table, initialRelationId, onClose, onChan
   const peer = target && { schema: target.schema, table: target.table, fields: [] };
   const sourceEndpoint = creating ? direction === 'outgoing' ? anchor : peer : selected?.source;
   const targetEndpoint = creating ? direction === 'incoming' ? anchor : peer : selected?.target;
+  const targetIds = new Set(targetPage?.items.map(item => item.id));
+  const targetOptions = target && !targetIds.has(target.id)
+    ? [target, ...(targetPage?.items ?? [])] : targetPage?.items ?? [];
 
   return <>
     <Modal open centered width={960} title="Relationship types" className="flow-surface-modal storage-relationship-types-dialog"
@@ -199,16 +208,24 @@ function RelationshipManager({ schema, table, initialRelationId, onClose, onChan
                     <label><span>Direction</span><NativeSelect aria-label="New relationship direction" value={direction} disabled={busy} onChange={event => setDirection(event.target.value as StorageRelationshipType['direction'])}>
                       <option value="outgoing">Outgoing · current type → selected type</option><option value="incoming">Incoming · selected type → current type</option>
                     </NativeSelect></label>
-                    <label><span>Find target object type</span><Input aria-label="Find target object types" placeholder="Search object types" prefix={<SearchOutlined />} value={targetSearch} disabled={busy} onChange={event => { setTargetSearch(event.target.value); changeTargetPage(0); }} /></label>
-                    <label><span>Target object type</span><NativeSelect aria-label="New relationship target type" value={target?.id || ''} disabled={busy || targetsLoading || !!targetError} onChange={event => setTarget(targetPage?.items.find(item => item.id === event.target.value))}>
-                      <option value="">{targetsLoading ? 'Loading object types…' : 'Select an object type'}</option>
-                      {targetPage?.items.map(item => <option key={item.id} value={item.id}>{item.displayName} · {item.schema}.{item.table}</option>)}
-                    </NativeSelect></label>
-                    <nav className="storage-relationship-target-pages" aria-label="Target object type pages">
-                      <Button size="small" disabled={busy || targetsLoading || targetOffset === 0} onClick={() => changeTargetPage(targetOffset - targetPageSize)}>Previous target types</Button>
-                      <span>Page {1 + targetOffset / targetPageSize}</span>
-                      <Button size="small" disabled={busy || targetsLoading || !targetPage || targetPage.offset + targetPage.items.length >= targetPage.total} onClick={() => changeTargetPage(targetOffset + targetPageSize)}>Next target types</Button>
-                    </nav>
+                    <label><span>Target object type</span><Select className="storage-relationship-target-select" popupClassName="flow-select-popup storage-relationship-target-popup"
+                      aria-label="New relationship target type" showSearch filterOption={(_query, option) => option?.catalogResult === true} allowClear placeholder="Search object types"
+                      value={target?.id} disabled={busy} loading={targetsLoading} onSearch={searchTargets}
+                      notFoundContent={targetsLoading ? 'Loading object types…' : 'No matching object types'}
+                      options={targetOptions.map(item => ({ value: item.id, catalogResult: targetIds.has(item.id), title: `${item.displayName} · ${item.schema}.${item.table}`,
+                        label: <span className="storage-relationship-target-option"><span>{item.displayName}</span><small>{item.schema}.{item.table}</small></span>,
+                        disabled: targetsLoading || !!targetError,
+                      }))}
+                      onChange={(id: string | undefined) => {
+                        if (writing.current || !current()) return;
+                        if (id === undefined) setTarget(undefined);
+                        else if (!targetsLoading && !targetError) setTarget(targetOptions.find(item => item.id === id));
+                      }}
+                      onPopupScroll={event => {
+                        const menu = event.currentTarget;
+                        if (writing.current || !current() || targetsLoading || targetError || !targetPage || targetPage.offset + targetPage.limit >= targetPage.total) return;
+                        if (menu.scrollTop + menu.clientHeight >= menu.scrollHeight - 24) setTargetOffset(targetPage.offset + targetPage.limit);
+                      }} /></label>
                     <label><span>Cardinality</span><NativeSelect aria-label="New relationship cardinality" value={cardinality} disabled={busy} onChange={event => setCardinality(event.target.value as StorageRelationshipType['cardinality'])}>
                       {Object.entries(cardinalities).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                     </NativeSelect></label><p className="storage-relationship-help">{cardinalityHelp[cardinality]}</p>

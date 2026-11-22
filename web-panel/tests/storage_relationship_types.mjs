@@ -30,7 +30,7 @@ function mount({ canManage = true, read, write, create, catalog, initialRelation
       useRef(initial) { const i = cursor++; return refs[i] ||= { current: initial }; },
       useEffect(effect, deps) { const i = cursor++; if (!effects[i] || deps.some((value, j) => !Object.is(value, effects[i].deps[j]))) scheduled.push([i, effect, deps]); },
     };
-    if (name === '@/components/ui') return { Button: 'Button', Modal: 'Modal', Input: Object.assign(() => null, { TextArea: 'TextArea' }),
+    if (name === '@/components/ui') return { Button: 'Button', Modal: 'Modal', Select: 'Select', NativeSelect: 'NativeSelect', Input: Object.assign(() => null, { TextArea: 'TextArea' }),
       message: { success: value => notifications.push({ kind: 'success', value }), error: value => notifications.push({ kind: 'error', value }) } };
     if (name === '@/components/ui/icons') return new Proxy({}, { get: (_, key) => String(key) });
     if (name === '../../services/session') return { getSessionState: () => session };
@@ -203,7 +203,13 @@ test('an initial read failure offers standard Toast retry and retry loads the ac
 });
 
 const beginCreate = async ui => { ui.button('New relationship type').props.onClick(); ui.render(); await ui.flush(); };
-const pickTarget = (ui, id = objectType().id) => { ui.field('New relationship target type').props.onChange({ target: { value: id } }); ui.render(); };
+const pickTarget = (ui, id = objectType().id) => { ui.field('New relationship target type').props.onChange(id); ui.render(); };
+const searchTargets = (ui, value) => { ui.field('New relationship target type').props.onSearch(value); ui.render(); };
+const scrollTargets = (ui, scrollTop = 760) => {
+  ui.field('New relationship target type').props.onPopupScroll({ currentTarget: { scrollTop, scrollHeight: 1000, clientHeight: 240 } });
+  ui.render();
+};
+const targetOptions = ui => ui.field('New relationship target type').props.options;
 
 test('creating an incoming relationship submits its business definition and selects the saved type without creating an import rule', async () => {
   const ui = mount(); await ui.flush(); await beginCreate(ui); edit(ui, '  参与  ');
@@ -233,34 +239,88 @@ test('starting and cancelling type creation reviews existing edits and never wri
   assert.equal(ui.field('Relationship display name').props.value, 'Works for'); assert.equal(ui.creates.length, 0);
 });
 
-test('target type search is paginated and changing pages or search clears the old target selection', async () => {
-  const ui = mount({ catalog: async params => catalogPage(Array.from({ length: params.offset ? 1 : 20 }, (_, i) => objectType(params.offset + i)), params.offset, 21) });
-  await ui.flush(); await beginCreate(ui); pickTarget(ui);
-  assert.equal(ui.button('Next target types').props.disabled, false);
-  ui.button('Next target types').props.onClick(); ui.render(); await ui.flush();
+test('one searchable target selector appends more object types when scrolled without a separate search or pager', async () => {
+  const ui = mount({ catalog: async params => catalogPage(Array.from({ length: Math.min(20, 41 - params.offset) }, (_, i) => objectType(params.offset + i)), params.offset, 41) });
+  await ui.flush(); await beginCreate(ui);
+  const selector = ui.field('New relationship target type');
+  assert.equal(selector.type, 'Select'); assert.equal(selector.props.showSearch, true);
+  assert.equal(ui.field('Find target object types'), undefined);
+  assert.equal(ui.button('Next target types'), undefined); assert.equal(ui.button('Previous target types'), undefined);
+  assert.equal(nodes(ui.tree()).some(node => node.props?.['aria-label'] === 'Target object type pages'), false);
+  assert.equal(targetOptions(ui).length, 20);
+  pickTarget(ui);
+  scrollTargets(ui, 0); await ui.flush(); assert.equal(ui.targetReads.length, 1);
+  scrollTargets(ui); await ui.flush();
   assert.deepEqual(ui.targetReads.map(call => call[0]), [{ search: '', limit: 20, offset: 0 }, { search: '', limit: 20, offset: 20 }]);
-  assert.equal(ui.field('New relationship target type').props.value, '');
-  assert.equal(ui.button('Next target types').props.disabled, true); assert.equal(ui.button('Previous target types').props.disabled, false);
-  pickTarget(ui, objectType(20).id);
-  ui.field('Find target object types').props.onChange({ target: { value: '  new search  ' } }); ui.render(); await ui.flush();
+  assert.deepEqual(targetOptions(ui).map(option => option.value), Array.from({ length: 40 }, (_, i) => objectType(i).id));
+  assert.equal(ui.field('New relationship target type').props.value, objectType().id);
+  scrollTargets(ui); await ui.flush();
+  assert.deepEqual(ui.targetReads.at(-1)[0], { search: '', limit: 20, offset: 40 });
+  assert.equal(targetOptions(ui).length, 41);
+  pickTarget(ui, objectType(40).id); scrollTargets(ui); await ui.flush(); assert.equal(ui.targetReads.length, 3);
+  edit(ui, 'Uses final target'); await save(ui); await ui.flush();
+  assert.deepEqual(ui.creates[0][2].target, { schema: 'ts_ods', table: 'type_40' });
+});
+
+test('remote search and the Select close reset preserve the chosen target until explicitly cleared', async () => {
+  const ui = mount({ catalog: async params => catalogPage(params.search === 'no matches' ? [] : [objectType(params.search ? 50 : 0)]) });
+  await ui.flush(); await beginCreate(ui); pickTarget(ui);
+  searchTargets(ui, '  new search  '); await ui.flush();
   assert.deepEqual(ui.targetReads.at(-1)[0], { search: 'new search', limit: 20, offset: 0 });
-  assert.equal(ui.field('New relationship target type').props.value, ''); assert.equal(ui.button('Previous target types').props.disabled, true);
+  assert.equal(ui.field('New relationship target type').props.value, objectType().id);
+  assert.deepEqual(new Set(targetOptions(ui).map(option => option.value)), new Set([objectType(0).id, objectType(50).id]));
+  const selectedOption = targetOptions(ui).find(option => option.value === objectType(0).id);
+  const matchedOption = targetOptions(ui).find(option => option.value === objectType(50).id);
+  assert.equal(ui.field('New relationship target type').props.filterOption('new search', selectedOption), false);
+  assert.equal(ui.field('New relationship target type').props.filterOption('new search', matchedOption), true);
+  pickTarget(ui, objectType(50).id);
+  searchTargets(ui, ''); await ui.flush();
+  assert.equal(ui.field('New relationship target type').props.value, objectType(50).id);
+  assert.ok(nodes(targetOptions(ui).find(option => option.value === objectType(50).id)?.label).some(node => node.props?.children === 'Object type 50'));
+  assert.equal(ui.field('New relationship target type').props.allowClear, true);
+  searchTargets(ui, 'no matches'); await ui.flush();
+  assert.equal(ui.field('New relationship target type').props.value, objectType(50).id);
+  assert.equal(targetOptions(ui).length, 1);
+  assert.equal(targetOptions(ui).filter(option => ui.field('New relationship target type').props.filterOption('no matches', option)).length, 0);
+  assert.ok(ui.field('New relationship target type').props.notFoundContent);
+  ui.field('New relationship target type').props.onChange(undefined); ui.render();
+  assert.equal(ui.field('New relationship target type').props.value, undefined);
+  assert.equal(ui.button('Create relationship type').props.disabled, true);
 });
 
 test('older target searches cannot replace current results and a failed catalog read can be retried through Toast', async () => {
   const requests = [], ui = mount({ catalog: (params, signal) => { const request = deferred(); requests.push({ params, signal, request }); return request.promise; } });
   await ui.flush(); await beginCreate(ui);
-  ui.field('Find target object types').props.onChange({ target: { value: 'current' } }); ui.render(); await ui.flush();
+  searchTargets(ui, 'current'); await ui.flush();
   assert.equal(requests[0].signal.aborted, true);
   requests[1].request.resolve(catalogPage([objectType(2)])); await ui.flush();
   requests[0].request.resolve(catalogPage([objectType(1)])); await ui.flush();
-  assert.deepEqual(nodes(ui.field('New relationship target type')).filter(node => node.type === 'option').map(node => node.props.value), ['', objectType(2).id]);
-  ui.field('Find target object types').props.onChange({ target: { value: 'failure' } }); ui.render(); await ui.flush();
+  assert.deepEqual(targetOptions(ui).map(option => option.value), [objectType(2).id]);
+  searchTargets(ui, 'failure'); await ui.flush();
   requests[2].request.reject(new Error('Target catalog unavailable')); await ui.flush();
   const notice = ui.errors.findLast(args => args[1] === 'Target object types unavailable');
-  assert.equal(notice[0], 'Target catalog unavailable'); assert.equal(ui.field('New relationship target type').props.disabled, true);
+  assert.equal(notice[0], 'Target catalog unavailable');
+  assert.equal(ui.field('New relationship target type').props.disabled, false);
+  assert.equal(ui.button('Create relationship type').props.disabled, true);
   notice[2](); ui.render(); await ui.flush(); requests[3].request.resolve(catalogPage([objectType(3)])); await ui.flush();
   assert.equal(ui.field('New relationship target type').props.disabled, false);
+});
+
+test('loading more types coalesces repeated bottom scrolls and an abandoned page cannot enter a new search', async () => {
+  const requests = [], ui = mount({ catalog: (params, signal) => {
+    const request = deferred(); requests.push({ params, signal, request }); return request.promise;
+  } });
+  await ui.flush(); await beginCreate(ui);
+  requests[0].request.resolve(catalogPage(Array.from({ length: 20 }, (_, index) => objectType(index)), 0, 50)); await ui.flush();
+  scrollTargets(ui); scrollTargets(ui); await ui.flush();
+  assert.equal(requests.length, 2); assert.equal(ui.field('New relationship target type').props.loading, true);
+  assert.equal(ui.field('New relationship target type').props.disabled, false);
+  searchTargets(ui, 'different'); await ui.flush();
+  assert.equal(requests[1].signal.aborted, true);
+  assert.deepEqual(requests[2].params, { search: 'different', limit: 20, offset: 0 });
+  requests[2].request.resolve(catalogPage([objectType(99)])); await ui.flush();
+  requests[1].request.resolve(catalogPage(Array.from({ length: 20 }, (_, index) => objectType(index + 20)), 20, 50)); await ui.flush();
+  assert.deepEqual(targetOptions(ui).map(option => option.value), [objectType(99).id]);
 });
 
 test('creation requires a target and valid name, preserving a duplicate-name draft for correction', async () => {
