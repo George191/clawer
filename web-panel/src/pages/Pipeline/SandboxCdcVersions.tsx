@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, Modal } from '@/components/ui';
+import { Button, Modal, NativeSelect } from '@/components/ui';
 import { compareSandboxCdcVersions, fetchSandboxCdcVersion, fetchSandboxCdcVersions } from '../../services/api';
 import type { SandboxCdcVersion, SandboxCdcVersionComparison, SandboxCdcVersionDetail, SandboxCdcVersionList } from '../../services/api';
 import { getSessionState } from '../../services/session';
@@ -120,11 +120,11 @@ function VersionWorkspace({ onScopeDenied }: { onScopeDenied?: () => void }) {
               <h5>Compare captured versions</h5>
               <div className="ontology-cdc-versions__select">
                 {(['from', 'to'] as const).map(side => <label key={side}>{side === 'from' ? 'From version' : 'To version'}
-                  <select aria-label={side === 'from' ? 'From version' : 'To version'} value={side === 'from' ? from : to}
+                  <NativeSelect aria-label={side === 'from' ? 'From version' : 'To version'} value={side === 'from' ? from : to}
                     onChange={event => select(side, event.target.value)}>
                     <option value="">Select a captured version</option>
                     {list.versions.map(version => <option key={version.id} value={version.id}>Checkpoint {version.appliedThrough} · {dateText(version.recordedAt)}</option>)}
-                  </select>
+                  </NativeSelect>
                 </label>)}
               </div>
               <Button size="small" disabled={!from || !to || from === to} loading={comparing} onClick={compare}>Compare versions</Button>

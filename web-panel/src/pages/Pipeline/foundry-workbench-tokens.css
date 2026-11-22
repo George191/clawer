@@ -11,7 +11,7 @@
   line-height: 1.4;
 }
 
-.flow-foundry-workbench :where(button, input, select, textarea) {
+.flow-foundry-workbench :where(button, input, .ui-native-select, textarea) {
   font-family: inherit;
 }
 

@@ -42,7 +42,7 @@
   width: 138px;
 }
 
-.dashboard-time-select .ui-select-selector,
+.dashboard-time-select,
 .dashboard-context-pill,
 .dashboard-connection {
   min-height: 36px !important;

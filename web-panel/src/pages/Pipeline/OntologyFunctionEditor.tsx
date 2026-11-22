@@ -1,4 +1,4 @@
-import { Button } from '@/components/ui';
+import { Button, NativeSelect } from '@/components/ui';
 import type { BusinessFunction, FunctionAssignment, FunctionOperand, SemanticDefinition } from '../../services/ontology';
 
 export default function OntologyFunctionEditor({definition, disabled, change, embedded = false}: {
@@ -19,19 +19,19 @@ export default function OntologyFunctionEditor({definition, disabled, change, em
         const set = (patch: Partial<FunctionAssignment>) => update(i,{assignments:fn.assignments.map((item,k) => j === k ? {...a,...patch} : item)});
         const operand = (index: number, next: FunctionOperand) => set({operands:a.operands.map((item,k) => k === index ? next : item)});
         return <fieldset key={j}><legend>Output {j+1}</legend>
-          <label>Output property<select aria-label="Output property" value={a.field} onChange={e => set({field:e.target.value,operation:'set',operands:[{parameter:'value'}]})}>
-            {fields.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
-          <label>Calculation<select aria-label="Calculation" value={a.operation} onChange={e => {
+          <label>Output property<NativeSelect aria-label="Output property" value={a.field} onChange={e => set({field:e.target.value,operation:'set',operands:[{parameter:'value'}]})}>
+            {fields.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</NativeSelect></label>
+          <label>Calculation<NativeSelect aria-label="Calculation" value={a.operation} onChange={e => {
             const op = e.target.value as FunctionAssignment['operation'];
             set({operation:op,operands:op === 'set' ? [a.operands[0]] : [a.operands[0],a.operands[1] ?? {parameter:'second'}]});
           }}><option value="set">Assign</option>
             {(type === 'integer' || type === 'number') && <><option value="add">Add</option><option value="multiply">Multiply</option></>}
-            {type === 'string' && <option value="concat">Concatenate</option>}</select></label>
-          {a.operands.map((term,k) => <div key={k}><label>Operand {k+1}<select aria-label={'Operand '+(k+1)} value={'parameter' in term ? 'parameter' : 'constant'}
+            {type === 'string' && <option value="concat">Concatenate</option>}</NativeSelect></label>
+          {a.operands.map((term,k) => <div key={k}><label>Operand {k+1}<NativeSelect aria-label={'Operand '+(k+1)} value={'parameter' in term ? 'parameter' : 'constant'}
             onChange={e => operand(k,e.target.value === 'parameter' ? {parameter:'value'} : {value:type === 'boolean' ? false : type === 'number' || type === 'integer' ? 0 : ''})}>
-            <option value="parameter">Parameter</option>{type !== 'json' && <option value="constant">Constant</option>}</select></label>
+            <option value="parameter">Parameter</option>{type !== 'json' && <option value="constant">Constant</option>}</NativeSelect></label>
             {'parameter' in term ? <label>Parameter {k+1} name<input value={term.parameter} onChange={e => operand(k,{parameter:e.target.value})} /></label>
-              : type === 'boolean' ? <label>Constant {k+1}<select aria-label={'Constant '+(k+1)} value={String(term.value)} onChange={e => operand(k,{value:e.target.value === 'true'})}><option>true</option><option>false</option></select></label>
+              : type === 'boolean' ? <label>Constant {k+1}<NativeSelect aria-label={'Constant '+(k+1)} value={String(term.value)} onChange={e => operand(k,{value:e.target.value === 'true'})}><option>true</option><option>false</option></NativeSelect></label>
               : <label>Constant {k+1}<input value={String(term.value ?? '')} onChange={e => {
                 const v = e.target.value;
                 operand(k,{value:(type === 'integer' || type === 'number') && v.trim() && Number.isFinite(Number(v)) ? Number(v) : v});

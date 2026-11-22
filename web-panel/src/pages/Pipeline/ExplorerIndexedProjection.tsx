@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, Input, Modal } from '@/components/ui';
+import { Button, Input, Modal, NativeSelect } from '@/components/ui';
 import { fetchIndexedProjectionCapability, queryIndexedProjection } from '../../services/api';
 import type { IndexedIdSamplePredicate, IndexedProjectionField, IndexedProjectionResult } from '../../services/api';
 import { getSessionState } from '../../services/session';
@@ -67,9 +67,9 @@ function ProjectionFilter({ fields, projectionRevision, ...scope }: Scope & { fi
   return <>
     <p>Approved fields: {fields.map(field => <code key={field.name}>{field.name} ({field.type}){' '}</code>)}</p>
     <p>Enter a signed 64-bit integer for the reviewed key <code>{fields[0].name}</code>. Only these approved fields can be returned.</p>
-    <label>Comparison <select aria-label="Comparison" value={mode} onChange={event => setMode(event.target.value === 'range' ? 'range' : 'eq')}>
+    <label>Comparison <NativeSelect aria-label="Comparison" value={mode} onChange={event => setMode(event.target.value === 'range' ? 'range' : 'eq')}>
       <option value="eq">Equals</option><option value="range">Inclusive range</option>
-    </select></label>
+    </NativeSelect></label>
     <label>{mode === 'eq' ? 'Key value' : 'From key'} <Input aria-label={mode === 'eq' ? 'Key value' : 'From key'} value={start}
       maxLength={64} onChange={event => setStart(event.target.value)} /></label>
     {mode === 'range' && <label>Through key <Input aria-label="Through key" value={end} maxLength={64}

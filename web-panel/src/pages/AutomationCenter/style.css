@@ -115,9 +115,9 @@
   font-size: 13px;
 }
 
-.automation-filters .ui-select-selector,
-.automation-filters .ui-select:hover .ui-select-selector,
-.automation-filters .ui-select-focused .ui-select-selector,
+.automation-filters .ui-select,
+.automation-filters .ui-select:hover,
+.automation-filters .ui-select-focused,
 .automation-filters .ui-input-affix-wrapper,
 .automation-filters .ui-input-affix-wrapper:hover,
 .automation-filters .ui-input-affix-wrapper-focused,
@@ -128,14 +128,14 @@
   box-shadow: none !important;
 }
 
-.automation-filters .ui-select-selector,
+.automation-filters .ui-select,
 .automation-filters .ui-input-affix-wrapper,
 .automation-filters .ui-btn-default {
   background: #343947 !important;
   color: #e4e7eb !important;
 }
 
-.automation-filters .ui-select:hover .ui-select-selector,
+.automation-filters .ui-select:hover,
 .automation-filters .ui-input-affix-wrapper:hover,
 .automation-filters .ui-btn-default:hover {
   background: #292e3b !important;
@@ -350,7 +350,7 @@
 .automation-page .ui-pagination .ui-pagination-item-active a { color: #e4e7eb !important; }
 .automation-page .ui-pagination .ui-pagination-options { display: flex; height: 30px; align-items: center; }
 .automation-page .ui-pagination .ui-pagination-options .ui-select { height: 30px; cursor: pointer; }
-.automation-page .ui-pagination .ui-pagination-options .ui-select-selector {
+.automation-page .ui-pagination .ui-pagination-options .ui-select {
   height: 30px !important;
   min-height: 30px !important;
   align-items: center;
@@ -361,7 +361,7 @@
 }
 .automation-page .ui-pagination .ui-pagination-options .ui-select-selection-item,
 .automation-page .ui-pagination .ui-pagination-options .ui-select-arrow { cursor: pointer; }
-.automation-page .ui-pagination .ui-select:hover .ui-select-selector { background: #292e3b !important; }
+.automation-page .ui-pagination .ui-select:hover { background: #292e3b !important; }
 .automation-page .ui-pagination .ui-select-arrow { color: #9299a6 !important; }
 
 .automation-name {
@@ -388,10 +388,10 @@
 .automation-code { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; }
 
 html[data-theme='light'] .automation-page { color: #172033; }
-html[data-theme='light'] .automation-filters .ui-select-selector,
+html[data-theme='light'] .automation-filters .ui-select,
 html[data-theme='light'] .automation-filters .ui-input-affix-wrapper,
 html[data-theme='light'] .automation-filters .ui-btn-default { background: #edf0f4 !important; color: #172033 !important; }
-html[data-theme='light'] .automation-filters .ui-select:hover .ui-select-selector,
+html[data-theme='light'] .automation-filters .ui-select:hover,
 html[data-theme='light'] .automation-filters .ui-input-affix-wrapper:hover,
 html[data-theme='light'] .automation-filters .ui-btn-default:hover { background: #dfe3e9 !important; }
 html[data-theme='light'] .automation-filters .ui-btn-default:hover,
@@ -407,8 +407,8 @@ html[data-theme='light'] .automation-page .ui-pagination .ui-pagination-prev:not
 html[data-theme='light'] .automation-page .ui-pagination .ui-pagination-next:not(.ui-pagination-disabled):hover { background: #dfe3e9 !important; }
 html[data-theme='light'] .automation-page .ui-pagination .ui-pagination-item-active { background: #cfd4dc !important; }
 html[data-theme='light'] .automation-page .ui-pagination .ui-pagination-item-active a { color: #343947 !important; }
-html[data-theme='light'] .automation-page .ui-pagination .ui-pagination-options .ui-select-selector { background: #edf0f4 !important; color: #4b5563 !important; }
-html[data-theme='light'] .automation-page .ui-pagination .ui-select:hover .ui-select-selector { background: #dfe3e9 !important; }
+html[data-theme='light'] .automation-page .ui-pagination .ui-pagination-options .ui-select { background: #edf0f4 !important; color: #4b5563 !important; }
+html[data-theme='light'] .automation-page .ui-pagination .ui-select:hover { background: #dfe3e9 !important; }
 
 .automation-page.is-schedules,
 .automation-schedule-modal,
@@ -553,7 +553,7 @@ html[data-theme='light'] .automation-page .ui-pagination .ui-select:hover .ui-se
 .automation-schedule-modal .ui-form-item-label > label { color: var(--schedule-muted); font-size: 12px; }
 .automation-schedule-modal .ui-input,
 .automation-schedule-modal .ui-input-number,
-.automation-schedule-modal .ui-select-selector { border-color: var(--schedule-border) !important; background: var(--schedule-row) !important; color: var(--schedule-text); font-size: 13px; }
+.automation-schedule-modal .ui-select { border-color: var(--schedule-border) !important; background: var(--schedule-row) !important; color: var(--schedule-text); font-size: 13px; }
 .automation-schedule-modal .ui-input:not(textarea),
 .automation-schedule-modal .ui-select,
 .automation-schedule-modal .ui-input-number { height: 36px; }
@@ -635,13 +635,13 @@ html[data-theme='light'] .automation-page .ui-pagination .ui-select:hover .ui-se
 }
 
 
-.is-schedules.is-light .automation-filters .ui-select-selector,
+.is-schedules.is-light .automation-filters .ui-select,
 .is-schedules.is-light .automation-filters .ui-input-affix-wrapper,
 .is-schedules.is-light .automation-filters .ui-btn-default,
 .is-schedules.is-light .ui-pagination .ui-pagination-item,
 .is-schedules.is-light .ui-pagination .ui-pagination-prev,
 .is-schedules.is-light .ui-pagination .ui-pagination-next { background: #edf0f4 !important; color: var(--schedule-text) !important; }
-.is-schedules.is-light .automation-filters .ui-select:hover .ui-select-selector,
+.is-schedules.is-light .automation-filters .ui-select:hover,
 .is-schedules.is-light .automation-filters .ui-input-affix-wrapper:hover,
 .is-schedules.is-light .automation-filters .ui-btn-default:hover,
 .is-schedules.is-light .ui-pagination .ui-pagination-item-active { background: #dfe3e9 !important; }

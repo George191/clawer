@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, Input, Modal } from '@/components/ui';
+import { Button, Input, Modal, NativeSelect } from '@/components/ui';
 import { ArrowRightOutlined } from '@/components/ui/icons';
 import {
   fetchTableExportAttempts, fetchTableExportCapabilities, fetchTableExportGrant, fetchTableExportGrantHistory,
@@ -103,11 +103,11 @@ function ReceiverSelection({ working, onWorkingChange }: { working: boolean; onW
   return <>
     <div className="ontology-source-sync__body">
       <label className="ontology-receiver-selection">Approved receiver
-        <select aria-label="Approved receiver" value={receiver?.id ?? ''} disabled={working}
+        <NativeSelect aria-label="Approved receiver" value={receiver?.id ?? ''} disabled={working}
           onChange={event => { if (!working) setSelected(choices.find(option => option.id === event.target.value)?.id); }}>
           <option value="">Select one approved receiver</option>
           {choices.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
-        </select>
+        </NativeSelect>
       </label>
       {!receiver && <p>Choose one receiver before inspecting its export draft, approval, or history.</p>}
     </div>
@@ -340,10 +340,10 @@ function TableExportWorkspace({ destination, label, initialCapabilities, onWorki
         <form className="ontology-source-sync__form" aria-label="Export draft" onSubmit={event => { event.preventDefault(); requestSave(); }}>
           <label>Export name<Input aria-label="Export name" required maxLength={120} value={name} disabled={Boolean(operation) || !capabilities.provisioned} onChange={event => setName(event.target.value)} /></label>
           {capabilities.appendAvailable && <><label>Export write mode
-            <select aria-label="Export write mode" value={writeMode} disabled={Boolean(operation) || !capabilities.provisioned || Boolean(localRequest)}
+            <NativeSelect aria-label="Export write mode" value={writeMode} disabled={Boolean(operation) || !capabilities.provisioned || Boolean(localRequest)}
               onChange={event => setWriteMode(event.target.value === 'append' ? 'append' : 'upsert')}>
               <option value="upsert">Upsert</option><option value="append">Append only</option>
-            </select>
+            </NativeSelect>
           </label><p>{exportModeDescription(writeMode)}</p></>}
           <div className="ontology-source-sync__actions">
             <Button htmlType="submit" size="small" loading={operation === 'save'} disabled={!capabilities.provisioned || Boolean(operation) || !name.trim() ||

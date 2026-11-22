@@ -4,7 +4,7 @@ import { JsonTreeValue } from './ExplorerJsonValue';
 import { editorValue, rowChanges, rowNullControl, type RowDraft } from './explorerRowEditing';
 import  React,  {  useCallback,  useEffect,  useRef,  useState  }  from  'react';
 import  {  Link,  matchPath,  Navigate,  useLocation,  useNavigate  }  from  'react-router-dom';
-import  {  Button,  Checkbox,  ConfigProvider,  Dropdown,  Input,  InputNumber,  Modal,  Select,  Space,  Spin,  Table,  Tag,  Upload,  message  }  from  '@/components/ui';
+import  {  Button,  Checkbox,  ConfigProvider,  Dropdown,  Input,  InputNumber,  Modal,  Select,  Space,  Spin,  Table,  Tag,  Upload,  message, NativeSelect  }  from  '@/components/ui';
 import  enUS  from  '@/components/ui/locale';
 import  {  AlertOutlined,  ArrowDownOutlined,  BranchesOutlined,  CheckOutlined,  CloseOutlined,  CodeOutlined,  DatabaseOutlined,  DeleteOutlined,  DownOutlined,  DownloadOutlined,  EditOutlined,  PlusOutlined,  ReloadOutlined,  RightOutlined,  SearchOutlined,  SettingOutlined,  TableOutlined,  UploadOutlined  }  from  '@/components/ui/icons';
 import  '../ProductWorkspace/workspace.css';
@@ -1285,9 +1285,9 @@ footer: previewPage && <ExplorerResultsFooter offset={previewPage.offset} rowCou
                                     {canManage && <Button size="small" disabled={!stream?.resumeAvailable || !offsets.length} onClick={() => { setOffsetPartition(offsets[0]?.partition); setOffset(offsets[0]?.offset); setTopicDraft(stream?.topic || ''); setOffsetOpen(true); }}>Adjust offset</Button>}
                                 </div>
                             </header>
-                            {!!inputTopics.length && <label>Input topic <select aria-label="Input topic" value={inputTopics[activeTopicIndex] || ''} onChange={event => { setActiveTopicIndex(inputTopics.indexOf(event.target.value)); setStream(undefined); setOffsets([]); setStreamLoading(true); }}>
+                            {!!inputTopics.length && <label>Input topic <NativeSelect aria-label="Input topic" value={inputTopics[activeTopicIndex] || ''} onChange={event => { setActiveTopicIndex(inputTopics.indexOf(event.target.value)); setStream(undefined); setOffsets([]); setStreamLoading(true); }}>
                                 {inputTopics.map(topic => <option key={topic} value={topic}>{topic}</option>)}
-                            </select></label>}
+                            </NativeSelect></label>}
                             {streamLoading && !stream && !streamError ? <div className="flow-schema-state" role="status">Checking stream status…</div>
                                 : streamError ? null
                                 : !stream?.available ? <div className="flow-schema-state" role="status"><strong>{stream?.topic ? 'Stream unavailable' : 'No active stream'}</strong><p>{stream?.reason || 'There is no stream information for this table.'}</p></div>

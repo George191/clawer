@@ -19,6 +19,7 @@ const editing = compile('pages/Pipeline/explorerRowEditing.ts', () => ({}));
 const field = compile('pages/Pipeline/ExplorerFieldEditor.tsx', name => {
   if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
   if (name === '../../services/explorerProperties') return propertyTypes;
+  if (name === '@/components/ui') return { NativeSelect: 'NativeSelect' };
   return {};
 }).default;
 const mutation = compile('pages/Pipeline/ExplorerRecordMutation.tsx', name => {
@@ -29,7 +30,7 @@ const mutation = compile('pages/Pipeline/ExplorerRecordMutation.tsx', name => {
   if (name === '@/components/ui/icons') return new Proxy({}, { get: (_, key) => String(key) });
   return {};
 }).default;
-const native = tree => nodes(tree).find(node => ['input', 'textarea', 'select'].includes(node.type));
+const native = tree => nodes(tree).find(node => ['input', 'textarea', 'NativeSelect'].includes(node.type));
 const toggle = tree => nodes(tree).find(node => node.type === 'button');
 const event = value => ({ target: { value } });
 

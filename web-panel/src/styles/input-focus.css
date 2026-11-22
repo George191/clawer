@@ -2,7 +2,7 @@
 :where(input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file'], [type='button'], [type='submit'], [type='reset'], [type='image']), textarea, select):focus,
 .ui-input:focus,
 :is(.ui-input-affix-wrapper, .ui-input-number, .ui-picker, .ui-input-surface):focus-within,
-.ui-select:focus-within > .ui-select-selector {
+.ui-select:focus-within {
   border-color: var(--ui-focus-ring);
   outline: 1px solid var(--ui-focus-ring);
   outline-offset: -1px;

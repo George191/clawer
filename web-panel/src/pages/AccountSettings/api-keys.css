@@ -20,7 +20,7 @@
 .acc-keys form { align-items: end; }
 .acc-keys label { font-size: 13px; }
 .acc-keys form label { flex: 1 1 240px; }
-.acc-keys input, .acc-keys select {
+.acc-keys input, .acc-keys .ui-native-select {
   width: 100%; min-width: 0; box-sizing: border-box; height: 36px; padding: 5px 10px;
   border: 1px solid #4a5362; border-radius: 6px; background: #20252c; color: #e4e7eb;
 }

@@ -1,4 +1,5 @@
 import PropertyTypeIcon from './PropertyTypeIcon';
+import { NativeSelect } from '@/components/ui';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { DeleteOutlined, PlusOutlined, ReloadOutlined, SaveOutlined } from '@/components/ui/icons';
@@ -52,9 +53,9 @@ export default function ExplorerPropertyInspector({mapping,property:p,columns,ed
         /^ts_[a-z0-9_]{1,60}$/.test(mapping.schema) && mapping.schema !== 'ts_meta' && !mapping.schema.endsWith('_hist') &&
         (mapping.schema !== INDEX_PREVIEW_SCHEMA || mapping.table !== INDEX_PREVIEW_TABLE);
     const field = (text: string, value: string, values: readonly string[], disabled: boolean, change: (v: string) => void) =>
-        <label>{text}<select aria-label={text} value={value} disabled={disabled} onChange={e => change(e.target.value)}>
+        <label>{text}<NativeSelect aria-label={text} value={value} disabled={disabled} onChange={e => change(e.target.value)}>
             {values.map(v => <option key={v} value={v}>{readable(v)}</option>)}
-        </select></label>;
+        </NativeSelect></label>;
     return <aside className="flow-foundry-property-inspector physical-property-inspector" aria-label="Property editor">
         {header}
         <nav aria-label="Property settings">{tabs.map(t => <button type="button" key={t} aria-pressed={tab === t} onClick={() => setTab(t)}>{t}</button>)}</nav>
@@ -83,8 +84,8 @@ export default function ExplorerPropertyInspector({mapping,property:p,columns,ed
                 {field('Presentation',p.presentation,columnPresentations(p.sqlType || ''),!editable,v => onPatch({presentation:v as Property['presentation']}))}
             </>}
             {tab === 'Details' && <>
-                <label>Property group<select aria-label="Property group" value={p.group || ''} disabled={!editable} onChange={e => onGroup(e.target.value || null)}>
-                    <option value="">Ungrouped</option>{mapping.groups.map(g => <option key={g}>{g}</option>)}</select></label>
+                <label>Property group<NativeSelect aria-label="Property group" value={p.group || ''} disabled={!editable} onChange={e => onGroup(e.target.value || null)}>
+                    <option value="">Ungrouped</option>{mapping.groups.map(g => <option key={g}>{g}</option>)}</NativeSelect></label>
                 {editable && <label>New group<span className="physical-property-group"><input aria-label="New group" value={group} maxLength={120} onChange={e => setGroup(e.target.value)}/>
                     <button type="button" aria-label="Add property group" disabled={!group.trim()} onClick={() => {onGroup(group.trim());setGroup('');}}><PlusOutlined/>Add</button></span></label>}
                 <dl><dt>Physical column</dt><dd>{col?.name || 'Unmapped'}</dd><dt>PostgreSQL type</dt><dd>{col?.type || '—'}</dd>
@@ -94,9 +95,9 @@ export default function ExplorerPropertyInspector({mapping,property:p,columns,ed
             </>}
             {tab === 'Advanced' && <>
                 <label>Property ID<input value={p.id} disabled={locked || !isNew} maxLength={63} onChange={e => onPatch({id:e.target.value})}/></label>
-                <label>Source column<select aria-label="Source column" value={p.sourceColumn || ''} disabled={locked || title} onChange={e => onMap(e.target.value || null)}>
+                <label>Source column<NativeSelect aria-label="Source column" value={p.sourceColumn || ''} disabled={locked || title} onChange={e => onMap(e.target.value || null)}>
                     <option value="">Unmapped</option>{columns.filter(c => p.sourceColumn===c.name || !mapping.properties.some(other => other.sourceColumn === c.name))
-                        .map(c => <option key={c.name}>{c.name}</option>)}</select></label>
+                        .map(c => <option key={c.name}>{c.name}</option>)}</NativeSelect></label>
                 {title && <small>Clear the title key before changing its source column.</small>}
                 <dl><dt>Definition</dt><dd>{bound ? 'Published ontology type' : 'Physical Explorer mapping'}</dd></dl>
             </>}

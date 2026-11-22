@@ -3,7 +3,7 @@
 .flow-index-preview header p { margin-top: 3px; color: var(--ontology-muted); }
 .flow-index-preview__query { display: grid; grid-template-columns: repeat(auto-fit, minmax(125px, 1fr)); gap: 7px; }
 .flow-index-preview__query label { display: grid; gap: 4px; min-width: 0; color: var(--ontology-text); }
-.flow-index-preview__query select { min-width: 0; width: 100%; min-height: 30px; padding: 4px 6px; color: inherit; border: 1px solid var(--ontology-border); border-radius: 4px; background: var(--ontology-bg); }
+.flow-index-preview__query .ui-native-select { min-width: 0; width: 100%; min-height: 30px; padding: 4px 6px; color: inherit; border: 1px solid var(--ontology-border); border-radius: 4px; background: var(--ontology-bg); }
 .flow-index-preview__actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .flow-index-preview > button { justify-self: start; }
 .flow-index-preview__table { overflow: auto; }

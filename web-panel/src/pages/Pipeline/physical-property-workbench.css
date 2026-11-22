@@ -50,12 +50,12 @@
 .physical-property-fields { min-height:0; overflow:auto; overscroll-behavior:contain; scrollbar-gutter:stable; padding:10px; display:grid; align-content:start; gap:8px; font-size:12px; }
 .physical-property-fields h4 { margin:2px 0; font-size:13px; }
 .physical-property-fields label { display:grid; gap:3px; }
-.physical-property-fields :is(input:not([type=checkbox]),textarea,select),.physical-property-search :is(select,input),
-.physical-property-workbench .flow-foundry-property-list select {
+.physical-property-fields :is(input:not([type=checkbox]),textarea,.ui-native-select),.physical-property-search :is(.ui-native-select,input),
+.physical-property-workbench .flow-foundry-property-list .ui-native-select {
   color:var(--ontology-text); background:var(--ontology-panel); border:1px solid var(--ontology-border);
   border-radius:3px; padding:4px 6px; font:inherit; min-width:0; max-width:100%;
 }
-.physical-property-workbench .physical-property-fields :is(input:not([type=checkbox]),select) { height:30px; box-sizing:border-box; }
+.physical-property-workbench .physical-property-fields :is(input:not([type=checkbox]),.ui-native-select) { height:30px; box-sizing:border-box; }
 .physical-property-fields textarea { resize:vertical; min-height:76px; }
 .physical-property-fields :disabled { color:var(--ontology-muted); background:var(--ontology-bg) }
 .physical-property-fields label.physical-property-toggle { display:flex; justify-content:space-between; align-items:center; }
@@ -71,15 +71,9 @@
 .physical-property-group button:disabled { opacity:.45; cursor:default; }
 .physical-property-group button .ui-icon { font-size:12px; }
 .physical-property-search { min-width:0; padding:0; flex-wrap:nowrap; }
-.physical-property-search :is(select,input) { box-sizing:border-box; height:30px; }
+.physical-property-search :is(.ui-native-select,input) { box-sizing:border-box; height:30px; }
 .physical-property-search input { width:180px; }
-.physical-property-search select { max-width:150px; }
-.physical-property-fields select,.physical-property-search select,
-.physical-property-workbench .flow-foundry-property-list select:not(.formatter) {
-  appearance:none; padding-inline-end:30px;
-  background-image:linear-gradient(45deg,transparent 50%,var(--ontology-muted) 50%),linear-gradient(135deg,var(--ontology-muted) 50%,transparent 50%);
-  background-position:right 14px center,right 10px center; background-size:4px 4px; background-repeat:no-repeat;
-}
+.physical-property-search .ui-native-select { max-width:150px; }
 .physical-selection { display:inline-grid; place-items:center; flex:none; width:14px; height:14px; }
 .physical-selection { border:1px solid var(--ontology-border); border-radius:2px; }
 .is-selected .physical-selection { background:var(--ontology-primary); color:var(--ontology-panel); }
@@ -92,8 +86,7 @@
 .physical-property-workbench .flow-foundry-property-list .visibility { background:var(--ontology-selected); color:var(--ontology-link); }
 .physical-property-workbench .flow-foundry-property-list .formatter { background:var(--ontology-bg); }
 .physical-formatter-select { display:inline-flex; position:relative; max-width:100%; vertical-align:middle; }
-.physical-property-workbench .flow-foundry-property-list select.formatter { appearance:none; padding-inline:5px 28px; text-align:start; }
-.physical-formatter-select > .ui-icon { position:absolute; inset-inline-end:10px; top:50%; width:10px; height:10px; transform:translateY(-50%); color:var(--ontology-muted); pointer-events:none; }
+.physical-property-workbench .flow-foundry-property-list .ui-native-select.formatter { padding-inline:5px 28px; text-align:start; }
 .physical-property-workbench .flow-foundry-property-list tbody tr.is-selected td { background:var(--ontology-bg); }
 .physical-property-preview .flow-foundry-property-preview-tools strong { margin-right:6px; }
 .physical-property-workbench .physical-property-toggle input,.physical-property-preview input[type=checkbox] {

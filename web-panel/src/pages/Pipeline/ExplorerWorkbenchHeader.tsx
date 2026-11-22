@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ApiOutlined, AppstoreOutlined, ArrowLeftOutlined, BarChartOutlined, CheckOutlined, CloseOutlined, CopyOutlined, DeleteOutlined, DownOutlined, DownloadCircleFilled, FileSearchOutlined, FilterOutlined, LinkOutlined, LoadingOutlined, ProfileOutlined, SearchOutlined, ShareAltOutlined, SyncOutlined, TableOutlined } from '@/components/ui/icons';
-import { Button, Dropdown, Modal, message } from '@/components/ui';
+import { Button, Dropdown, Modal, message, NativeSelect } from '@/components/ui';
 import type { SheetData } from 'write-excel-file/browser';
 import { projectHref } from '../../services/projectDomains';
 import { createSaved, listSaved, openSaved, publishedSavedPath, removeSaved, savedPath, sharing, type Exploration, type SavedDetail, type SavedKind, type SavedMeta, type WorkbenchQuery } from '../../services/explorerSaved';
@@ -273,7 +273,7 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
     const libraryContent = <section className="wb-library" aria-label={`Saved ${menu}`}>
         {error && <p role="alert" className="wb-library-error">{error}</p>}
         <div className="wb-library-heading"><div><h3>{menu === 'lists' ? 'Lists' : 'Explorations'}</h3><p>{menu === 'lists' ? 'Saved object selections' : 'Saved searches and views'}</p></div><button aria-label="Close saved items" onClick={() => show('')}><CloseOutlined /></button></div>
-        <div className="wb-library-controls"><label className="ui-input-surface"><SearchOutlined /><input aria-label={`Search ${menu}`} placeholder={`Search ${menu}…`} maxLength={100} value={librarySearch} onChange={e => { setLibrarySearch(e.target.value); setPage(0); }}/></label><select aria-label="Saved item sharing" value={access} onChange={e => { setAccess(e.target.value as typeof access); setPage(0); }}><option value="all">All</option><option value="private">Private</option><option value="shared">Shared</option></select></div>
+        <div className="wb-library-controls"><label className="ui-input-surface"><SearchOutlined /><input aria-label={`Search ${menu}`} placeholder={`Search ${menu}…`} maxLength={100} value={librarySearch} onChange={e => { setLibrarySearch(e.target.value); setPage(0); }}/></label><NativeSelect aria-label="Saved item sharing" value={access} onChange={e => { setAccess(e.target.value as typeof access); setPage(0); }}><option value="all">All</option><option value="private">Private</option><option value="shared">Shared</option></NativeSelect></div>
         <div className="wb-library-items">
             {!items && !error && <p role="status" className="wb-library-empty">Loading saved items…</p>}
             {items && !items.items.length && <div className="wb-library-empty"><SearchOutlined /><strong>{librarySearch || access !== 'all' ? 'No matching saved items' : `No saved ${menu}`}</strong><p>{librarySearch || access !== 'all' ? 'Try another search or sharing filter.' : 'Save your work to return to it later.'}</p></div>}

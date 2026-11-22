@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from 'react';
+import { NativeSelect } from '@/components/ui';
 import { Link } from 'react-router-dom';
 import { canonicalTransferReceipt } from './transferReceiptFocus';
 import { fetchObservedTableLineage } from '../../services/api';
@@ -24,10 +25,10 @@ function Workspace({ table }: { table: string }) {
       {open ? 'Hide observed transfers' : 'Show observed transfers'}
     </button>
     {open && <>
-      <label>Transfer direction<select aria-label="Transfer direction" value={direction} onChange={event =>
+      <label>Transfer direction<NativeSelect aria-label="Transfer direction" value={direction} onChange={event =>
         setDirection(event.target.value === 'outgoing' ? 'outgoing' : 'incoming')}>
         <option value="incoming">Incoming</option><option value="outgoing">Outgoing</option>
-      </select></label>
+      </NativeSelect></label>
       <ObservedDirection key={direction} table={table} direction={direction} />
     </>}
   </section>;

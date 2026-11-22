@@ -123,7 +123,7 @@
 .wb-library-controls { display:flex; gap:8px; padding:0 14px 12px; border-bottom:1px solid var(--ontology-control-border); }
 .wb-library-controls label { display:flex; flex:1; min-width:0; align-items:center; gap:7px; padding:0 9px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-bg); color:var(--ontology-muted); }
 .wb-library-controls input { width:100%; min-width:0; border:0; padding:6px 0; background:transparent; color:var(--ontology-text); font:inherit; font-size:12px; }
-.wb-library-controls select { padding:4px 7px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-bg); color:var(--ontology-text); font:inherit; font-size:12px; }
+.wb-library-controls .ui-native-select { padding:4px 7px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-bg); color:var(--ontology-text); font:inherit; font-size:12px; }
 .wb-library-items { flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; padding:5px; }
 .wb-library-item { display:flex; align-items:center; border-radius:2px; }
 .wb-library-item:hover { background:var(--ontology-hover); }

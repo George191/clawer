@@ -32,9 +32,13 @@
 .ui-dropdown-trigger,.ui-tooltip-trigger,.ui-popconfirm-trigger{display:inline-flex;align-items:inherit;vertical-align:middle;max-width:100%}
 .ui-dropdown,.ui-tooltip,.ui-popover{z-index:1200;color:var(--ui-text,#e9edf3);font-size:12px;line-height:1.5;box-sizing:border-box;overflow:auto;overscroll-behavior:contain}
 .ui-dropdown{min-width:140px;border:1px solid var(--ui-border,#404854);border-radius:7px;background:var(--ui-panel,#252a31);box-shadow:0 8px 28px #0004;padding:4px}
+.ui-dropdown[data-state="open"]{animation:ui-dropdown-enter 160ms ease-out both}
+.ui-dropdown[data-state="closed"]{pointer-events:none;animation:ui-dropdown-exit 160ms ease-in both}
+.ui-dropdown[data-ui-popup] > .ui-dropdown-menu[role="menu"]{border:0!important;background:transparent!important;box-shadow:none!important}
+.ui-dropdown[data-ui-popup]:has(> :is(.flow-filter-field-popup,.flow-filter-value-popup,.explorer-filter-field-popup,.explorer-filter-value-popup,.flow-tab-search-panel)){min-width:0;padding:0!important;border:0!important;background:transparent!important;box-shadow:none!important}
 .ui-dropdown-menu{list-style:none;margin:0;padding:0;outline:none;min-width:130px}
 .ui-dropdown-menu-item{width:100%;border:0;display:flex;align-items:center;gap:8px;text-align:left;min-height:30px;line-height:1.4;padding:6px 9px;background:transparent;border-radius:4px;color:inherit;font:inherit;cursor:pointer}
-.ui-dropdown-menu-item:hover,.ui-dropdown-menu-item:focus-visible,.ui-dropdown-menu-item-selected{background:color-mix(in srgb,var(--ui-action-bg) 15%,transparent)}
+.ui-dropdown-menu-item:hover,.ui-dropdown-menu-item:focus-visible,.ui-dropdown-menu-item-selected{background:color-mix(in srgb,var(--ui-text,#e9edf3) 10%,transparent)}
 .ui-dropdown-menu-item:disabled{color:var(--ui-muted,#9ca6b5);opacity:.45;cursor:default;background:transparent}
 .ui-dropdown-menu-item-danger{color:#f87171}
 .ui-dropdown-menu-title-content{flex:1;min-width:0}
@@ -69,7 +73,9 @@
 .ui-message-info .ui-message-icon{color:var(--ui-action-link,var(--ui-primary))}
 .ui-message-icon.ui-overlay-spinner{width:16px;height:16px;min-width:16px;margin-top:2px}
 @keyframes ui-message-enter{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
+@keyframes ui-dropdown-enter{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+@keyframes ui-dropdown-exit{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(-4px)}}
 .ui-overlay-spinner{display:inline-block;width:13px;height:13px;min-width:13px;box-sizing:border-box;border:1.5px solid currentColor;border-right-color:transparent;border-radius:50%;animation:ui-overlay-spin .75s linear infinite}
 @keyframes ui-overlay-spin{to{transform:rotate(360deg)}}
 @media(max-width:600px){.ui-modal-wrap{padding:24px 12px}.ui-modal{max-width:calc(100vw - 24px)}.ui-modal-header{padding:17px 17px 12px}.ui-modal-body{padding:17px}.ui-modal-footer{padding:12px 17px}.ui-drawer-header,.ui-drawer-body{padding:16px}}
-@media(prefers-reduced-motion:reduce){.ui-overlay-spinner{animation-duration:1.5s}.ui-message-notice{animation:none}.ui-message-close{transition:none}}
+@media(prefers-reduced-motion:reduce){.ui-overlay-spinner{animation-duration:1.5s}.ui-message-notice,.ui-dropdown[data-state]{animation:none}.ui-message-close{transition:none}}

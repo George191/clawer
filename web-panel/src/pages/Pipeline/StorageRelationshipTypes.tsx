@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, Input, Modal, message } from '@/components/ui';
+import { Button, Input, Modal, message, NativeSelect } from '@/components/ui';
 import { ApartmentOutlined, ArrowRightOutlined, PlusOutlined, SearchOutlined } from '@/components/ui/icons';
 import { fetchEtlObjectTypes } from '../../services/api';
 import type { EtlObjectCatalog, EtlObjectType } from '../../services/types';
@@ -196,22 +196,22 @@ function RelationshipManager({ schema, table, initialRelationId, onClose, onChan
                   {creating && <p className="storage-relationship-help">Describe the business meaning, for example 任职于、参与、负责 or 所属. The same object types can have several relationship types.</p>}
                   <label><span>Description <small>Optional</small></span><Input.TextArea aria-label="Relationship description" maxLength={4000} rows={3} value={draft.description} disabled={!canEdit || busy || loading || conflict} onChange={event => setDraft(previous => ({ ...previous, description: event.target.value }))} /></label>
                   {creating && <>
-                    <label><span>Direction</span><select aria-label="New relationship direction" value={direction} disabled={busy} onChange={event => setDirection(event.target.value as StorageRelationshipType['direction'])}>
+                    <label><span>Direction</span><NativeSelect aria-label="New relationship direction" value={direction} disabled={busy} onChange={event => setDirection(event.target.value as StorageRelationshipType['direction'])}>
                       <option value="outgoing">Outgoing · current type → selected type</option><option value="incoming">Incoming · selected type → current type</option>
-                    </select></label>
+                    </NativeSelect></label>
                     <label><span>Find target object type</span><Input aria-label="Find target object types" placeholder="Search object types" prefix={<SearchOutlined />} value={targetSearch} disabled={busy} onChange={event => { setTargetSearch(event.target.value); changeTargetPage(0); }} /></label>
-                    <label><span>Target object type</span><select aria-label="New relationship target type" value={target?.id || ''} disabled={busy || targetsLoading || !!targetError} onChange={event => setTarget(targetPage?.items.find(item => item.id === event.target.value))}>
+                    <label><span>Target object type</span><NativeSelect aria-label="New relationship target type" value={target?.id || ''} disabled={busy || targetsLoading || !!targetError} onChange={event => setTarget(targetPage?.items.find(item => item.id === event.target.value))}>
                       <option value="">{targetsLoading ? 'Loading object types…' : 'Select an object type'}</option>
                       {targetPage?.items.map(item => <option key={item.id} value={item.id}>{item.displayName} · {item.schema}.{item.table}</option>)}
-                    </select></label>
+                    </NativeSelect></label>
                     <nav className="storage-relationship-target-pages" aria-label="Target object type pages">
                       <Button size="small" disabled={busy || targetsLoading || targetOffset === 0} onClick={() => changeTargetPage(targetOffset - targetPageSize)}>Previous target types</Button>
                       <span>Page {1 + targetOffset / targetPageSize}</span>
                       <Button size="small" disabled={busy || targetsLoading || !targetPage || targetPage.offset + targetPage.items.length >= targetPage.total} onClick={() => changeTargetPage(targetOffset + targetPageSize)}>Next target types</Button>
                     </nav>
-                    <label><span>Cardinality</span><select aria-label="New relationship cardinality" value={cardinality} disabled={busy} onChange={event => setCardinality(event.target.value as StorageRelationshipType['cardinality'])}>
+                    <label><span>Cardinality</span><NativeSelect aria-label="New relationship cardinality" value={cardinality} disabled={busy} onChange={event => setCardinality(event.target.value as StorageRelationshipType['cardinality'])}>
                       {Object.entries(cardinalities).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                    </select></label><p className="storage-relationship-help">{cardinalityHelp[cardinality]}</p>
+                    </NativeSelect></label><p className="storage-relationship-help">{cardinalityHelp[cardinality]}</p>
                   </>}
                 </div>
                 <section className="storage-relationship-definition" aria-label="Relationship definition">

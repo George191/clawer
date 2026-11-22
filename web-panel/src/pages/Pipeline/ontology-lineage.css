@@ -27,8 +27,8 @@
 .flow-transfer fieldset{display:grid;gap:8px;margin:10px 0 0;padding:0;border:0;min-width:0}
 .flow-transfer legend{padding:0 0 5px;font-weight:600}
 .flow-transfer label{display:grid;gap:4px;min-width:0}
-.flow-transfer input,.flow-transfer select{width:100%;min-width:0;min-height:32px;padding:5px 7px;border:1px solid var(--ui-border);border-radius:4px;background:var(--ui-elevated);color:var(--ui-text);font:inherit}
-.flow-transfer select:disabled{color:var(--ui-muted)}
+.flow-transfer input,.flow-transfer .ui-native-select{width:100%;min-width:0;min-height:32px;padding:5px 7px;border:1px solid var(--ui-border);border-radius:4px;background:var(--ui-elevated);color:var(--ui-text);font:inherit}
+.flow-transfer .ui-native-select:disabled{color:var(--ui-muted)}
 .flow-transfer-actions{justify-content:flex-end;margin-top:12px}
 .flow-transfer .flow-lineage-action{min-height:28px;padding:3px 8px;font-size:11px}
 .flow-transfer .flow-transfer-error,.flow-transfer-picker [role=alert]{color:var(--ui-danger,#b12f39);margin-top:8px}
@@ -104,7 +104,7 @@
 .flow-lineage-reference-path,.flow-lineage-reference-path__body{display:grid;gap:7px;min-width:0}
 .flow-lineage-reference-path{padding:7px 0;border-block:1px solid var(--ui-border)}
 .flow-lineage-reference-path__body form,.flow-lineage-reference-path__body label{display:grid;gap:4px;min-width:0}
-.flow-lineage-reference-path :is(input,select){width:100%;min-width:0;padding:5px;border:1px solid var(--ui-border);border-radius:2px;background:var(--ui-panel);color:var(--ui-text);font:inherit}
+.flow-lineage-reference-path :is(input,.ui-native-select){width:100%;min-width:0;padding:5px;border:1px solid var(--ui-border);border-radius:2px;background:var(--ui-panel);color:var(--ui-text);font:inherit}
 .flow-lineage-reference-path button{justify-self:start}
 .flow-transfer-time-gate { min-width: 0; margin: 8px 0; padding: 8px 10px; border: 1px solid var(--ui-border); }
 .flow-transfer-time-gate label { display: flex; align-items: baseline; gap: 6px; min-width: 0; }

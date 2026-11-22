@@ -1,7 +1,8 @@
-import React, { Children, cloneElement, createContext, forwardRef, isValidElement, useContext, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
+import React, { Children, cloneElement, createContext, forwardRef, isValidElement, useContext, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import dayjs, { type Dayjs } from 'dayjs';
 import customParseFormat from 'dayjs/plugin/customParseFormat';
+import { message } from './overlays';
 import './forms.css';
 dayjs.extend(customParseFormat);
 
@@ -225,12 +226,13 @@ export function InputNumber<T extends string | number = number>(props: InputNumb
 }
 
 export type SelectOption = { value: string | number; label?: React.ReactNode; title?: string; disabled?: boolean; [key: string]: any };
-export interface SelectProps<T = any> extends Omit<React.HTMLAttributes<HTMLDivElement>, 'onChange' | 'defaultValue' | 'onSelect' | 'prefix'> { value?: T; defaultValue?: T; options?: SelectOption[]; children?: React.ReactNode; onChange?: (value: T, option?: SelectOption | SelectOption[]) => void; onSelect?: (value: any, option: SelectOption) => void; onDeselect?: (value: any, option: SelectOption) => void; mode?: 'multiple' | 'tags'; showSearch?: boolean; filterOption?: boolean | ((input: string, option?: SelectOption) => boolean); optionFilterProp?: string; onSearch?: (value: string) => void; placeholder?: React.ReactNode; allowClear?: boolean; disabled?: boolean; loading?: boolean; size?: string; open?: boolean; onOpenChange?: (open: boolean) => void; onDropdownVisibleChange?: (open: boolean) => void; popupClassName?: string; dropdownClassName?: string; popupMatchSelectWidth?: boolean | number; listHeight?: number; onPopupScroll?: (event: React.UIEvent<HTMLDivElement>) => void; suffixIcon?: React.ReactNode; maxTagCount?: number | 'responsive'; notFoundContent?: React.ReactNode; labelInValue?: boolean; }
+export interface SelectProps<T = any> extends Omit<React.HTMLAttributes<HTMLDivElement>, 'onChange' | 'defaultValue' | 'onSelect' | 'prefix'> { controlRef?: React.Ref<HTMLDivElement>; formControl?: React.ReactNode; value?: T; defaultValue?: T; options?: SelectOption[]; children?: React.ReactNode; onChange?: (value: T, option?: SelectOption | SelectOption[]) => void; onSelect?: (value: any, option: SelectOption) => void; onDeselect?: (value: any, option: SelectOption) => void; mode?: 'multiple' | 'tags'; showSearch?: boolean; filterOption?: boolean | ((input: string, option?: SelectOption) => boolean); optionFilterProp?: string; onSearch?: (value: string) => void; placeholder?: React.ReactNode; allowClear?: boolean; disabled?: boolean; loading?: boolean; size?: string; open?: boolean; onOpenChange?: (open: boolean) => void; onDropdownVisibleChange?: (open: boolean) => void; popupClassName?: string; dropdownClassName?: string; listHeight?: number; onPopupScroll?: (event: React.UIEvent<HTMLDivElement>) => void; suffixIcon?: React.ReactNode; maxTagCount?: number | 'responsive'; notFoundContent?: React.ReactNode; labelInValue?: boolean; }
 function SelectRoot<T = any>(props: SelectProps<T>) {
-  const { value, defaultValue, options: supplied, children, onChange, onSelect, onDeselect, mode, showSearch, filterOption, optionFilterProp = 'label', onSearch, placeholder, allowClear, loading, size, open, onOpenChange, onDropdownVisibleChange, popupClassName, dropdownClassName, popupMatchSelectWidth, listHeight = 256, onPopupScroll, suffixIcon, maxTagCount, notFoundContent, labelInValue, className, style, disabled: providedDisabled, onKeyDown, onClick, ...rest } = props;
+  const { value, defaultValue, options: supplied, children, onChange, onSelect, onDeselect, mode, showSearch, filterOption, optionFilterProp = 'label', onSearch, placeholder, allowClear, loading, size, open, onOpenChange, onDropdownVisibleChange, popupClassName, dropdownClassName, listHeight = 256, onPopupScroll, suffixIcon, maxTagCount, notFoundContent, labelInValue, controlRef, formControl, className, style, disabled: providedDisabled, onKeyDown, onClick, ...rest } = props;
   const disabled = useDisabled(providedDisabled), multiple = !!mode, searchable = !!(showSearch || multiple);
-  const [local, setLocal] = useState<any>(defaultValue), [expanded, setExpanded] = useState(false), [query, setQuery] = useState(''), [active, setActive] = useState(0), [position, setPosition] = useState<React.CSSProperties>({});
-  const wrapper = useRef<HTMLDivElement>(null), popup = useRef<HTMLDivElement>(null), input = useRef<HTMLInputElement>(null), listId = useId();
+  const [local, setLocal] = useState<any>(defaultValue), [expanded, setExpanded] = useState(false), [query, setQuery] = useState(''), [active, setActive] = useState(0), [position, setPosition] = useState<React.CSSProperties>({ visibility: 'hidden' }), [present, setPresent] = useState(false);
+  const wrapper = useRef<HTMLDivElement>(null), popup = useRef<HTMLDivElement>(null), input = useRef<HTMLInputElement>(null), listId = useId(), typeahead = useRef({ text: '', time: 0 });
+  useImperativeHandle(controlRef, () => wrapper.current!, []);
   const current: any = 'value' in props ? value : local, isOpen = !disabled && (open ?? expanded);
   const options: SelectOption[] = supplied || Children.toArray(children).filter(isValidElement).map((child: any) => ({ ...child.props, label: child.props.children }));
   const raw = (item: any) => labelInValue ? item?.value : item;
@@ -254,28 +256,44 @@ function SelectRoot<T = any>(props: SelectProps<T>) {
   };
   const choose = (option: SelectOption) => { if (option.disabled) return; if (multiple) { const removing = selected.includes(option.value); publish(removing ? selected.filter(item => item !== option.value) : [...selected, option.value]); if (removing) onDeselect?.(option.value, option); else onSelect?.(option.value, option); setQuery(''); onSearch?.(''); input.current?.focus(); } else { publish([option.value]); onSelect?.(option.value, option); changeOpen(false); if (!searchable) wrapper.current?.focus(); } };
   useLayoutEffect(() => {
-    if (!isOpen || !wrapper.current) return;
+    if (isOpen) { setPresent(true); return; }
+    const timer = window.setTimeout(() => setPresent(false), window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 160);
+    return () => window.clearTimeout(timer);
+  }, [isOpen]);
+  useLayoutEffect(() => {
+    if (!present || !isOpen || !wrapper.current) return;
     const place = () => {
       const rect = wrapper.current!.getBoundingClientRect();
-      const below = innerHeight - rect.bottom - 8, above = rect.top - 8;
-      const upward = below < Math.min(listHeight, 160) && above > below;
-      const height = Math.max(40, Math.min(listHeight, upward ? above : below));
-      const width = Math.min(innerWidth - 16, typeof popupMatchSelectWidth === 'number' ? popupMatchSelectWidth : popupMatchSelectWidth === false ? Math.max(rect.width, 180) : rect.width);
+      const width = Math.min(innerWidth - 16, rect.width);
       let layer = 1100;
       for (let element: HTMLElement | null = wrapper.current; element; element = element.parentElement) layer = Math.max(layer, (Number(getComputedStyle(element).zIndex) || 0) + 1);
-      setPosition({ position: 'fixed', zIndex: layer, left: Math.max(8, Math.min(rect.left, innerWidth - width - 8)), top: upward ? Math.max(8, rect.top - height - 4) : rect.bottom + 4, width, maxHeight: height });
+      setPosition({ position: 'fixed', zIndex: layer, visibility: 'visible', left: Math.max(8, Math.min(rect.left, innerWidth - width - 8)), top: rect.bottom + 4, width, maxHeight: Math.max(0, Math.min(listHeight, innerHeight - rect.bottom - 12)) });
     };
-    const resize = multiple ? new ResizeObserver(place) : undefined;
-    resize?.observe(wrapper.current);
+    const resize = new ResizeObserver(place);
+    resize.observe(wrapper.current);
     place(); window.addEventListener('resize', place); window.addEventListener('scroll', place, true);
-    return () => { resize?.disconnect(); window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true); };
-  }, [isOpen, listHeight, multiple, popupMatchSelectWidth]);
+    return () => { resize.disconnect(); window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true); };
+  }, [isOpen, present, listHeight]);
   useEffect(() => { if (!isOpen) return; const outside = (event: PointerEvent) => { if (!wrapper.current?.contains(event.target as Node) && !popup.current?.contains(event.target as Node)) changeOpen(false); }; document.addEventListener('pointerdown', outside); return () => document.removeEventListener('pointerdown', outside); }, [isOpen]);
   useEffect(() => { setActive(0); }, [query]);
   const keyboard = (event: React.KeyboardEvent<HTMLDivElement>) => {
     onKeyDown?.(event); if (event.defaultPrevented || disabled) return;
     if (event.key === 'Escape' && isOpen) { event.preventDefault(); event.stopPropagation(); changeOpen(false); if (!searchable) wrapper.current?.focus(); }
     if (event.key === 'Tab') changeOpen(false);
+    if ((event.key === 'Home' || event.key === 'End') && isOpen) {
+      event.preventDefault();
+      const indices = filtered.map((option, index) => option.disabled ? -1 : index).filter(index => index >= 0);
+      const next = event.key === 'Home' ? indices[0] : indices[indices.length - 1];
+      if (next !== undefined) { setActive(next); document.getElementById(`${listId}-${next}`)?.scrollIntoView({ block: 'nearest' }); }
+      return;
+    }
+    if (!searchable && event.key.length === 1 && event.key !== ' ' && !event.ctrlKey && !event.altKey && !event.metaKey) {
+      const now = Date.now();
+      const prefix = now - typeahead.current.time < 500 ? typeahead.current.text + event.key : event.key;
+      typeahead.current = { text: prefix, time: now };
+      const next = filtered.findIndex(option => !option.disabled && text(option.label ?? option.value).toLowerCase().startsWith(prefix.toLowerCase()));
+      if (next >= 0) { event.preventDefault(); setActive(next); if (!isOpen) choose(filtered[next]); else document.getElementById(`${listId}-${next}`)?.scrollIntoView({ block: 'nearest' }); }
+    }
     if ((event.target as HTMLElement).closest('button')) return;
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
@@ -312,10 +330,72 @@ function SelectRoot<T = any>(props: SelectProps<T>) {
       {!selected.length && !query && <span className="ui-select-selection-placeholder">{placeholder}</span>}
       {searchable && <span className="ui-select-selection-search"><input {...(rest.id ? { id: rest.id } : {})} ref={input} role="combobox" aria-label={props['aria-label'] || (text(placeholder) || undefined)} aria-labelledby={props['aria-labelledby']} aria-invalid={props['aria-invalid']} aria-describedby={props['aria-describedby']} aria-required={props['aria-required']} aria-expanded={isOpen} aria-controls={isOpen ? listId : undefined} aria-activedescendant={isOpen ? `${listId}-${active}` : undefined} aria-autocomplete="list" autoComplete="off" value={query} disabled={disabled} className="ui-select-selection-search-input" onFocus={() => changeOpen(true)} onChange={event => { setQuery(event.target.value); onSearch?.(event.target.value); changeOpen(true); }} /></span>}
     </span></div>{allowClear && selected.length > 0 && !disabled ? <button type="button" className="ui-select-clear" aria-label="Clear selection" onClick={event => { event.stopPropagation(); publish([]); }}>×</button> : <span className="ui-select-arrow" aria-hidden="true">{loading ? '◌' : suffixIcon || <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="m3 4.5 3 3 3-3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>}</span>}
-    {isOpen && createPortal(<div ref={popup} className={cx('ui-select-dropdown', popupClassName, dropdownClassName)} style={position} onScroll={onPopupScroll} onPointerDown={event => { if ((event.target as Element).closest('[role="option"]')) event.preventDefault(); }}><div role="listbox" id={listId} aria-multiselectable={multiple || undefined}>{filtered.length ? filtered.map((option, index) => <div key={String(option.value)} id={`${listId}-${index}`} role="option" aria-selected={selected.includes(option.value)} aria-disabled={option.disabled || undefined} className={cx('ui-select-item', 'ui-select-item-option', index === active && 'ui-select-item-option-active', selected.includes(option.value) && 'ui-select-item-option-selected', option.disabled && 'ui-select-item-option-disabled')} onMouseMove={() => setActive(index)} onClick={() => choose(option)}><span className="ui-select-item-option-content">{option.label ?? String(option.value)}</span>{selected.includes(option.value) && <span aria-hidden="true">✓</span>}</div>) : <div className="ui-select-empty">{notFoundContent ?? 'No options found'}</div>}</div></div>, document.body)}
+    {formControl}
+    {present && createPortal(<div ref={popup} data-ui-popup data-state={isOpen ? 'open' : 'closed'} aria-hidden={!isOpen || undefined} {...(!isOpen ? { inert: '' } : {})} className={cx('ui-select-dropdown', popupClassName, dropdownClassName)} style={position} onScroll={onPopupScroll} onPointerDown={event => { if ((event.target as Element).closest('[role="option"]')) event.preventDefault(); }}><div role="listbox" id={listId} aria-multiselectable={multiple || undefined}>{filtered.length ? filtered.map((option, index) => <div key={String(option.value)} id={`${listId}-${index}`} role="option" aria-selected={selected.includes(option.value)} aria-disabled={option.disabled || undefined} className={cx('ui-select-item', 'ui-select-item-option', index === active && 'ui-select-item-option-active', selected.includes(option.value) && 'ui-select-item-option-selected', option.disabled && 'ui-select-item-option-disabled')} onMouseMove={() => setActive(index)} onClick={() => { if (isOpen) choose(option); }}><span className="ui-select-item-option-content">{option.label ?? String(option.value)}</span>{selected.includes(option.value) && <span aria-hidden="true">✓</span>}</div>) : <div className="ui-select-empty">{notFoundContent ?? 'No options found'}</div>}</div></div>, document.body)}
   </div>;
 }
 export const Select = SelectRoot;
+
+// Keep browser form values and validation while sharing the same visible menu.
+export const NativeSelect = forwardRef<HTMLSelectElement, React.SelectHTMLAttributes<HTMLSelectElement>>((props, ref) => {
+  const { children, className, style, value, defaultValue, multiple, disabled: providedDisabled, onChange, onInvalid, onFocus, onBlur, ...rest } = props;
+  const native = useRef<HTMLSelectElement>(null), control = useRef<HTMLDivElement>(null);
+  const disabled = useDisabled(providedDisabled), controlled = value !== undefined;
+  const [fieldsetDisabled, setFieldsetDisabled] = useState(false);
+  const [local, setLocal] = useState(value ?? defaultValue), [label, setLabel] = useState<string>(), [invalid, setInvalid] = useState(false);
+  useImperativeHandle(ref, () => native.current!, []);
+  const options: SelectOption[] = [];
+  const collect = (nodes: React.ReactNode, groupDisabled = false) => Children.forEach(nodes, child => {
+    if (!isValidElement<any>(child)) return;
+    if (child.type === 'option') options.push({ value: String(child.props.value ?? text(child.props.children)), label: child.props.children, disabled: groupDisabled || child.props.disabled });
+    else collect(child.props.children, groupDisabled || child.props.disabled);
+  });
+  collect(children);
+  useLayoutEffect(() => { setFieldsetDisabled(native.current?.matches(':disabled') || false); });
+  useLayoutEffect(() => {
+    if (!native.current) return;
+    if (!controlled) setLocal(multiple ? Array.from(native.current.selectedOptions, option => option.value) : native.current.value);
+    const names = Array.from(native.current.labels || [], node => {
+      const copy = node.cloneNode(true) as HTMLElement;
+      copy.querySelectorAll('select, .ui-select, input, button, small').forEach(element => element.remove());
+      return copy.textContent?.trim() || '';
+    });
+    setLabel(names.join(' ') || undefined);
+  }, [children, controlled, multiple, rest.id]);
+  useEffect(() => {
+    const form = native.current?.form;
+    if (!form) return;
+    const reset = (event: Event) => window.setTimeout(() => {
+      if (event.defaultPrevented || !native.current) return;
+      if (controlled) {
+        const values = (Array.isArray(value) ? value : [value]).map(String);
+        Array.from(native.current.options).forEach(option => { option.selected = values.includes(option.value); });
+      } else setLocal(multiple ? Array.from(native.current.selectedOptions, option => option.value) : native.current.value);
+      setInvalid(false);
+    }, 0);
+    form.addEventListener('reset', reset);
+    return () => form.removeEventListener('reset', reset);
+  }, [controlled, value, multiple, rest.form]);
+  const focus = () => {
+    const input = control.current?.querySelector<HTMLInputElement>('input');
+    if (input) input.focus(); else control.current?.focus();
+  };
+  const current = controlled ? value : local;
+  const selection = multiple ? Array.isArray(current) ? current.map(String) : [] : current == null ? undefined : String(current);
+  const change = (next: any) => {
+    if (!native.current) return;
+    const values = (multiple ? next : [next]).map(String);
+    Array.from(native.current.options).forEach(option => { option.selected = values.includes(option.value); });
+    native.current.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+  return <Select controlRef={control} id={rest.id ? `${rest.id}-control` : undefined} className={cx('ui-native-select', className)} style={style} value={selection} options={options} mode={multiple ? 'multiple' : undefined} disabled={disabled || fieldsetDisabled} onChange={change}
+      aria-label={props['aria-label'] || label} aria-labelledby={props['aria-labelledby']} aria-describedby={props['aria-describedby']} aria-invalid={props['aria-invalid'] || invalid || undefined} aria-required={props.required}
+      onFocus={event => { if ((event.target as EventTarget) !== native.current) native.current?.dispatchEvent(new FocusEvent('focusin', { bubbles: true })); }} onBlur={event => { if ((event.target as EventTarget) !== native.current) native.current?.dispatchEvent(new FocusEvent('focusout', { bubbles: true })); }}
+      formControl={<select {...rest} ref={native} hidden tabIndex={-1} aria-hidden="true" style={{ display: 'none' }} multiple={multiple} disabled={disabled} value={value} defaultValue={defaultValue}
+      onClick={event => { event.stopPropagation(); focus(); rest.onClick?.(event); }} onFocus={onFocus} onBlur={onBlur} onInvalid={event => { event.preventDefault(); setInvalid(true); focus(); message.warning(event.currentTarget.validationMessage); onInvalid?.(event); }}
+      onChange={event => { setInvalid(false); if (!controlled) setLocal(multiple ? Array.from(event.currentTarget.selectedOptions, option => option.value) : event.currentTarget.value); onChange?.(event); }}>{children}</select>} />;
+});
+NativeSelect.displayName = 'NativeSelect';
 
 export interface TimePickerProps { value?: Dayjs | null; defaultValue?: Dayjs; onChange?: (value: Dayjs | null, formatted: string | string[]) => void; format?: string; minuteStep?: number; needConfirm?: boolean; allowClear?: boolean; disabled?: boolean; size?: string; className?: string; style?: React.CSSProperties; popupClassName?: string; id?: string; 'aria-label'?: string; }
 export function TimePicker({ value, defaultValue, onChange, minuteStep = 1, needConfirm, allowClear = true, disabled: providedDisabled, className, style, id, 'aria-label': label = 'Time' }: TimePickerProps) {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Button } from '@/components/ui';
+import { Button, NativeSelect } from '@/components/ui';
 import {
   createTeamKey, deleteTeamKey, fetchCurrentUserContext, issuePublicationKey,
   publicationKeys, revokePublicationKey, rotateTeamKey, teamKeys,
@@ -132,9 +132,9 @@ export default function ApiKeys() {
           {!user.teams.length ? <p>No accessible teams.</p> : (
             <>
               <label>Team
-                <select value={team} disabled={busy} onChange={e => { setTeam(e.target.value); setTeamPage(1); reveal(''); }}>
+                <NativeSelect value={team} disabled={busy} onChange={e => { setTeam(e.target.value); setTeamPage(1); reveal(''); }}>
                   {user.teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                </select>
+                </NativeSelect>
               </label>
               <form onSubmit={e => { e.preventDefault(); void createKey(); }}>
                 <label>Key description<input value={name} maxLength={160} onChange={e => setName(e.target.value)} /></label>

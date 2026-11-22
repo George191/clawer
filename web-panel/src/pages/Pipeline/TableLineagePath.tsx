@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { NativeSelect } from '@/components/ui';
 import type { FormEvent } from 'react';
 import { fetchTableLineageCommonDownstream, fetchTableLineageCommonUpstream, fetchTableLineagePath, fetchTableLineageTargets } from '../../services/api';
 import type { TableLineageCommonUpstream, TableLineageIdentity, TableLineagePathEdge, TableLineagePathResult, TableLineageReferenceKind } from '../../services/api';
@@ -126,12 +127,12 @@ function PathSearch({ source, onScopeDenied, onEndpointUnavailable }: Props) {
       {limited && <p>Showing at most the first {CATALOG_LIMIT} visible matches. Refine the search to see a different set.</p>}
       {!options.length ? <p role="status">No eligible visible destination in these results.</p> :
         <form onSubmit={event => { event.preventDefault(); void find('directed'); }} aria-label="Find a directed reference path">
-          <label>Destination table<select aria-label="Destination table" value={target} onChange={event => {
+          <label>Destination table<NativeSelect aria-label="Destination table" value={target} onChange={event => {
             clearPath(); setError(''); setTarget(event.target.value);
           }}>
             <option value="">Select a visible destination</option>
             {options.map(option => <option key={name(option)} value={name(option)}>{name(option)}</option>)}
-          </select></label>
+          </NativeSelect></label>
           <div className="flow-lineage-reference-path__actions">
             <button type="submit" className="flow-lineage-action" disabled={!target || searching === 'directed'}>Find reference path</button>
             <button type="button" className="flow-lineage-action" disabled={!target || searching === 'upstream'}

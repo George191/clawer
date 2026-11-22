@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { Button, Input, Modal } from '@/components/ui';
+import { Button, Input, Modal, NativeSelect } from '@/components/ui';
 import { ArrowRightOutlined } from '@/components/ui/icons';
 import {
   fetchBatchSyncAttempts, fetchBatchSyncCapabilities, fetchBatchSyncReceipts, fetchBatchSyncSchedule, fetchBatchSyncScheduleJobs, fetchBatchSyncs, fetchDataSourceColumns,
@@ -467,26 +467,26 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
             <p>Fixed key: <code>id</code>. Mapping: <code>id → id</code>, <code>value → value</code>. A run can apply only the next complete published batch.</p>
             {!committedModeAvailable && <p role="status">Committed batch setup is unavailable for this saved source.</p>}
           </div> : <>
-            <label>Destination table<select value={draft.target} onChange={event => { setTargetColumns(undefined); setDestinationError(''); change({ target: event.target.value, mapping: {} }); }}>
+            <label>Destination table<NativeSelect value={draft.target} onChange={event => { setTargetColumns(undefined); setDestinationError(''); change({ target: event.target.value, mapping: {} }); }}>
               <option value="">{targets ? 'Select a sandbox table' : 'Loading destination tables…'}</option>
               {draft.target && !targets?.includes(draft.target) && <option value={draft.target} disabled>{draft.target} (saved)</option>}
               {targets?.map(name => <option key={name} value={name}>{name}</option>)}
-            </select></label>
+            </NativeSelect></label>
             {targets?.length === 0 && <p>No destination tables are available in the local sandbox.</p>}
-            <label>Source primary key<select disabled={!sourceKey} value={draft.key} onChange={event => change({ key: event.target.value })}>
+            <label>Source primary key<NativeSelect disabled={!sourceKey} value={draft.key} onChange={event => change({ key: event.target.value })}>
               <option value="">Select the source primary key</option>
               {draft.key && draft.key !== sourceKey && <option value={draft.key} disabled>{draft.key} (saved)</option>}
               {sourceKey && <option value={sourceKey}>{sourceKey}</option>}
-            </select></label>
+            </NativeSelect></label>
             {sourceColumns && !sourceKey && <p>Requires complete source metadata and a single integer or UUID primary key.</p>}
             {targetColumns && targetKeys.length !== 1 && <p>Choose a destination table with one primary key column.</p>}
             {mappingRows.length > 0 && <section className="ontology-source-sync__mapping" aria-label="Column mapping">
               <h4>Column mapping</h4><p>Map every destination column to one same-type source column. The source key must map to the destination primary key.</p>
               {mappingRows.map(({ column, options }) => <label key={column.name}><span><code>{column.name}</code> · {column.type}{column.primary ? ' · Primary key' : ''}</span>
-                <select aria-label={`Source column for ${column.name}`} value={draft.mapping[column.name] ?? ''} onChange={event => change({ mapping: { ...draft.mapping, [column.name]: event.target.value } })}>
+                <NativeSelect aria-label={`Source column for ${column.name}`} value={draft.mapping[column.name] ?? ''} onChange={event => change({ mapping: { ...draft.mapping, [column.name]: event.target.value } })}>
                   <option value="">{options.length ? 'Select source column' : 'No matching source column'}</option>
                   {options.map(item => <option key={item.name} value={item.name}>{item.name}</option>)}
-                </select>
+                </NativeSelect>
               </label>)}
             </section>}
             {(catalogError || sourceError || destinationError) && <p className="is-error" role="alert">{[catalogError, sourceError, destinationError].filter(Boolean).join(' ')} <Button size="small" onClick={() => setMetadataRevision(value => value + 1)}>Retry metadata</Button></p>}

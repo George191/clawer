@@ -29,7 +29,7 @@ html[data-theme='light'] {
   --ui-focus-ring: #0e766f;
 }
 
-:where(button, a[href], [tabindex]):not(input, select, textarea):focus-visible {
+:where(button, a[href], [tabindex]):not(input, .ui-native-select, textarea):focus-visible {
   outline: 2px solid var(--ui-focus-ring);
   outline-offset: 2px;
 }
@@ -988,7 +988,7 @@ h4.ui-typography { letter-spacing: -0.01em; }
 .automation-tabs { justify-content: space-between; gap: 16px; }
 .automation-tabs .automation-filters { margin-left: auto; }
 .automation-tabs .automation-filters .ui-select,
-.automation-tabs .automation-filters .ui-select-selector,
+.automation-tabs .automation-filters .ui-select,
 .automation-tabs .automation-filters .ui-input-affix-wrapper,
 .automation-tabs .automation-filters .ui-btn { height: 32px !important; min-height: 32px !important; }
 .automation-tabs .automation-filters .ui-input-affix-wrapper { padding-block: 4px !important; }

@@ -589,7 +589,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     return (
       <div
         style={{
-          ...overlayShellStyle,
           width: 252,
         }}
       >

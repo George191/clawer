@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, Input, Modal } from '@/components/ui';
+import { Button, Input, Modal, NativeSelect } from '@/components/ui';
 import { acknowledgeAssetQualityIncident, captureAssetSchemaBaseline, fetchAssetFreshness, fetchAssetFreshnessCandidates, previewAssetSchemaBaseline, updateAssetFreshness } from '../../services/api';
 import type { AssetFreshness, AssetFreshnessCandidate, AssetFreshnessChange, AssetQualityIncident, AssetSchemaPreview } from '../../services/api';
 import ExplorerAssetQualityChecks, { AssetSchemaColumns, qualityBounds, readQualityDraft } from './ExplorerAssetQualityChecks';
@@ -195,12 +195,12 @@ export default function ExplorerAssetFreshness({ schema, table, version }: { sch
         {!snapshot.available && <p>Freshness evaluation is unavailable for this table or environment.</p>}
         <div className="flow-evidence-freshness-form">
           <label>Freshness transfer plan
-            <select value={planId} onChange={event => setPlanId(event.target.value)}
+            <NativeSelect value={planId} onChange={event => setPlanId(event.target.value)}
               disabled={busy || !snapshot.available || !candidates?.length}>
               <option value="">Select a saved sandbox transfer</option>
               {planId && !selected && <option value={planId} disabled>Current binding · not available to select</option>}
               {candidates?.map(item => <option value={item.id} key={item.id}>{item.name}</option>)}
-            </select>
+            </NativeSelect>
           </label>
           <label>Threshold in minutes
             <Input aria-label="Threshold in minutes" type="number" min={minMinutes} max={maxMinutes} step={1}

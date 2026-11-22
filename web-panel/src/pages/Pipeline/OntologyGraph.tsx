@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Button, Modal } from '@/components/ui';
+import { Button, Modal, NativeSelect } from '@/components/ui';
 import {
   listOntologyRecords,
   ontologyError,
@@ -139,14 +139,14 @@ function NewType({ object, onSaved }: { object: PublishedOntologyType; onSaved: 
       </label>
       <label>
         Target type
-        <select required value={target} onChange={(e) => choose(e.target.value)}>
+        <NativeSelect required value={target} onChange={(e) => choose(e.target.value)}>
           <option value="">Select type</option>
           {types?.data?.items.map((t) => (
               <option key={t.id} value={t.id}>
                 {t.name}
               </option>
             ))}
-        </select>
+        </NativeSelect>
       </label>
       <Pages
         offset={off}
@@ -158,13 +158,13 @@ function NewType({ object, onSaved }: { object: PublishedOntologyType; onSaved: 
       />
       <label>
         Cardinality
-        <select value={card} onChange={(e) => cardinality(e.target.value)}>
+        <NativeSelect value={card} onChange={(e) => cardinality(e.target.value)}>
           {['one_to_one', 'one_to_many', 'many_to_one', 'many_to_many'].map((c) => (
             <option key={c} value={c}>
               {c.replace(/_/g, ' ')}
             </option>
           ))}
-        </select>
+        </NativeSelect>
       </label>
       <Button type="primary" htmlType="submit" disabled={busy}>
         Save relationship type
@@ -236,7 +236,7 @@ function Links({ anchor, move }: { anchor: Anchor; move: (a: Anchor) => void }) 
     <div>
       <label>
         Relationship and direction
-        <select
+        <NativeSelect
           value={selected ? typeId + ':' + direction : ''}
           onChange={(e) => {
             const [id, dir] = e.target.value.split(':');
@@ -257,7 +257,7 @@ function Links({ anchor, move }: { anchor: Anchor; move: (a: Anchor) => void }) 
                 </option>
               )),
           )}
-        </select>
+        </NativeSelect>
       </label>
       <Pages
         offset={toff}
@@ -297,14 +297,14 @@ function Links({ anchor, move }: { anchor: Anchor; move: (a: Anchor) => void }) 
             <>
               <label>
                 Record to link
-                <select value={choice} onChange={(e) => pick(e.target.value)}>
+                <NativeSelect value={choice} onChange={(e) => pick(e.target.value)}>
                   <option value="">Select record</option>
                   {choices?.data?.items.map((r: OntologyRecord) => (
                     <option value={r.id!} key={r.id}>
                       {display(r.title ?? r.id)}
                     </option>
                   ))}
-                </select>
+                </NativeSelect>
               </label>
               <Pages
                 offset={coff}
@@ -463,7 +463,7 @@ function ObjectSets({ object, returnTo, onOpenExplorer }: { object: PublishedOnt
       <div className="flow-tool-fields">
         <label>
           Filter property
-          <select
+          <NativeSelect
             value={field}
             onChange={(e) => {
               setField(e.target.value);
@@ -476,13 +476,13 @@ function ObjectSets({ object, returnTo, onOpenExplorer }: { object: PublishedOnt
                 {p.name}
               </option>
             ))}
-          </select>
+          </NativeSelect>
         </label>
         <label>
           Operator
-          <select value={op} onChange={(e) => setOp(e.target.value as typeof op)}>
+          <NativeSelect value={op} onChange={(e) => setOp(e.target.value as typeof op)}>
             {operators.map(o => <option key={o} value={o}>{operatorLabels[o]}</option>)}
-          </select>
+          </NativeSelect>
         </label>
         <label>
           Filter value
@@ -508,7 +508,7 @@ function ObjectSets({ object, returnTo, onOpenExplorer }: { object: PublishedOnt
       <div className="flow-tool-fields">
         <label>
           Group by
-          <select value={group} onChange={(e) => groupBy(e.target.value)}>
+          <NativeSelect value={group} onChange={(e) => groupBy(e.target.value)}>
             <option value="">None</option>
             {props
               .filter((p) => p.type !== 'json')
@@ -517,11 +517,11 @@ function ObjectSets({ object, returnTo, onOpenExplorer }: { object: PublishedOnt
                   {p.name}
                 </option>
               ))}
-          </select>
+          </NativeSelect>
         </label>
         <label>
           Sum property
-          <select value={sum} onChange={(e) => sumField(e.target.value)}>
+          <NativeSelect value={sum} onChange={(e) => sumField(e.target.value)}>
             <option value="">None</option>
             {props
               .filter((p) => ['number', 'integer'].includes(p.type))
@@ -530,7 +530,7 @@ function ObjectSets({ object, returnTo, onOpenExplorer }: { object: PublishedOnt
                   {p.name}
                 </option>
               ))}
-          </select>
+          </NativeSelect>
         </label>
         <Button type="primary" onClick={() => execute()}>Preview set</Button>
       </div>
@@ -546,14 +546,14 @@ function ObjectSets({ object, returnTo, onOpenExplorer }: { object: PublishedOnt
       <div className="flow-tool-fields">
         <label>
           Saved set
-          <select value={chosen} onChange={(e) => choose(e.target.value)}>
+          <NativeSelect value={chosen} onChange={(e) => choose(e.target.value)}>
             <option value="">Select set</option>
             {saved?.data?.items.map((v) => (
               <option key={v.id} value={v.id}>
                 {v.name}
               </option>
             ))}
-          </select>
+          </NativeSelect>
         </label>
         <Pages
           offset={off}

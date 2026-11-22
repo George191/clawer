@@ -141,12 +141,12 @@
 .flow-console--ontology .flow-data-table .ui-table-tbody > tr > td:first-child { color:var(--ontology-text); }
 .flow-console--ontology .flow-data-table .ui-table-tbody > tr:hover > td { background:var(--ontology-hover)!important; }
 .flow-console--ontology .flow-data-table .ui-pagination { margin:0; padding:8px 0; border-top:1px solid var(--ontology-border); color:var(--ontology-muted); font-size:12px; }
-.flow-console--ontology .flow-data-table .ui-pagination :is(button,.ui-select-selector) { border:1px solid var(--ontology-control-border)!important; background:var(--ontology-panel)!important; color:var(--ontology-text)!important; font-size:12px; }
+.flow-console--ontology .flow-data-table .ui-pagination :is(button,.ui-select) { border:1px solid var(--ontology-control-border)!important; background:var(--ontology-panel)!important; color:var(--ontology-text)!important; font-size:12px; }
 .flow-console--ontology .flow-data-table .ui-pagination .ui-pagination-item-active button { background:var(--ontology-selected)!important; color:var(--ontology-link)!important; }
 .flow-console--ontology :is(.flow-inline-designer,.flow-inline-designer .flow-designer-tabs) { background:var(--ontology-panel); color:var(--ontology-text); border-radius:3px; }
 .flow-console--ontology :is(.flow-designer-header,.flow-td-fields-table th,.flow-td-sql-header) { border-color:var(--ontology-border); background:var(--ontology-bg); color:var(--ontology-text); font-size:12px; }
 .flow-console--ontology :is(.flow-td-fields-table td,.flow-designer-identity label,.flow-td-options-row label) { border-color:var(--ontology-border); color:var(--ontology-text); font-size:12px; }
-.flow-console--ontology .flow-td-fields-table :is(.ui-input,.ui-select-selector) { background:var(--ontology-panel)!important; color:var(--ontology-text)!important; border-color:var(--ontology-control-border)!important; font-size:12px; }
+.flow-console--ontology .flow-td-fields-table :is(.ui-input,.ui-select) { background:var(--ontology-panel)!important; color:var(--ontology-text)!important; border-color:var(--ontology-control-border)!important; font-size:12px; }
 .flow-surface-modal .ui-modal-content { border:1px solid var(--ontology-control-border); border-radius:4px; background:var(--ontology-panel); color:var(--ontology-text); box-shadow:0 3px 12px #1c21271f; }
 .flow-surface-modal .ui-modal-header { background:var(--ontology-panel); border-color:var(--ontology-border); }
 .flow-surface-modal .ui-modal-title { color:var(--ontology-text); font-size:14px; font-weight:500; line-height:20px; }
@@ -288,7 +288,7 @@
 .flow-console--ontology .flow-schema-workbench .flow-filter-api-title { flex-wrap: wrap; gap: 5px; color: var(--ontology-text); }
 .flow-console--ontology .flow-schema-workbench .flow-filter-api-item { background: var(--ontology-panel); border-color: var(--ontology-border); }
 .flow-console--ontology .flow-schema-workbench :is(.flow-filter-api-item-head strong,.flow-filter-api-token code,.flow-filter-api-permissions strong) { color: var(--ontology-text); }
-.flow-console--ontology .flow-schema-workbench :is(.flow-filter-api-grid input, .flow-filter-api-range .ui-select-selector) {
+.flow-console--ontology .flow-schema-workbench :is(.flow-filter-api-grid input, .flow-filter-api-range .ui-select) {
   border-color: var(--ontology-control-border); background: var(--ontology-panel); color: var(--ontology-text);
 }
 .flow-schema-details { padding: 14px 0; min-width: 0; overflow: auto; }
@@ -489,7 +489,7 @@
 .flow-preview-range { font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .flow-preview-page-controls { flex-wrap: wrap; }
 .flow-preview-page-controls > label { white-space: nowrap; }
-.flow-preview-page-controls select {
+.flow-preview-page-controls .ui-native-select {
   min-height: 28px; padding: 0 4px; border: 1px solid var(--ontology-control-border); border-radius: 3px;
   background: var(--ontology-panel); color: var(--ontology-text); font: inherit;
 }
@@ -497,7 +497,7 @@
   display: grid; gap: 3px; padding: 6px 10px; border-bottom: 1px solid var(--ontology-border);
 }
 @media (max-width: 740px), (pointer: coarse) {
-  .flow-console--ontology .flow-schema-workbench .flow-preview-page-controls :is(.ui-btn, select) { min-height: 38px; }
+  .flow-console--ontology .flow-schema-workbench .flow-preview-page-controls :is(.ui-btn, .ui-native-select) { min-height: 38px; }
 }
 
 .flow-console--ontology .flow-explorer-catalog .flow-catalog-create-table { margin: 0 12px 10px; width: calc(100% - 24px); }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, Input, Modal } from '@/components/ui';
+import { Button, Input, Modal, NativeSelect } from '@/components/ui';
 import { fetchIndexedIdSample, queryIndexedIdSample } from '../../services/api';
 import type { IndexedIdSampleCapability, IndexedIdSamplePredicate, IndexedIdSampleResult } from '../../services/api';
 import { getSessionState } from '../../services/session';
@@ -44,9 +44,9 @@ function RequiredSample({ schema, table, field, identity }: { schema: string; ta
   const candidate = { field, operator, value: operator === '=' ? start : `${start},${end}` };
   return <>
     <p>Reviewed key: <code>{field}</code>. Enter signed 64-bit integers without leading zeros.</p>
-    <label>Comparison <select aria-label="Comparison" value={operator} onChange={event => setOperator(event.target.value === '介于' ? '介于' : '=')}>
+    <label>Comparison <NativeSelect aria-label="Comparison" value={operator} onChange={event => setOperator(event.target.value === '介于' ? '介于' : '=')}>
       <option value="=">Equals</option><option value="介于">Inclusive range</option>
-    </select></label>
+    </NativeSelect></label>
     <label>{operator === '=' ? 'Key value' : 'From key'} <Input aria-label={operator === '=' ? 'Key value' : 'From key'} value={start}
       maxLength={64} onChange={event => setStart(event.target.value)} /></label>
     {operator === '介于' && <label>Through key <Input aria-label="Through key" value={end} maxLength={64}

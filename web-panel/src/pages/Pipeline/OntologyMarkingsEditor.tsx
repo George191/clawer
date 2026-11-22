@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Button, Input, Select } from '@/components/ui';
+import { Button, Input, Select, NativeSelect } from '@/components/ui';
 import { ontologyError, type OntologyPrincipal, type Principal } from '../../services/ontology';
 import { graphRequest, type Page } from '../../services/ontology_graph';
 
@@ -59,8 +59,8 @@ export default function OntologyMarkingsEditor({ project, value, onChange, princ
     {result.canManage && <details><summary>Manage project clearances</summary>
       <fieldset disabled={busy} className="flow-semantic-config flow-clearance-form">
         <div className="flow-clearance-identity">
-          <label>Project marking<select aria-label="Project marking" value={editing?.id ?? ''} onChange={e => selectMark(choices.find(item => item.id === e.target.value))}>
-            <option value="">New marking</option>{choices.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+          <label>Project marking<NativeSelect aria-label="Project marking" value={editing?.id ?? ''} onChange={e => selectMark(choices.find(item => item.id === e.target.value))}>
+            <option value="">New marking</option>{choices.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</NativeSelect></label>
           {!editing && <label>Marking name<Input value={name} onChange={e => setName(e.target.value)} /></label>}
         </div>
         <label>Clearance holders<Select {...selectStyle} aria-label="Clearance holders" mode="multiple" disabled={busy} value={readers.map(key)} placeholder="Select project members or groups"

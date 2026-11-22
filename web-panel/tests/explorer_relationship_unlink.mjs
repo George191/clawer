@@ -21,7 +21,7 @@ function mount(run) {
       useRef(initial) { return refs[cursor++] ||= { current: initial }; },
       useEffect(effect, deps) { const i = cursor++; if (!effects[i] || deps.some((value, j) => !Object.is(value, effects[i].deps[j]))) scheduled.push([i, effect, deps]); },
     };
-    if (name === '@/components/ui') return { Button: 'Button', Modal: 'Modal', message: Object.fromEntries(['success', 'error'].map(kind => [kind, value => notifications.push({ kind, value })])) };
+    if (name === '@/components/ui') return { Button: 'Button', Modal: 'Modal', NativeSelect: 'NativeSelect', message: Object.fromEntries(['success', 'error'].map(kind => [kind, value => notifications.push({ kind, value })])) };
     if (name === '@/components/ui/icons') return new Proxy({}, { get: (_, key) => String(key) });
     if (name === '../../services/session') return { getSessionState: () => session };
     if (name === '../../services/ontology') return { ontologyError: (error, fallback) => error.message || fallback };
@@ -88,7 +88,7 @@ test('confirmed unlink is submitted once, locks controls and closes only after s
   const pending = ui.modal().props.onOk(); ui.render();
   assert.equal(calls, 1); assert.equal(ui.modal().props.confirmLoading, true);
   assert.equal(ui.modal().props.closable, false);
-  assert.equal(ui.nodes().find(node => node.type === 'select').props.disabled, true);
+  assert.equal(ui.nodes().find(node => node.type === 'NativeSelect').props.disabled, true);
   assert.equal(ui.remove().props.disabled, true);
   await ui.modal().props.onOk(); assert.equal(calls, 1);
   ui.modal().props.onCancel(); ui.render(); assert.equal(ui.modal().props.open, true);

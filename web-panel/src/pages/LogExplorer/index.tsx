@@ -521,7 +521,7 @@ const LogExplorer: React.FC = () => {
             font-family: 'Fira Code', monospace;
             font-size: 13px;
           }
-          .log-actions .ui-select-selector {
+          .log-actions .ui-select {
             background: transparent !important;
             border-color: ${aura.border} !important;
             color: ${aura.muted} !important;

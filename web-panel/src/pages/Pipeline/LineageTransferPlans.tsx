@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Modal } from '@/components/ui';
+import { Modal, NativeSelect } from '@/components/ui';
 import { ArrowRightOutlined, PlusOutlined } from '@/components/ui/icons';
 import { checkTransferPlan, fetchEtlObjectTypes, fetchEtlTableColumns, fetchTransferPlans, fetchTransferRunAttempts, fetchTransferRunCapabilities, fetchTransferRunHistory, fetchTransferSchedule, fetchTransferScheduleJobs, runSandboxTransfer, saveTransferPlan, updateTransferSchedule } from '../../services/api';
 import type { TransferPlan, TransferPlanInput, TransferPlanPreflight, TransferRunAttempt, TransferRunCapabilities, TransferRunReceipt, TransferSchedule, TransferScheduleJob } from '../../services/api';
@@ -244,11 +244,11 @@ function IncrementalCursorPicker({ schema, table, cursor, onChange }: {
   }, [schema, table, revision]);
 
   return <div className="flow-transfer-cursor">
-    <label>Source selection<select value={cursor ?? ''} onChange={event => onChange(event.target.value || null)}>
+    <label>Source selection<NativeSelect value={cursor ?? ''} onChange={event => onChange(event.target.value || null)}>
       <option value="">One-time append</option>
       {cursor && cursor !== candidate && <option value={cursor} disabled>Incremental by {cursor} (saved)</option>}
       {candidate && <option value={candidate}>Incremental by {candidate}</option>}
-    </select></label>
+    </NativeSelect></label>
     {error ? <div role="alert" className="flow-transfer-error">{error} <button type="button" className="flow-lineage-action" onClick={() => setRevision(value => value + 1)}>Retry key lookup</button></div>
       : <p>{!table ? 'Choose a source table to check for an incremental key.' : candidate === undefined ? 'Checking the source primary key…' : candidate === null ? 'Incremental append requires a single integer source primary key.' : null}</p>}
     {cursor && <p>New keys must always be higher than all previously committed source keys. Rows inserted late at or below the checkpoint are not copied; updates and deletions of processed rows are not tracked. This does not backfill a completed one-time append.</p>}
@@ -282,11 +282,11 @@ function TablePicker({ label, schema, table, setTable }: {
   }, [schema, revision]);
 
   return <div className="flow-transfer-picker">
-    <label>{label}<select required disabled={!options?.length} value={table} onChange={event => setTable(event.target.value)}>
+    <label>{label}<NativeSelect required disabled={!options?.length} value={table} onChange={event => setTable(event.target.value)}>
       <option value="">{!schema ? 'Choose a schema first' : error ? 'Tables unavailable' : !options ? 'Loading tables…' : !options.length ? 'No visible tables' : 'Select a table'}</option>
       {table && !options?.includes(table) && <option value={table} disabled>{table}{options ? ' (unavailable)' : ''}</option>}
       {options?.map(option => <option value={option} key={option}>{option}</option>)}
-    </select></label>
+    </NativeSelect></label>
     {error && <div role="alert">{error} <button className="flow-lineage-action" type="button" onClick={() => setRevision(value => value + 1)}>Retry {label.toLowerCase()} lookup</button></div>}
   </div>;
 }
@@ -520,12 +520,12 @@ export default function LineageTransferPlans({ schema, schemas, selectedSchedule
       <fieldset disabled={saving}>
         <legend>{editingId ? 'Edit draft' : 'New draft'}</legend>
         <label>Plan name<input autoFocus required maxLength={120} value={draft.name} onChange={event => change({ name: event.target.value })} /></label>
-        <label>Source schema<select required value={draft.sourceSchema} onChange={event => change({ sourceSchema: event.target.value, sourceTable: '', incrementalCursor: null })}><option value="">Select a schema</option>{schemaOptions(draft.sourceSchema)}</select></label>
+        <label>Source schema<NativeSelect required value={draft.sourceSchema} onChange={event => change({ sourceSchema: event.target.value, sourceTable: '', incrementalCursor: null })}><option value="">Select a schema</option>{schemaOptions(draft.sourceSchema)}</NativeSelect></label>
         <TablePicker key={`source:${draft.sourceSchema}`} label="Source table" schema={draft.sourceSchema} table={draft.sourceTable} setTable={sourceTable => change({ sourceTable, incrementalCursor: null })} />
-        <label>Destination schema<select required value={draft.targetSchema} onChange={event => change({ targetSchema: event.target.value, targetTable: '', incrementalCursor: null })}><option value="">Select a schema</option>{schemaOptions(draft.targetSchema)}</select></label>
+        <label>Destination schema<NativeSelect required value={draft.targetSchema} onChange={event => change({ targetSchema: event.target.value, targetTable: '', incrementalCursor: null })}><option value="">Select a schema</option>{schemaOptions(draft.targetSchema)}</NativeSelect></label>
         <TablePicker key={`target:${draft.targetSchema}`} label="Destination table" schema={draft.targetSchema} table={draft.targetTable} setTable={targetTable => change({ targetTable, incrementalCursor: null })} />
-        <label>Write mode<select value={draft.writeMode} onChange={event => change({ writeMode: event.target.value === 'upsert' ? 'upsert' : 'append', incrementalCursor: null })}><option value="append">Append</option><option value="upsert">Upsert by destination primary key</option></select></label>
-        <label>Intended trigger<select value={draft.trigger} onChange={event => {
+        <label>Write mode<NativeSelect value={draft.writeMode} onChange={event => change({ writeMode: event.target.value === 'upsert' ? 'upsert' : 'append', incrementalCursor: null })}><option value="append">Append</option><option value="upsert">Upsert by destination primary key</option></NativeSelect></label>
+        <label>Intended trigger<NativeSelect value={draft.trigger} onChange={event => {
           const trigger = event.target.value;
           change({ trigger: trigger === 'scheduled' || trigger === 'upstream' || trigger === 'weekly' || trigger === 'monthly' ? trigger : 'manual', scheduleTime: null, scheduleWeekdayUtc: undefined, scheduleDayOfMonthUtc: undefined, incrementalCursor: null });
         }}><option value="manual">Manual</option><option value="scheduled">Daily</option>
@@ -533,24 +533,24 @@ export default function LineageTransferPlans({ schema, schemas, selectedSchedule
             <option value="weekly" disabled={!capabilities?.weeklyUpsert || !canSelectUpstream}>Weekly UTC</option>}
           {(capabilities?.monthlyUpsert === true || draft.trigger === 'monthly') &&
             <option value="monthly" disabled={!capabilities?.monthlyUpsert || !canSelectUpstream}>Monthly UTC</option>}
-          <option value="upstream" disabled={!canSelectUpstream}>On upstream commit</option></select></label>
+          <option value="upstream" disabled={!canSelectUpstream}>On upstream commit</option></NativeSelect></label>
         {draft.trigger === 'scheduled' && <label>Daily time (UTC)<input type="time" required step={60} value={draft.scheduleTime ?? ''} onChange={event => change({ scheduleTime: event.target.value || null })} /></label>}
         {draft.trigger === 'weekly' && <>
-          <label>Weekday (UTC)<select required value={draft.scheduleWeekdayUtc ?? ''} disabled={!capabilities?.weeklyUpsert}
+          <label>Weekday (UTC)<NativeSelect required value={draft.scheduleWeekdayUtc ?? ''} disabled={!capabilities?.weeklyUpsert}
             onChange={event => change({ scheduleWeekdayUtc: event.target.value ? Number(event.target.value) : undefined })}>
             <option value="">Select a weekday</option>{isoWeekdaysUtc.map((day, index) => <option key={day} value={index + 1}>{day}</option>)}
-          </select></label>
+          </NativeSelect></label>
           <label>Weekly time (UTC)<input type="time" required step={60} value={draft.scheduleTime ?? ''} disabled={!capabilities?.weeklyUpsert}
             onChange={event => change({ scheduleTime: event.target.value || null })} /></label>
           <p>{capabilities?.weeklyUpsert ? 'Saving this draft does not arm the schedule. Review and arm the saved revision separately.' :
             'Weekly scheduling is unavailable. Existing schedule history remains in the saved plan.'}</p>
         </>}
         {draft.trigger === 'monthly' && <>
-          <label>Day of month (UTC)<select required value={draft.scheduleDayOfMonthUtc ?? ''} disabled={!capabilities?.monthlyUpsert}
+          <label>Day of month (UTC)<NativeSelect required value={draft.scheduleDayOfMonthUtc ?? ''} disabled={!capabilities?.monthlyUpsert}
             onChange={event => change({ scheduleDayOfMonthUtc: event.target.value ? Number(event.target.value) : undefined })}>
             <option value="">Select a day</option>{Array.from({ length: 28 }, (_, index) => index + 1).map(day =>
               <option key={day} value={day}>{day}</option>)}
-          </select></label>
+          </NativeSelect></label>
           <label>Monthly time (UTC)<input type="time" required step={60} value={draft.scheduleTime ?? ''} disabled={!capabilities?.monthlyUpsert}
             onChange={event => change({ scheduleTime: event.target.value || null })} /></label>
           <p>{capabilities?.monthlyUpsert ? 'Choose day 1 through 28. Saving this draft does not arm the schedule. Review and arm the saved revision separately.' :

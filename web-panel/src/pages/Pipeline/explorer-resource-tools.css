@@ -6,8 +6,8 @@
 .explorer-resource-dialog .flow-schema-details h3 { margin:0 0 4px; font-size:13px; font-weight:500; line-height:20px; }
 .explorer-resource-view .flow-schema-details p,
 .explorer-resource-dialog .flow-schema-details p { line-height:1.5; }
-.explorer-resource-view :is(table,.ui-btn,select),
-.explorer-resource-dialog :is(table,.ui-btn,select) { font-size:12px; }
+.explorer-resource-view :is(table,.ui-btn,.ui-native-select),
+.explorer-resource-dialog :is(table,.ui-btn,.ui-native-select) { font-size:12px; }
 .explorer-resource-view .flow-schema-details :is(th,td) { padding:7px 10px; vertical-align:top; }
 .explorer-resource-view a { color:var(--ui-action-link); }
 .explorer-resource-view > .physical-property-workbench { flex:none; box-sizing:border-box; width:100%; min-height:0; padding:0; background:var(--ontology-panel); font-size:12px; }

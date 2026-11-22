@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Modal } from '@/components/ui';
+import { Modal, NativeSelect } from '@/components/ui';
 import { ArrowRightOutlined } from '@/components/ui/icons';
 import { fetchTransferUpstreamCandidates, fetchTransferUpstreamJobs, fetchTransferUpstreamTrigger, updateTransferUpstreamTrigger } from '../../services/api';
 import type { TransferPlan, TransferUpstreamCandidate, TransferUpstreamGroup, TransferUpstreamJob, TransferUpstreamOperator, TransferUpstreamTrigger } from '../../services/api';
@@ -129,10 +129,10 @@ export default function LineageUpstreamTrigger({ plan, maxRows, formatError }: {
       {binding.configuredEnabled
         ? <div className="flow-transfer-run-actions"><button type="button" className="flow-lineage-action" disabled={busy} onClick={() => setConfirm('pause')}>Pause upstream trigger</button></div>
         : <>
-          <label>Upstream condition <select aria-label="Upstream condition" value={operator} disabled={busy || !binding.available} onChange={event => setOperator(event.target.value as TransferUpstreamOperator)}>
+          <label>Upstream condition <NativeSelect aria-label="Upstream condition" value={operator} disabled={busy || !binding.available} onChange={event => setOperator(event.target.value as TransferUpstreamOperator)}>
             <option value="OR">{groupEnabled ? 'OR · Either branch' : 'OR · Any producer commits'}</option>
             <option value="AND">{groupEnabled ? 'AND · Both branches' : 'AND · All producers commit'}</option>
-          </select></label>
+          </NativeSelect></label>
           {!groupEnabled && !gateEnabled && <p>{operator === 'AND' ? 'Each job consumes one eligible, unused commit from every selected producer.' : 'Each eligible, unused producer commit can start its own job.'}</p>}
           {candidates && (candidates.length > 0 || unlisted.length > 0) && <fieldset className="flow-transfer-parent-options" disabled={busy || !binding.available}>
             <legend>Eligible manual producers ({parentIds.length}/{maxParents} selected)</legend>

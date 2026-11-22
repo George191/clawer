@@ -14,10 +14,10 @@
 .access-stats .ui-statistic-content{color:#e4e7eb;font-size:22px}
 .access-toolbar{display:grid;grid-template-columns:150px 150px minmax(220px,1fr) auto auto;gap:8px;min-height:auto;padding:12px 14px;background:#1a1d27}
 .access-toolbar .ui-input-affix-wrapper{width:100%;max-width:none}
-.access-page .ui-select-selector,.access-page .ui-select:hover .ui-select-selector,.access-page .ui-select-focused .ui-select-selector,.access-page .ui-input-affix-wrapper,.access-page .ui-input-affix-wrapper:hover,.access-page .ui-input-affix-wrapper-focused,.access-page .ui-btn,.access-page .ui-btn:hover,.access-page .ui-btn:focus-visible{border:0!important;box-shadow:none!important}
+.access-page .ui-select,.access-page .ui-select:hover,.access-page .ui-select-focused,.access-page .ui-input-affix-wrapper,.access-page .ui-input-affix-wrapper:hover,.access-page .ui-input-affix-wrapper-focused,.access-page .ui-btn,.access-page .ui-btn:hover,.access-page .ui-btn:focus-visible{border:0!important;box-shadow:none!important}
 
-.access-page .ui-select-selector,.access-page .ui-input-affix-wrapper,.access-page .ui-btn-default{background:#343947!important;color:#e4e7eb!important}
-.access-page .ui-select:hover .ui-select-selector,.access-page .ui-input-affix-wrapper:hover,.access-page .ui-btn-default:hover{background:#292e3b!important;color:#e4e7eb!important}
+.access-page .ui-select,.access-page .ui-input-affix-wrapper,.access-page .ui-btn-default{background:#343947!important;color:#e4e7eb!important}
+.access-page .ui-select:hover,.access-page .ui-input-affix-wrapper:hover,.access-page .ui-btn-default:hover{background:#292e3b!important;color:#e4e7eb!important}
 .access-table-card,.access-page>.ui-card{overflow:hidden}
 .access-page .ui-table,.access-page .ui-table-container,.access-page .ui-table-cell{border-color:rgba(148,163,184,.08)!important}
 .access-page .ui-table-thead>tr>th{background:#1a1d27}
@@ -28,8 +28,8 @@
 .access-permission-toolbar{border:0;background:#1a1d27}
 html[data-theme='light'] .access-page{color:#172033}
 html[data-theme='light'] .access-toolbar,html[data-theme='light'] .access-permission-toolbar,html[data-theme='light'] .access-stats .ui-card,html[data-theme='light'] .access-page .ui-table-thead>tr>th{background:#fff}
-html[data-theme='light'] .access-page .ui-select-selector,html[data-theme='light'] .access-page .ui-input-affix-wrapper,html[data-theme='light'] .access-page .ui-btn-default{background:#edf0f4!important;color:#172033!important}
-html[data-theme='light'] .access-page .ui-select:hover .ui-select-selector,html[data-theme='light'] .access-page .ui-input-affix-wrapper:hover,html[data-theme='light'] .access-page .ui-btn-default:hover{background:#dfe3e9!important;color:#172033!important}
+html[data-theme='light'] .access-page .ui-select,html[data-theme='light'] .access-page .ui-input-affix-wrapper,html[data-theme='light'] .access-page .ui-btn-default{background:#edf0f4!important;color:#172033!important}
+html[data-theme='light'] .access-page .ui-select:hover,html[data-theme='light'] .access-page .ui-input-affix-wrapper:hover,html[data-theme='light'] .access-page .ui-btn-default:hover{background:#dfe3e9!important;color:#172033!important}
 html[data-theme='light'] .access-page .ui-card{background:#fff!important}
 html[data-theme='light'] .access-role-card,html[data-theme='light'] .access-project-card,html[data-theme='light'] .access-add-card{background:#f1f3f6!important;box-shadow:0 3px 10px rgba(23,32,51,.08)!important}
 html[data-theme='light'] .access-role-card:hover,html[data-theme='light'] .access-project-card:hover,html[data-theme='light'] .access-add-card:hover{background:#e7e9ee!important}
@@ -125,11 +125,11 @@ html[data-theme='light'] .access-detail-tabs button:hover,html[data-theme='light
 .access-page .ui-pagination .ui-pagination-item-active a{color:#e4e7eb!important}
 .access-page .ui-pagination .ui-pagination-options{display:flex;height:30px;align-items:center}
 .access-page .ui-pagination .ui-pagination-options .ui-select{height:30px;cursor:pointer}
-.access-page .ui-pagination .ui-pagination-options .ui-select-selector{height:30px!important;min-height:30px!important;align-items:center;cursor:pointer}
+.access-page .ui-pagination .ui-pagination-options .ui-select{height:30px!important;min-height:30px!important;align-items:center;cursor:pointer}
 .access-page .ui-pagination .ui-pagination-options .ui-select-selection-item,.access-page .ui-pagination .ui-pagination-options .ui-select-arrow{cursor:pointer}
 .access-page .ui-pagination .ui-select-selection-search-input{pointer-events:none;caret-color:transparent;cursor:pointer}
-.access-page .ui-pagination .ui-select-selector{border:0!important;background:#343947!important;color:#b7bdc8!important}
-.access-page .ui-pagination .ui-select:hover .ui-select-selector{background:#292e3b!important}
+.access-page .ui-pagination .ui-select{border:0!important;background:#343947!important;color:#b7bdc8!important}
+.access-page .ui-pagination .ui-select:hover{background:#292e3b!important}
 .access-page .ui-pagination .ui-select-arrow{color:#9299a6!important}
 .access-export-menu .ui-dropdown-menu{min-width:150px;padding:6px;background:#343947;box-shadow:0 8px 24px rgba(0,0,0,.28)}
 .access-export-menu .ui-dropdown-menu-item{min-height:34px;padding:7px 10px;color:#c4c9d2;font-size:12px}
@@ -140,8 +140,8 @@ html[data-theme='light'] .access-page .ui-pagination .ui-pagination-item,html[da
 html[data-theme='light'] .access-page .ui-pagination .ui-pagination-item:hover,html[data-theme='light'] .access-page .ui-pagination .ui-pagination-prev:not(.ui-pagination-disabled):hover,html[data-theme='light'] .access-page .ui-pagination .ui-pagination-next:not(.ui-pagination-disabled):hover{background:#dfe3e9!important}
 html[data-theme='light'] .access-page .ui-pagination .ui-pagination-item-active{background:#cfd4dc!important}
 html[data-theme='light'] .access-page .ui-pagination .ui-pagination-item-active a{color:#343947!important}
-html[data-theme='light'] .access-page .ui-pagination .ui-select-selector{background:#edf0f4!important;color:#4b5563!important}
-html[data-theme='light'] .access-page .ui-pagination .ui-select:hover .ui-select-selector{background:#dfe3e9!important}
+html[data-theme='light'] .access-page .ui-pagination .ui-select{background:#edf0f4!important;color:#4b5563!important}
+html[data-theme='light'] .access-page .ui-pagination .ui-select:hover{background:#dfe3e9!important}
 html[data-theme='light'] .access-export-menu .ui-dropdown-menu{background:#edf0f4}
 html[data-theme='light'] .access-export-menu .ui-dropdown-menu-item{color:#4b5563}
 html[data-theme='light'] .access-export-menu .ui-dropdown-menu-item:hover{background:#dfe3e9!important;color:#172033!important}

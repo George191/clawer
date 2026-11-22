@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, message } from '@/components/ui';
+import { Button, message, NativeSelect } from '@/components/ui';
 import { graphRequest, type LinkType, type Page } from '../../services/ontology_graph';
 import { applyTransaction, listOntologyRecords, listPublishedOntologyTypes, listTransactions, ontologyError, undoTransaction,
   type OntologyRecordPage, type PublishedOntologyType, type TransactionReceipt, type TransactionStep } from '../../services/ontology';
@@ -37,11 +37,11 @@ function RecordPicker({type, label, value, aliases = [], change, version}: {
   }, [type, offset, version, retry]);
   const records = page.items.filter(r => r.id);
   const pageTo = (next: number) => {change(''); setLoading(true); setOffset(next);};
-  return <div><label>{label}<select aria-label={label} value={value} disabled={!aliases.length && (loading || !!error || !records.length)} onChange={e => {
+  return <div><label>{label}<NativeSelect aria-label={label} value={value} disabled={!aliases.length && (loading || !!error || !records.length)} onChange={e => {
     const id = e.target.value; const record = page.items.find(r => r.id === id);
     change(id, record?.revision ?? undefined, record ? String(record.title ?? record.id) : id);
   }}><option value="">{aliases.length || records.length ? 'Select record' : loading ? 'Loading records…' : error ? 'Records unavailable' : 'No visible records'}</option>{aliases.map(ref => <option key={ref}>{ref}</option>)}
-    {records.map(r => <option key={r.id} value={r.id!}>{String(r.title ?? r.id)} · r{r.revision}</option>)}</select></label>
+    {records.map(r => <option key={r.id} value={r.id!}>{String(r.title ?? r.id)} · r{r.revision}</option>)}</NativeSelect></label>
     {(offset > 0 || page.hasMore) && <div><Button disabled={!offset || loading} onClick={() => pageTo(offset-50)}>Previous records</Button>
       <Button disabled={!page.hasMore || loading || offset + 50 > 100_000} onClick={() => pageTo(offset+50)}>Next records</Button></div>}
     </div>;
@@ -185,13 +185,13 @@ export default function OntologyTransactions({objectType, onCommitted}: {objectT
     <nav className="ontology-tool-tabs" aria-label="Transaction views"><button type="button" aria-pressed={tab === 'compose'} disabled={pending} onClick={() => setTab('compose')}>New transaction{entries.length ? ' · ' + entries.length : ''}</button><button type="button" aria-pressed={tab === 'history'} disabled={pending} onClick={() => setTab('history')}>History and writeback</button></nav>
     {tab === 'compose' ? <div className="ontology-transaction-layout">
       <section className="flow-tool-section ontology-transaction-editor" aria-label="Transaction steps"><header><h4>Add an operation</h4><p>Choose an object type and supply the values for this step.</p></header><fieldset disabled={pending}>
-        <div className="ontology-tx-fields"><label>Step operation<select aria-label="Step operation" value={kind} onChange={e => {if (e.target.value === kind) return;setKind(e.target.value as Kind);if (!edge) resetLinks();resetStep();}}>
-          {(['create','modify','delete','link','unlink'] as const).map(k => <option key={k} value={k}>{operationLabels[k]}</option>)}</select></label>
-        <label>Step object type<select aria-label="Step object type" value={typeId} onChange={e => {if (e.target.value === typeId) return;setTypeId(e.target.value);setActions([]);resetLinks();resetStep();}}>
-          {types.map(t => <option key={t.id} value={t.id}>{t.definition.name}</option>)}</select></label></div>
+        <div className="ontology-tx-fields"><label>Step operation<NativeSelect aria-label="Step operation" value={kind} onChange={e => {if (e.target.value === kind) return;setKind(e.target.value as Kind);if (!edge) resetLinks();resetStep();}}>
+          {(['create','modify','delete','link','unlink'] as const).map(k => <option key={k} value={k}>{operationLabels[k]}</option>)}</NativeSelect></label>
+        <label>Step object type<NativeSelect aria-label="Step object type" value={typeId} onChange={e => {if (e.target.value === typeId) return;setTypeId(e.target.value);setActions([]);resetLinks();resetStep();}}>
+          {types.map(t => <option key={t.id} value={t.id}>{t.definition.name}</option>)}</NativeSelect></label></div>
         {moreTypes && <Button disabled={typesLoading || typeOffset + 50 > 100_000} onClick={() => {setTypesLoading(true);setTypeOffset(typeOffset+50);}}>Load more object types</Button>}
-        {edge ? <><label>Step relationship<select aria-label="Step relationship" value={linkId} onChange={e => {setLinkId(e.target.value);setSource('');setTarget('');}}>
-          <option value="">{links.length ? 'Select relationship' : linksLoading ? 'Loading relationships…' : 'No visible relationships'}</option>{links.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select></label>
+        {edge ? <><label>Step relationship<NativeSelect aria-label="Step relationship" value={linkId} onChange={e => {setLinkId(e.target.value);setSource('');setTarget('');}}>
+          <option value="">{links.length ? 'Select relationship' : linksLoading ? 'Loading relationships…' : 'No visible relationships'}</option>{links.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</NativeSelect></label>
           {moreLinks && <Button disabled={linksLoading || linkOffset + 50 > 100_000} onClick={() => {setLinksLoading(true);setLinkOffset(linkOffset+50);}}>Load more relationships</Button>}
           {link && <div className="ontology-tx-fields"><RecordPicker key={'source'+link.id} type={link.sourceDefinitionId} version={version}
             label="Source record" aliases={aliasesFor(link.sourceDefinitionId)} value={source} change={setSource} />

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { NativeSelect } from '@/components/ui';
 import { BarChartOutlined, FilterOutlined, ReloadOutlined, TableOutlined } from '@/components/ui/icons';
 import { explorerPropertyType } from '../../services/explorerProperties';
 import PropertyTypeIcon from './PropertyTypeIcon';
@@ -76,9 +77,9 @@ export default function ExplorerExploreView({ fields, names, types, rows, field,
   useExplorerErrorToast(aggregation?.limitReached ? undefined : error, 'Unable to load this analysis', aggregation?.onRetry);
   return <section className="explore-analysis" aria-label="Explore results" aria-busy={busy}>
     <header className="explore-analysis__header"><div><h2>Explore</h2><p>Analyze a property and select values to refine your results.</p></div>
-      <label className="explore-analysis__property"><span>Property</span><div><PropertyTypeIcon type={type} /><select aria-label="Property to analyze" disabled={!fields.length} value={field} onChange={event => { setShowAll(false); select(event.target.value); }}>
+      <label className="explore-analysis__property"><span>Property</span><div><PropertyTypeIcon type={type} /><NativeSelect aria-label="Property to analyze" disabled={!fields.length} value={field} onChange={event => { setShowAll(false); select(event.target.value); }}>
         {fields.map(name => <option key={name} value={name}>{names?.[name] || name}</option>)}
-      </select></div></label>
+      </NativeSelect></div></label>
     </header>
     <div className="explore-analysis__scope"><span>{aggregation ? 'Current object set' : 'Current results page'}</span>
       <p>{aggregation ? 'Includes the current search, filters and saved object set.' : 'Statistics cover the loaded page, not the full object set.'}</p>
@@ -98,7 +99,7 @@ export default function ExplorerExploreView({ fields, names, types, rows, field,
           : !field || !fields.length ? <div className="explore-analysis__empty"><p>Choose an available property to begin.</p></div>
             : !chartable ? <div className="explore-analysis__empty"><PropertyTypeIcon type={type} /><strong>{media ? 'Media properties are explored in object details' : 'Structured properties do not have a scalar distribution'}</strong><p>Choose a text, number, date or boolean property to compare values. Use Add filter to refine this property.</p></div>
               : !groups.length ? <div className="explore-analysis__empty"><BarChartOutlined /><strong>No values to analyze</strong><p>Change the current filters or choose another property.</p></div> : <>
-                <div className="explore-analysis__controls"><span>Value distribution</span><div><label>Sort <select aria-label="Sort analysis values" value={sort} onChange={event => setSort(event.target.value)}><option value="count">Count, high to low</option><option value="value">Value, ascending</option></select></label>
+                <div className="explore-analysis__controls"><span>Value distribution</span><div><label>Sort <NativeSelect aria-label="Sort analysis values" value={sort} onChange={event => setSort(event.target.value)}><option value="count">Count, high to low</option><option value="value">Value, ascending</option></NativeSelect></label>
                   <div role="group" aria-label="Analysis display"><button type="button" aria-label="Show bar chart" title="Bar chart" aria-pressed={view === 'bars'} onClick={() => setView('bars')}><BarChartOutlined /></button><button type="button" aria-label="Show value table" title="Value table" aria-pressed={view === 'table'} onClick={() => setView('table')}><TableOutlined /></button></div>
                 </div></div>
                 {numericCount > 0 && <p className="explore-analysis__range">Min <strong>{number(Math.min(...numericGroups.map(group => group.value)))}</strong><span>Max <strong>{number(Math.max(...numericGroups.map(group => group.value)))}</strong></span><span>Average <strong>{number(numericGroups.reduce((sum, group) => sum + group.value * group.count, 0) / numericCount)}</strong></span></p>}

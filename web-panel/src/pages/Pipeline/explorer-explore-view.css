@@ -1,5 +1,5 @@
 .explore-analysis { padding:20px 24px 28px; background:var(--ontology-bg); color:var(--ontology-text); font-size:13px; }
-.explore-analysis button,.explore-analysis select { color:inherit; font:inherit; }
+.explore-analysis button,.explore-analysis .ui-native-select { color:inherit; font:inherit; }
 .explore-analysis button { cursor:pointer; }
 .explore-analysis button:disabled { opacity:.45; cursor:default; }
 .explore-analysis__header { display:flex; align-items:center; justify-content:space-between; gap:18px; margin-bottom:16px; }
@@ -7,8 +7,8 @@
 .explore-analysis__header p { margin:4px 0 0; color:var(--ontology-muted); font-size:12px; }
 .explore-analysis__property { display:grid; flex:none; gap:4px; min-width:200px; max-width:360px; color:var(--ontology-muted); font-size:11px; }
 .explore-analysis__property > div { display:flex; align-items:center; gap:7px; }
-.explore-analysis select { max-width:100%; min-height:28px; padding:3px 26px 3px 8px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-panel); color:var(--ontology-text); font-size:12px; }
-.explore-analysis__property select { width:100%; }
+.explore-analysis .ui-native-select { max-width:100%; min-height:28px; padding:3px 26px 3px 8px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-panel); color:var(--ontology-text); font-size:12px; }
+.explore-analysis__property .ui-native-select { width:100%; }
 .explore-analysis__scope { display:flex; align-items:baseline; flex-wrap:wrap; gap:4px 10px; margin-bottom:12px; color:var(--ontology-muted); font-size:11px; }
 .explore-analysis__scope > span { color:var(--ontology-text); font-weight:500; }
 .explore-analysis__scope p { margin:0; }
@@ -27,7 +27,7 @@
 .explore-analysis__card > header > button:hover,.explore-analysis__empty button:hover { background:var(--ontology-hover); }
 .explore-analysis__controls { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; padding:12px 14px 8px; color:var(--ontology-muted); font-size:11px; }
 .explore-analysis__controls > div,.explore-analysis__controls label { display:flex; align-items:center; gap:7px; }
-.explore-analysis__controls select { min-height:25px; padding-block:2px; font-size:11px; }
+.explore-analysis__controls .ui-native-select { min-height:25px; padding-block:2px; font-size:11px; }
 .explore-analysis__controls [role=group] { display:flex; gap:2px; }
 .explore-analysis__controls button { display:grid; place-items:center; width:27px; height:27px; padding:0; border:1px solid transparent; border-radius:3px; background:transparent; color:var(--ontology-muted); }
 .explore-analysis__controls button:hover { background:var(--ontology-hover); color:var(--ontology-text); }

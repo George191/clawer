@@ -1,6 +1,6 @@
 import type { ComponentProps, ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
-import { Button, Modal, message } from '@/components/ui';
+import { Button, Modal, message, NativeSelect } from '@/components/ui';
 import { DeleteOutlined, LinkOutlined } from '@/components/ui/icons';
 import { ExplorerFieldValue, type explorerFields } from './ExplorerObjectOverview';
 import { PropertyLabel } from './PropertyTypeIcon';
@@ -68,9 +68,9 @@ export default function ExplorerRelationshipsView({ relations, selectedId, recor
   </section>;
   return <section className="explorer-row-links" aria-label="Related records" aria-busy={loading || busy}>
     <header className="explorer-links-heading"><LinkOutlined /><label><span>Relationships</span>
-      <select aria-label="Relationship" value={selected.id} disabled={loading || busy} onChange={event => onSelect(event.target.value)}>
+      <NativeSelect aria-label="Relationship" value={selected.id} disabled={loading || busy} onChange={event => onSelect(event.target.value)}>
         {relations.map(item => <option key={item.id} value={item.id}>{item.name} · {item.direction}</option>)}
-      </select></label>{management}
+      </NativeSelect></label>{management}
     </header>
     {selected.fieldMapping && <details className="explorer-links-mapping"><summary>{selected.fieldMapping.label}</summary>
       <div className="explorer-links-field-mapping">

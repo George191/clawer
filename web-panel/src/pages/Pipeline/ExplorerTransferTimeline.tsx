@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { exactTransferReceiptFocus } from './transferReceiptFocus';
-import { Button, Modal } from '@/components/ui';
+import { Button, Modal, NativeSelect } from '@/components/ui';
 import { fetchTransferTimeline, fetchTransferTimelineDetail } from '../../services/api';
 import type { TransferRunReceipt, TransferTimelineDetail, TransferTimelineEntry, TransferTimelineFilters } from '../../services/api';
 import { isUtcMonthDay, isoWeekdayName } from '../../services/scheduleTime';
@@ -211,10 +211,10 @@ function TimelineWorkspace({ schema, table, onLatestCurrentReceipt }: Props) {
     <header><h4>Transfer timeline</h4><span>Sandbox destination · newest first</span></header>
     <p>Attempts and dispatches do not prove a write. Receipts record committed transfers and identify whether the physical destination matches this table.</p>
     <form className="flow-evidence-freshness-form" aria-label="Transfer timeline filters" onSubmit={event => { event.preventDefault(); apply(); }}>
-      <label>Timeline view<select aria-label="Timeline view" value={view} onChange={event => setView(event.target.value as typeof view)}>
+      <label>Timeline view<NativeSelect aria-label="Timeline view" value={view} onChange={event => setView(event.target.value as typeof view)}>
         <option value="">All</option><option value="receipts">Committed receipts</option>
         <option value="rejected_attempts">Rejected attempts</option><option value="unconfirmed_attempts">Outcome unconfirmed</option>
-      </select></label>
+      </NativeSelect></label>
       <label>From (UTC)<input type="datetime-local" aria-label="From (UTC)" value={from} onChange={event => setFrom(event.target.value)} /></label>
       <label>To (UTC)<input type="datetime-local" aria-label="To (UTC)" value={before} onChange={event => setBefore(event.target.value)} /></label>
       <p>Enter both times in UTC. From is included and To is excluded; maximum 31 days. Entry times are shown in your local time.</p>

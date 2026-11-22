@@ -140,25 +140,27 @@ function useOpen(controlled: boolean | undefined, initial = false, change?: (ope
   const setOpen = (next: boolean, info?: any) => { if (controlled === undefined) setState(next); if (next !== open) change?.(next, info); };
   return [open, setOpen] as const;
 }
-function usePopup(open: boolean, anchor: React.RefObject<HTMLElement>, popup: React.RefObject<HTMLElement>, placement = 'bottomLeft', point?: { x: number; y: number } | null) {
+function usePopup(open: boolean, anchor: React.RefObject<HTMLElement>, popup: React.RefObject<HTMLElement>, placement = 'bottomLeft', point?: { x: number; y: number } | null, dropdown?: { keepBelow: boolean }) {
   const [style, setStyle] = useState<React.CSSProperties>({ visibility: 'hidden' });
   useLayoutEffect(() => {
     if (!open) return;
     const update = () => {
       if (!anchor.current || !popup.current) return;
-      const a = anchor.current.getBoundingClientRect(); const box = popup.current.getBoundingClientRect(); const gap = 6; const pad = 8; const isTop = placement.startsWith('top'); const isLeft = placement.startsWith('left'); const isRight = placement.startsWith('right');
+      const a = anchor.current.getBoundingClientRect(); const measured = popup.current.getBoundingClientRect(); const gap = 6; const pad = 8; const isTop = placement.startsWith('top'); const isLeft = placement.startsWith('left'); const isRight = placement.startsWith('right');
+      const minWidth = dropdown && !point ? Math.min(a.width, innerWidth - 2 * pad) : undefined;
+      const box = { width: Math.max(measured.width, minWidth || 0), height: measured.height };
       let x = point?.x ?? (isLeft ? a.left - box.width - gap : isRight ? a.right + gap : placement.endsWith('Right') ? a.right - box.width : placement === 'top' || placement === 'bottom' ? a.left + (a.width - box.width) / 2 : a.left);
       let y = point?.y ?? (isTop ? a.top - box.height - gap : isLeft || isRight ? a.top + (a.height - box.height) / 2 : a.bottom + gap);
-      if (!point && !isLeft && !isRight && y + box.height > innerHeight - pad && a.top >= box.height + gap) y = a.top - box.height - gap;
+      if (!dropdown?.keepBelow && !point && !isLeft && !isRight && y + box.height > innerHeight - pad && a.top >= box.height + gap) y = a.top - box.height - gap;
       if (!point && isTop && y < pad) y = a.bottom + gap;
-      x = Math.max(pad, Math.min(x, innerWidth - box.width - pad)); y = Math.max(pad, Math.min(y, innerHeight - box.height - pad));
-      const next: React.CSSProperties = { position: 'fixed', left: x, top: y, visibility: 'visible', maxHeight: Math.max(80, innerHeight - y - pad), maxWidth: 'calc(100vw - 16px)' };
-      setStyle(old => old.left === next.left && old.top === next.top && old.maxHeight === next.maxHeight && old.visibility === 'visible' ? old : next);
+      x = Math.max(pad, Math.min(x, innerWidth - box.width - pad)); y = Math.max(pad, dropdown?.keepBelow && !point ? y : Math.min(y, innerHeight - box.height - pad));
+      const next: React.CSSProperties = { position: 'fixed', left: x, top: y, visibility: 'visible', minWidth, maxHeight: Math.max(dropdown?.keepBelow ? 0 : 80, innerHeight - y - pad), maxWidth: 'calc(100vw - 16px)' };
+      setStyle(old => old.left === next.left && old.top === next.top && old.minWidth === next.minWidth && old.maxHeight === next.maxHeight && old.visibility === 'visible' ? old : next);
     };
     update(); const observer = new ResizeObserver(update); if (anchor.current) observer.observe(anchor.current); if (popup.current) observer.observe(popup.current);
     window.addEventListener('resize', update); window.addEventListener('scroll', update, true);
     return () => { observer.disconnect(); window.removeEventListener('resize', update); window.removeEventListener('scroll', update, true); };
-  }, [open, anchor, popup, placement, point]);
+  }, [open, anchor, popup, placement, point, !!dropdown, dropdown?.keepBelow]);
   return style;
 }
 function useDismiss(open: boolean, anchor: React.RefObject<HTMLElement>, popup: React.RefObject<HTMLElement>, dismiss: () => void, restore = true) {
@@ -198,16 +200,25 @@ function MenuList({ items = [], menu, close, parentPath = [] }: { items?: (MenuI
     return <li key={key} role="none" data-menu-key={key} className="ui-dropdown-menu-entry" onMouseEnter={() => setExpanded(hasChildren ? key : null)}><button type="button" role="menuitem" disabled={item.disabled} aria-disabled={item.disabled || undefined} aria-haspopup={hasChildren ? 'menu' : undefined} aria-expanded={hasChildren ? expanded === key : undefined} className={cx('ui-dropdown-menu-item', selected && 'ui-dropdown-menu-item-selected', item.danger && 'ui-dropdown-menu-item-danger', item.className)} onClick={select} onKeyDown={event => { if (event.key === 'ArrowRight' && hasChildren) { event.preventDefault(); event.stopPropagation(); if(expanded===key)(event.currentTarget.parentElement?.querySelector('ul button:not(:disabled)') as HTMLElement)?.focus();else{pendingChildFocus.current=key;setExpanded(key);} } }}>{item.icon && <span className="ui-dropdown-menu-item-icon">{item.icon}</span>}<span className="ui-dropdown-menu-title-content">{item.label}</span>{hasChildren && <span aria-hidden="true">›</span>}</button>{hasChildren && expanded === key && <MenuList items={item.children} menu={menu} close={close} parentPath={[...parentPath,key]} />}</li>;
   })}</ul>;
 }
-export function Dropdown({ children, menu = {}, open: controlled, defaultOpen, onOpenChange, disabled, trigger = ['hover'], placement = 'bottomLeft', overlayClassName, rootClassName, overlayStyle, dropdownRender, popupRender, getPopupContainer, mouseEnterDelay = .12, mouseLeaveDelay = .15 }: DropdownProps) {
+export function Dropdown({ children, menu = {}, open: controlled, defaultOpen, onOpenChange, disabled, trigger = ['hover'], placement, overlayClassName, rootClassName, overlayStyle, dropdownRender, popupRender, getPopupContainer, mouseEnterDelay = .12, mouseLeaveDelay = .15 }: DropdownProps) {
   const [open, setOpen] = useOpen(controlled, defaultOpen, onOpenChange); const anchor = useRef<HTMLSpanElement>(null); const popup = useRef<HTMLDivElement>(null); const [point, setPoint] = useState<{x:number;y:number}|null>(null); const timer = useRef<number>(); const id = useId(); const keyboard = useRef(false);
+  const shown = open && !disabled; const [present, setPresent] = useState(shown);
   const change = (next: boolean, source = 'trigger') => { window.clearTimeout(timer.current); if (!disabled) setOpen(next, {source}); };
-  const style = usePopup(open, anchor, popup, placement, point); useDismiss(open, anchor, popup, () => change(false));
+  const style = usePopup(shown, anchor, popup, placement || 'bottomLeft', point, { keepBelow: !placement }); useDismiss(shown, anchor, popup, () => change(false));
+  useLayoutEffect(() => {
+    if (shown) { setPresent(true); return; }
+    if (!popup.current) return;
+    if (popup.current?.contains(document.activeElement)) (anchor.current?.querySelector<HTMLElement>(focusable) || anchor.current)?.focus();
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { setPresent(false); return; }
+    const exit = window.setTimeout(() => setPresent(false), 160);
+    return () => window.clearTimeout(exit);
+  }, [shown]);
   useEffect(() => () => window.clearTimeout(timer.current), []);
-  useEffect(() => { if (open && keyboard.current) { const timer = window.setTimeout(() => visibleItems(popup.current)[0]?.focus(), 0); return () => window.clearTimeout(timer); } }, [open]);
+  useEffect(() => { if (shown && keyboard.current) { const timer = window.setTimeout(() => visibleItems(popup.current)[0]?.focus(), 0); return () => window.clearTimeout(timer); } }, [shown]);
   const hover = (next: boolean) => { if (!trigger.includes('hover')) return; window.clearTimeout(timer.current); timer.current = window.setTimeout(() => change(next), 1000 * (next ? mouseEnterDelay : mouseLeaveDelay)); };
   const close = () => change(false, 'menu'); const content = <MenuList items={menu.items} menu={menu} close={close} />;
-  return <><span ref={anchor} className="ui-dropdown-trigger" onMouseEnter={() => hover(true)} onMouseLeave={() => hover(false)} onClick={() => { if (trigger.includes('click')) { keyboard.current = false; setPoint(null); change(!open); } }} onContextMenu={event => { if (trigger.includes('contextMenu')) { event.preventDefault(); keyboard.current = true; setPoint({ x:event.clientX,y:event.clientY }); change(true); } }} onKeyDown={event => { if (event.key === 'ArrowDown' || (event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu') { event.preventDefault(); keyboard.current = true; setPoint(null); change(true); } }}>{childWithAria(children, { 'aria-haspopup':'menu', 'aria-expanded':open, 'aria-controls':open?id:undefined, 'aria-disabled':disabled || undefined })}</span>
-    {open && !disabled && <Portal container={getPopupContainer ? () => getPopupContainer(anchor.current) : undefined}><div ref={popup} id={id} data-ui-popup className={cx('ui-dropdown', overlayClassName, rootClassName)} style={{ ...style,...overlayStyle }} onMouseEnter={() => hover(true)} onMouseLeave={() => hover(false)}>{(popupRender || dropdownRender)?.(content) ?? content}</div></Portal>}
+  return <><span ref={anchor} className="ui-dropdown-trigger" onMouseEnter={() => hover(true)} onMouseLeave={() => hover(false)} onClick={() => { if (trigger.includes('click')) { keyboard.current = false; setPoint(null); change(!open); } }} onContextMenu={event => { if (trigger.includes('contextMenu')) { event.preventDefault(); keyboard.current = true; setPoint({ x:event.clientX,y:event.clientY }); change(true); } }} onKeyDown={event => { if (event.key === 'ArrowDown' || (event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu') { event.preventDefault(); keyboard.current = true; setPoint(null); change(true); } }}>{childWithAria(children, { 'aria-haspopup':'menu', 'aria-expanded':shown, 'aria-controls':shown?id:undefined, 'aria-disabled':disabled || undefined })}</span>
+    {(shown || present) && <Portal container={getPopupContainer ? () => getPopupContainer(anchor.current) : undefined}><div ref={popup} id={id} data-ui-popup data-state={shown ? 'open' : 'closed'} aria-hidden={!shown || undefined} {...(!shown ? { inert: '' } : {})} className={cx('ui-dropdown', overlayClassName, rootClassName)} style={{ ...style,...overlayStyle }} onMouseEnter={() => { if (shown) hover(true); }} onMouseLeave={() => { if (shown) hover(false); }}>{(popupRender || dropdownRender)?.(content) ?? content}</div></Portal>}
   </>;
 }
 export interface TooltipProps extends AnyProps { title?: React.ReactNode | (() => React.ReactNode); children?: React.ReactNode; }

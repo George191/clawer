@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Button } from '@/components/ui';
+import { Button, NativeSelect } from '@/components/ui';
 import { graphRequest } from '../../services/ontology_graph';
 import { ontologyError } from '../../services/ontology';
 
@@ -37,9 +37,9 @@ export default function OntologyWriteback({project, transaction}: {project: stri
   return <section aria-label="External writeback">
     <h4>External writeback</h4>
     {data && !data.receivers.length && <p>No receivers configured for this project.</p>}
-    {!!data?.receivers.length && <><label>Business receiver<select aria-label="Business receiver" value={key}
+    {!!data?.receivers.length && <><label>Business receiver<NativeSelect aria-label="Business receiver" value={key}
       disabled={pending} onChange={e => {choose(e.target.value); fail('');}}>
-      {data.receivers.map(r => <option key={r.key} value={r.key}>{r.name}</option>)}</select></label>
+      {data.receivers.map(r => <option key={r.key} value={r.key}>{r.name}</option>)}</NativeSelect></label>
       <Button disabled={pending || !key || selected?.status === 'delivered'} onClick={send}>
         {selected && selected.status !== 'delivered' ? 'Retry delivery' : 'Send transaction'}</Button></>}
     {selected && <p role="status">Delivery {selected.status} · Attempts {selected.attempts}

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, Input } from '@/components/ui';
+import { Button, Input, NativeSelect } from '@/components/ui';
 import { fetchIndexPreviewSandbox, queryIndexPreviewSandbox } from '../../services/api';
 import type { SandboxIndexPreviewQuery, SandboxIndexPreviewResult } from '../../services/api';
 import { useSandboxIdentity } from './SandboxMarkings';
@@ -130,11 +130,11 @@ function IndexPreviewWorkspace() {
         : !available ? <p>Index-aware sandbox preview is disabled in this environment.</p> : <>
     <section className="flow-index-preview__query" aria-label="Primary key query">
       <label>ID predicate
-        <select aria-label="ID predicate" value={predicate} onChange={event => {
+        <NativeSelect aria-label="ID predicate" value={predicate} onChange={event => {
           clear(); setPredicate(event.target.value === 'range' ? 'range' : 'equals');
         }}>
           <option value="equals">Equals</option><option value="range">Inclusive range</option>
-        </select>
+        </NativeSelect>
       </label>
       {predicate === 'equals' ? <label>ID equals<Input aria-label="ID equals" value={equals} maxLength={20}
         onChange={event => { clear(); setEquals(event.target.value); }} /></label>

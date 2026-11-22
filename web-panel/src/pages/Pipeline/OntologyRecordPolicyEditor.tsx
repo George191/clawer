@@ -1,5 +1,5 @@
 import React from 'react';
-import { Button, Input, Select } from '@/components/ui';
+import { Button, Input, Select, NativeSelect } from '@/components/ui';
 import type { OntologyPrincipal, Principal, RecordRule, SemanticDefinition, SemanticSecurity } from '../../services/ontology';
 
 type Props = {
@@ -48,21 +48,21 @@ export default function OntologyRecordPolicyEditor({ definition, principals, onC
               const { kind, id } = readers.get(key)!; return { kind, id };
             }) })} /></label>
         {rule.kind === 'property' ? <>
-          <label className="flow-create-field"><span>Record property</span><select value={rule.field}
+          <label className="flow-create-field"><span>Record property</span><NativeSelect value={rule.field}
             onChange={e => update(i, { ...rule, field: e.target.value, match: 'equals', value: initialValue(fields.find(p => p.id === e.target.value)?.type) })}>
-            {fields.map(p => <option key={p.id} value={p.id}>{p.name || p.id}</option>)}</select></label>
-          <label className="flow-create-field"><span>Compare with</span><select value={rule.match}
+            {fields.map(p => <option key={p.id} value={p.id}>{p.name || p.id}</option>)}</NativeSelect></label>
+          <label className="flow-create-field"><span>Compare with</span><NativeSelect value={rule.match}
             onChange={e => update(i, e.target.value === 'currentUser' ? { ...rule, match: 'currentUser', value: null } : { ...rule, match: 'equals', value: initialValue(type) })}>
-            <option value="equals">A fixed value</option>{type === 'string' && <option value="currentUser">Signed-in user ID</option>}</select></label>
+            <option value="equals">A fixed value</option>{type === 'string' && <option value="currentUser">Signed-in user ID</option>}</NativeSelect></label>
           {rule.match === 'equals' && <label className="flow-create-field"><span>Required value</span>{type === 'boolean'
-            ? <select value={String(rule.value)} onChange={e => update(i, { ...rule, value: e.target.value === 'true' })}><option>true</option><option>false</option></select>
+            ? <NativeSelect value={String(rule.value)} onChange={e => update(i, { ...rule, value: e.target.value === 'true' })}><option>true</option><option>false</option></NativeSelect>
             : type === 'integer' || type === 'number'
               ? <NumericRuleValue value={rule.value} onChange={value => update(i, { ...rule, value })} />
               : <Input value={String(rule.value ?? '')} onChange={e => update(i, { ...rule, value: e.target.value })} />}</label>}
         </> : <>
           <label className="flow-create-field"><span>Link type key</span><Input value={rule.linkType} onChange={e => update(i, { ...rule, linkType: e.target.value })} /></label>
-          <label className="flow-create-field"><span>Link direction from this record</span><select value={rule.direction} onChange={e => update(i, { ...rule, direction: e.target.value as 'incoming' | 'outgoing' })}>
-            <option value="outgoing">Outgoing</option><option value="incoming">Incoming</option></select></label>
+          <label className="flow-create-field"><span>Link direction from this record</span><NativeSelect value={rule.direction} onChange={e => update(i, { ...rule, direction: e.target.value as 'incoming' | 'outgoing' })}>
+            <option value="outgoing">Outgoing</option><option value="incoming">Incoming</option></NativeSelect></label>
           <label className="flow-create-field"><span>Related record ID</span><Input value={rule.relatedRecordId} onChange={e => update(i, { ...rule, relatedRecordId: e.target.value })} /></label>
         </>}
         <Button size="small" onClick={() => change(rules.filter((_, index) => index !== i))}>Remove rule</Button>

@@ -3410,10 +3410,8 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                     <Select
                       className="workspace-dock-log-run-select"
                       popupClassName="workspace-dock-log-run-popup"
-                      popupMatchSelectWidth={168}
                       size="small"
                       listHeight={160}
-                      suffixIcon={<DownOutlined className="workspace-dock-log-run-arrow" />}
                       open={taskLogRunOpen}
                       onOpenChange={setTaskLogRunOpen}
                       value={selectedTaskLogRunId ?? latestTaskLogRunId ?? logRunOptions[0].value}
@@ -4501,8 +4499,8 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         .workspace-dock-form-grid .ui-input-number,
         .workspace-dock-form-block .ui-input-affix-wrapper,
         .workspace-dock-form-grid .ui-input-affix-wrapper,
-        .workspace-dock-form-block .ui-select-selector,
-        .workspace-dock-form-grid .ui-select-selector {
+        .workspace-dock-form-block .ui-select,
+        .workspace-dock-form-grid .ui-select {
           background: rgba(255, 255, 255, 0.04);
           border-color: ${aura.border};
           color: ${aura.text};
@@ -4543,8 +4541,8 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         .workspace-dock-detail.is-task-composer .workspace-dock-form-grid .ui-input-number,
         .workspace-dock-detail.is-task-composer .workspace-dock-form-block .ui-input-affix-wrapper,
         .workspace-dock-detail.is-task-composer .workspace-dock-form-grid .ui-input-affix-wrapper,
-        .workspace-dock-detail.is-task-composer .workspace-dock-form-block .ui-select-selector,
-        .workspace-dock-detail.is-task-composer .workspace-dock-form-grid .ui-select-selector {
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-block .ui-select,
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-grid .ui-select {
           min-height: 34px;
           border-radius: 9px;
           font-size: 12px;
@@ -4767,17 +4765,13 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           outline: 0 !important;
           box-shadow: none !important;
         }
-        .workspace-dock-log-run-select.ui-select-single,
-        .workspace-dock-log-run-select.ui-select-single.ui-select-sm {
-          height: auto !important;
-          min-height: 0 !important;
-        }
-        .workspace-dock-log-run-select .ui-select-selector {
+        .workspace-dock-log-run-select.ui-select {
           display: flex !important;
           align-items: center !important;
           justify-content: center !important;
           height: 22px !important;
-          padding: 0 24px 0 8px !important;
+          min-height: 22px !important;
+          padding: 0 36px 0 8px !important;
           border: 0 !important;
           background: transparent !important;
           box-shadow: none !important;
@@ -4795,19 +4789,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           line-height: normal !important;
           text-align: center;
         }
-        .workspace-dock-log-run-select .ui-select-arrow {
-          top: 50%;
-          inset-inline-end: 8px;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          width: 8px;
-          height: 8px;
-          margin-top: 0;
-          transform: translateY(-50%);
-          color: ${aura.subtle};
-          font-size: 8px;
-        }
         .workspace-dock-log-run-select .ui-select-arrow .ui-icon {
           display: inline-flex;
           align-items: center;
@@ -4818,12 +4799,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           width: 8px;
           height: 8px;
         }
-        .workspace-dock-log-run-arrow {
-          transition: transform 160ms ease;
-        }
-        .workspace-dock-log-run-select.ui-select-open .workspace-dock-log-run-arrow {
-          transform: rotate(180deg);
-        }
         .workspace-dock-log-run-popup {
           box-sizing: border-box;
           padding: 4px;
@@ -4831,16 +4806,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           border-radius: 8px;
           background: ${aura.surfaceElevated};
           box-shadow: ${aura.shadow};
-          transform-origin: top center;
-          animation: workspace-dock-log-run-enter 160ms ease-out;
-        }
-        @keyframes workspace-dock-log-run-enter {
-          from { opacity: 0; transform: translateY(-4px) scale(.98); }
-          to { opacity: 1; transform: translateY(0) scale(1); }
-        }
-        @media (prefers-reduced-motion: reduce) {
-          .workspace-dock-log-run-popup { animation: none; }
-          .workspace-dock-log-run-arrow { transition: none; }
         }
         .workspace-dock-log-run-popup .ui-select-item {
           display: flex;

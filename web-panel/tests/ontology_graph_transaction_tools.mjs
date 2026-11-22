@@ -27,7 +27,7 @@ function mount(file, name, props, api) {
       useRef(initial) { return refs[cursor++] ||= { current: initial }; },
       useEffect(effect, deps) { const i = cursor++; if (!effects[i] || !deps || deps.some((value, j) => !Object.is(value, effects[i].deps[j]))) scheduled.push([i, effect, deps]); },
     };
-    if (dependency === '@/components/ui') return { Button: 'Button', Modal: 'Modal', message: Object.fromEntries(['success', 'error'].map(kind => [kind, value => notices.push({ kind, value })])) };
+    if (dependency === '@/components/ui') return { Button: 'Button', Modal: 'Modal', NativeSelect: 'NativeSelect', message: Object.fromEntries(['success', 'error'].map(kind => [kind, value => notices.push({ kind, value })])) };
     if (dependency === '@/components/ui/icons') return new Proxy({}, { get: (_, key) => String(key) });
     if (dependency === '../../services/session') return { getSessionState: () => session };
     if (dependency === '../../services/ontology') return { ...api, ontologyError: (error, fallback) => error.message || fallback, newOntologyRequestId: () => 'synthetic-request-' + ++requestId };
@@ -62,7 +62,7 @@ function graphLinks(mutate = async () => {}, canUnlink = true, direction = 'outg
   });
   return { ...ui, writes, async select() {
     await ui.flush();
-    nodes(ui.tree()).find(node => node.type === 'select').props.onChange({ target: { value: relation.id + ':' + direction } });
+    nodes(ui.tree()).find(node => node.type === 'NativeSelect').props.onChange({ target: { value: relation.id + ':' + direction } });
     await ui.flush();
   }, confirmation: () => nodes(ui.tree()).find(node => node.type === 'Modal') };
 }
@@ -121,7 +121,7 @@ test('new relationship type submission is single-flight and cannot notify after 
   await ui.flush();
   for (const [label, value] of [['Relationship name', 'Synthetic relation'], ['Relationship key', 'synthetic_relation'], ['Target type', 'target-type']]) {
     const node = nodes(ui.tree()).find(item => item.type === 'label' && text(item).startsWith(label));
-    nodes(node).find(item => ['input', 'select'].includes(item.type)).props.onChange({ target: { value } }); ui.render();
+    nodes(node).find(item => ['input', 'NativeSelect'].includes(item.type)).props.onChange({ target: { value } }); ui.render();
   }
   const submit = ui.tree().props.onSubmit;
   submit({ preventDefault() {} }); submit({ preventDefault() {} });
@@ -141,7 +141,7 @@ test('saved set deletion uses explicit confirmation and its guard blocks duplica
   });
   await ui.flush();
   const saved = nodes(ui.tree()).find(item => item.type === 'label' && text(item).startsWith('Saved set'));
-  nodes(saved).find(item => item.type === 'select').props.onChange({ target: { value: 'synthetic-set' } }); ui.render();
+  nodes(saved).find(item => item.type === 'NativeSelect').props.onChange({ target: { value: 'synthetic-set' } }); ui.render();
   button(ui.tree(), 'Delete saved set').props.onClick(); ui.render();
   const confirmation = () => nodes(ui.tree()).find(item => item.type === 'Modal');
   assert.equal(writes.length, 0); assert.equal(confirmation().props.open, true);

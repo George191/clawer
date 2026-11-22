@@ -5600,7 +5600,7 @@ const AICollect: React.FC = () => {
           .ai-collect-workbench .ui-input,
           .ai-collect-workbench .ui-input-affix-wrapper,
           .ai-collect-workbench .ui-input-number,
-          .ai-collect-workbench .ui-select-selector {
+          .ai-collect-workbench .ui-select {
             background: rgba(255, 255, 255, 0.035) !important;
             border-color: ${aura.border} !important;
             color: ${aura.text} !important;
@@ -6768,14 +6768,13 @@ const AICollect: React.FC = () => {
           }
           .ai-session-task-control .ui-input,
           .ai-session-task-control .ui-input-number,
-          .ai-session-task-control .ui-select-selector,
+          .ai-session-task-control .ui-select,
           .ai-session-task-control .ui-picker {
             font-size: 12px;
           }
           .ai-session-task-control .ui-input,
           .ai-session-task-control .ui-input-number,
           .ai-session-task-control .ui-select,
-          .ai-session-task-control .ui-select-selector,
           .ai-session-task-control .ui-picker,
           .ai-session-task-control .ui-segmented {
             height: 32px;
@@ -7819,7 +7818,7 @@ const AICollect: React.FC = () => {
           .ai-template-field-value .ui-input,
           .ai-template-field-value .ui-input-affix-wrapper,
           .ai-template-field-value .ui-input-number,
-          .ai-template-field-value .ui-select-selector,
+          .ai-template-field-value .ui-select,
           .ai-template-field-value .ui-input-textarea textarea {
             background: transparent !important;
             color: ${aura.text} !important;
@@ -7834,7 +7833,7 @@ const AICollect: React.FC = () => {
           .ai-template-field-value input.ui-input,
           .ai-template-field-value .ui-input-affix-wrapper,
           .ai-template-field-value .ui-input-number,
-          .ai-template-field-value .ui-select-selector {
+          .ai-template-field-value .ui-select {
             min-height: 22px !important;
             height: 22px !important;
           }
@@ -7901,8 +7900,8 @@ const AICollect: React.FC = () => {
             color: rgba(255, 255, 255, 1);
             background: rgba(255, 255, 255, 0.1) !important;
           }
-          .ai-template-field-value .ui-select-single.ui-select-sm .ui-select-selector,
-          .ai-template-field-value .ui-select-single .ui-select-selector {
+          .ai-template-field-value .ui-select-single.ui-select-sm,
+          .ai-template-field-value .ui-select-single {
             display: flex;
             align-items: center;
           }
@@ -7912,16 +7911,16 @@ const AICollect: React.FC = () => {
             font-size: 12px;
             line-height: 22px !important;
           }
-          .ai-template-field-value .ui-select-selector {
+          .ai-template-field-value .ui-select {
             border: 1px solid rgba(255, 255, 255, 0.14) !important;
             border-radius: 4px !important;
             background: rgba(255, 255, 255, 0.025) !important;
-            padding-inline: 6px !important;
+            padding-inline: 6px 36px !important;
           }
-          .ai-template-field-value .ui-select:hover .ui-select-selector {
+          .ai-template-field-value .ui-select:hover {
             background: rgba(0, 0, 0, 0.14) !important;
           }
-          .ai-template-field-value .ui-select-focused .ui-select-selector {
+          .ai-template-field-value .ui-select-focused {
             border-color: rgba(255, 255, 255, 0.3) !important;
             box-shadow: none !important;
           }

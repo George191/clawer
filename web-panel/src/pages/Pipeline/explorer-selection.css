@@ -74,7 +74,7 @@
 }
 .flow-explorer-selection__control:not(:disabled):hover { background:var(--explorer-selection-bg); }
 .flow-explorer-selection__control:disabled { color: var(--ontology-muted); cursor: default; }
-.flow-explorer-selection :where(:not(input,select,textarea,.ui-select)):focus-visible { outline: 2px solid var(--ui-focus-ring); outline-offset: -2px; }
+.flow-explorer-selection :where(:not(input,.ui-native-select,textarea,.ui-select)):focus-visible { outline: 2px solid var(--ui-focus-ring); outline-offset: -2px; }
 .flow-explorer-selection__table-title { display: flex; align-items: center; gap: 6px; overflow: hidden; }
 .flow-explorer-selection__table-title > :is(a, span:last-child) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .flow-explorer-selection a { color: var(--ontology-link); text-decoration: none; }
@@ -171,8 +171,8 @@
 .flow-explorer-selection__comparison-controls > .ui-checkbox-wrapper { min-height: 26px; }
 .flow-explorer-selection__filters label > span,
 .flow-explorer-selection__comparison-controls label > span:first-child { color: var(--ontology-muted); font-size: 11px; }
-.flow-explorer-selection__properties select,
-.flow-explorer-selection__comparison select {
+.flow-explorer-selection__properties .ui-native-select,
+.flow-explorer-selection__comparison .ui-native-select {
   box-sizing: border-box;
   width: 100%;
   min-width: 0;

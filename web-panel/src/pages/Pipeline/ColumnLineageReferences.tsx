@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button } from '@/components/ui';
+import { Button, NativeSelect } from '@/components/ui';
 import { getSessionState } from '../../services/session';
 import { fetchColumnLineageReferences, traceColumnMappingPaths } from '../../services/api';
 import type { ColumnLineageReferences as References, ColumnMappingPaths, TableLineageDirection, TableLineageIdentity } from '../../services/api';
@@ -20,10 +20,10 @@ function Workspace({ canTraceMappings, identity, ...scope }: Scope & { canTraceM
     <h3>Column references</h3>
     <p>Direct column references do not verify data movement or expose column values.</p>
     {canonColumn(scope.column) ? <>
-      <label>Column reference direction<select aria-label="Column reference direction" value={direction}
+      <label>Column reference direction<NativeSelect aria-label="Column reference direction" value={direction}
         onChange={event => setDirection(event.target.value === 'outgoing' ? 'outgoing' : 'incoming')}>
         <option value="incoming">Incoming</option><option value="outgoing">Outgoing</option>
-      </select></label>
+      </NativeSelect></label>
       <Results key={direction} scope={scope} direction={direction} />
       {canTraceMappings && <MappingTrace key={`trace:${direction}`} scope={scope} direction={direction} identity={identity} />}
     </> : <p role="status">Column references are unavailable for this selection.</p>}
