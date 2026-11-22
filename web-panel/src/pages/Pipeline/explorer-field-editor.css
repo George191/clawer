@@ -1,10 +1,12 @@
 .explorer-field-editor { display:grid; min-width:0; width:100%; gap:4px; }
 .explorer-field-editor__control { display:grid; position:relative; min-width:0; }
 .explorer-field-editor :is(input,.ui-native-select,textarea) { width:100%; min-width:0; min-height:30px; padding:5px 8px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-panel); color:var(--ontology-text); font:inherit; font-size:12px; }
-.explorer-field-editor__control.has-null-control > :is(input,textarea) { padding-inline-end:50px; }
-.explorer-field-editor__control.has-null-control > .ui-native-select { padding-inline-end:76px !important; }
-.explorer-field-editor__null { position:absolute; inset-inline-end:5px; top:4px; width:38px; height:22px; padding:0; border:0; border-radius:2px; background:var(--ontology-panel); color:var(--ontology-muted); font:500 10px/1 ui-monospace,SFMono-Regular,Consolas,monospace; cursor:pointer; opacity:0; pointer-events:none; transform:translateX(3px); transition:opacity .14s ease,transform .14s ease; }
-.explorer-field-editor__control.is-select > .explorer-field-editor__null { inset-inline-end:29px; }
+.explorer-field-editor__control.has-null-control > :is(input,textarea) { padding-inline-end:72px; }
+.explorer-field-editor__control.has-null-control > .ui-native-select .ui-select-selector { padding-inline-end:86px; }
+.explorer-field-editor__control.has-null-control > input[type=date] { padding-inline-end:96px; }
+.explorer-field-editor input[type=date]::-webkit-calendar-picker-indicator { position:absolute; right:8px; margin:0; }
+.explorer-field-editor__null { position:absolute; inset-inline-end:5px; top:4px; width:60px; height:22px; padding:0; border:0; border-radius:2px; background:var(--ontology-panel); color:var(--ontology-muted); font:500 10px/1 ui-monospace,SFMono-Regular,Consolas,monospace; cursor:pointer; opacity:0; pointer-events:none; transform:translateX(3px); transition:opacity .14s ease,transform .14s ease; }
+.explorer-field-editor__control.has-trailing-icon > .explorer-field-editor__null { inset-inline-end:29px; }
 .explorer-field-editor__control:hover > .explorer-field-editor__null,
 .explorer-field-editor__control:focus-within > .explorer-field-editor__null,
 .explorer-field-editor__null[aria-pressed=true] { opacity:1; pointer-events:auto; transform:translateX(0); }

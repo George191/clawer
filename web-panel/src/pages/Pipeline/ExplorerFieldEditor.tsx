@@ -15,7 +15,7 @@ export default function ExplorerFieldEditor({ name, type = 'text', value, onChan
   const change = (next: string) => { if (!fieldDisabled) onChange(next === '' && (structured || number || kind === 'date' || kind === 'datetime') ? null : next); };
   const props = { 'aria-label': 'Edit ' + name, disabled: fieldDisabled, value: nullControl?.checked ? '' : value ?? '', onChange: (event: { target: { value: string } }) => change(event.target.value) };
   return <div className="explorer-field-editor" onKeyDown={onKeyDown}>
-    <div className={`explorer-field-editor__control${nullControl ? ' has-null-control' : ''}${kind === 'boolean' ? ' is-select' : ''}`}>
+    <div className={`explorer-field-editor__control${nullControl ? ' has-null-control' : ''}${kind === 'boolean' || kind === 'date' ? ' has-trailing-icon' : ''}`}>
       {kind === 'boolean' ? <NativeSelect {...props} onChange={event => { if (!fieldDisabled) onChange(event.target.value || null); }}>
         <option value="">No value</option><option value="true">True</option><option value="false">False</option>
       </NativeSelect> : structured ? <textarea {...props} rows={5} spellCheck={false} placeholder={nullControl?.checked ? 'Null' : 'No value · enter JSON'} />
@@ -23,7 +23,7 @@ export default function ExplorerFieldEditor({ name, type = 'text', value, onChan
             inputMode={number ? 'decimal' : undefined} placeholder={nullControl?.checked ? 'Null' : kind === 'datetime' ? 'YYYY-MM-DD HH:mm:ss[.fraction][±HH:mm]' : 'No value'} />}
       {nullControl && <button type="button" className="explorer-field-editor__null" aria-label={`Set ${name} to null`} aria-pressed={nullControl.checked}
         title={nullControl.checked ? 'Restore previous value' : 'Set to null'} disabled={disabled}
-        onClick={() => { if (!disabled) nullControl.onChange(!nullControl.checked); }}>NULL</button>}
+        onClick={() => { if (!disabled) nullControl.onChange(!nullControl.checked); }}>Set NULL</button>}
     </div>
     {kind === 'datetime' && <small>ISO 8601 · preserves timezone and fractional seconds</small>}
   </div>;

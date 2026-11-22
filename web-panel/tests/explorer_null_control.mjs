@@ -46,6 +46,7 @@ test('nullable controls live beside the actual field inside the shared editor wi
   assert.ok(control.props.children.includes(native(optional)));
   assert.ok(control.props.children.includes(button));
   assert.equal(button.props.type, 'button');
+  assert.equal(button.props.children, 'Set NULL');
   assert.equal(button.props['aria-label'], 'Set Optional to null');
   assert.equal(button.props['aria-pressed'], false);
 });
@@ -108,5 +109,13 @@ test('textarea null actions share its control and datetime guidance remains sepa
     assert.ok(control.props.children.includes(toggle(editor)));
     assert.equal(nodes(control).some(node => node.type === 'small'), false);
     assert.equal(nodes(editor).some(node => node.type === 'small'), type.startsWith('timestamp'));
+  }
+});
+
+test('select and date actions reserve the trailing icon slot', () => {
+  for (const type of ['boolean', 'date', 'text']) {
+    const editor = field({ name: 'Value', type, value: '', onChange() {}, nullControl: { checked: false, onChange() {} } });
+    const control = nodes(editor).find(node => node.props?.className?.includes('explorer-field-editor__control'));
+    assert.equal(control.props.className.includes('has-trailing-icon'), type !== 'text');
   }
 });

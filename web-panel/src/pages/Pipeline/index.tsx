@@ -518,6 +518,8 @@ const DataLayersWorkspace: React.FC = () => {
     };
     const rowEditor = (key: string) => <ExplorerFieldEditor name={key} type={data?.columnTypes?.[key]} disabled={mutationLoading}
         value={editingDraft?.[key] ?? null}
+        nullControl={data?.columnNullable?.[key] === true ? rowNullControl(key, editingDraft?.[key] ?? null, rememberedEditValues.current,
+            value => setEditingDraft(current => current ? { ...current, [key]: value } : current)) : undefined}
         onKeyDown={(event) => { if (!isSchemas && event.key === 'Escape') { event.preventDefault(); cancelRowEdit(); } }}
         onChange={value => setEditingDraft(current => current ? { ...current, [key]: value } : current)} />;
     const rowMutationError = (error: unknown, row: Record<string, unknown>) => {
