@@ -495,7 +495,7 @@ export default function DataConnections({ onChanged }: Props = {}) {
         <header><div><h2>Sources <span>{sources.length}</span></h2><p>Open a source to review its settings or run a read-only check.</p></div><Button size="small" icon={<ReloadOutlined />} disabled={blocked} onClick={() => setReload((value) => value + 1)}>Refresh sources</Button></header>
         <div className="ontology-connections-inventory__toolbar">
           <Input aria-label="Search sources" placeholder="Search sources" prefix={<SearchOutlined />} value={sourceSearch} allowClear onChange={(event) => setSourceSearch(event.target.value)} />
-          <label className="ontology-connections-inventory__filter">Connector <NativeSelect aria-label="Filter sources by connector" value={sourceEngine} onChange={(event) => setSourceEngine(event.target.value)}>
+          <label className="ontology-connections-inventory__filter">Connector <NativeSelect aria-label="Filter sources by connector" popupWidth={224} value={sourceEngine} onChange={(event) => setSourceEngine(event.target.value)}>
             <option value="all">All connectors</option>{connectors.map((type) => <option key={type.engine} value={type.engine}>{type.name}</option>)}
           </NativeSelect></label>
           <span className="ontology-connections-inventory__count" role="status">{filteredSources.length} of {sources.length} sources</span>
