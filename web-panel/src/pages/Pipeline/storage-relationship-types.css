@@ -3,7 +3,7 @@
 .storage-relationship-types .ontology-tool-layout { grid-template-columns:240px minmax(0,1fr); }
 .storage-relationship-types .ontology-tool-detail-header > div > span { color:var(--ontology-muted); font-size:11px; }
 .storage-relationship-types .ontology-tool-fields :is(.ui-input,.ui-input-affix-wrapper,textarea) { font-size:12px; }
-.storage-relationship-types .ontology-tool-fields select { appearance:none; width:100%; min-width:0; min-height:32px; padding:5px 32px 5px 8px; border:1px solid var(--ontology-control-border); border-radius:3px; background-color:var(--ontology-panel); color:var(--ontology-text); font:inherit; font-size:12px; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='m1 1 4 4 4-4' fill='none' stroke='%239ca3af' stroke-width='1.2'/%3E%3C/svg%3E"); background-repeat:no-repeat; background-position:right 12px center; }
+.storage-relationship-types .ontology-tool-fields .ui-native-select { width:100%; min-width:0; min-height:32px; padding:5px 36px 5px 8px; border:1px solid var(--ontology-control-border); border-radius:3px; background-color:var(--ontology-panel); color:var(--ontology-text); font:inherit; font-size:12px; }
 .storage-relationship-readonly { color:var(--ontology-muted); font-size:11px; white-space:nowrap; }
 .storage-relationship-definition { display:grid; gap:10px; }
 .storage-relationship-definition h4 { margin:0; color:var(--ontology-muted); font-size:11px; font-weight:500; }
