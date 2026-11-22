@@ -1,7 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Button, Checkbox, Input, Modal, Select } from '@/components/ui';
-import { ArrowLeftOutlined, CheckCircleOutlined, DatabaseOutlined, DeleteOutlined, EyeOutlined, FolderOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, TableOutlined } from '@/components/ui/icons';
+import { Button, Checkbox, Input, message, Modal, Select } from '@/components/ui';
+import { ArrowLeftOutlined, DatabaseOutlined, DeleteOutlined, EyeOutlined, FolderOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, TableOutlined } from '@/components/ui/icons';
 import apiClient, { createDataSource, deleteDataSource, fetchCurrentUserContext, fetchDataConnectorTypes, fetchDataSourceCatalog, fetchDataSourceColumns, fetchDataSources, setDataSourcePaused, testDataSource, updateDataSource } from '../../services/api';
 import type { DataConnectorEngine, DataConnectorType, DataSource, DataSourceCatalog, DataSourceColumns, DataSourceConfig, DataSourcePayload, DataSourceRelation, DataSourceTest, BatchSourceIdentity } from '../../services/api';
 import { getSessionState } from '../../services/session';
@@ -16,6 +16,7 @@ import TableExports from './TableExports';
 import SandboxCdcReplay from './SandboxCdcReplay';
 import SyntheticPushInbox from './SyntheticPushInbox';
 import SandboxHandoffRecipientProof from './SandboxHandoffRecipientProof';
+import useExplorerErrorToast from './useExplorerErrorToast';
 import './data-connections.css';
 
 type Props = { onCancel?: () => void; onChanged?: () => void };
@@ -114,13 +115,16 @@ function SourceCatalog({ sourceId, sourceRevision, onSetUpSync }: { sourceId: st
     setAppliedSearch(next); changePage(0);
   };
   const changeTable = (name: string) => { if (table !== name) { clearTable(); setTable(name); } };
+  useExplorerErrorToast(schemaError, 'Unable to load source schemas', () => setRefresh(value => value + 1));
+  useExplorerErrorToast(relationError, 'Unable to load tables and views', () => setRefresh(value => value + 1));
+  useExplorerErrorToast(columnError, 'Unable to load column metadata', () => setRefresh(value => value + 1));
 
   return <section className="ontology-source-catalog" aria-label="Source catalog">
     <header><div><h3>Source catalog</h3><p>Read-only metadata. No rows are read or imported. Results depend on the saved database account’s permissions.</p></div><Button size="small" icon={<ReloadOutlined />} onClick={() => setRefresh(value => value + 1)}>Refresh catalog</Button></header>
     <div className="ontology-source-catalog__layout">
       <section aria-label="Schemas">
         <h4>Schemas</h4>
-        {schemaError ? <p role="alert" className="is-error">{schemaError}</p> : !catalog ? <p role="status">Loading schemas…</p> : !catalog.schemas.length ? <p>No visible schemas.</p> : <>
+        {schemaError ? null : !catalog ? <p role="status">Loading schemas…</p> : !catalog.schemas.length ? <p>No visible schemas.</p> : <>
           <ul className="ontology-source-catalog__list">{catalog.schemas.map(item => <li key={item}>
             <button type="button" aria-pressed={schema === item} onClick={() => changeSchema(item)}><FolderOutlined /><span>{item}</span></button>
           </li>)}</ul>
@@ -135,7 +139,7 @@ function SourceCatalog({ sourceId, sourceRevision, onSetUpSync }: { sourceId: st
             <Button size="small" htmlType="submit">Search</Button>
             {(search || appliedSearch) && <Button size="small" onClick={() => { setSearch(''); searchRelations(''); }}>Clear</Button>}
           </form>
-          {relationError ? <p role="alert" className="is-error">{relationError}</p> : !relations ? <p role="status">Loading tables and views…</p> : relations.relations.length ? <ul className="ontology-source-catalog__list">
+          {relationError ? null : !relations ? <p role="status">Loading tables and views…</p> : relations.relations.length ? <ul className="ontology-source-catalog__list">
             {relations.relations.map(relation => <li key={relation.name}><button type="button" aria-pressed={table === relation.name} aria-label={`${relation.name} · ${relationLabel[relation.kind]}`} onClick={() => changeTable(relation.name)}>
               {relation.kind === 'view' || relation.kind === 'materialized_view' ? <EyeOutlined /> : <TableOutlined />}
               <span>{relation.name}</span><small>{relationLabel[relation.kind]}</small>
@@ -152,7 +156,7 @@ function SourceCatalog({ sourceId, sourceRevision, onSetUpSync }: { sourceId: st
       <section aria-label="Column metadata">
         <h4>{table ? <code>{schema}.{table}</code> : 'Columns'}</h4>
         {!table ? <p>Select a table or view to inspect its column metadata.</p>
-          : columnError ? <p role="alert" className="is-error">{columnError}</p>
+          : columnError ? null
           : !columns || columnRevision !== sourceRevision ? <p role="status">Loading column metadata…</p>
           : !columns.columns.length ? <p>No columns are visible with this connection.</p>
           : <><div className="ontology-source-catalog__columns"><table aria-label="Source columns">
@@ -170,6 +174,7 @@ function SourceCatalog({ sourceId, sourceRevision, onSetUpSync }: { sourceId: st
 }
 
 export default function DataConnections({ onChanged }: Props = {}) {
+  const feedbackKey = useId();
   const [connectors, setConnectors] = useState<DataConnectorType[]>([]);
   const [sources, setSources] = useState<DataSource[]>([]);
   const [loading, setLoading] = useState(true);
@@ -190,18 +195,13 @@ export default function DataConnections({ onChanged }: Props = {}) {
   const [wizard, setWizard] = useState<'choose' | 'configure' | null>(null);
   const [chosenEngine, setChosenEngine] = useState<DataConnectorEngine>();
   const [sourceProof, setSourceProof] = useState<{key: string; value: BatchSourceIdentity | undefined}>();
-  const [savedTest, setSavedTest] = useState<DataSourceTest | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [editingId, setEditingId] = useState('');
   const [editingRevision, setEditingRevision] = useState<{ updatedAt: string; engine: DataConnectorEngine }>();
   const [editConflict, setEditConflict] = useState(false);
   const [baseline, setBaseline] = useState('');
   const [operation, setOperation] = useState<'' | 'test' | 'save' | 'delete' | 'pause'>('');
-  const [testResult, setTestResult] = useState<DataSourceTest | null>(null);
-  const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
-  const [confirmationError, setConfirmationError] = useState('');
   const active = useRef(true);
   const pendingRef = useRef(false);
   const metadataRequest = useRef<AbortController>();
@@ -210,6 +210,11 @@ export default function DataConnections({ onChanged }: Props = {}) {
   const metadataVerifying = useRef(new Set<string>());
   const sessionIdentity = useRef(getSessionState().identity).current;
   const current = () => active.current && getSessionState().identity === sessionIdentity;
+  const notify = (kind: 'error' | 'success', content: string, description?: string) => {
+    const session = getSessionState();
+    if (current() && session.authenticated && !session.locked) message[kind]({ key: feedbackKey, content, description, className: 'explorer-toast' });
+  };
+  const notifyTest = (result: DataSourceTest) => notify(result.ok ? 'success' : 'error', result.message, `${result.latencyMs} ms`);
   const pending = !!operation;
   const blocked = pending || loading || !!loadError || !canManage;
   const connector = connectors.find((item) => item.engine === draft?.engine);
@@ -228,10 +233,14 @@ export default function DataConnections({ onChanged }: Props = {}) {
   const canReuseSecret = !!selected?.credentialsConfigured && sameDestination;
   const dirty = !!draft && JSON.stringify(draft) !== baseline;
 
-  useEffect(() => { active.current = true; return () => { active.current = false; metadataRequest.current?.abort(); }; }, []);
+  useEffect(() => { active.current = true; return () => { active.current = false; metadataRequest.current?.abort(); message.destroy(feedbackKey); }; }, [feedbackKey]);
   useEffect(() => {
-    setExploringSource(''); setSyncSelection(undefined); setSavedTest(null); setSourceProof(undefined);
+    setExploringSource(''); setSyncSelection(undefined); setSourceProof(undefined);
   }, [sourceId]);
+  useEffect(() => {
+    const session = getSessionState();
+    if (loading && current() && session.authenticated && !session.locked) return message.loading({ key: `${feedbackKey}-loading`, content: 'Loading data sources…', className: 'explorer-toast' });
+  }, [loading, feedbackKey, sessionIdentity]);
   useEffect(() => {
     if (!dirty && !pending) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
@@ -248,7 +257,7 @@ export default function DataConnections({ onChanged }: Props = {}) {
       if (!allowed) return;
       const [types, saved] = await Promise.all([fetchDataConnectorTypes(), fetchDataSources()]);
       if (valid && current()) { metadataVerifying.current.clear(); setConnectors(types); setSources(saved); }
-    }).catch((failure) => { if (valid && current()) setLoadError(`Unable to load data sources. ${errorText(failure)}`); })
+    }).catch((failure) => { if (valid && current()) setLoadError(errorText(failure)); })
       .finally(() => { if (valid && current()) setLoading(false); });
     return () => { valid = false; };
   }, [reload, sessionIdentity]);
@@ -256,14 +265,14 @@ export default function DataConnections({ onChanged }: Props = {}) {
   const navigate = (action: () => void) => {
     if (pendingRef.current) return;
     if (dirty) {
-      setConfirmationError('');
       setConfirmation({ title: 'Discard unsaved changes?', detail: 'Your unsaved connection settings will be discarded.', label: 'Discard changes', action: async () => { if (!current() || pendingRef.current) return false; action(); return true; } });
     } else action();
   };
-  const resetFeedback = () => { setError(''); setNotice(''); setTestResult(null); };
+  const resetFeedback = () => message.destroy(feedbackKey);
   const closeWizard = () => {
     setWizard(null); setDraft(null); setBaseline(''); setEditingId(''); setEditingRevision(undefined); setEditConflict(false); setChosenEngine(undefined); resetFeedback();
   };
+  const reloadSavedSource = () => { closeWizard(); setReload(value => value + 1); };
   const newSource = () => navigate(() => {
     setDraft(null); setBaseline(''); setEditingId(''); setEditingRevision(undefined); setEditConflict(false); setChosenEngine(undefined); setCategory('all'); setSearch('');
     setWizard('choose'); resetFeedback();
@@ -295,11 +304,11 @@ export default function DataConnections({ onChanged }: Props = {}) {
   const payload = (): DataSourcePayload | null => {
     if (editConflict || (postgresEdit && !editingRevision?.updatedAt) || !draft || isConnectionPaused(selected)) return null;
     const name = draft.name.trim(), config = draft.config;
-    if (!name || !config.host.trim() || !/^\d+$/.test(config.port) || Number(config.port) < 1 || Number(config.port) > 65535) { setError('Enter a connection name, host and port between 1 and 65535.'); return null; }
-    if (config.auth === 'password' && !config.username.trim()) { setError('Enter the database username.'); return null; }
-    if (['postgresql', 'mysql', 'oracle', 'milvus'].includes(draft.engine) && !config.database.trim()) { setError('Enter the database or service name.'); return null; }
+    if (!name || !config.host.trim() || !/^\d+$/.test(config.port) || Number(config.port) < 1 || Number(config.port) > 65535) { notify('error', 'Enter a connection name, host and port between 1 and 65535.'); return null; }
+    if (config.auth === 'password' && !config.username.trim()) { notify('error', 'Enter the database username.'); return null; }
+    if (['postgresql', 'mysql', 'oracle', 'milvus'].includes(draft.engine) && !config.database.trim()) { notify('error', 'Enter the database or service name.'); return null; }
     if (!draft.secret && !canReuseSecret) {
-      setError(editingId ? 'Enter credentials again after changing the destination, transport, or authentication.' : 'Enter credentials for this data source.');
+      notify('error', editingId ? 'Enter credentials again after changing the destination, transport, or authentication.' : 'Enter credentials for this data source.');
       return null;
     }
     const key = config.auth === 'api_key' ? 'apiKey' : config.auth === 'token' ? 'token' : 'password';
@@ -307,17 +316,18 @@ export default function DataConnections({ onChanged }: Props = {}) {
   };
   const mutate = async (kind: 'test' | 'save' | 'delete' | 'pause', action: () => Promise<void>, draftEdit = false) => {
     if (!current() || pendingRef.current || blocked) return false;
-    pendingRef.current = true; setOperation(kind); setError(''); setNotice(''); setConfirmationError('');
+    pendingRef.current = true; setOperation(kind); resetFeedback();
     try { await action(); return current(); }
     catch (failure) {
       if (current()) {
         const response = (failure as { response?: { status?: number; data?: { detail?: { code?: string }; errors?: { code?: string } } } })?.response;
         const code = response?.data?.errors?.code ?? response?.data?.detail?.code;
         if (draftEdit && response?.status === 409 && code === 'source_revision_changed') {
-          setEditConflict(true); setTestResult(null);
+          setEditConflict(true);
           setDraft(value => value ? { ...value, secret: '' } : value);
+          notify('error', 'This saved source changed after you opened the editor. The entered password was cleared. Reload the saved source and reopen Edit before testing or saving.');
         } else {
-          const detail = errorText(failure); setError(detail); setConfirmationError(detail);
+          notify('error', errorText(failure));
         }
       }
       return false;
@@ -327,10 +337,9 @@ export default function DataConnections({ onChanged }: Props = {}) {
   const test = async () => {
     const body = payload();
     if (!body) return;
-    setTestResult(null);
     await mutate('test', async () => {
       const result = await testDataSource(body, editingId || undefined);
-      if (current()) setTestResult(result);
+      notifyTest(result);
     }, postgresEdit);
   };
   const refreshCapabilities = (id: string) => {
@@ -376,20 +385,19 @@ export default function DataConnections({ onChanged }: Props = {}) {
       if (!current()) return;
       setSources((items) => [...items.filter((item) => item.id !== source.id), source].sort((a, b) => a.name.localeCompare(b.name)));
       closeWizard();
-      selectSource(source.id); setExploringSource(''); setSyncSelection(undefined); setSavedTest(null);
+      selectSource(source.id); setExploringSource(''); setSyncSelection(undefined);
       refreshCapabilities(source.id);
-      setNotice('Source saved. Its connectivity was tested with a read-only request.'); onChanged?.();
+      notify('success', 'Source saved. Its connectivity was tested with a read-only request.'); onChanged?.();
     }, postgresEdit);
   };
   const testSaved = async () => {
     if (!viewedSource || sourcePaused || blocked || !viewedType?.driverAvailable) return;
     const source = viewedSource;
-    setSavedTest(null);
     await mutate('test', async () => {
       const response = await apiClient.post<DataSourceTest | { code: number; data: DataSourceTest }>(`/etl/data-connections/${encodeURIComponent(source.id)}/test`, undefined, { timeout: 45000 });
       if (!current()) return;
       const result = 'data' in response.data ? response.data.data : response.data;
-      setSavedTest(result);
+      notifyTest(result);
       if (result.ok && result.testedAt) setSources((items) => items.map((item) => item.id === source.id ? { ...item, testedAt: result.testedAt! } : item));
     });
     refreshCapabilities(source.id);
@@ -398,7 +406,6 @@ export default function DataConnections({ onChanged }: Props = {}) {
     if (!viewedSource || !pauseAvailable || blocked) return;
     const source = viewedSource;
     const paused = !sourcePaused;
-    setConfirmationError('');
     setConfirmation({
       title: paused ? 'Pause saved PostgreSQL connection?' : 'Resume saved PostgreSQL connection?',
       label: paused ? 'Confirm pause' : 'Confirm resume',
@@ -410,9 +417,9 @@ export default function DataConnections({ onChanged }: Props = {}) {
           const updated = await setDataSourcePaused(source.id, { paused, expectedUpdatedAt: source.updatedAt });
           if (!current()) return;
           setSources(items => items.map(item => item.id === source.id ? updated : item));
-          setExploringSource(''); setSyncSelection(undefined); setSavedTest(null); setSourceProof(undefined);
+          setExploringSource(''); setSyncSelection(undefined); setSourceProof(undefined);
           refreshCapabilities(source.id);
-          setNotice(paused ? 'Connection paused. No new source work can start.'
+          notify('success', paused ? 'Connection paused. No new source work can start.'
             : 'Connection resumed. Review affected syncs and explicitly rearm schedules; nothing was started.');
           onChanged?.();
         } catch {
@@ -425,12 +432,11 @@ export default function DataConnections({ onChanged }: Props = {}) {
   const remove = () => {
     if (!viewedSource || blocked) return;
     const source = viewedSource;
-    setConfirmationError('');
     setConfirmation({ title: 'Delete data source?', detail: `Delete “${source.name}” and its stored credentials? This retains the external database and all data.`, label: 'Delete source', action: async () => {
       const done = await mutate('delete', async () => {
         await deleteDataSource(source.id);
         if (!current()) return;
-        setSources((items) => items.filter((item) => item.id !== source.id)); selectSource(); setSavedTest(null); setNotice('Data source deleted.'); onChanged?.();
+        setSources((items) => items.filter((item) => item.id !== source.id)); selectSource(); notify('success', 'Data source deleted.'); onChanged?.();
       });
       return done;
     } });
@@ -441,11 +447,11 @@ export default function DataConnections({ onChanged }: Props = {}) {
   const labelFor = (engine: DataConnectorEngine) => connectors.find((type) => type.engine === engine)?.name || engine;
   const filteredSources = sources.filter((source) => (sourceEngine === 'all' || source.engine === sourceEngine)
     && `${source.name} ${source.config.host} ${source.config.database} ${labelFor(source.engine)}`.toLowerCase().includes(sourceSearch.trim().toLowerCase()));
-  const testFeedback = (result: DataSourceTest | null) => result && <div className="ontology-connectors__test-result" aria-live="polite">
-    <p className={result.ok ? 'is-success' : 'is-error'} role={result.ok ? 'status' : 'alert'}>
-      {result.ok && <CheckCircleOutlined />}<span>{result.message}</span><small>{result.latencyMs} ms</small>
-    </p>
-  </div>;
+  useExplorerErrorToast(loadError, 'Unable to load data sources', () => { if (!pendingRef.current) setReload(value => value + 1); });
+  useExplorerErrorToast(!loading && !loadError && !canManage ? 'Only administrators can manage data sources.' : undefined, 'Access unavailable');
+  useExplorerErrorToast(!loading && !loadError && canManage && sourceId && !viewedSource ? 'The linked data source is not available.' : undefined, 'Source unavailable');
+  const visibleConnector = wizard === 'choose' ? chosen : wizard === 'configure' ? connector : viewedType;
+  useExplorerErrorToast(visibleConnector && !visibleConnector.driverAvailable ? visibleConnector.prerequisite : undefined, 'Connector unavailable');
 
   return <>
     <div className="ontology-connectors ontology-connections-workspace" aria-busy={loading || pending}>
@@ -453,14 +459,6 @@ export default function DataConnections({ onChanged }: Props = {}) {
         <div><Link to="/ontology" className="ontology-connectors__eyebrow">Object types</Link><h1>Data connections</h1><p>Manage saved sources and verify access to external databases.</p></div>
         {canManage && <Button type="primary" icon={<PlusOutlined />} disabled={blocked} onClick={newSource}>New source</Button>}
       </header>
-      <div className="ontology-connectors__status" aria-live="polite">
-        {loading && <p role="status"><ReloadOutlined spin /> Loading data sources…</p>}
-        {loadError && <p className="is-error" role="alert"><span>{loadError}</span><Button size="small" onClick={() => setReload((value) => value + 1)} disabled={pending}>Retry</Button></p>}
-        {!loading && !loadError && !canManage && <p className="is-error" role="alert">Only administrators can manage data sources.</p>}
-        {!loading && !loadError && canManage && sourceId && !viewedSource && <p role="status">The linked data source is not available.</p>}
-        {!wizard && notice && <p className="is-success" role="status"><CheckCircleOutlined />{notice}</p>}
-        {!wizard && error && !confirmation && <p className="is-error" role="alert">{error}</p>}
-      </div>
 
       {canManage && !loading && !loadError && (viewedSource ? <section className="ontology-connections-detail" aria-label="Source details">
         <Button size="small" icon={<ArrowLeftOutlined />} disabled={pending} onClick={() => showSource()}>Back to sources</Button>
@@ -474,7 +472,6 @@ export default function DataConnections({ onChanged }: Props = {}) {
             {pauseAvailable && <Button disabled={blocked} loading={operation === 'pause'} onClick={changePause}>{sourcePaused ? 'Resume connection' : 'Pause connection'}</Button>}
           </div>
         </header>
-        {testFeedback(savedTest)}
         <dl className="ontology-connections-summary">
           <div><dt>Endpoint</dt><dd><code>{endpoint(viewedSource.config)}</code></dd></div>
           {viewedSource.config.database && <div><dt>{viewedSource.engine === 'oracle' ? 'Service name' : 'Database'}</dt><dd>{viewedSource.config.database}</dd></div>}
@@ -485,7 +482,6 @@ export default function DataConnections({ onChanged }: Props = {}) {
           {sourcePaused && <div><dt>Paused at</dt><dd>{formatDate(viewedSource.pausedAt)}</dd></div>}
         </dl>
         <SavedConnectionCapabilities capabilities={viewedSource.capabilities} />
-        {viewedType && !viewedType.driverAvailable && <p className="ontology-connectors__prerequisite" role="status">{viewedType.prerequisite}</p>}
         <p className="ontology-connectors__scope"><DatabaseOutlined /> These settings do not import or synchronize tables.</p>
         {sourcePaused && <p>This source cannot be tested, explored, verified or edited while paused. Sync history remains available.</p>}
         {viewedSource.engine === 'postgresql' && !sourcePaused && <SourceIdentity key={`identity:${proofKey}`} source={viewedSource} identity={activeProof}
@@ -535,7 +531,6 @@ export default function DataConnections({ onChanged }: Props = {}) {
             <li aria-current={wizard === 'choose' ? 'step' : undefined}><span>1</span> Choose connector</li>
             <li aria-current={wizard === 'configure' ? 'step' : undefined}><span>2</span> Configure &amp; verify</li>
           </ol>}
-          <div className="ontology-connectors__status" aria-live="polite">{error && !confirmation && <p className="is-error" role="alert">{error}</p>}</div>
           {wizard === 'choose' && <section className="ontology-connectors__catalog">
             <header><h2>Choose a connector</h2><p>Select a supported external database type.</p></header>
             <div className="ontology-connectors__picker-tools">
@@ -546,12 +541,10 @@ export default function DataConnections({ onChanged }: Props = {}) {
               <ConnectorMark engine={item.engine} /><strong title={item.name}>{item.name}</strong><small>{item.description}</small><span className={`ontology-connectors__capability${item.driverAvailable ? '' : ' is-unavailable'}`}>{item.driverAvailable ? 'Read-only connection test' : 'Driver required'}</span>
             </button>)}</div>
             {!filtered.length && <p className="ontology-connectors__empty">No connectors match your search.</p>}
-            {chosen && !chosen.driverAvailable && <p className="ontology-connectors__prerequisite" role="status">{chosen.prerequisite}</p>}
             <div className="ontology-connectors__actions ontology-connectors__wizard-footer"><span /><Button disabled={pending} onClick={() => navigate(closeWizard)}>Cancel</Button><Button type="primary" disabled={blocked || !chosen?.driverAvailable} onClick={() => { if (chosen?.driverAvailable) configure(chosen); }}>Continue</Button></div>
           </section>}
           {wizard === 'configure' && draft && connector && <form className="ontology-connectors__form" onSubmit={(event) => event.preventDefault()} onKeyDown={(event) => { if (event.key === 'Enter' && !event.nativeEvent.isComposing && event.target instanceof HTMLInputElement && !event.target.closest('[role="combobox"]')) event.preventDefault(); }}>
             <header className="ontology-connectors__form-heading"><div><ConnectorMark engine={draft.engine} /><span><span className="ontology-connectors__eyebrow">{connector.name}</span><h2>{editingId ? 'Source settings' : `New ${connector.name} source`}</h2></span></div>{!editingId && <Button size="small" icon={<ArrowLeftOutlined />} disabled={blocked} onClick={chooseAgain}>Change connector</Button>}</header>
-            {!connector.driverAvailable && <p className="ontology-connectors__prerequisite" role="alert">{connector.prerequisite} Connection testing and saving require this driver.</p>}
             <fieldset disabled={blocked || editConflict}>
               <section className="ontology-connectors__section"><h3>Source details</h3><label>Connection name<Input aria-label="Connection name" value={draft.name} maxLength={200} autoComplete="off" placeholder="Production database" onChange={(event) => change({ name: event.target.value })} /></label></section>
               <section className="ontology-connectors__section"><h3>Connection</h3><div className="ontology-connectors__endpoint"><label>Host<Input aria-label="Host" value={draft.config.host} maxLength={253} autoComplete="off" placeholder="database.example.com" onChange={(event) => changeConfig({ host: event.target.value })} /></label><label>Port<Input aria-label="Port" value={draft.config.port} inputMode="numeric" maxLength={5} onChange={(event) => changeConfig({ port: event.target.value })} /></label></div>
@@ -568,18 +561,11 @@ export default function DataConnections({ onChanged }: Props = {}) {
                 <p className="ontology-connectors__help">Credentials are encrypted at rest and are never returned by the API. Use a dedicated account with read access.</p>
               </section>
             </fieldset>
-            {editConflict && <div role="alert" className="ontology-connectors__test-result is-error">
-              <p>This saved source changed after you opened the editor. The entered password was cleared. Reload the saved source and reopen Edit before testing or saving.</p>
-              <Button size="small" disabled={pending} onClick={() => {
-                closeWizard(); setReload(value => value + 1);
-              }}>Reload saved source</Button>
-            </div>}
-            {testFeedback(testResult)}
             <p className="ontology-connectors__help">Saving verifies the connection again. It does not import tables or change the external database.</p>
-            <div className="ontology-connectors__actions ontology-connectors__wizard-footer"><span /><Button disabled={pending} onClick={() => navigate(closeWizard)}>Cancel</Button><Button onClick={() => void test()} loading={operation === 'test'} disabled={blocked || editConflict || !connector.driverAvailable}>Test connection</Button><Button type="primary" onClick={() => void save()} loading={operation === 'save'} disabled={blocked || editConflict || !connector.driverAvailable || !!editingId && !dirty}>Save source</Button></div>
+            <div className="ontology-connectors__actions ontology-connectors__wizard-footer"><span /><Button disabled={pending} onClick={() => navigate(closeWizard)}>Cancel</Button><Button onClick={() => editConflict ? reloadSavedSource() : void test()} loading={operation === 'test'} disabled={blocked || !editConflict && !connector.driverAvailable}>{editConflict ? 'Reload saved source' : 'Test connection'}</Button><Button type="primary" onClick={() => void save()} loading={operation === 'save'} disabled={blocked || editConflict || !connector.driverAvailable || !!editingId && !dirty}>Save source</Button></div>
           </form>}
       </div>
     </Modal>}
-    {confirmation && <Modal className="flow-surface-modal ontology-connectors__confirmation" title={confirmation.title} open okText={confirmation.label} confirmLoading={pending} cancelButtonProps={{ disabled: pending }} closable={!pending} maskClosable={false} onCancel={() => { if (!pendingRef.current) setConfirmation(null); }} onOk={async () => { if (await confirmation.action() && current()) setConfirmation(null); }}><p>{confirmation.detail}</p>{confirmationError && <p role="alert">{confirmationError}</p>}</Modal>}
+    {confirmation && <Modal className="flow-surface-modal ontology-connectors__confirmation" title={confirmation.title} open okText={confirmation.label} confirmLoading={pending} cancelButtonProps={{ disabled: pending }} closable={!pending} maskClosable={false} onCancel={() => { if (!pendingRef.current) setConfirmation(null); }} onOk={async () => { if (await confirmation.action() && current()) setConfirmation(null); }}><p>{confirmation.detail}</p></Modal>}
   </>;
 }
