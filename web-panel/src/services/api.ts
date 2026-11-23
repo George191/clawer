@@ -1150,6 +1150,14 @@ export const fetchHandlerCode = (
 ): Promise<HandlerCode> =>
   client.get(`/etl/handlers/${layer}/${table}`).then((r) => unwrap<HandlerCode>(r.data));
 
+export type LayerScriptMessage = { role: 'user' | 'assistant'; content: string };
+type LayerScriptReply = { reply: string; code: string | null; model: string };
+export const fetchLayerScriptModel = (signal: AbortSignal) =>
+  client.get('/etl/handlers/chat-model', { signal }).then(r => unwrap<{ model: string }>(r.data));
+export const chatLayerScript = (layer: string, table: string, code: string, messages: LayerScriptMessage[], signal: AbortSignal) =>
+  client.post(`/etl/handlers/${encodeURIComponent(layer)}/${encodeURIComponent(table)}/chat`, { code, messages }, { signal, timeout: 180000 })
+    .then(r => unwrap<LayerScriptReply>(r.data));
+
 export const saveHandlerCode = (
   layer: string,
   table: string,

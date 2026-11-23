@@ -5,14 +5,17 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from dataclasses import asdict
 from uuid import UUID
 
+from anyio import create_task_group
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from jwt import InvalidTokenError
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import settings
@@ -23,6 +26,7 @@ from app.web.services.automation_store import automation_store
 from app.web.services.automation_task_store import automation_task_store
 from app.web.services.task_events import TASK_EVENT_CHANNEL
 from app.web.api.dependencies.common import get_current_user
+from app.web.api.routes.ai_collect import AdapterRequest, GenerateRequest, build_adapter, build_template
 from app.web.core.db import engine
 from app.web.core.security import decode_session_token, TokenType
 
@@ -172,6 +176,56 @@ async def _close_at_expiry(connection: ClientConnection) -> None:
         await connection.websocket.close(code=4401)
 
 
+async def _run_scout(message: dict, send: Callable[[dict], Awaitable[None]]) -> None:
+    request_id = message["request_id"]
+    analyzing = message["type"] == "start_analyze"
+    kind = "analyze" if analyzing else "adapter"
+    events: asyncio.Queue[dict | None] = asyncio.Queue()
+
+    def emit(event: str, data: dict) -> None:
+        events.put_nowait({"request_id": request_id, "type": event, "data": data})
+
+    async def forward() -> None:
+        while (event := await events.get()) is not None:
+            await send(event)
+
+    async with create_task_group() as group:
+        group.start_soon(forward)
+        try:
+            emit(f"{kind}_started", {})
+            if analyzing:
+                payload = GenerateRequest.model_validate({
+                    "url": message.get("url"),
+                    "options": {
+                        "userRequest": message.get("prompt", ""),
+                        "currentTemplateYaml": message.get("current_template_yaml", ""),
+                        "viewportWidth": message.get("viewport_width", 1440),
+                        "viewportHeight": message.get("viewport_height", 1000),
+                    },
+                })
+                result = await build_template(payload, emit)
+                emit("analyze_fields", {"fields": result["fields"]})
+                emit("analyze_pagination", result["pagination"])
+                emit("analyze_complete", {**result, "templateYaml": result["yaml"]})
+            else:
+                payload = AdapterRequest.model_validate({
+                    "url": message.get("url"), "templateId": message.get("template_id"),
+                    "prompt": message.get("prompt", ""),
+                    "currentAdapterCode": message.get("current_adapter_code", ""),
+                })
+                result = await build_adapter(payload, lambda delta: emit("adapter_delta", {"content": delta}))
+                emit("adapter_ready", result)
+        except HTTPException as exc:
+            emit(f"{kind}_error", {"message": str(exc.detail)})
+        except ValidationError:
+            emit(f"{kind}_error", {"message": "采集参数无效或超出长度限制"})
+        except Exception:
+            logger.exception("Scout %s request failed", kind)
+            emit(f"{kind}_error", {"message": "采集分析失败，请查看服务日志"})
+        finally:
+            events.put_nowait(None)
+
+
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     protocols = [value.strip() for value in websocket.headers.get("sec-websocket-protocol", "").split(',')]
@@ -189,12 +243,32 @@ async def websocket_endpoint(websocket: WebSocket):
     connection = ClientConnection(websocket, payload['exp'])
     expiry = asyncio.create_task(_close_at_expiry(connection))
     _connections.add(connection)
+    scout_task: asyncio.Task | None = None
+    scout_request_id: str | None = None
     try:
         await connection.send({"type": "task_stream_status", "data": {"available": _stream_available}})
         while True:
             try:
                 message = await asyncio.wait_for(websocket.receive_json(), timeout=max(0, connection.expires_at - time.time()))
                 action = message["type"]
+                if action in {"start_analyze", "generate_adapter", "cancel_analyze"}:
+                    request_id = message.get("request_id")
+                    if not isinstance(request_id, str) or not 0 < len(request_id) <= 128:
+                        await connection.send({"type": "error", "message": "Invalid Scout request ID"})
+                        continue
+                    if action == "cancel_analyze" and request_id != scout_request_id:
+                        continue
+                    if scout_task:
+                        scout_task.cancel()
+                        await asyncio.gather(scout_task, return_exceptions=True)
+                    if action == "cancel_analyze":
+                        scout_task = None
+                        scout_request_id = None
+                        await connection.send({"type": "analyze_cancelled", "request_id": request_id, "data": {}})
+                    else:
+                        scout_request_id = request_id
+                        scout_task = asyncio.create_task(_run_scout(message, connection.send))
+                    continue
                 channel = message["channel"]
                 if action not in {"subscribe", "unsubscribe"} or not isinstance(channel, str):
                     raise ValueError("Unsupported subscription")
@@ -222,6 +296,9 @@ async def websocket_endpoint(websocket: WebSocket):
         with suppress(Exception):
             await websocket.close(code=1011)
     finally:
+        if scout_task:
+            scout_task.cancel()
+            await asyncio.gather(scout_task, return_exceptions=True)
         expiry.cancel()
         with suppress(asyncio.CancelledError):
             await expiry

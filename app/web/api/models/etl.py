@@ -91,6 +91,27 @@ class CodePayload(BaseModel):
     code: str = Field(max_length=250_000)
 
 
+class LayerScriptMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=8000)
+
+
+class LayerScriptChat(CodePayload):
+    messages: list[LayerScriptMessage] = Field(min_length=1, max_length=21)
+
+    @model_validator(mode="after")
+    def check_turns(self):
+        for index, message in enumerate(self.messages):
+            role = "assistant" if index % 2 else "user"
+            if message.role != role or not message.content.strip():
+                raise ValueError("Expected alternating non-empty user and assistant messages")
+            if role == "user" and len(message.content) > 4000:
+                raise ValueError("User messages may contain up to 4000 characters")
+        if self.messages[-1].role != "user":
+            raise ValueError("The final message must be from the user")
+        return self
+
+
 class SqlQuery(BaseModel):
     sql: str = Field(min_length=1, max_length=50_000)
 

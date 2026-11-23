@@ -1,30 +1,48 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
-from pydantic import BaseModel, ConfigDict, Field
+import yaml
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.web.agents.adapter import AdapterAgent
+from app.config.ai_settings import ai_settings
+from app.web.agents.adapter import adapter_agent
+from app.web.api.dependencies.common import get_current_user
 from app.web.agents.template import template_agent
 from app.web.api.models.tasks import TaskAction, WorkspaceTaskRequest
 from app.web.services.ai_collect_store import ai_collect_store
-from app.web.services.browser_renderer import browser_renderer
+from app.web.services.browser_renderer import BrowserRenderResult, browser_renderer
 from app.web.services.google_search import GoogleSearchRequest, create_google_search_task
 from app.web.services.search import SearchRequest, create_search_task
 from app.web.services.task_runs import delete_run, run_action
+from app.web.utils.validation import scope_limit, validate_generated_adapter, validate_target_url
 
 router = APIRouter(prefix="/ai", tags=["ai-collect"])
 
 
 class UrlRequest(BaseModel):
-    url: str = Field(min_length=1)
+    url: str = Field(min_length=1, max_length=4096)
+
+    @field_validator("url")
+    @classmethod
+    def check_public_url(cls, value: str) -> str:
+        validate_target_url(value)
+        return value
+
+
+class GenerateOptions(BaseModel):
+    userRequest: str = Field(default="", max_length=4000)
+    currentTemplateYaml: str = Field(default="", max_length=65536)
+    viewportWidth: int = Field(default=1440, gt=0)
+    viewportHeight: int = Field(default=1000, gt=0)
 
 
 class GenerateRequest(UrlRequest):
-    options: dict[str, Any] = Field(default_factory=dict)
+    options: GenerateOptions = Field(default_factory=GenerateOptions)
 
 
 class DryRunRequest(BaseModel):
@@ -34,7 +52,9 @@ class DryRunRequest(BaseModel):
 
 class AdapterRequest(UrlRequest):
     siteType: str = "default"
-    templateId: str | None = None
+    templateId: str | None = Field(default=None, max_length=256)
+    prompt: str = Field(default="", max_length=4000)
+    currentAdapterCode: str = Field(default="", max_length=65536)
 
 
 class WorkspaceTemplateUpdate(BaseModel):
@@ -77,17 +97,23 @@ def _analysis_response(url: str, analysis: dict[str, Any], yaml_content: str, te
         "sampleItems": analysis.get("sample_items") or [],
         "warnings": analysis.get("warnings") or [],
         "acquisition": analysis.get("acquisition") or {},
-        "agent": {"source": "template_agent"},
+        "agent": {
+            "source": "template_agent", "model": ai_settings.scout_model,
+            "decision": {"requires_adapter": bool(analysis.get("adapter_requirements"))},
+        },
         "createdAt": datetime.now(timezone.utc).isoformat(),
     }
 
 
-@router.post("/preflight")
-async def preflight(payload: UrlRequest) -> dict[str, Any]:
-    result = await browser_renderer.render(payload.url)
+@router.get("/chat-model", dependencies=[Depends(get_current_user)])
+async def chat_model() -> dict[str, str]:
+    return {"model": ai_settings.scout_model}
+
+
+def _preflight_response(url: str, result: BrowserRenderResult) -> dict[str, Any]:
     return {
         "ok": True,
-        "url": payload.url,
+        "url": url,
         "normalizedUrl": result.url,
         "host": result.url.split("/", 3)[2] if "://" in result.url else "",
         "title": result.title,
@@ -106,9 +132,22 @@ async def preflight(payload: UrlRequest) -> dict[str, Any]:
     }
 
 
-@router.post("/generate-template")
-async def generate_template(payload: GenerateRequest) -> dict[str, Any]:
-    rendered = await browser_renderer.render(payload.url)
+@router.post("/preflight", dependencies=[Depends(get_current_user)])
+async def preflight(payload: UrlRequest) -> dict[str, Any]:
+    return _preflight_response(payload.url, await browser_renderer.render(payload.url))
+
+
+async def build_template(payload: GenerateRequest, emit: Callable[[str, dict], None] | None = None) -> dict[str, Any]:
+    options = payload.options
+    if emit:
+        emit("analyze_step", {"step": "fetch_page", "label": "正在渲染采集页面", "status": "running"})
+    rendered = await browser_renderer.render(
+        payload.url, viewport_width=options.viewportWidth, viewport_height=options.viewportHeight,
+    )
+    validate_target_url(rendered.url)
+    if emit:
+        emit("analyze_preflight", _preflight_response(payload.url, rendered))
+        emit("analyze_step", {"step": "fetch_page", "label": "页面证据已就绪", "status": "done"})
     evidence = await template_agent.analyze_page(
         rendered.url,
         rendered.html,
@@ -120,8 +159,18 @@ async def generate_template(payload: GenerateRequest) -> dict[str, Any]:
         rendered.url,
         evidence,
         rendered.title,
-        user_request=str(payload.options.get("userRequest") or ""),
+        user_request=options.userRequest,
+        existing_template_yaml=options.currentTemplateYaml,
+        on_event=(lambda event: emit("analyze_model", event)) if emit else None,
     )
+    if len(yaml_content.encode()) > scope_limit("max_generated_template_bytes", 65536):
+        raise HTTPException(422, "Generated template exceeds the collection size limit")
+    template = yaml.safe_load(yaml_content)
+    evidence = template_agent.merge_template_evidence(evidence, template)
+    if len(evidence["fields"]) > scope_limit("max_generated_fields", 100):
+        raise HTTPException(422, "Generated template exceeds the collection field limit")
+    if template.get("list_pagination") and not 0 < int(template["list_pagination"].get("max_pages", 1000)) <= scope_limit("max_template_pages", 100):
+        raise HTTPException(422, "Generated template exceeds the collection page limit")
     template_id = template_agent._build_template_name(rendered.url)
     await ai_collect_store.save_analysis({
         "template_id": template_id,
@@ -134,6 +183,11 @@ async def generate_template(payload: GenerateRequest) -> dict[str, Any]:
         "sample_items": evidence.get("sample_items") or [],
     })
     return _analysis_response(rendered.url, evidence, yaml_content, template_id)
+
+
+@router.post("/generate-template", dependencies=[Depends(get_current_user)])
+async def generate_template(payload: GenerateRequest) -> dict[str, Any]:
+    return await build_template(payload)
 
 
 @router.post("/dry-run")
@@ -152,13 +206,20 @@ async def dry_run(payload: DryRunRequest) -> dict[str, Any]:
     }
 
 
-@router.post("/generate-adapter")
-async def generate_adapter(payload: AdapterRequest) -> dict[str, Any]:
+async def build_adapter(payload: AdapterRequest, on_chunk: Callable[[str], None] | None = None) -> dict[str, Any]:
     template_id = payload.templateId or template_agent._build_template_name(payload.url)
     analysis = await ai_collect_store.get_analysis(template_id)
     if analysis is None:
         raise HTTPException(status_code=404, detail="模板分析结果不存在")
-    result = await AdapterAgent().generate_adapter(template_id, str(analysis["template_yaml"]))
+    result = await adapter_agent.generate_adapter(
+        template_id, str(analysis["template_yaml"]), on_chunk=on_chunk,
+        user_request=payload.prompt, existing_adapter_code=payload.currentAdapterCode,
+    )
+    if len(result.adapter_code.encode()) > scope_limit("max_generated_adapter_bytes", 65536):
+        raise HTTPException(422, "Generated adapter exceeds the collection size limit")
+    validate_generated_adapter(result.adapter_code)
+    if result.warnings:
+        raise HTTPException(422, "；".join(result.warnings))
     await ai_collect_store.save_analysis({
         "template_id": template_id,
         "source_url": str(analysis.get("source_url") or payload.url),
@@ -175,6 +236,11 @@ async def generate_adapter(payload: AdapterRequest) -> dict[str, Any]:
         "language": "python",
         "testResult": {"passed": not result.warnings, "sampleCount": 0},
     }
+
+
+@router.post("/generate-adapter", dependencies=[Depends(get_current_user)])
+async def generate_adapter(payload: AdapterRequest) -> dict[str, Any]:
+    return await build_adapter(payload)
 
 
 @router.get("/workspace/templates")

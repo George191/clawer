@@ -326,6 +326,9 @@ export interface WorkspaceReleasePayload {
 
 export const getAiAnalyzeWsUrl = () => wsUrl('/ws');
 
+export const getScoutChatModel = (signal: AbortSignal): Promise<{ model: string }> =>
+  client.get('/ai/chat-model', { signal }).then(r => r.data);
+
 export const preflightUrl = (url: string): Promise<UrlPreflightResponse> =>
   client.post('/ai/preflight', { url }, { timeout: 0 }).then((r) => r.data);
 

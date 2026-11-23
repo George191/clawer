@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError, MultipleResultsFound
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config.ai_settings import ai_settings
 from app.etl.tasks.extractors.keyword_files import MAX_FILE_SIZE
 from app.web.api.dependencies.common import CurrentActiveSuperuser, SessionDep, get_current_active_superuser, get_current_user
 from app.web.api.dependencies.session import get_db
@@ -90,6 +91,7 @@ from app.web.api.models.transfer_upstream import (
 from app.web.api.models.etl import RowPreviewPolicy
 from app.web.api.models.etl import (
     CodePayload,
+    LayerScriptChat,
     DataQuery,
     FavoriteImport,
     FavoriteMutation,
@@ -191,7 +193,7 @@ from app.web.services.transfer_timeline import list_transfer_timeline, parse_tim
 from app.web.services.transfer_upstream import (
     change_upstream_trigger, list_upstream_candidates, list_upstream_jobs, list_upstream_mixed_slots, list_upstream_triggers, read_upstream_trigger,
 )
-from app.web.services import etl_runtime
+from app.web.services import etl_runtime, layer_script_chat
 from app.web.services import vulnerability_keywords as keyword_files
 from app.web.services.etl_layers import get_etl_layers
 from app.web.services.etl_workspace import get_etl_workspace
@@ -2088,6 +2090,17 @@ async def save_handler(layer: str, table: str, payload: CodePayload) -> dict[str
 async def validate_handler(layer: str, table: str, payload: CodePayload) -> dict[str, Any]:
     await get_etl_layers().columns(layer, table)
     return etl_runtime.validate(payload.code)
+
+
+@write.get("/handlers/chat-model")
+async def layer_script_model() -> dict[str, str]:
+    return {"model": ai_settings.helio_model}
+
+
+@write.post("/handlers/{layer}/{table}/chat")
+async def chat_handler(layer: str, table: str, payload: LayerScriptChat) -> dict[str, str | None]:
+    columns = await get_etl_layers().columns(layer, table)
+    return await layer_script_chat.chat(layer, table, columns, payload)
 
 
 @read.post("/{layer}/{table}/dry-run")

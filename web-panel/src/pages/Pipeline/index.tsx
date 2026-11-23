@@ -36,6 +36,7 @@ import useExplorerErrorToast from './useExplorerErrorToast';
 import { LayoutToolbar, useResultLayout } from './ExplorerResultLayout';
 import ExplorerTableEvidence from './ExplorerTableEvidence';
 import ExplorerStreamPositions, { topicRate } from './ExplorerStreamPositions';
+import LayerScriptChat from './LayerScriptChat';
 import ExplorerIndexedProjection from './ExplorerIndexedProjection';
 import ExplorerIndexedIdSample from './ExplorerIndexedIdSample';
 import { useSandboxIdentity } from './SandboxMarkings';
@@ -187,11 +188,11 @@ const DataLayersWorkspace: React.FC = () => {
     const workspaceActive = useRef(true);
     const mutationPending = useRef(false);
     const validationPending = useRef(false);
-    const errorText = (error: unknown) => {
+    const errorText = useCallback((error: unknown) => {
         const response = (error as { response?: { data?: { errors?: unknown; detail?: unknown; message?: unknown } }; message?: string })?.response?.data;
         const detail = response?.errors ?? response?.detail ?? response?.message;
         return typeof detail === 'string' ? detail : detail ? JSON.stringify(detail) : (error as Error)?.message || 'Request failed';
-    };
+    }, []);
     const beginMutation = () => {
         if (!workspaceActive.current || !managePermission.current || mutationPending.current) return false;
         mutationPending.current = true; setMutationLoading(true); return true;
@@ -250,6 +251,8 @@ const DataLayersWorkspace: React.FC = () => {
     const [savedScript, setSavedScript] = useState('');
     const [scriptLoaded, setScriptLoaded] = useState(false);
     const [scriptValidating, setScriptValidating] = useState(false);
+    const [scriptError, setScriptError] = useState('');
+    const editScript = (code: string) => { setScriptError(''); setScript(code); };
     const scriptContent = useRef('');
     scriptContent.current = script;
     const  [inputTopics,  setInputTopics]  =  useState<string[]>([]);
@@ -271,6 +274,7 @@ const DataLayersWorkspace: React.FC = () => {
     const  [sortConditions,  setSortConditions]  =  useState<SortCondition[]>([]);
     const activateTool = (tool: 'filter' | 'script') => {
         if (tool === 'script' && scriptOpen) { closeScript(); return; }
+        if (tool === 'script') setScriptError('');
         setFilterOpen(tool === 'filter' && !filterOpen);
         setScriptOpen(tool === 'script');
     };
@@ -937,18 +941,28 @@ const DataLayersWorkspace: React.FC = () => {
     const runDryRun = async () => {
         if (!selectedTableAvailable || !scriptLoaded || !script.trim() || validationPending.current) return;
         const target = selection.current; const code = script;
-        validationPending.current = true; setScriptValidating(true);
+        validationPending.current = true; setScriptValidating(true); setScriptError('');
+        const current = () => selection.current === target && scriptContent.current === code;
+        const reportError = (detail: string) => {
+            if (current()) { setScriptError(detail); message.error(detail); }
+        };
         try {
             const result = await validateHandlerCode(selectedSchema, table.name, code);
-            if (selection.current === target && scriptContent.current === code) { if (result.valid) message.success('Python syntax is valid'); else message.error(result.errors.join('; ')); }
-        } catch (error) { if (selection.current === target) message.error(errorText(error)); }
+            if (result.valid) { if (current()) message.success('Python syntax is valid'); }
+            else reportError(result.errors.join('; '));
+        } catch (error) { reportError(errorText(error)); }
         finally { validationPending.current = false; if (workspaceActive.current) setScriptValidating(false); }
     };
     const saveScript = async () => {
         if (!selectedTableAvailable || !scriptLoaded || !script.trim() || !beginMutation()) return;
         const target = selection.current; const code = script;
+        setScriptError('');
         try { await saveHandlerCode(selectedSchema, table.name, code); if (selection.current === target) { setSavedScript(code); setScriptNote('Saved draft'); } message.success('Draft saved; deployed worker code is unchanged'); }
-        catch (error) { message.error(errorText(error)); } finally { endMutation(); }
+        catch (error) {
+            const detail = errorText(error);
+            if (selection.current === target && scriptContent.current === code) setScriptError(detail);
+            message.error(detail);
+        } finally { endMutation(); }
     };
     const applyFilters = () => { if (editingRowKey) { message.warning('Save or cancel the current row edit first'); return; } setAppliedQuery({ filters: filterRules.filter((rule) => rule.field || rule.id.startsWith('group-')), sorts: [...(sortField ? [{ field: sortField, direction: sortDirection }] : []), ...sortConditions.filter((item) => item.field)], search: filterText }); setPageNumber(1); };
     const saveOffset = async () => {
@@ -1167,12 +1181,20 @@ footer: previewPage && <ExplorerResultsFooter offset={previewPage.offset} rowCou
                         </section>}
                         {resourceView === 'api' && (canManage ? apiPanel : <div className="flow-schema-state" role="status">Published APIs are available to administrators only.</div>)}
                     </ExplorerToolDialog>
-                    <Modal  className="flow-surface-modal flow-script-modal"  title="Layer  script"  open={scriptOpen} onCancel={closeScript} keyboard={!mutationLoading} maskClosable={!mutationLoading}  footer={null}  width={720}>
-                        <div  className="flow-script-editor">
-                            <div  className="flow-script-note">{scriptNote}. Drafts are stored separately and are not deployed to workers.</div>
-                            <Input.TextArea aria-label="Layer script code" readOnly={!canManage || !scriptLoaded || mutationLoading} value={script}  onChange={(event)  =>  setScript(event.target.value)}  autoSize={{  minRows:  12,  maxRows:  22  }}  />
-                            <div  className="flow-script-actions"><Button type="primary" onClick={runDryRun} loading={scriptValidating} disabled={!scriptLoaded || !script.trim() || mutationLoading}>Validate syntax</Button>{canManage && <Button onClick={saveScript} loading={mutationLoading} disabled={!scriptLoaded || !script.trim() || !scriptDirty}>Save draft</Button>}<span>AST validation only; code is not executed</span></div>
-
+                    <Modal className="flow-surface-modal flow-script-modal" title="Layer script" open={scriptOpen} onCancel={closeScript} keyboard={!mutationLoading} maskClosable={!mutationLoading} footer={null} width={canManage ? 1060 : 720}>
+                        <div className={canManage ? 'layer-script-workbench' : undefined}>
+                            <div className="flow-script-editor">
+                                <div className="flow-script-note">{scriptNote}. Drafts are stored separately and are not deployed to workers.</div>
+                                <Input.TextArea aria-label="Layer script code" readOnly={!canManage || !scriptLoaded || mutationLoading} value={script} onChange={event => editScript(event.target.value)} autoSize={{ minRows: 12, maxRows: 22 }} />
+                                <div className="flow-script-actions">
+                                    <Button type="primary" onClick={runDryRun} loading={scriptValidating} disabled={!scriptLoaded || !script.trim() || mutationLoading}>Validate syntax</Button>
+                                    {canManage && <Button onClick={saveScript} loading={mutationLoading} disabled={!scriptLoaded || !script.trim() || !scriptDirty}>Save draft</Button>}
+                                    <span>AST validation only; code is not executed</span>
+                                </div>
+                            </div>
+                            {scriptOpen && resourceView === 'stream' && selectedTableAvailable && canManage && previewIdentity && adminPreviewIdentity.current === previewIdentity &&
+                                <LayerScriptChat key={workspaceAsset} layer={selectedSchema} table={table.name} code={script} loaded={scriptLoaded}
+                                    validating={scriptValidating} saving={mutationLoading} apply={editScript} error={scriptError} setError={setScriptError} errorText={errorText} />}
                         </div>
                     </Modal>
                     <Modal className="flow-surface-modal" title="Satellite vulnerability extraction" open={keywordsOpen} onCancel={() => { if (!keywordsSaving) setKeywordsOpen(false); }} footer={<Button disabled={keywordsSaving} onClick={() => setKeywordsOpen(false)}>Close</Button>} width={760}>

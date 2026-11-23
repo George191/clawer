@@ -62,6 +62,8 @@ class AISettings(BaseSettings):
     custom_api_key: str = Field(default="", description="自定义 API Key")
     custom_base_url: str = Field(default="", description="自定义 API Base URL")
     custom_model: str = Field(default="", description="自定义模型名")
+    helio_model: str = Field(default="Helio-AI-LayerScript", pattern=r"^Helio-AI-[A-Za-z0-9][A-Za-z0-9._-]*$")
+    scout_model: str = Field(default="Scout-AI-Collect", pattern=r"^Scout-AI-[A-Za-z0-9][A-Za-z0-9._-]*$")
 
     # ── 功能开关 ──
     ai_enabled: bool = Field(

@@ -1,82 +1,24 @@
 from __future__ import annotations
 
-import os
-
-os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
-os.environ.setdefault("OMP_NUM_THREADS", "1")
-
 import asyncio
 import json
 import re
-from pathlib import Path
 from typing import Any, Callable, Dict
 
+from app.ai.gateway import complete
+from app.config.ai_settings import ai_settings
 from app.logger import get_logger
 
 logger = get_logger(__name__)
 
 
 class BaseAgent:
-    def __init__(self, model_path: str | None = None):
-        self._model_path = model_path or str(
-            Path(__file__).parent.parent.parent.parent
-            / "models"
-            / "Qwen"
-            / "2.5-0.5B-Instruct"
-        )
-        self._model = None
-        self._tokenizer = None
-        self._torch = None
-        self._model_lock = asyncio.Lock()
+    def __init__(self):
         self._prompts: Dict[str, str] = {}
 
     @property
     def model_name(self) -> str:
-        return Path(self._model_path).name
-
-    async def _ensure_model(self) -> None:
-        if self._model is not None:
-            return
-        async with self._model_lock:
-            if self._model is None:
-                await asyncio.to_thread(self._load_model)
-
-    def _load_model(self) -> None:
-        try:
-            import torch
-            from transformers import AutoModelForCausalLM, AutoTokenizer
-        except ImportError as exc:
-            raise RuntimeError(
-                "Local AI model dependencies are unavailable; install torch and transformers"
-            ) from exc
-
-        logger.info("Loading model from: %s", self._model_path)
-        model_path = Path(self._model_path)
-        if model_path.is_absolute() and not model_path.is_dir():
-            raise FileNotFoundError(
-                f"Local AI model directory does not exist: {model_path}. "
-                "Mount the host models directory at /app/models in the web container."
-            )
-
-        local_files_only = model_path.is_absolute()
-        self._tokenizer = AutoTokenizer.from_pretrained(
-            self._model_path,
-            trust_remote_code=True,
-            local_files_only=local_files_only,
-        )
-        self._model = AutoModelForCausalLM.from_pretrained(
-            self._model_path,
-            device_map="auto",
-            trust_remote_code=True,
-            dtype=torch.float16,
-            local_files_only=local_files_only,
-        )
-        self._torch = torch
-        self._model.generation_config.do_sample = False
-        self._model.generation_config.temperature = None
-        self._model.generation_config.top_p = None
-        self._model.generation_config.top_k = None
-        logger.info("Model loaded successfully")
+        return ai_settings.scout_model
 
     def register_prompt(self, name: str, prompt: str) -> None:
         self._prompts[name] = prompt
@@ -94,77 +36,12 @@ class BaseAgent:
         max_tokens: int = 8192,
         on_chunk: Callable[[str], None] | None = None,
     ) -> str:
-        await self._ensure_model()
-
-        model_input = self._tokenizer.apply_chat_template(
+        return await complete(
             [{"role": "user", "content": prompt}],
-            tokenize=False,
-            add_generation_prompt=True,
+            self.model_name,
+            max_tokens=max_tokens,
+            on_chunk=on_chunk,
         )
-        encoded = self._tokenizer(
-            model_input,
-            return_tensors="pt",
-            truncation=True,
-            max_length=4096,
-        )
-        encoded = {k: v.to(self._model.device) for k, v in encoded.items()}
-        input_length = encoded["input_ids"].shape[-1]
-        
-        if on_chunk is None:
-            with self._torch.inference_mode():
-                outputs = self._model.generate(
-                    **encoded,
-                    max_new_tokens=max_tokens,
-                    num_return_sequences=1,
-                    do_sample=False,
-                )
-
-            return self._tokenizer.decode(outputs[0][input_length:], skip_special_tokens=True).strip()
-
-        from transformers import TextIteratorStreamer
-
-        streamer = TextIteratorStreamer(
-            self._tokenizer,
-            skip_prompt=True,
-            skip_special_tokens=True,
-        )
-        generation_errors: list[BaseException] = []
-
-        def run_generation() -> None:
-            try:
-                with self._torch.inference_mode():
-                    self._model.generate(
-                        **encoded,
-                        streamer=streamer,
-                        max_new_tokens=max_tokens,
-                        num_return_sequences=1,
-                        do_sample=False,
-                    )
-            except BaseException as exc:
-                generation_errors.append(exc)
-                streamer.text_queue.put(streamer.stop_signal)
-
-        generation_task = asyncio.create_task(asyncio.to_thread(run_generation))
-        chunks: list[str] = []
-        while True:
-            finished, chunk = await asyncio.to_thread(self._next_stream_chunk, streamer)
-            if finished:
-                break
-            if chunk:
-                chunks.append(chunk)
-                on_chunk(chunk)
-
-        await generation_task
-        if generation_errors:
-            raise generation_errors[0]
-        return "".join(chunks).strip()
-
-    @staticmethod
-    def _next_stream_chunk(streamer: Any) -> tuple[bool, str]:
-        try:
-            return False, next(streamer)
-        except StopIteration:
-            return True, ""
 
     async def generate_complete_json(
         self,
@@ -192,8 +69,7 @@ class BaseAgent:
                 on_event({"kind": "retry", "attempt": attempt + 2, "reason": "invalid_model_output"})
             await asyncio.sleep(1)
         
-        logger.error("JSON generation failed after %d attempts", max_retries)
-        return {"data_type": "list", "fields": [], "pagination": {"type": "none"}, "api_endpoints": [], "download_fields": [], "dedup_fields": [], "description": ""}
+        raise ValueError(f"Model output failed JSON validation after {max_retries} attempts")
 
     def _is_valid_json_structure(self, data: Dict[str, Any]) -> bool:
         if data.get("_parse_failed"):

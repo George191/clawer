@@ -126,6 +126,8 @@ def validate_target_url(url: str) -> None:
         raise HTTPException(status_code=400, detail=f"不支持的协议: {parsed.scheme}")
 
     hostname = parsed.hostname or ""
+    if not hostname or parsed.username is not None or parsed.password is not None:
+        raise HTTPException(status_code=400, detail="采集 URL 必须包含主机且不能内嵌凭据")
 
     if hostname in set(url_rules.get("blocked_exact_hosts", [])):
         raise HTTPException(status_code=400, detail="禁止访问本地地址")

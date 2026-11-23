@@ -4,7 +4,6 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import yaml
@@ -29,10 +28,7 @@ class AdapterResult:
 
 class AdapterAgent(BaseAgent):
     def __init__(self):
-        model_path = (
-            Path(__file__).parents[3] / "models" / "Qwen" / "2.5-Coder-1.5B-Instruct"
-        )
-        super().__init__(str(model_path))
+        super().__init__()
         self._register_default_prompts()
 
     def _register_default_prompts(self) -> None:

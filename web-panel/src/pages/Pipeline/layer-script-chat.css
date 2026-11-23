@@ -1,0 +1,58 @@
+.layer-script-workbench {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(280px, 2fr);
+  gap: 20px;
+}
+.layer-script-workbench .flow-script-actions { flex-wrap: wrap; }
+.layer-script-chat {
+  display: flex;
+  flex-direction: column;
+  align-self: start;
+  gap: 12px;
+  min-width: 0;
+  padding-left: 20px;
+  border-left: 1px solid var(--ontology-border);
+}
+.layer-script-chat header { display: flex; align-items: center; gap: 8px; }
+.layer-script-chat header > div:last-child { min-width: 0; }
+.layer-script-chat code { overflow-wrap: anywhere; }
+.layer-script-dot { width: 80px; height: 80px; flex: none; }
+.layer-script-chat h3 { margin: 0 0 2px; font-size: 14px; }
+.layer-script-chat p { margin: 0; overflow-wrap: anywhere; }
+.layer-script-chat header p, .layer-script-chat-limit p { color: var(--ontology-muted); }
+.layer-script-chat-log {
+  display: grid;
+  gap: 10px;
+  max-height: min(34vh, 300px);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.layer-script-message {
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: var(--ontology-bg);
+}
+.layer-script-message--user { margin-left: 16px; background: var(--ontology-selected); }
+.layer-script-message p { white-space: pre-wrap; }
+.layer-script-message strong { color: var(--ontology-muted); font-size: 11px; }
+.layer-script-chat form, .layer-script-proposal, .layer-script-chat-limit { display: grid; gap: 8px; }
+.layer-script-chat form .ui-btn { justify-self: end; }
+.layer-script-proposal .ui-btn, .layer-script-chat-limit .ui-btn { justify-self: start; }
+.layer-script-proposal details { min-width: 0; }
+.layer-script-proposal summary { color: var(--ontology-link); cursor: pointer; }
+.layer-script-proposal pre {
+  max-height: 24vh;
+  overflow: auto;
+  margin: 6px 0 0;
+  padding: 10px;
+  background: var(--ontology-bg);
+  font: 12px/1.5 ui-monospace, monospace;
+}
+.layer-script-changes > div { margin-top: 6px; }
+.layer-script-changes strong { color: var(--ontology-muted); font-size: 11px; }
+.layer-script-changes pre { max-height: min(12vh, 100px); min-height: 1.5em; margin-top: 2px; }
+.layer-script-chat [role="alert"] { color: var(--ui-error); }
+@media (max-width: 760px) {
+  .layer-script-workbench { grid-template-columns: minmax(0, 1fr); }
+  .layer-script-chat { border-left: 0; border-top: 1px solid var(--ontology-border); padding: 10px 0 0; }
+}

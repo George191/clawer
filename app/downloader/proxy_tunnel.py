@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import socket
 import threading
+from collections.abc import Callable
 from contextlib import suppress
 from urllib.parse import urlsplit
 
@@ -17,8 +18,10 @@ from app.downloader.curl_control import configure_curl_cancellation
 class ProxyTunnel:
     """Forward Chromium TCP through an already selected front/exit proxy route."""
 
-    def __init__(self, proxy_url: str, pre_proxy_url: str | None, *, timeout: float | None) -> None:
+    def __init__(self, proxy_url: str, pre_proxy_url: str | None, *, timeout: float | None,
+                 validate_destination: Callable[[str], None] | None = None) -> None:
         self._check_route(proxy_url, pre_proxy_url)
+        self._validate_destination = validate_destination
         self._proxy_url = proxy_url
         self._pre_proxy_url = pre_proxy_url
         self._timeout = None if timeout is None else max(0.001, timeout)
@@ -54,7 +57,10 @@ class ProxyTunnel:
         curl = Curl()
         try:
             authority = f"[{host}]" if ":" in host else host
-            curl.setopt(CurlOpt.URL, f"http://{authority}:{port}/".encode())
+            destination = f"http://{authority}:{port}/"
+            if self._validate_destination:
+                self._validate_destination(destination)
+            curl.setopt(CurlOpt.URL, destination.encode())
             curl.setopt(CurlOpt.PROXY, self._proxy_url.encode())
             curl.setopt(CurlOpt.NOPROXY, b"")
             if self._pre_proxy_url:

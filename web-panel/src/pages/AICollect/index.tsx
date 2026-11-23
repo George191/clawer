@@ -52,6 +52,7 @@ import { useWebSocket } from '@/hooks/useWebSocket';
 import { formatWorkspaceScheduleLabel } from '@/services/taskSchedule';
 import {
   getAiAnalyzeWsUrl,
+  getScoutChatModel,
   type BrowserAnalysisEvent,
   type DryRunResponse,
   type FieldDef,
@@ -1135,6 +1136,21 @@ const aura = workspacePalette;
 const AICollect: React.FC = () => {
   const { message } = App.useApp();
   const [searchParams, setSearchParams] = useSearchParams();
+  const [scoutModel, setScoutModel] = useState('');
+  const [modelError, setModelError] = useState('');
+  useEffect(() => {
+    const controller = new AbortController();
+    getScoutChatModel(controller.signal).then(({ model }) => {
+      if (!model?.trim()) throw new Error('网关未返回模型 ID');
+      if (!controller.signal.aborted) setScoutModel(model);
+    }).catch(() => {
+      if (!controller.signal.aborted) setModelError('无法读取网关模型');
+    });
+    return () => controller.abort();
+  }, []);
+  const modelLabel = <span className="ai-scout-model">
+    {scoutModel ? <>网关模型 <code>{scoutModel}</code></> : modelError || '正在读取网关模型…'}
+  </span>;
   const analyzeRequestRef = useRef<{ requestId: string; url: string; prompt: string } | null>(null);
   const adapterRequestRef = useRef<{ requestId: string } | null>(null);
   const adapterCharacterQueueRef = useRef<string[]>([]);
@@ -3314,6 +3330,7 @@ const AICollect: React.FC = () => {
           <div className="ai-prompt-copy">
             <div className="ai-collect-dot is-landing" data-activity={dotActivity} />
             <h1 className="ai-prompt-title">嗨，<span className="ai-prompt-name">{currentUserName}</span>，又有新灵感了吗？</h1>
+            {modelLabel}
           </div>
 
           <Segmented
@@ -4620,6 +4637,7 @@ const AICollect: React.FC = () => {
             <h2>{sessionHeaderMeta.title}</h2>
           </div>
           <Text className="ai-session-fixed-subtitle">{sessionHeaderMeta.subtitle}</Text>
+          {modelLabel}
         </div>
       </div>
       {renderSessionBrowserPreview()}
@@ -5956,6 +5974,7 @@ const AICollect: React.FC = () => {
             min-width: 0;
           }
           .ai-collect-dot { flex: 0 0 auto; }
+          .ai-scout-model { display: block; margin-top: 4px; color: ${aura.muted}; font-size: 12px; overflow-wrap: anywhere; }
           .ai-collect-dot .native-dot-message[role="status"] {
             width: 1px;
             height: 1px;

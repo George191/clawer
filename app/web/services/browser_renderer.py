@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
+from fastapi import HTTPException
+
 from app.config.ai_settings import ai_settings
 from app.config.settings import settings
 from app.downloader.browser_runtime import (
@@ -22,6 +24,7 @@ from app.downloader.http_client import HttpClient
 from app.downloader.proxy_tunnel import ProxyTunnel
 from app.logger import get_logger
 from app.utils.runtime_control import get_crawl_proxy_mode
+from app.web.utils.validation import validate_target_url
 
 logger = get_logger(__name__)
 
@@ -166,13 +169,21 @@ class BrowserRenderer:
                     ignore_https_errors=not settings.http_verify_ssl,
                     locale="zh-CN",
                 )
+                def route_request(route) -> None:
+                    request = route.request
+                    if request.resource_type in {"media", "font"}:
+                        route.abort()
+                        return
+                    if urlparse(request.url).scheme not in {"about", "blob", "data"}:
+                        try:
+                            validate_target_url(request.url)
+                        except (HTTPException, ValueError):
+                            route.abort()
+                            return
+                    route.continue_()
+
+                context.route("**/*", route_request)
                 page = context.new_page()
-                page.route(
-                    "**/*",
-                    lambda route: route.abort()
-                    if route.request.resource_type in {"media", "font"}
-                    else route.continue_(),
-                )
 
                 def track_navigation(frame) -> None:
                     if frame == page.main_frame and frame.url:
@@ -369,7 +380,9 @@ class BrowserRenderer:
         operation = None
         try:
             proxy_url, pre_proxy_url = await client._select_proxy(mode)
-            tunnel = ProxyTunnel(proxy_url, pre_proxy_url, timeout=ai_settings.page_fetch_timeout)
+            # Chromium may continue a redirect without invoking the Playwright route again.
+            tunnel = ProxyTunnel(proxy_url, pre_proxy_url, timeout=ai_settings.page_fetch_timeout,
+                                 validate_destination=validate_target_url)
             browser_proxy_url = await tunnel.start()
             operation = asyncio.create_task(asyncio.to_thread(
                 self._render_sync,

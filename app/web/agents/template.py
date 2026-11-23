@@ -4,7 +4,6 @@ import json
 import re
 import textwrap
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Callable, Dict, List
 from urllib.parse import urlparse
 
@@ -138,8 +137,7 @@ class AnalysisResult:
 
 class TemplateAgent(BaseAgent):
     def __init__(self):
-        model_path = Path(__file__).parents[3] / "models" / "Qwen" / "2.5-3B-Instruct"
-        super().__init__(str(model_path))
+        super().__init__()
         self._register_default_prompts()
 
     def _register_default_prompts(self) -> None:
