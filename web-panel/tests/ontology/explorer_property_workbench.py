@@ -40,12 +40,51 @@ def run():
         ctx, page = login(fixture["owner"])
         dialog = page.get_by_role("dialog", name="Properties & column mapping", exact=True)
         expect(dialog.get_by_role("table", name="Registered properties")).to_be_visible()
+        def toggle_search(button):
+            return button.evaluate("""async button => {
+                const pane = button.nextElementSibling;
+                const before = pane.offsetWidth;
+                button.click();
+                await new Promise(requestAnimationFrame);
+                const expansion = pane.getAnimations().find(animation => animation.transitionProperty === 'width');
+                if (!expansion) return null;
+                await expansion.finished;
+                return [before, pane.offsetWidth];
+            }""")
+
+        def check_option_labels(control):
+            assert control.locator(".ui-select-selection-item").evaluate("el => el.clientWidth >= el.scrollWidth")
+            control.click()
+            options = page.get_by_role("listbox").locator(".ui-select-item-option-content")
+            expect(options.first).to_be_visible()
+            assert options.evaluate_all("items => items.every(el => el.clientWidth >= el.scrollWidth)")
+            page.keyboard.press("Escape")
+
+        page.emulate_media(reduced_motion="no-preference")
         for width, height in [(1580, 1024), (390, 670)]:
             page.set_viewport_size({"width": width, "height": height})
             shell = dialog.locator(".ui-modal-content").bounding_box()
             assert shell and .9 * width <= shell["width"] <= width and .85 * height <= shell["height"] <= height, shell
             close = dialog.get_by_role("button", name="Close", exact=True)
             expect(close).to_be_in_viewport()
+            dialog.locator(".flow-foundry-property-tools").scroll_into_view_if_needed()
+            search = dialog.get_by_role("button", name="Search properties and columns")
+            filters = dialog.get_by_role("button", name="Filter properties and columns")
+            expect(search).to_be_in_viewport(ratio=1)
+            expect(filters).to_be_in_viewport(ratio=1)
+            opened = toggle_search(search)
+            assert opened and opened[0] == 0 and opened[1] > 0, opened
+            search_field = dialog.get_by_role("textbox", name="Search properties or source columns")
+            expect(search_field).to_be_focused()
+            filters.click()
+            check_option_labels(dialog.get_by_role("combobox", name="Filter properties", exact=True))
+            filters.click()
+            assert toggle_search(search) == list(reversed(opened))
+            check_option_labels(dialog.get_by_role("combobox", name="Visibility for amount", exact=True))
+            inspector = dialog.get_by_role("complementary", name="Property editor")
+            inspector.get_by_role("button", name="Display", exact=True).click()
+            check_option_labels(inspector.get_by_role("combobox", name="Visibility", exact=True))
+            inspector.get_by_role("button", name="General", exact=True).click()
             sample = dialog.get_by_role("table", name="Data preview").get_by_text("Sample A", exact=True)
             sample.scroll_into_view_if_needed()
             expect(sample).to_be_in_viewport()

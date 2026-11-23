@@ -14,7 +14,7 @@
 .physical-property-workbench .flow-foundry-property-header nav button { height:35px; min-height:35px; font-size:12px; }
 .physical-property-workbench .flow-foundry-property-list { display:flex; flex-direction:column; min-height:0; align-self:stretch; border:0; border-radius:0; overflow:hidden; }
 .physical-property-workbench .flow-foundry-property-workspace.has-inspector { grid-template-columns:minmax(0,1fr) minmax(255px,28%); }
-.physical-property-workbench .flow-foundry-property-tools { flex:none; box-sizing:border-box; height:36px; flex-wrap:nowrap; }
+.physical-property-workbench .flow-foundry-property-tools { flex:none; box-sizing:border-box; min-height:36px; flex-wrap:wrap; justify-content:flex-start; }
 .physical-property-workbench .flow-foundry-property-list .flow-foundry-property-tools { padding-block:0; }
 .physical-property-workbench .flow-foundry-property-workspace { height:var(--physical-workspace-height); min-height:0; grid-template-rows:minmax(0,1fr); align-items:stretch; border:1px solid var(--ontology-border); border-radius:3px; overflow:hidden; }
 .explorer-resource-view > .flow-foundry-properties.physical-property-workbench .flow-foundry-property-main { gap:0; padding:0; }
@@ -59,7 +59,7 @@
 .physical-property-fields { min-height:0; overflow:auto; overscroll-behavior:contain; scrollbar-gutter:stable; padding:10px; display:grid; align-content:start; gap:8px; font-size:12px; }
 .physical-property-fields h4 { margin:2px 0; font-size:13px; }
 .physical-property-fields label { display:grid; gap:3px; }
-.physical-property-fields :is(input:not([type=checkbox]),textarea,.ui-native-select),.physical-property-search :is(.ui-native-select,input),
+.physical-property-fields :is(input:not([type=checkbox]),textarea,.ui-native-select),.physical-property-search input,
 .physical-property-workbench .flow-foundry-property-list .ui-native-select {
   color:var(--ontology-text); background:var(--ontology-panel); border:1px solid var(--ontology-border);
   border-radius:3px; padding:4px 6px; font:inherit; min-width:0; max-width:100%;
@@ -72,17 +72,19 @@
 .physical-property-fields small,.physical-property-fields dt { font-size:11px; color:var(--ontology-muted); }
 .physical-property-fields dl,.physical-property-fields dd { margin:0; }
 .physical-property-fields dd { margin-bottom:8px; overflow-wrap:anywhere; }
-.physical-property-group,.physical-property-search { display:flex; gap:8px; align-items:center; }
+.physical-property-group { display:flex; gap:8px; align-items:center; }
 .physical-property-group input { flex:1; }
 .physical-property-group button { display:inline-flex; flex:none; align-items:center; justify-content:center; gap:4px; box-sizing:border-box; height:30px; min-width:62px; padding:0 9px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-toolbar); color:var(--ontology-text); font:inherit; cursor:pointer; }
 .physical-property-group button:hover:not(:disabled) { border-color:var(--ontology-muted); background:var(--ontology-hover); }
 .physical-property-group button:focus-visible { outline:1px solid var(--ontology-muted); outline-offset:2px; }
 .physical-property-group button:disabled { opacity:.45; cursor:default; }
 .physical-property-group button .ui-icon { font-size:12px; }
-.physical-property-search { min-width:0; padding:0; flex-wrap:nowrap; }
-.physical-property-search :is(.ui-native-select,input) { box-sizing:border-box; height:30px; }
-.physical-property-search input { width:180px; }
-.physical-property-search .ui-native-select { max-width:150px; }
+.physical-property-tool { display:inline-flex; flex:none; align-items:center; }
+.physical-property-search { --control-width:240px; }
+.physical-property-filter { --control-width:160px; }
+.physical-property-reveal { display:grid; grid-template-columns:var(--control-width); align-items:center; width:0; overflow:clip; opacity:0; transform:translateX(-5px); transition:width .18s ease,margin-inline-start .18s ease,opacity .18s ease,transform .18s ease; }
+.physical-property-reveal[data-open=true] { width:var(--control-width); margin-inline-start:6px; opacity:1; transform:none; }
+.physical-property-reveal > :is(input,.ui-native-select) { box-sizing:border-box; width:100%; height:30px; }
 .physical-selection { display:inline-grid; place-items:center; flex:none; width:14px; height:14px; }
 .physical-selection { border:1px solid var(--ontology-border); border-radius:2px; }
 .is-selected .physical-selection { background:var(--ontology-primary); color:var(--ontology-panel); }
@@ -94,6 +96,7 @@
 .physical-property-workbench .flow-foundry-property-list .physical-chip { font-size:11px; padding:2px 5px; border:0; }
 .physical-property-workbench .flow-foundry-property-list .ui-select { display:inline-flex; padding-block:1px; }
 .physical-property-workbench .flow-foundry-property-list .visibility { background:var(--ontology-selected); color:var(--ontology-link); }
+.physical-property-workbench .flow-foundry-property-list .ui-native-select.visibility { min-width:112px; }
 .physical-formatter-select { display:inline-flex; position:relative; max-width:100%; vertical-align:middle; }
 .physical-formatter-value { padding-inline-start:6px; }
 .physical-property-workbench .flow-foundry-property-list tbody tr.is-selected td { background:var(--ontology-bg); }
@@ -143,7 +146,6 @@
   .explorer-resource-view--schema > .flow-foundry-properties.physical-property-workbench .flow-foundry-property-workspace { flex:none; }
   .physical-property-workbench .flow-foundry-property-workspace.has-inspector { height:auto; grid-template-columns:minmax(0,1fr); grid-template-rows:var(--physical-workspace-height) var(--physical-workspace-height); gap:0; }
   .explorer-resource-view > .flow-foundry-properties.physical-property-workbench .physical-property-inspector { border-left:0; border-top:1px solid var(--ontology-border); }
-  .physical-property-workbench .flow-foundry-property-tools { flex-wrap:nowrap; overflow-x:auto; }
 }
 @media (max-width:500px) { .physical-planner-metrics { grid-template-columns:minmax(0,1fr); } }
-@media (prefers-reduced-motion:reduce) { .physical-property-pending-actions { transition:none; } }
+@media (prefers-reduced-motion:reduce) { .physical-property-pending-actions,.physical-property-reveal { transition:none; } }

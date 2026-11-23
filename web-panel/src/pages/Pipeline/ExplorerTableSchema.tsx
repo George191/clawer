@@ -43,6 +43,7 @@ function Workbench({schema,table,canManage,identity,onSaved,onDirtyChange}: Prop
     const [selected,setSelected] = useState<number>(0);
     const [mode,setMode] = useState<'properties'|'mapping'>('properties');
     const [searching,setSearching] = useState(false);
+    const searchInput = useRef<HTMLInputElement>(null);
     const [term,setTerm] = useState('');
     const [filterOpen,setFilterOpen] = useState(false);
     const [filter,setFilter] = useState('');
@@ -51,6 +52,7 @@ function Workbench({schema,table,canManage,identity,onSaved,onDirtyChange}: Prop
     const [conflict,setConflict] = useState(false);
     const [reload,setReload] = useState(0);
     const alive = useRef(false), saving = useRef(false);
+    useEffect(() => { if (searching) searchInput.current?.focus(); }, [searching]);
     useEffect(() => {
         alive.current = true;
         const read = new AbortController();
@@ -134,13 +136,21 @@ function Workbench({schema,table,canManage,identity,onSaved,onDirtyChange}: Prop
                     </header>
                     {bound ? <Link to={publishedExplorerHref(draft.sourceDefinitionId!)}>Open published type</Link>
                         : canManage && <Button size="small" icon={<PlusOutlined/>} disabled={!structural} onClick={()=>create()}>Create property</Button>}
-                    <Button size="small" aria-label="Search properties and columns" aria-expanded={searching} icon={<SearchOutlined/>}
-                        onClick={()=>{setSearching(!searching);if(searching)setTerm('');}}/>
-                    <Button size="small" aria-label="Filter properties and columns" aria-expanded={filterOpen} icon={<FilterOutlined/>}
-                        onClick={()=>{setFilterOpen(!filterOpen);if(filterOpen)setFilter('');}}/>
-                {(searching||filterOpen) && <div className="physical-property-search">{searching && <input aria-label="Search properties or source columns" autoFocus placeholder="Search properties or source columns" value={term} onChange={e=>setTerm(e.target.value)}/>}
-                    {filterOpen && <NativeSelect aria-label="Filter properties" value={filter} onChange={e=>setFilter(e.target.value)}><option value="">All properties</option>
-                        {['mapped','unmapped','active','experimental','deprecated','normal','prominent','hidden'].map(v=><option key={v} value={v}>{readable(v)}</option>)}</NativeSelect>}</div>}
+                    <div className="physical-property-tool">
+                        <Button size="small" aria-label="Search properties and columns" aria-expanded={searching} icon={<SearchOutlined/>}
+                            onClick={()=>{setSearching(!searching);if(searching)setTerm('');}}/>
+                        <div className="physical-property-reveal physical-property-search" data-open={searching} {...(!searching ? { inert: '' } : {})}>
+                            <input ref={searchInput} aria-label="Search properties or source columns" placeholder="Search properties or source columns" value={term} onChange={e=>setTerm(e.target.value)}/>
+                        </div>
+                    </div>
+                    <div className="physical-property-tool">
+                        <Button size="small" aria-label="Filter properties and columns" aria-expanded={filterOpen} icon={<FilterOutlined/>}
+                            onClick={()=>{setFilterOpen(!filterOpen);if(filterOpen)setFilter('');}}/>
+                        <div className="physical-property-reveal physical-property-filter" data-open={filterOpen} {...(!filterOpen ? { inert: '' } : {})}>
+                            <NativeSelect aria-label="Filter properties" popupWidth={184} value={filter} onChange={e=>setFilter(e.target.value)}><option value="">All properties</option>
+                                {['mapped','unmapped','active','experimental','deprecated','normal','prominent','hidden'].map(v=><option key={v} value={v}>{readable(v)}</option>)}</NativeSelect>
+                        </div>
+                    </div>
                 </div>
                 <div className="flow-foundry-property-table-wrap"><table aria-label={mode==='properties'?'Registered properties':'Physical column mappings'}>
                     {mode==='properties'?<><thead><tr>{['Property name','Status','Visibility','Base formatter','Column'].map(s=><th key={s} scope="col">{s}</th>)}</tr></thead><tbody>
@@ -149,7 +159,7 @@ function Workbench({schema,table,canManage,identity,onSaved,onDirtyChange}: Prop
                                 <span className="physical-selection" aria-hidden="true"/><PropertyTypeIcon type={item.type} /><span className="physical-property-name" title={item.name || item.id}>{item.name || item.id}</span>
                                 <PropertyBadges property={item} title={draft.titleProperty}/></button></td>
                             <td><span className={'physical-chip status-'+item.status}>{readable(item.status)}</span></td>
-                            <td>{editable ? <NativeSelect className="physical-chip visibility" height={24} paddingInlineStart={5} paddingInlineEnd={5} aria-label={'Visibility for '+item.name} value={item.visibility}
+                            <td>{editable ? <NativeSelect className="physical-chip visibility" popupWidth={152} height={24} paddingInlineStart={5} paddingInlineEnd={5} aria-label={'Visibility for '+item.name} value={item.visibility}
                                 onChange={e=>patch(index,{visibility:e.target.value as Property['visibility'], ...(e.target.value==='hidden'?{summary:false}:{})})}>
                                 {(draft.titleProperty && item.sourceColumn===draft.titleProperty?['normal','prominent']:['normal','prominent','hidden']).map(v=><option key={v} value={v}>{readable(v)}</option>)}
                             </NativeSelect> : <span className="physical-chip visibility">{readable(item.visibility)}</span>}</td>
