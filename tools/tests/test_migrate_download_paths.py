@@ -171,12 +171,14 @@ def test_active_download_claim_is_checked_before_transferring_bytes(tmp_path):
     client.fput_object.assert_not_called()
     db.close()
 
-@pytest.mark.parametrize('legacy_owner', [False, True])
+@pytest.mark.parametrize('legacy_owner', ['current','renamed','shared'])
 def test_indexed_inventory_resumes_without_relisting_sources(tmp_path, legacy_owner):
     from datetime import datetime, timezone
     from unittest.mock import MagicMock
     record_id = 'a' * 32
-    old = 'news/old_source/'+'b'*32+'/image.jpg.jpg' if legacy_owner else 'news/source/'+record_id+'/image.jpg.jpg'
+    old = {'current':'news/source/'+record_id+'/image.jpg.jpg',
+           'renamed':'news/old_source/'+'b'*32+'/image.jpg.jpg',
+           'shared':'news/satellite_today/_shared_wayback/shared.jpeg'}[legacy_owner]
     client = MagicMock()
     collection = client.__getitem__.return_value.__getitem__.return_value
     collection.index_information.return_value = {'downloads': {'key': [
@@ -258,4 +260,44 @@ async def test_reference_repair_preserves_delivery_positions_and_updates_only_pa
     assert '"url"=' in ods and '"images"=CAST(' in ods
     assert 'title=' not in ods
     assert any('FOR UPDATE' in sql for sql,p in calls)
+    db.close()
+
+
+def test_existing_journal_upgrade_preserves_rows_checkpoints_and_errors(tmp_path):
+    import sqlite3
+    path=tmp_path/'journal.sqlite';db=sqlite3.connect(path)
+    db.execute('CREATE TABLE objects (old TEXT PRIMARY KEY,prefix TEXT,record_id TEXT,shard INTEGER,new TEXT,phase TEXT NOT NULL DEFAULT "planned",error TEXT)')
+    original=('old/key','news/source','a'*32,4,'new/key','verified','original error')
+    db.execute('INSERT INTO objects VALUES(?,?,?,?,?,?,?)',original)
+    db.execute('CREATE TABLE progress (prefix TEXT PRIMARY KEY,last_key TEXT NOT NULL,done INTEGER NOT NULL DEFAULT 0)')
+    db.execute('INSERT INTO progress VALUES("source","checkpoint",1)')
+    db.execute('CREATE TABLE error_history (id INTEGER PRIMARY KEY,old TEXT NOT NULL,error TEXT NOT NULL,recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)')
+    db.execute('INSERT INTO error_history VALUES(1,"old/key","prior failure","2026-11-23")');db.commit();db.close()
+    db=migration.journal(path)
+    assert db.execute('SELECT * FROM objects').fetchone()==original
+    assert db.execute('SELECT * FROM progress').fetchone()==('source','checkpoint',1)
+    assert db.execute('SELECT * FROM error_history').fetchone()==(1,'old/key','prior failure','2026-11-23',None,None)
+    db.execute('INSERT INTO objects(old,prefix,record_id,shard) VALUES(?,?,?,?)',('old/key','news/source','b'*32,1));db.commit();db.close()
+    db=migration.journal(path)
+    assert db.execute('SELECT count(*) FROM objects').fetchone()[0]==2
+    db.close()
+
+
+def test_shared_file_reference_updates_only_its_current_owner(tmp_path):
+    from unittest.mock import MagicMock
+    db=migration.journal(tmp_path/'journal.sqlite')
+    old='news/satellite_today/_shared_wayback/shared.jpg'
+    route={'collection_name':'news_satellite_today','template_name':'satellite_today','data_type':'news'}
+    owners=['a'*32,'b'*32]
+    for identity in owners:
+        db.execute('INSERT INTO objects(old,prefix,record_id,shard) VALUES(?,?,?,?)',(old,'news/satellite_today',identity,int(identity,16)%6))
+    db.commit();mongo=MagicMock();mongo.__getitem__.return_value.update_one.return_value.matched_count=1
+    def documents(mongo,registered,prefix,identity):return [(route,{'_id':identity,'assets':{'image':old}})]
+    def copy(client,key,prefix,identity):return prefix+'/'+identity+'/content.jpg'
+    with patch.object(migration,'source_documents',side_effect=documents),patch.object(migration,'copy_object',side_effect=copy):
+        migration.apply_group(db,Mock(),mongo,[route],'news/satellite_today',owners[0])
+        assert db.execute('SELECT phase,new FROM objects WHERE record_id=?',(owners[1],)).fetchone()==('planned',None)
+        migration.apply_group(db,Mock(),mongo,[route],'news/satellite_today',owners[1])
+    rows=db.execute('SELECT record_id,new,phase FROM objects ORDER BY record_id').fetchall()
+    assert rows==[(identity,'news/satellite_today/'+identity+'/content.jpg','source_updated') for identity in owners]
     db.close()

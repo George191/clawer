@@ -43,10 +43,29 @@ def journal(path):
     db = sqlite3.connect(path, timeout=60)
     db.execute('PRAGMA journal_mode=WAL')
     db.execute('PRAGMA busy_timeout=60000')
-    db.execute('CREATE TABLE IF NOT EXISTS objects (old TEXT PRIMARY KEY,prefix TEXT,record_id TEXT,shard INTEGER,new TEXT,phase TEXT NOT NULL DEFAULT "planned",error TEXT)')
+    db.execute('BEGIN IMMEDIATE')
+    try:
+        db.execute('CREATE TABLE IF NOT EXISTS objects (old TEXT NOT NULL,prefix TEXT NOT NULL,record_id TEXT NOT NULL,shard INTEGER,new TEXT,phase TEXT NOT NULL DEFAULT "planned",error TEXT,PRIMARY KEY(old,prefix,record_id))')
+        primary=[row[1] for row in sorted(db.execute('PRAGMA table_info(objects)'),key=lambda row:row[5]) if row[5]]
+        if primary==['old']:
+            # Upgrade the journal atomically, preserving every committed row.
+            db.execute('CREATE TABLE objects_upgrade (old TEXT NOT NULL,prefix TEXT NOT NULL,record_id TEXT NOT NULL,shard INTEGER,new TEXT,phase TEXT NOT NULL DEFAULT "planned",error TEXT,PRIMARY KEY(old,prefix,record_id))')
+            db.execute('INSERT INTO objects_upgrade SELECT * FROM objects')
+            assert db.execute('SELECT count(*) FROM objects').fetchone()==db.execute('SELECT count(*) FROM objects_upgrade').fetchone()
+            assert db.execute('SELECT * FROM objects EXCEPT SELECT * FROM objects_upgrade LIMIT 1').fetchone() is None
+            db.execute('DROP TABLE objects')
+            db.execute('ALTER TABLE objects_upgrade RENAME TO objects')
+        elif primary!=['old','prefix','record_id']:
+            raise RuntimeError('Unexpected migration journal key: '+repr(primary))
+        db.execute('CREATE TABLE IF NOT EXISTS error_history (id INTEGER PRIMARY KEY,old TEXT NOT NULL,error TEXT NOT NULL,recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,prefix TEXT,record_id TEXT)')
+        history_columns={row[1] for row in db.execute('PRAGMA table_info(error_history)')}
+        for name in ('prefix','record_id'):
+            if name not in history_columns:db.execute('ALTER TABLE error_history ADD COLUMN '+name+' TEXT')
+        db.commit()
+    except Exception:
+        db.rollback();db.close();raise
     db.execute('CREATE INDEX IF NOT EXISTS objects_work ON objects(shard,phase,prefix,record_id)')
     db.execute('CREATE TABLE IF NOT EXISTS progress (prefix TEXT PRIMARY KEY,last_key TEXT NOT NULL,done INTEGER NOT NULL DEFAULT 0)')
-    db.execute('CREATE TABLE IF NOT EXISTS error_history (id INTEGER PRIMARY KEY,old TEXT NOT NULL,error TEXT NOT NULL,recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)')
     db.commit()
     return db
 
@@ -145,15 +164,12 @@ def inventory(path):
                                 value=url.path[len(settings.minio_bucket)+2:]
                             else:continue
                         parts=value.split('/')
-                        if len(parts)<4 or not RECORD.fullmatch(parts[2]):
+                        if len(parts)<3 or not all(parts):
                             if value:raise ValueError('Unsupported resource reference: '+value)
                             continue
                         record_id=doc['_meta']['record_id']
                         if not RECORD.fullmatch(record_id):raise ValueError('Invalid source record identity: '+record_id)
                         prefix=f"{route['data_type']}/{route['template_name']}"
-                        existing=db.execute('SELECT record_id FROM objects WHERE old=?',(value,)).fetchone()
-                        if existing and existing[0]!=record_id:
-                            raise ValueError('Resource has conflicting source owners: '+value)
                         canonical=(len(parts)==4 and HEX.fullmatch(Path(parts[-1]).stem)
                                    and '/'.join(parts[:2])==prefix and parts[2]==record_id)
                         pending.append((value,prefix,record_id,int(record_id,16)%WORKERS,value if canonical else None,'canonical' if canonical else 'planned'))
@@ -240,7 +256,7 @@ def apply_group(db, client, mongo, registered, prefix, record_id):
             replacements[old] = new;continue
         if not any(old in value for _, doc in docs for _, value in strings(doc.get('assets', {}))):
             # Unreferenced objects are explicitly recorded and left untouched.
-            db.execute('UPDATE objects SET phase="unreferenced",error=NULL WHERE old=?', (old,));db.commit();continue
+            db.execute('UPDATE objects SET phase="unreferenced",error=NULL WHERE old=? AND prefix=? AND record_id=?', (old,prefix,record_id));db.commit();continue
         owners = [route for route, doc in docs
                   if any(old in value for _, value in strings(doc.get('assets', {})))]
         targets = {f"{route['data_type']}/{route['template_name']}" for route in owners}
@@ -248,7 +264,7 @@ def apply_group(db, client, mongo, registered, prefix, record_id):
             raise ValueError('Resource must have exactly one source storage prefix: ' + old)
         new = new or copy_object(client,old,targets.pop(),record_id)
         replacements[old] = new
-        db.execute('UPDATE objects SET new=?,error=NULL WHERE old=?',(new,old));db.commit()
+        db.execute('UPDATE objects SET new=?,error=NULL WHERE old=? AND prefix=? AND record_id=?',(new,old,prefix,record_id));db.commit()
     for route, doc in docs:
         fields, conditions = {}, {'_id':doc['_id'],'_meta.download_status':{'$ne':'downloading'}}
         for field, value in strings({k:v for k,v in doc.items() if k not in {'_meta','_id'}}):
@@ -263,7 +279,7 @@ def apply_group(db, client, mongo, registered, prefix, record_id):
             if result.matched_count != 1:
                 raise ConcurrentSourceUpdate('Concurrent source update; reread the latest record')
     for old in replacements:
-        db.execute('UPDATE objects SET phase="source_updated" WHERE old=?',(old,))
+        db.execute('UPDATE objects SET phase="source_updated" WHERE old=? AND prefix=? AND record_id=?',(old,prefix,record_id))
     db.commit()
 
 
@@ -386,7 +402,7 @@ async def verify_group(db, client, mongo, registered, prefix, record_id):
                 return False
     for old,new in rows:
         client.stat_object(settings.minio_bucket,new)
-        db.execute('UPDATE objects SET phase="verified",error=NULL WHERE old=?',(old,))
+        db.execute('UPDATE objects SET phase="verified",error=NULL WHERE old=? AND prefix=? AND record_id=?',(old,prefix,record_id))
     db.commit();return True
 
 
@@ -397,7 +413,7 @@ def worker(path, shard, mode, db_gate):
     mongo=mongo_client[settings.db_name]
     phase='planned' if mode=='apply' else 'source_updated' if mode=='verify' else 'verified'
     phases_to_retry=(phase,'source_updated') if mode=='apply' else (phase,)
-    db.execute('INSERT INTO error_history(old,error) SELECT old,error FROM objects WHERE shard=? AND error IS NOT NULL AND phase IN ('+','.join('?' for _ in phases_to_retry)+')',(shard,*phases_to_retry))
+    db.execute('INSERT INTO error_history(old,prefix,record_id,error) SELECT old,prefix,record_id,error FROM objects WHERE shard=? AND error IS NOT NULL AND phase IN ('+','.join('?' for _ in phases_to_retry)+')',(shard,*phases_to_retry))
     db.execute('UPDATE objects SET error=NULL WHERE shard=? AND phase=?',(shard,phase))
     if mode=='apply':db.execute('UPDATE objects SET error=NULL WHERE shard=? AND phase="source_updated"',(shard,))
     db.commit()
@@ -432,7 +448,7 @@ def worker(path, shard, mode, db_gate):
                             for old,new in db.execute('SELECT old,new FROM objects WHERE prefix=? AND record_id=? AND phase="verified"',(prefix,record_id)).fetchall():
                                 client.stat_object(settings.minio_bucket,new)
                                 client.remove_object(settings.minio_bucket,old)
-                                db.execute('UPDATE objects SET phase="complete",error=NULL WHERE old=?',(old,));db.commit()
+                                db.execute('UPDATE objects SET phase="complete",error=NULL WHERE old=? AND prefix=? AND record_id=?',(old,prefix,record_id));db.commit()
                             db.commit()
                     except Exception as error:
                         db.rollback()
