@@ -2111,6 +2111,14 @@ async def update_publication(layer: str, table: str, publication_id: str,
     return await get_etl_workspace().save_publication(layer, table, payload, publication_id)
 
 
+@write.patch("/{layer}/{table}/apis/{publication_id}")
+async def rename_publication(layer: str, table: str, publication_id: str,
+                             payload: dict[str, Any]) -> dict[str, Any]:
+    if set(payload) != {"name"}:
+        raise HTTPException(422, "Only the publication name can be renamed")
+    return await get_etl_workspace().rename_publication(layer, table, publication_id, payload["name"])
+
+
 @write.delete("/{layer}/{table}/apis/{publication_id}")
 async def revoke_publication(layer: str, table: str, publication_id: str) -> dict[str, Any]:
     return await get_etl_workspace().delete_publication(layer, table, publication_id)

@@ -20,6 +20,7 @@ import ExplorerWorkbench, { ExplorerFilterButton, ExplorerResults, ExplorerResul
 import ExplorerFilterIndexNotice, { ExplorerSortIndexNotice } from './ExplorerFilterIndexNotice';
 import PublishedApiWorkbench from './PublishedApiWorkbench';
 import useStoragePublicationKey from './useStoragePublicationKey';
+import StoragePublicationNameDialog from './StoragePublicationNameDialog';
 import PublishedExplorer from './PublishedExplorer';
 import { openSaved, savedPath, type SavedDetail } from '../../services/explorerSaved';
 import { catalogReturnHref, compactExplorerSearch } from '../../services/explorerNavigation';
@@ -44,7 +45,7 @@ import SandboxIndexPreview, { INDEX_PREVIEW_SCHEMA, INDEX_PREVIEW_TABLE } from '
 import { activeExplorerFilters, appendAndFilters, blankExplorerFilter, cellFilterRows, countFilterTerms, exactCellValue, explorerFilterTerms, hasExplorerFilterInput } from './explorerFilters';
 import type { ExplorerFilter } from './explorerFilters';
 import { firstIncompleteExplorerFilter } from './explorerFilterDraft';
-import { fetchCurrentUserContext, fetchLayers, fetchLayerTables, fetchTableData, fetchHandlerCode, queryExplorerPreview, fetchRowPreviewPolicy, fetchEtlTableColumns, fetchTableStream, fetchLayerScript, setTableOffset, validateHandlerCode, saveHandlerCode, updateEtlRow, deleteEtlRow, fetchEtlApis, createEtlApi, updateEtlApi, deleteEtlApi, fetchVulnerabilityKeywords, uploadVulnerabilityKeywords, activateVulnerabilityKeywordVersion, downloadVulnerabilityKeywordVersion, downloadCurrentVulnerabilityKeywords } from '../../services/api';
+import { fetchCurrentUserContext, fetchLayers, fetchLayerTables, fetchTableData, fetchHandlerCode, queryExplorerPreview, fetchRowPreviewPolicy, fetchEtlTableColumns, fetchTableStream, fetchLayerScript, setTableOffset, validateHandlerCode, saveHandlerCode, updateEtlRow, deleteEtlRow, fetchEtlApis, createEtlApi, updateEtlApi, renameEtlApi, deleteEtlApi, fetchVulnerabilityKeywords, uploadVulnerabilityKeywords, activateVulnerabilityKeywordVersion, downloadVulnerabilityKeywordVersion, downloadCurrentVulnerabilityKeywords } from '../../services/api';
 import type { RowPreviewMode, EtlDataQuery, EtlPublishedApi, VulnerabilityKeywordConfig } from '../../services/api';
 import  type  {  LayerNode,  LayerTable,  QueryResult,  ExplorerPreviewResult,  EtlStreamState  }  from  '../../services/types';
 
@@ -278,18 +279,27 @@ const DataLayersWorkspace: React.FC = () => {
     const [apisLoading, setApisLoading] = useState(false);
     const [apisError, setApisError] = useState('');
     const [apiRevision, setApiRevision] = useState(0);
-    const addApi = async () => {
-        if (!selectedTableAvailable || apisLoading || !beginMutation()) return;
+    const [apiNameForm, setApiNameForm] = useState<{scope: string; initialName: string; id?: string}>();
+    const saveApiName = async (name: string) => {
+        const form = apiNameForm;
+        if (!form || form.scope !== workspaceAsset || resourceView !== 'api' || !selectedTableAvailable || apisDirty || apisLoading || !beginMutation()) return;
         const target = selection.current; apiRequest.current++;
+        const current = () => {
+            const session = getSessionState();
+            return workspaceActive.current && selection.current === target && session.authenticated && !session.locked && session.identity === previewIdentity;
+        };
         try {
             const now = new Date();
-            const api = await createEtlApi(selectedSchema, table.name, {
+            const api = form.id ? await renameEtlApi(selectedSchema, table.name, form.id, name) : await createEtlApi(selectedSchema, table.name, {
+                name,
                 validFrom: now.toISOString(), validUntil: new Date(now.getTime() + 30 * 86400000).toISOString(),
                 filterType: [], filterSource: [], ...appliedQuery, partition,
             });
-            if (selection.current === target) setOpenApis((current) => [...current, api]);
-            message.success('Read API published');
-        } catch (error) { message.error(errorText(error)); } finally { endMutation(); }
+            if (!current()) return;
+            setOpenApis(items => form.id ? items.map(item => item.id === form.id ? api : item) : [...items, api]);
+            setApiNameForm(undefined);
+            message.success(form.id ? 'Publication renamed' : 'Read API published');
+        } catch (error) { if (current()) message.error(errorText(error)); } finally { endMutation(); }
     };
     const updateApi = (id: string, changes: Partial<Omit<OpenApiAccess, 'id'>>) => { setApisDirty(true); setOpenApis((current) => current.map((api) => api.id === id ? { ...api, ...changes } : api)); };
     const saveApis = async () => {
@@ -952,14 +962,19 @@ const DataLayersWorkspace: React.FC = () => {
         ? JSON.stringify([selectedSchema, table.name]) : '', (id, keyStatus) => {
         setOpenApis(items => items.map(api => api.id === id ? {...api, keyStatus} : api));
     });
+    useEffect(() => { setApiNameForm(undefined); }, [workspaceAsset, resourceView]);
     const apiPanel = <>
         <PublishedApiWorkbench items={openApis} loading={apisLoading} busy={mutationLoading || !selectedTableAvailable || publicationKey.busy}
             dirty={apisDirty} error={apisError} onReload={() => { if (!apisDirty && !mutationLoading) setApiRevision(value => value + 1); }}
             onManageKey={publicationKey.open}
-            onAdd={() => void addApi()} onUpdate={updateApi} onSave={() => void saveApis()} onDelete={removeApi}
+            onAdd={() => setApiNameForm({scope: workspaceAsset, initialName: `${table.name} API`})}
+            onEdit={api => setApiNameForm({scope: workspaceAsset, id: api.id, initialName: api.name || ''})}
+            onUpdate={updateApi} onSave={() => void saveApis()} onDelete={removeApi}
             onDiscard={() => { if (!mutationLoading && !apisLoading) setApiRevision(value => value + 1); }}
             storageAsset={{schema: selectedSchema, table: table.name}} />
         {publicationKey.dialog}
+        {apiNameForm?.scope === workspaceAsset && <StoragePublicationNameDialog mode={apiNameForm.id ? 'rename' : 'create'}
+            initialName={apiNameForm.initialName} busy={mutationLoading} onSave={saveApiName} onClose={() => setApiNameForm(undefined)} />}
     </>;
 
     useEffect(() => {

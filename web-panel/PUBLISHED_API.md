@@ -21,7 +21,7 @@ Published 的读取地址为 `GET /ontology/v1/publications/{publication_id}/dat
 
 ## Storage-backed
 
-沿用已保存的发布范围和有效期。在 `Published APIs → Overview → Manage API key` 签发、轮换或撤销密钥，状态会在面板内更新。读取接口仍为 `GET /v1/etl/published/{publication_id}/data`（本地开发为 `/api/v1/etl/published/...`），分页上限为 `limit=500`、`offset=1000000`，返回格式沿用 `rows` 等原有字段。额外的 `search` 和 `filters` 只能缩小已发布范围。
+在 `Publish API` 中填写发布名称。已有发布可通过 `Overview → Rename publication` 改名，接口地址、范围和密钥保持原样。在 `Overview → Manage API key` 签发、轮换或撤销密钥，状态会在面板内更新。读取接口为 `GET /v1/etl/published/{publication_id}/data`（本地开发为 `/api/v1/etl/published/...`），分页上限为 `limit=500`、`offset=1000000`，返回格式沿用 `rows` 等原有字段。额外的 `search` 和 `filters` 只能缩小已发布范围。
 
 ## 客户端与部署
 

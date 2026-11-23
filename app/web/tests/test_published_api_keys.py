@@ -154,7 +154,7 @@ async def publication_app(monkeypatch):
         await engine.dispose()
 
 
-async def create_publication(client, schema, admin):
+async def create_publication(client, schema, admin, **changes):
     now = datetime.now(timezone.utc)
     res = await client.post(
         f"/api/v1/etl/{schema}/items/apis",
@@ -165,12 +165,63 @@ async def create_publication(client, schema, admin):
             "filterSource": ["local"],
             "filters": [{"field": "category", "operator": "=", "value": "a"}],
             "sorts": [{"field": "category", "direction": "desc"}],
+            **changes,
         },
     )
     assert res.status_code == 200, res.text
     publication = res.json()
     assert publication["keyStatus"] == "unissued" and "token" not in publication
     return publication
+
+
+@pytest.mark.asyncio
+async def test_storage_publication_names_and_rename(publication_app, monkeypatch):
+    _, client, _, schema, admin, member, _, _, _ = publication_app
+    catalog = f"/api/v1/etl/{schema}/items/apis"
+    legacy = await create_publication(client, schema, admin)
+    assert "name" not in legacy
+    publication = await create_publication(client, schema, admin, name="  客户目录  ")
+    assert publication["name"] == "客户目录"
+    publish_id = publication["id"]
+    manage = f"{catalog}/{publish_id}"
+    assert (await client.patch(manage, headers=member, json={"name": "Blocked"})).status_code == 403
+    assert (await client.patch(
+        f"/api/v1/etl/{schema}/other/apis/{publish_id}", headers=admin, json={"name": "Wrong table"}
+    )).status_code == 404
+    invalid = ({}, {"name": None}, {"name": 42}, {"name": "   "}, {"name": "x" * 121},
+               {"name": "Invalid\0value"}, {"name": "Name", "filters": []})
+    for payload in invalid:
+        assert (await client.patch(manage, headers=admin, json=payload)).status_code == 422
+
+    issued = await client.post(f"/api/v1/apikey/publications/{publish_id}/rotate", headers=admin)
+    assert issued.status_code == 200
+    key = issued.json()["key"]
+    layers = etl.get_etl_workspace()._layers
+    data = layers.data
+
+    async def rename_during_read(*args, **kwargs):
+        assert "name" not in kwargs["scope"]
+        result = await data(*args, **kwargs)
+        renamed = await client.patch(manage, headers=admin, json={"name": "  Renamed catalog  "})
+        assert renamed.status_code == 200, renamed.text
+        assert renamed.json() == {**publication, "name": "Renamed catalog", "keyStatus": "active"}
+        assert key not in renamed.text
+        return result
+
+    with monkeypatch.context() as patch:
+        patch.setattr(layers, "data", rename_during_read)
+        read = await client.get(publication["url"], headers={"X-API-Key": key})
+    assert read.status_code == 200, read.text
+    assert [row["id"] for row in read.json()["rows"]] == [1, 3, 4]
+
+    settings = {field: publication[field] for field in ("validFrom", "validUntil", "filterSource", "filters", "sorts")}
+    updated = await client.put(manage, headers=admin, json={**settings, "search": "local"})
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["name"] == "Renamed catalog"
+    assert updated.json()["search"] == "local"
+    listed = {item["id"]: item for item in (await client.get(catalog, headers=admin)).json()}
+    assert "name" not in listed[legacy["id"]]
+    assert listed[publish_id] == updated.json()
 
 
 @pytest.mark.asyncio

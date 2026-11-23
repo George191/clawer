@@ -60,6 +60,13 @@ def _bad(message: str) -> None:
     raise HTTPException(422, message)
 
 
+def _publication_name(value: Any) -> str:
+    name = value.strip() if isinstance(value, str) else ""
+    if not 1 <= len(name) <= 120 or re.search(r"[\x00\ud800-\udfff]", name):
+        _bad("Publication name must be a string of 1 to 120 characters")
+    return name
+
+
 def _json(value: Any) -> str:
     try:
         return json.dumps(value, ensure_ascii=False, allow_nan=False)
@@ -718,6 +725,7 @@ class EtlWorkspace:
     async def save_publication(self, layer: str, table: str, payload: dict[str, Any], publication_id: str | None = None) -> dict[str, Any]:
         schema = resolve_schema(layer)
         require_ordinary_table(schema, table)
+        publication_name = _publication_name(payload["name"]) if "name" in payload else None
         columns = await self._layers.columns(schema, table)
         start = self._validity(payload.get("validFrom"))
         end = self._validity(payload.get("validUntil"))
@@ -741,15 +749,39 @@ class EtlWorkspace:
                 _bad(f"Publication range requires column {column}")
         # Validate the stored query through the same path that will serve the token.
         await self._layers.data(schema, table, {"limit": 1}, scope=scope)
+        if publication_name is not None:
+            scope["name"] = publication_name
         async with self._session() as session:
             await session.execute(text(_PUBLICATION_DDL))
             params = {"id": publication_id or str(uuid.uuid4()), "schema": schema, "table": table, "start": start, "end": end, "scope": _json(scope)}
             if publication_id:
-                sql = 'UPDATE public.flow_publications SET valid_from = :start, valid_until = :end, scope = CAST(:scope AS jsonb) WHERE id = :id AND schema_name = :schema AND table_name = :table RETURNING id, token, valid_from AS "validFrom", valid_until AS "validUntil", scope'
+                # Keep the current name when the client only saves range and validity.
+                sql = '''UPDATE public.flow_publications SET valid_from = :start, valid_until = :end,
+                            scope = jsonb_strip_nulls(jsonb_build_object('name', scope->'name')) || CAST(:scope AS jsonb)
+                         WHERE id = :id AND schema_name = :schema AND table_name = :table
+                         RETURNING id, token, valid_from AS "validFrom", valid_until AS "validUntil", scope'''
             else:
                 params["token"] = "pending:" + params["id"]
                 sql = 'INSERT INTO public.flow_publications (id, token, schema_name, table_name, valid_from, valid_until, scope) VALUES (:id, :token, :schema, :table, :start, :end, CAST(:scope AS jsonb)) RETURNING id, token, valid_from AS "validFrom", valid_until AS "validUntil", scope'
             result = await session.execute(text(sql), params)
+            row = result.mappings().one_or_none()
+            if row is None:
+                raise HTTPException(404, "Publication not found")
+            return self._publication(row)
+
+    async def rename_publication(self, layer: str, table: str, publication_id: str, value: Any) -> dict[str, Any]:
+        schema = resolve_schema(layer)
+        require_ordinary_table(schema, table)
+        name = _publication_name(value)
+        async with self._session() as session:
+            if not await self._exists(session, "flow_publications"):
+                raise HTTPException(404, "Publication not found")
+            result = await session.execute(
+                text('''UPDATE public.flow_publications SET scope = jsonb_set(scope, '{name}', to_jsonb(CAST(:name AS text)))
+                        WHERE id = :id AND schema_name = :schema AND table_name = :table
+                        RETURNING id, token, valid_from AS "validFrom", valid_until AS "validUntil", scope'''),
+                {"id": publication_id, "schema": schema, "table": table, "name": name},
+            )
             row = result.mappings().one_or_none()
             if row is None:
                 raise HTTPException(404, "Publication not found")
@@ -825,8 +857,9 @@ class EtlWorkspace:
         if publication_id is not None:
             args.update(id=publication_id, digest="sha256:" + hashlib.sha256(token.encode()).hexdigest())
             predicate = "id = :id AND token IN (:digest, :token)"
+        # A rename does not change the data grant or invalidate an in-flight read.
         query = text(
-            "SELECT schema_name, table_name, scope FROM public.flow_publications WHERE "
+            "SELECT schema_name, table_name, scope - 'name' AS scope FROM public.flow_publications WHERE "
             + predicate
             + " AND valid_from <= clock_timestamp() AND valid_until > clock_timestamp()"
         )

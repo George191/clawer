@@ -12,7 +12,7 @@ import useExplorerErrorToast from './useExplorerErrorToast';
 import { generatePublicationSdk, sdkFilename, sdkLanguages, sdkRequirements, sdkUsage, type SdkLanguage } from '../../services/publicationSdk';
 import './published-api-workbench.css';
 
-export type PublishedReadApi = EtlPublishedApi & { name?: string; revision?: number; modelChanged?: boolean; fields?: string[]; query?: PublishedExplorerQuery };
+export type PublishedReadApi = EtlPublishedApi & { revision?: number; modelChanged?: boolean; fields?: string[]; query?: PublishedExplorerQuery };
 export interface PublishedApiWorkbenchProps {
   items: PublishedReadApi[]; title?: string; loading?: boolean; busy?: boolean; dirty?: boolean; error?: string;
   scopeKind?: 'storage' | 'ontology'; userTokenSdk?: ReactNode;
@@ -116,7 +116,7 @@ export default function PublishedApiWorkbench({ items, title = 'Published APIs',
           {tab === 'overview' && <>
             <section className="api-document-section"><h4>Access</h4><div className="api-access-summary"><div><span>Authentication</span><strong>X-API-Key</strong></div><div><span>API key</span><strong>{item.keyStatus === 'active' ? 'Issued' : item.keyStatus === 'unissued' ? 'Not issued' : 'Revoked'}</strong></div><div><span>Permission</span><strong>Read published range</strong></div></div>
               {onManageKey && <button type="button" className="api-key-link" disabled={disabled || dirty} onClick={() => { if (!disabled && !dirty) onManageKey(item); }}>Manage API key</button>}
-              {onEdit && <Button size="small" disabled={disabled || dirty} onClick={() => onEdit(item)}>Edit publication</Button>}
+              {onEdit && <Button size="small" disabled={disabled || dirty} onClick={() => onEdit(item)}>{scopeKind === 'storage' ? 'Rename publication' : 'Edit publication'}</Button>}
             </section>
             <section className="api-document-section"><h4>Validity <small>Local time</small></h4><div className="api-validity-fields">
               <label>Valid from{editable ? <Input size="small" type="datetime-local" aria-label="API valid from" disabled={disabled} value={publicationDateInput(item.validFrom)} onChange={event => onUpdate?.(item.id, { validFrom: publicationDateValue(event.target.value) })} /> : <strong>{dates(item.validFrom)}</strong>}</label>

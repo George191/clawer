@@ -36,6 +36,7 @@ function mount(props, file = 'PublishedApiWorkbench.tsx', dependencies = {}) {
     if (name === 'react') return {
       useState(initial) { const index = cursor++; if (!(index in state)) state[index] = typeof initial === 'function' ? initial() : initial; return [state[index], update => { const next = typeof update === 'function' ? update(state[index]) : update; if (!Object.is(next, state[index])) { state[index] = next; dirty = true; } }]; },
       useRef(initial) { const index = cursor++; return refs[index] ||= { current: initial }; },
+      useId() { return 'form-' + cursor++; },
       useEffect(effect, deps) {
         const index = cursor++;
         if (!effects[index] || deps.some((value, i) => !Object.is(value, effects[index].deps[i]))) pending.push(() => {
@@ -44,7 +45,7 @@ function mount(props, file = 'PublishedApiWorkbench.tsx', dependencies = {}) {
         });
       },
     };
-    if (name === '@/components/ui') return { NativeSelect: 'NativeSelect', Button: 'Button', Input: 'Input', Select: 'Select', message: {} };
+    if (name === '@/components/ui') return { NativeSelect: 'NativeSelect', Button: 'Button', Input: 'Input', Modal: 'Modal', Select: 'Select', message: {} };
     if (name === '@/components/ui/icons') return new Proxy({}, { get: (_, key) => String(key) });
     if (name === '../../services/endpoints') return { apiUrl: path => 'https://api.example.test' + path };
     if (name === '../../services/publicationSdk') return sdk;
@@ -272,6 +273,18 @@ test('semantic model changes are visible and key management uses the explicit ca
   ui.click('Manage API key'); assert.equal(managed, api);
 });
 
+test('storage publications display their saved names and rename only the selected publication', () => {
+  let editing;
+  const first = publication('first', {name: 'Monthly report'}), second = publication('second', {name: 'Company directory'});
+  const ui = mount({items: [first, second], onEdit: item => {editing = item;}});
+  ui.click('Select API second');
+  assert.ok(nodes(ui.view()).some(node => node.type === 'h3' && copy(node) === second.name));
+  const rename = nodes(ui.view()).find(node => node.type === 'Button' && copy(node) === 'Rename publication');
+  assert.ok(!rename.props.disabled);
+  rename.props.onClick();
+  assert.equal(editing, second);
+});
+
 test('a storage publication manages only the selected key and disables key changes during edits', () => {
   const items = [publication('first'), publication('second')];
   let managed;
@@ -366,4 +379,58 @@ test('a pending key operation cannot reveal a key or update status in a differen
   assert.deepEqual(changes, []);
   assert.ok(!dialog().item);
   assert.ok(!dialog().issuedKey);
+});
+
+
+test('storage naming submits the trimmed draft through the form and preserves it across a failed save', () => {
+  for (const [mode, title, submitText] of [['create', 'Publish API', 'Publish API'], ['rename', 'Rename publication', 'Save name']]) {
+    const saved = [];
+    let closed = 0;
+    const props = {mode, initialName: 'Existing API', busy: false, onSave: name => saved.push(name), onClose: () => closed++};
+    const ui = mount(props, 'StoragePublicationNameDialog.tsx');
+    const input = () => nodes(ui.view()).find(node => node.type === 'Input');
+    const buttons = () => nodes(ui.view().props.footer).filter(node => node.type === 'Button');
+    const submit = () => {
+      const form = nodes(ui.view()).find(node => node.type === 'form');
+      const primary = buttons().find(node => node.props.htmlType === 'submit');
+      assert.equal(primary.props.form, form.props.id);
+      assert.equal(copy(primary), submitText);
+      let prevented = false;
+      form.props.onSubmit({preventDefault: () => {prevented = true;}});
+      assert.equal(prevented, true);
+    };
+    assert.equal(ui.view().props.title, title);
+    assert.equal(input().props.value, props.initialName);
+    for (const value of ['   ', 'a'.repeat(121)]) {
+      input().props.onChange({target: {value}});
+      ui.render();
+      assert.equal(buttons()[1].props.disabled, true);
+      submit();
+    }
+    assert.deepEqual(saved, []);
+    input().props.onChange({target: {value: '  Company directory  '}});
+    ui.render();
+    submit();
+    assert.deepEqual(saved, ['Company directory']);
+
+    props.busy = true;
+    ui.render();
+    assert.equal(input().props.disabled, true);
+    assert.equal(buttons()[1].props.disabled, true);
+    assert.equal(ui.view().props.maskClosable, false);
+    assert.equal(ui.view().props.keyboard, false);
+    ui.view().props.onCancel();
+    buttons()[0].props.onClick();
+    submit();
+    assert.deepEqual(saved, ['Company directory']);
+    assert.equal(closed, 0);
+
+    props.busy = false;
+    ui.render();
+    assert.equal(input().props.value, '  Company directory  ');
+    submit();
+    assert.deepEqual(saved, ['Company directory', 'Company directory']);
+    ui.view().props.onCancel();
+    assert.equal(closed, 1);
+  }
 });

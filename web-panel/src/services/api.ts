@@ -1067,7 +1067,7 @@ export interface EtlDataQuery {
   sorts: Array<{ field: string; direction: 'asc' | 'desc' }>;
 }
 export interface EtlPublishedApi {
-  id: string; keyStatus: 'active' | 'unissued' | 'revoked'; validFrom: string; validUntil: string; filterType: string[]; filterSource: string[]; url: string;
+  id: string; name?: string; keyStatus: 'active' | 'unissued' | 'revoked'; validFrom: string; validUntil: string; filterType: string[]; filterSource: string[]; url: string;
   filters?: EtlDataQuery['filters']; sorts?: EtlDataQuery['sorts']; search?: string; partition?: string;
 }
 export type PublishedKey = Pick<EtlPublishedApi,'id'|'keyStatus'|'validFrom'|'validUntil'|'url'> & {schema:string;table:string};
@@ -1114,6 +1114,8 @@ export const createEtlApi = (layer: string, table: string, payload: Partial<EtlP
   client.post(`/etl/${layer}/${table}/apis`, payload).then((r) => unwrap<EtlPublishedApi>(r.data));
 export const updateEtlApi = (layer: string, table: string, id: string, payload: Partial<EtlPublishedApi>): Promise<EtlPublishedApi> =>
   client.put(`/etl/${layer}/${table}/apis/${id}`, payload).then((r) => unwrap<EtlPublishedApi>(r.data));
+export const renameEtlApi = (layer: string, table: string, id: string, name: string): Promise<EtlPublishedApi> =>
+  client.patch(`/etl/${encodeURIComponent(layer)}/${encodeURIComponent(table)}/apis/${encodeURIComponent(id)}`, {name}).then((r) => unwrap<EtlPublishedApi>(r.data));
 export const deleteEtlApi = (layer: string, table: string, id: string): Promise<void> =>
   client.delete(`/etl/${layer}/${table}/apis/${id}`).then(() => undefined);
 
