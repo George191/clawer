@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Checkbox, Input, Modal, message, type MenuItem } from '@/components/ui';
-import { BranchesOutlined, CodeOutlined, FilterOutlined, DeleteOutlined, DownloadOutlined, HistoryOutlined, PlusOutlined, SyncOutlined } from '@/components/ui/icons';
+import { ApiOutlined, BranchesOutlined, CodeOutlined, FilterOutlined, DeleteOutlined, DownloadOutlined, HistoryOutlined, PlusOutlined, SyncOutlined } from '@/components/ui/icons';
 import { getSessionState } from '../../services/session';
 import {
   ontologyError as describe, submitOntologyAction,
@@ -11,6 +11,8 @@ import OntologyGraph, { DynamicObjectSets } from './OntologyGraph';
 import OntologyFunctions from './OntologyFunctions';
 import OntologyRevisions from './OntologyRevisions';
 import OntologySdkDownload from './OntologySdkDownload';
+import OntologyApiPublications from './OntologyApiPublications';
+import type { PublishedExplorerQuery } from '../../services/publishedExplorerHandoff';
 import OntologyTransactions from './OntologyTransactions';
 import { parsePropertyValue } from './ontologyPropertyValue';
 import DeletedObjects, { RecordHistory } from './PublishedDeletedObjects';
@@ -22,10 +24,10 @@ import './explorer-history.css';
 
 type ActionInputs = Record<string, { text: string; isNull: boolean }>;
 type Operation = { kind: SemanticAction['kind']; fields: string[]; record?: OntologyRecord; initialInputs: ActionInputs };
-type Props = { objectType?: PublishedOntologyType; actions: NonNullable<OntologyRecordPage['actions']>; record?: OntologyRecord; returnTo: string; onChanged: (kind?: SemanticAction['kind']) => void; busy?: boolean };
+type Props = { publicationQuery?: PublishedExplorerQuery; objectType?: PublishedOntologyType; actions: NonNullable<OntologyRecordPage['actions']>; record?: OntologyRecord; returnTo: string; onChanged: (kind?: SemanticAction['kind']) => void; busy?: boolean };
 const title = (value: unknown) => value == null ? 'Untitled object' : typeof value === 'object' ? JSON.stringify(value) : String(value);
 
-export function usePublishedObjectTools({ objectType, actions, record, returnTo, onChanged, busy = false }: Props) {
+export function usePublishedObjectTools({ objectType, publicationQuery, actions, record, returnTo, onChanged, busy = false }: Props) {
   const [tool, setTool] = useState('');
   const [sdkOpen, setSdkOpen] = useState(false);
   const [operation, setOperation] = useState<Operation>();
@@ -100,7 +102,9 @@ export function usePublishedObjectTools({ objectType, actions, record, returnTo,
       { key: 'deleted', label: 'Deleted objects', icon: <DeleteOutlined />, group: 'inspect' as const, run: () => setTool('Deleted objects') },
     ] : []),
     { key: 'revisions', label: 'Model revisions', icon: <HistoryOutlined />, group: 'inspect', run: () => setTool('Model revisions') },
-    { key: 'sdk', label: 'TypeScript SDK', icon: <DownloadOutlined />, group: 'inspect', run: () => setSdkOpen(true) },
+    { key: 'published-api', label: 'Published APIs', icon: <ApiOutlined />, group: 'inspect', run: () => setTool('Published APIs') },
+    { key: 'sdk', label: 'SDK', icon: <DownloadOutlined />, group: 'inspect', run: () => setTool('SDK') },
+    { key: 'user-sdk', label: 'User-token SDK (TypeScript)', icon: <DownloadOutlined />, group: 'inspect', run: () => setSdkOpen(true) },
   ] : [];
   const create = native ? actions.find(action => action.kind === 'create') : undefined;
   const creating = operation?.kind === 'create';
@@ -139,6 +143,7 @@ export function usePublishedObjectTools({ objectType, actions, record, returnTo,
       <Modal open={!!tool} centered width={1040} className={`flow-surface-modal flow-published-dialog explorer-resource-dialog explorer-tool-workbench-dialog${tool === 'Relationships' ? ' ontology-relationships-dialog' : ''}`} title={tool} onCancel={() => setTool('')} footer={<Button onClick={() => setTool('')}>Close</Button>}>
         <div className="explorer-resource-context"><strong>{objectType.definition.name}</strong><code>{objectType.definition.id}</code></div>
         <div className="flow-ontology-tool-content" role="region" aria-label={tool || undefined} tabIndex={0}>
+          {(tool === 'Published APIs' || tool === 'SDK') && <OntologyApiPublications key={tool + objectType.id} objectType={objectType} query={publicationQuery} initialTab={tool === 'SDK' ? 'sdk' : 'overview'} />}
           {tool === 'Relationships' && <OntologyGraph key={objectType.id} objectType={objectType} onRelationsChanged={() => setRelationsVersion(value => value + 1)} />}
           {tool === 'Dynamic object sets' && <DynamicObjectSets key={objectType.id} object={objectType} returnTo={returnTo} onOpenExplorer={() => setTool('')} />}
           {tool === 'Transactions' && <OntologyTransactions key={objectType.id} objectType={objectType} onCommitted={onChanged} />}

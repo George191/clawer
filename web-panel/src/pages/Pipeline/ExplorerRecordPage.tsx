@@ -127,7 +127,7 @@ function RecordPage({ source, identity }: { source: ExplorerDetailSource; identi
     const native = objectType?.definition.source.mode === 'none';
     const hasLinks = source.kind === 'published' ? native : !!links.page;
     const currentMode = mode === 'links' && !hasLinks || mode === 'history' && !publishedRecord?.hasHistory ? 'overview' : mode;
-    const objectTools = usePublishedObjectTools({ objectType, actions: publishedRecord?.actions || [], record: publishedRecord,
+    const objectTools = usePublishedObjectTools({ objectType, publicationQuery: source.kind === 'published' ? {filters: [], keys: [key as Record<string, string>]} : undefined, actions: publishedRecord?.actions || [], record: publishedRecord,
         returnTo: '/ontology?catalog=published', busy: !result || !!error,
         onChanged: kind => { if (kind === 'delete') navigate(tablePath, { replace:true }); else reload(value => value + 1); } });
     const locked=busy || !!draft || confirmDelete || objectTools.mutationOpen;

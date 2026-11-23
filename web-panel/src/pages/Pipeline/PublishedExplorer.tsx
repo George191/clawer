@@ -165,7 +165,7 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
     setChosen(previous => previous.map(row => current.get(row.key) || row));
   }, [previewRows, result]);
   const original = (row?: ExplorerPreviewRow) => row ? originals.current.get(row.key) : undefined;
-  const objectTools = usePublishedObjectTools({ objectType, actions: result?.actions || [], record: original(activeRow), returnTo: entry.returnTo, busy: busy || !!error,
+  const objectTools = usePublishedObjectTools({ objectType, publicationQuery: query ? {...query, ...(chosen.length ? {keys: chosen.map(row => row.identity as Record<string, string>)} : {})} : undefined, actions: result?.actions || [], record: original(activeRow), returnTo: entry.returnTo, busy: busy || !!error,
     onChanged: () => { setActiveRow(undefined); setChosen([]); retry(value => value + 1); } });
   const activeFilters = useMemo(() => query && objectType ? commonFilters(query, objectType) : [], [query, objectType]);
   const sorts = query?.sorts || [];

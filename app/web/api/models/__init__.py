@@ -139,3 +139,4 @@ class NewPasswordWithCode(SQLModel):
 
 from .explorer_saved_items import ExplorerSavedItem
 from .ontology_explorer import OntologyExplorerResultLayout, OntologyExplorerSavedItem
+from .ontology_publications import OntologyPublication

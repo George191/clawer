@@ -62,3 +62,11 @@
 .published-source-tools:has(.published-api-workbench) .explorer-resource-dialog-body { overflow:hidden; }
 .published-source-tools .published-api-workbench { height:min(580px,calc(100dvh - 260px)); min-height:300px; }
 @media (max-width:760px) { .api-workbench-layout { grid-template-columns:170px minmax(0,1fr); }.api-document-heading { flex-direction:column; gap:4px; }.api-publication-id { max-width:100%; }.api-access-summary,.api-validity-fields { grid-template-columns:1fr; }.api-document-footer > span { display:none; } }
+
+.api-sdk-controls { display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px; margin:12px 0; }
+.api-sdk-controls label { display:grid; gap:5px; min-width:160px; }
+.api-sdk-controls .ui-native-select { min-height:30px; padding:4px 8px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-bg); color:var(--ontology-text); }
+.api-document-section > pre { overflow:auto; white-space:pre-wrap; padding:10px; border:1px solid var(--ontology-border); background:var(--ontology-bg); }
+
+.explorer-resource-dialog .flow-ontology-tool-content:has(> .published-api-workbench) { display:flex; flex-direction:column; overflow:hidden; }
+.explorer-resource-dialog .flow-ontology-tool-content > .published-api-workbench { flex:1; height:auto; min-height:0; }

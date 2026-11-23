@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
+import * as sdk from '../src/services/publicationSdk.ts';
 
 function compile(file, require) {
   const source = readFileSync(new URL('../src/pages/Pipeline/' + file, import.meta.url), 'utf8');
@@ -34,9 +35,10 @@ function mount(props) {
       useRef(initial) { const index = cursor++; return refs[index] ||= { current: initial }; },
       useEffect(effect, deps) { const index = cursor++; if (!effects[index] || deps.some((value, i) => !Object.is(value, effects[index][i]))) { effects[index] = deps; pending.push(effect); } },
     };
-    if (name === '@/components/ui') return { Button: 'Button', Input: 'Input', Select: 'Select', message: {} };
+    if (name === '@/components/ui') return { NativeSelect: 'NativeSelect', Button: 'Button', Input: 'Input', Select: 'Select', message: {} };
     if (name === '@/components/ui/icons') return new Proxy({}, { get: (_, key) => String(key) });
     if (name === '../../services/endpoints') return { apiUrl: path => 'https://api.example.test' + path };
+    if (name === '../../services/publicationSdk') return sdk;
     if (name === './publishedApiPresentation') return helpers;
     if (name === './useExplorerErrorToast') return { default: (error, title, retry) => { if (error) notifications.push({ error, title, retry }); } };
     if (name.endsWith('.css')) return {};
@@ -125,4 +127,29 @@ test('API retry preserves the unsaved-change guard and inline date validation', 
   ui.notifications.at(-1).retry();
   assert.equal(reloads, 0);
   assert.ok(nodes(ui.view()).some(node => node.props?.role === 'alert' && copy(node).includes('valid start date')));
+});
+
+
+test('both publication types offer four SDK languages and the proper page bounds', () => {
+  for (const scopeKind of ['storage', 'ontology']) {
+    const api = publication('sdk', {name: 'Customer export', fields: ['id'], query: {filters: []}});
+    const ui = mount({items: [api], scopeKind});
+    ui.click('SDK');
+    const language = nodes(ui.view()).find(node => node.props?.['aria-label'] === 'SDK language');
+    assert.deepEqual(nodes(language).filter(node => node.type === 'option').map(node => node.props.value), ['typescript', 'python', 'java', 'c']);
+    assert.ok(copy(ui.view()).includes('Download TypeScript SDK'));
+    ui.click('Request');
+    const text = copy(ui.view());
+    assert.ok(text.includes(scopeKind === 'ontology' ? '1 to 100.' : '1 to 500.'));
+    if (scopeKind === 'ontology') assert.ok(!text.includes('URL-encoded filter rows'));
+  }
+});
+
+test('semantic model changes are visible and key management uses the explicit callback', () => {
+  let managed;
+  const api = publication('stale', {name: 'Scoped API', revision: 3, modelChanged: true, fields: ['id'], query: {filters: []}});
+  const ui = mount({items: [api], scopeKind: 'ontology', onManageKey: item => {managed = item;}});
+  assert.ok(copy(ui.view()).includes('Model changed'));
+  assert.ok(copy(ui.view()).includes('Published model revision 3'));
+  ui.click('Manage API key'); assert.equal(managed, api);
 });
