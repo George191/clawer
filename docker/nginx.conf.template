@@ -50,9 +50,7 @@ http {
         listen 80;
         server_name
             app.${FRONTEND_DOMAIN_SUFFIX}
-            crawler.${BACKEND_DOMAIN_SUFFIX} ontology.${BACKEND_DOMAIN_SUFFIX}
-            atlas.${BACKEND_DOMAIN_SUFFIX} graph.${BACKEND_DOMAIN_SUFFIX}
-            rag.${BACKEND_DOMAIN_SUFFIX} vault.${BACKEND_DOMAIN_SUFFIX};
+            api.${BACKEND_DOMAIN_SUFFIX};
 
         location = /nginx-health {
             access_log off;
@@ -93,10 +91,7 @@ http {
 
     server {
         listen 443 ssl;
-        server_name
-            crawler.${BACKEND_DOMAIN_SUFFIX} ontology.${BACKEND_DOMAIN_SUFFIX}
-            atlas.${BACKEND_DOMAIN_SUFFIX} graph.${BACKEND_DOMAIN_SUFFIX}
-            rag.${BACKEND_DOMAIN_SUFFIX} vault.${BACKEND_DOMAIN_SUFFIX};
+        server_name api.${BACKEND_DOMAIN_SUFFIX};
 
         location = /api/v1 {
             return 404;

@@ -9,10 +9,10 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-PROJECTS = ("crawler", "ontology", "atlas", "graph", "rag", "vault")
+DOMAIN_SUFFIX = "astral.io"
 SUFFIXES = {
-    "FRONTEND_DOMAIN_SUFFIX": "astral-helio.internal",
-    "BACKEND_DOMAIN_SUFFIX": "astral-helio.api",
+    "FRONTEND_DOMAIN_SUFFIX": DOMAIN_SUFFIX,
+    "BACKEND_DOMAIN_SUFFIX": DOMAIN_SUFFIX,
 }
 
 
@@ -34,9 +34,7 @@ class ProjectDomainsTest(unittest.TestCase):
             certificate_hash = hashlib.sha256(certificate.read_bytes()).hexdigest()
             run(command, env=env)
             self.assertEqual(certificate_hash, hashlib.sha256(certificate.read_bytes()).hexdigest())
-            domains = [f"app.{SUFFIXES['FRONTEND_DOMAIN_SUFFIX']}"] + [
-                f"{project}.{SUFFIXES['BACKEND_DOMAIN_SUFFIX']}" for project in PROJECTS
-            ]
+            domains = [f"app.{SUFFIXES['FRONTEND_DOMAIN_SUFFIX']}", f"api.{SUFFIXES['BACKEND_DOMAIN_SUFFIX']}"]
             for domain in domains:
                 run(["openssl", "verify", "-purpose", "sslserver", "-verify_hostname", domain,
                      "-CAfile", str(ca), str(certificate)])
@@ -46,19 +44,18 @@ class ProjectDomainsTest(unittest.TestCase):
                                   str(certificate)], check=False)
                     self.assertNotEqual(result.returncode, 0)
 
-            # Replace the wildcard leaf with the previous single-project SAN contract.
+            # Replace the wildcard leaf with the previous per-project SAN contract.
             csr = path / "previous.csr"
             run(["openssl", "req", "-new", "-key", str(path / "certs/privkey.pem"), "-out", str(csr),
-                 "-subj", "/CN=ontology.astral-helio.internal", "-addext",
-                 "subjectAltName=DNS:ontology.astral-helio.internal,DNS:ontology.astral-helio.api"])
+                 "-subj", "/CN=app.astral-helio.internal", "-addext",
+                 "subjectAltName=DNS:*.astral-helio.internal,DNS:*.astral-helio.api"])
             run(["openssl", "x509", "-req", "-in", str(csr), "-CA", str(ca), "-CAkey", str(path / "ca/ca.key"),
                  "-set_serial", "42", "-days", "365", "-copy_extensions", "copy", "-out", str(certificate)])
             result = run(command, env=env)
             self.assertIn("deployment domains changed", result.stdout)
             self.assertEqual(ca_hash, hashlib.sha256(ca.read_bytes()).hexdigest())
             sans = run(["openssl", "x509", "-in", str(certificate), "-noout", "-ext", "subjectAltName"]).stdout
-            self.assertIn("DNS:*.astral-helio.internal", sans)
-            self.assertIn("DNS:*.astral-helio.api", sans)
+            self.assertIn("DNS:*.astral.io", sans)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required")
     def test_runtime_config_contains_project_independent_deployment_settings(self):
@@ -76,9 +73,9 @@ class ProjectDomainsTest(unittest.TestCase):
                     'console.log(JSON.stringify(window.__APP_CONFIG__));',
                 ], input=output.read_text())
                 self.assertEqual(json.loads(result.stdout), {
-                    "backendDomainSuffix": "astral-helio.api",
+                    "backendDomainSuffix": "astral.io",
                     "httpsPort": port,
-                    "frontendDomainSuffix": "astral-helio.internal",
+                    "frontendDomainSuffix": "astral.io",
                 })
 
     def test_suffix_injection_and_invalid_dns_labels_are_rejected(self):

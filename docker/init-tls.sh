@@ -74,8 +74,8 @@ if [ -e "$CERT_DIR/fullchain.pem" ] || [ -e "$CERT_DIR/privkey.pem" ]; then
         || fail 'The existing server certificate was not signed by the persistent CA.'
     cert_sans=$(openssl x509 -in "$CERT_DIR/fullchain.pem" -noout -ext subjectAltName) \
         || fail 'Could not read the existing server certificate SANs.'
-    cert_sans=$(printf '%s\n' "$cert_sans" | sed '1d;s/[[:space:]]//g' | tr ',' '\n' | LC_ALL=C sort)
-    expected_sans=$(printf 'DNS:%s\nDNS:%s\n' "$frontend_wildcard" "$backend_wildcard" | LC_ALL=C sort)
+    cert_sans=$(printf '%s\n' "$cert_sans" | sed '1d;s/[[:space:]]//g' | tr ',' '\n' | LC_ALL=C sort -u)
+    expected_sans=$(printf 'DNS:%s\nDNS:%s\n' "$frontend_wildcard" "$backend_wildcard" | LC_ALL=C sort -u)
     if [ "$cert_sans" != "$expected_sans" ]; then
         renew_reason='deployment domains changed'
     elif ! openssl x509 -in "$CERT_DIR/fullchain.pem" -noout -checkend 2592000 >/dev/null; then
