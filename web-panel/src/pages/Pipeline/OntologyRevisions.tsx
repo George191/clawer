@@ -198,7 +198,7 @@ export default function OntologyRevisions({ definitionId, onMerged, showTitle = 
               disabled={busy} onPrincipalSearch={setPrincipalQuery} onChange={definition => setComposer({ ...composer, definition })} />}
           </div>
           <footer className="ontology-revisions__footer">
-            <span className="ontology-revisions__review-note">Submit → Independent review → Publish</span>
+            <span className="ontology-revisions__review-note">Submit → Review → Publish</span>
             <Button size="small" onClick={() => setComposer(undefined)} disabled={busy}>Cancel proposal</Button>
             <Button size="small" type="primary" onClick={submit} loading={busy} disabled={!composer.summary.trim()}>Submit proposal</Button>
           </footer>
@@ -244,7 +244,7 @@ export default function OntologyRevisions({ definitionId, onMerged, showTitle = 
           </header>
           {proposal.reviewNote && <p className="ontology-revisions__note">{proposal.reviewNote}</p>}
           <Changes changes={proposal.changes} />
-          {!proposal.stale && proposal.status === 'pending' && workspace.canReview && !proposal.isAuthor && <>
+          {!proposal.stale && proposal.status === 'pending' && workspace.canReview && (!proposal.isAuthor || workspace.canManageRoles) && <>
             <label className="flow-create-field"><span>Review note</span><Input aria-label="Review note" value={reviewNote} maxLength={500} disabled={busy} onChange={event => setReviewNote(event.target.value)} /></label>
             <div className="ontology-revisions__footer">
               <Button size="small" disabled={busy} onClick={() => review(false)}>Reject proposal</Button>

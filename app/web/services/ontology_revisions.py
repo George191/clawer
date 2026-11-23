@@ -323,8 +323,8 @@ async def review_proposal(session, row, proposal, actor, payload):
     ensure_pending(row, proposal)
     await require_proposal_baseline(session, row)
     await require_clearance(session, actor, row.project_id, Definition.model_validate(proposal.proposed_definition).security.markings)
-    if actor.id == proposal.author_id:
-        raise HTTPException(403, "A different authorized member must review this proposal")
+    if actor.id == proposal.author_id and not (await rights_for(session, row.project_id, actor.id, lock=True)).manage:
+        raise HTTPException(403, "Only a project manager can review their own proposal")
     proposal.status = "approved" if payload.approve else "rejected"
     proposal.reviewer_id = actor.id
     proposal.reviewed_at = utcnow()
@@ -336,11 +336,13 @@ async def review_proposal(session, row, proposal, actor, payload):
 
 async def merge_proposal(session, row, current, proposal, actor):
     check_revision(row, proposal.base_revision)
-    if proposal.status != "approved" or proposal.author_id == proposal.reviewer_id:
-        raise HTTPException(409, "This proposal requires independent approval")
+    if proposal.status != "approved":
+        raise HTTPException(409, "This proposal requires approval")
     await require_proposal_baseline(session, row)
     author = await rights_for(session, row.project_id, proposal.author_id, lock=True)
     reviewer = await rights_for(session, row.project_id, proposal.reviewer_id, lock=True)
+    if proposal.author_id == proposal.reviewer_id and not author.manage:
+        raise HTTPException(409, "Self-reviewed proposals require a current project manager")
     if not author.edit or not reviewer.review or (current.source.mode == "existing" and not (author.warehouse and reviewer.warehouse)):
         raise HTTPException(409, "The proposer or reviewer no longer has permission")
     candidate = Definition.model_validate(proposal.proposed_definition)
