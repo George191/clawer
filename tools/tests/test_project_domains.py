@@ -30,6 +30,9 @@ class ProjectDomainsTest(unittest.TestCase):
             run(command, env=env)
             ca = path / "ca/ca.crt"
             certificate = path / "certs/fullchain.pem"
+            for cert in (ca, certificate):
+                self.assertEqual(run(["openssl", "x509", "-in", str(cert), "-noout", "-enddate"]).stdout.strip(),
+                                 "notAfter=Dec 31 23:59:59 2099 GMT")
             ca_hash = hashlib.sha256(ca.read_bytes()).hexdigest()
             certificate_hash = hashlib.sha256(certificate.read_bytes()).hexdigest()
             run(command, env=env)

@@ -34,6 +34,30 @@ chmod 700 "$CA_DIR"
 tmp_dir=$(mktemp -d "$CERT_DIR/.tls-init.XXXXXX")
 trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
 
+certificate_end='20991231235959Z'
+certificate_end_display='Dec 31 23:59:59 2099 GMT'
+touch "$tmp_dir/index"
+printf '01\n' > "$tmp_dir/serial"
+cat > "$tmp_dir/ca.cnf" <<EOF
+[ca]
+default_ca=issuer
+[issuer]
+database=$tmp_dir/index
+serial=$tmp_dir/serial
+new_certs_dir=$tmp_dir
+default_md=sha256
+policy=subject_policy
+copy_extensions=copy
+unique_subject=no
+[subject_policy]
+commonName=supplied
+[ca_extensions]
+basicConstraints=critical,CA:TRUE
+keyUsage=critical,keyCertSign,cRLSign
+subjectKeyIdentifier=hash
+authorityKeyIdentifier=keyid:always
+EOF
+
 if [ -e "$CA_DIR/ca.key" ] || [ -e "$CA_DIR/ca.crt" ]; then
     [ -f "$CA_DIR/ca.key" ] && [ -f "$CA_DIR/ca.crt" ] \
         || fail 'The persistent CA is incomplete; restore its matching key and certificate.'
@@ -48,6 +72,16 @@ else
         || { cat "$tmp_dir/openssl.log" >&2; fail 'Could not create the private CA.'; }
     mv "$tmp_dir/ca.key" "$CA_DIR/ca.key"
     mv "$tmp_dir/ca.crt" "$CA_DIR/ca.crt"
+fi
+
+# Keep the existing CA identity and key while extending its validity.
+ca_end=$(openssl x509 -in "$CA_DIR/ca.crt" -noout -enddate)
+if [ "$ca_end" != "notAfter=$certificate_end_display" ]; then
+    openssl x509 -x509toreq -in "$CA_DIR/ca.crt" -signkey "$CA_DIR/ca.key" -out "$tmp_dir/ca.csr"
+    openssl ca -batch -selfsign -config "$tmp_dir/ca.cnf" -extensions ca_extensions \
+        -keyfile "$CA_DIR/ca.key" -cert "$CA_DIR/ca.crt" -in "$tmp_dir/ca.csr" \
+        -enddate "$certificate_end" -out "$tmp_dir/renewed-ca.crt" -notext
+    mv "$tmp_dir/renewed-ca.crt" "$CA_DIR/ca.crt"
 fi
 
 ca_public=$(openssl x509 -in "$CA_DIR/ca.crt" -noout -pubkey) \
@@ -78,6 +112,8 @@ if [ -e "$CERT_DIR/fullchain.pem" ] || [ -e "$CERT_DIR/privkey.pem" ]; then
     expected_sans=$(printf 'DNS:%s\nDNS:%s\n' "$frontend_wildcard" "$backend_wildcard" | LC_ALL=C sort -u)
     if [ "$cert_sans" != "$expected_sans" ]; then
         renew_reason='deployment domains changed'
+    elif [ "$(openssl x509 -in "$CERT_DIR/fullchain.pem" -noout -enddate)" != "notAfter=$certificate_end_display" ]; then
+        renew_reason='certificate expiration changed'
     elif ! openssl x509 -in "$CERT_DIR/fullchain.pem" -noout -checkend 2592000 >/dev/null; then
         renew_reason='certificate expires within 30 days'
     else
@@ -94,10 +130,9 @@ if [ -n "$renew_reason" ]; then
         -addext 'basicConstraints=critical,CA:FALSE' \
         -addext 'keyUsage=critical,digitalSignature,keyEncipherment' \
         -addext 'extendedKeyUsage=serverAuth'
-    serial=$(openssl rand -hex 16)
-    openssl x509 -req -in "$tmp_dir/server.csr" -CA "$CA_DIR/ca.crt" \
-        -CAkey "$CA_DIR/ca.key" -set_serial "0x$serial" -days 365 -sha256 \
-        -copy_extensions copy -out "$tmp_dir/server.crt"
+    openssl ca -batch -config "$tmp_dir/ca.cnf" -in "$tmp_dir/server.csr" \
+        -cert "$CA_DIR/ca.crt" -keyfile "$CA_DIR/ca.key" \
+        -enddate "$certificate_end" -out "$tmp_dir/server.crt" -notext
     openssl verify -CAfile "$CA_DIR/ca.crt" "$tmp_dir/server.crt" >/dev/null
     cat "$tmp_dir/server.crt" "$CA_DIR/ca.crt" >"$tmp_dir/fullchain.pem"
     mv "$tmp_dir/privkey.pem" "$CERT_DIR/privkey.pem"
