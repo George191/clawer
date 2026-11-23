@@ -27,3 +27,23 @@
 .ontology-transaction-history > ul { display:grid; gap:8px; padding:0!important; list-style:none; }
 .ontology-transaction-history > ul > li { padding:12px; border:1px solid var(--ontology-border); border-radius:3px; }
 @media(max-width:700px) { .ontology-transaction-layout { grid-template-columns:minmax(0,1fr); overflow:auto; } .ontology-transaction-queue { min-height:250px; border-left:0; border-top:1px solid var(--ontology-border); } }
+
+.ontology-tx-record-label { display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between; gap:4px 8px; }
+.ontology-tx-record-label small { min-width:0; color:var(--ontology-muted); font-size:11px; overflow-wrap:anywhere; }
+.ontology-transaction-history > ul { margin:12px 0 0; }
+.ontology-transaction-history > ul > .ontology-transaction-history-item { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:10px 16px; padding:14px; }
+.ontology-transaction-history-summary { min-width:0; }
+.ontology-transaction-history-summary > strong { display:block; overflow-wrap:anywhere; font-size:12px; font-weight:500; }
+.ontology-transaction-history-meta { display:flex; flex-wrap:wrap; align-items:center; gap:4px 14px; margin-top:5px; color:var(--ontology-muted); font-size:11px; }
+.ontology-transaction-history-meta time { font-variant-numeric:tabular-nums; }
+.ontology-transaction-history-actions { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:6px; }
+.ontology-transaction-status { margin-right:6px; padding:2px 7px; border:1px solid var(--ontology-success-border); border-radius:3px; background:var(--ontology-success-bg); color:var(--ontology-text); font-size:11px; }
+.ontology-transaction-status.is-undone { border-color:var(--ontology-border); background:var(--ontology-hover); color:var(--ontology-muted); }
+.ontology-transaction-undone-at { grid-column:1 / -1; margin:0; color:var(--ontology-muted); font-size:11px; }
+.ontology-transaction-history-writeback { grid-column:1 / -1; min-width:0; padding-top:12px; border-top:1px solid var(--ontology-border); overflow-wrap:anywhere; }
+.ontology-transaction-history-writeback h4 { margin:0 0 10px; font-size:12px; font-weight:500; }
+.ontology-transaction-history-writeback label { display:grid; gap:5px; margin-bottom:8px; }
+@media(max-width:640px) {
+  .ontology-transaction-history > ul > .ontology-transaction-history-item { grid-template-columns:minmax(0,1fr); }
+  .ontology-transaction-history-actions { justify-content:flex-start; }
+}

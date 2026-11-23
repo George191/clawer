@@ -136,7 +136,7 @@ export function usePublishedObjectTools({ objectType, actions, record, returnTo,
       {operation?.kind === 'delete' && operation.record && <ExplorerRecordMutation mode="delete" title={title(operation.record.title)}
         busy={pending} disabled={busy} onSubmit={applyAction}
         onCancel={() => { if (!locked.current) { setOperation(undefined); setError(''); } }} />}
-      <Modal open={!!tool} centered width={1040} className="flow-surface-modal flow-published-dialog explorer-resource-dialog explorer-tool-workbench-dialog" title={tool} onCancel={() => setTool('')} footer={<Button onClick={() => setTool('')}>Close</Button>}>
+      <Modal open={!!tool} centered width={1040} className={`flow-surface-modal flow-published-dialog explorer-resource-dialog explorer-tool-workbench-dialog${tool === 'Relationships' ? ' ontology-relationships-dialog' : ''}`} title={tool} onCancel={() => setTool('')} footer={<Button onClick={() => setTool('')}>Close</Button>}>
         <div className="explorer-resource-context"><strong>{objectType.definition.name}</strong><code>{objectType.definition.id}</code></div>
         <div className="flow-ontology-tool-content" role="region" aria-label={tool || undefined} tabIndex={0}>
           {tool === 'Relationships' && <OntologyGraph key={objectType.id} objectType={objectType} onRelationsChanged={() => setRelationsVersion(value => value + 1)} />}

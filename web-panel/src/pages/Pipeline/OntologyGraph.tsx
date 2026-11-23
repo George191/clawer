@@ -23,6 +23,12 @@ import './ontology-graph-workbench.css';
 
 const size = 20;
 const cardinalities = { one_to_one: 'One to one', one_to_many: 'One to many', many_to_one: 'Many to one', many_to_many: 'Many to many' } as const;
+const cardinalityHelp: Record<string, string> = {
+  one_to_one: 'Each source can link to one target, and each target to one source.',
+  one_to_many: 'One source can link to many targets; each target can link to one source.',
+  many_to_one: 'Many sources can link to one target; each source can link to one target.',
+  many_to_many: 'Objects on either side can have multiple links.',
+};
 const cardinalityLabel = (value: string) => cardinalities[value as keyof typeof cardinalities] ?? value;
 const operatorLabels = { eq: 'Equals', contains: 'Contains', gt: 'Greater than', lt: 'Less than' };
 const objectPath = (id: string) => '/object-types/' + encodeURIComponent(id);
@@ -248,16 +254,26 @@ function RelationshipDefinition({ selected, objectType }: { selected: LinkType; 
   const ids = [...new Set([selected.sourceDefinitionId, selected.targetDefinitionId])].filter(id => id !== objectType.id);
   const endpoints = usePage(ids.length ? ids.join(':') : null, signal =>
     Promise.all(ids.map(id => fetchPublishedOntologyType(id, signal))));
-  const name = (id: string) => id === objectType.id ? objectType.definition.name
-    : endpoints?.data?.find(type => type.id === id)?.definition.name ?? (endpoints?.error ? 'Object type unavailable' : 'Loading object type…');
+  const endpoint = (id: string) => id === objectType.id ? objectType.definition
+    : endpoints?.data?.find(type => type.id === id)?.definition;
+  const name = (id: string) => endpoint(id)?.name ?? (endpoints?.error ? 'Object type unavailable' : 'Loading object type…');
+  const direction = selected.sourceDefinitionId === selected.targetDefinitionId ? 'Self relationship'
+    : selected.sourceDefinitionId === objectType.id ? 'Outgoing' : 'Incoming';
   return <section className="ontology-graph-definition" aria-label="Relationship definition">
-    <h4>Connected object types</h4>
-    <div className="ontology-graph-endpoints">
-      <div className="ontology-tool-target"><span>Source</span><strong>{name(selected.sourceDefinitionId)}</strong></div>
-      <ArrowRightOutlined />
-      <div className="ontology-tool-target"><span>Target</span><strong>{name(selected.targetDefinitionId)}</strong></div>
+    <div className="ontology-graph-overview">
+      <h4>Relationship details</h4>
+      <dl><div><dt>Display name</dt><dd>{selected.name}</dd></div><div><dt>Relationship key</dt><dd><code>{selected.key}</code></dd></div></dl>
     </div>
-    <dl><div><dt>Cardinality</dt><dd>{cardinalityLabel(selected.cardinality)}</dd></div><div><dt>Relationship key</dt><dd><code>{selected.key}</code></dd></div></dl>
+    <div className="ontology-graph-connection">
+      <h4>Connected object types</h4>
+      <div className="ontology-graph-endpoints">
+        <div className="ontology-tool-target"><span>Source</span><strong>{name(selected.sourceDefinitionId)}</strong>{endpoint(selected.sourceDefinitionId) && <code>{endpoint(selected.sourceDefinitionId)!.id}</code>}</div>
+        <ArrowRightOutlined />
+        <div className="ontology-tool-target"><span>Target</span><strong>{name(selected.targetDefinitionId)}</strong>{endpoint(selected.targetDefinitionId) && <code>{endpoint(selected.targetDefinitionId)!.id}</code>}</div>
+      </div>
+      <dl><div><dt>Direction</dt><dd>{direction}</dd></div><div><dt>Cardinality</dt><dd>{cardinalityLabel(selected.cardinality)}</dd></div></dl>
+      {cardinalityHelp[selected.cardinality] && <p className="ontology-graph-definition-help">{cardinalityHelp[selected.cardinality]}</p>}
+    </div>
     <Message text={endpoints?.error} />
   </section>;
 }

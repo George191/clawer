@@ -18,7 +18,7 @@
 .explorer-full-record > header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding-bottom: 16px; }
 .record-heading { flex: 1 1 200px; min-width: 0; }
 .record-type { display:flex; align-items:center; gap:6px; min-width:0; }
-.record-type > :is(.flow-explorer-selection__icon,.flow-semantic-type-glyph) { width:26px; height:26px; border-radius:3px; font-size:16px; }
+.record-type > :is(.flow-explorer-selection__icon,.flow-semantic-type-glyph) { display:inline-grid; flex:none; place-items:center; width:26px; height:26px; border-radius:3px; font-size:16px; line-height:1; }
 .record-type > :is(.flow-explorer-selection__icon,.flow-semantic-type-glyph) > .workspace-glyph { width:16px; height:16px; font-size:16px; }
 .record-type .workspace-glyph .ui-icon { font-size:16px; }
 .record-type, .record-identity dt { color: var(--ontology-muted); }

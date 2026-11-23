@@ -2,6 +2,10 @@
   --physical-workspace-height:clamp(320px,50dvh,460px);
   container-type: inline-size; min-width: 0; padding: 0 0 12px; background:var(--ontology-bg);
 }
+.explorer-resource-view--schema { display:flex; flex-direction:column; }
+.explorer-resource-view--schema > .flow-foundry-properties.physical-property-workbench { display:flex; flex:1; flex-direction:column; min-height:0; }
+.explorer-resource-view--schema > .flow-foundry-properties.physical-property-workbench .flow-foundry-property-workspace { flex:1; height:auto; min-height:240px; }
+.explorer-resource-view--schema > .flow-foundry-properties.physical-property-workbench .physical-property-preview { flex:none; }
 .physical-property-workbench .flow-foundry-property-main {
   min-height:0; gap:0; padding:0; grid-template-rows:minmax(0,1fr); overflow:hidden;
 }
@@ -136,6 +140,7 @@
 .physical-planner-state strong { color:var(--ontology-text); font-weight:500; }
 .physical-planner-state p,.physical-planner-help { margin:6px 0 0; color:var(--ontology-muted); font-size:11px; line-height:1.5; }
 @container (max-width: 760px) {
+  .explorer-resource-view--schema > .flow-foundry-properties.physical-property-workbench .flow-foundry-property-workspace { flex:none; }
   .physical-property-workbench .flow-foundry-property-workspace.has-inspector { height:auto; grid-template-columns:minmax(0,1fr); grid-template-rows:var(--physical-workspace-height) var(--physical-workspace-height); gap:0; }
   .explorer-resource-view > .flow-foundry-properties.physical-property-workbench .physical-property-inspector { border-left:0; border-top:1px solid var(--ontology-border); }
   .physical-property-workbench .flow-foundry-property-tools { flex-wrap:nowrap; overflow-x:auto; }

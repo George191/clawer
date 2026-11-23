@@ -18,8 +18,8 @@ const emptyRecords: OntologyRecordPage = {items: [], hasMore: false, actions: []
 const operationLabels = {create: 'Create object', modify: 'Edit object', delete: 'Delete object', link: 'Add relationship', unlink: 'Remove relationship'};
 const description = (error: unknown) => ontologyError(error, 'The transaction request failed.');
 
-function RecordPicker({type, label, value, aliases = [], change, version}: {
-  type: string; label: string; value: string; aliases?: string[]; version: number;
+function RecordPicker({type, typeName, label, value, aliases = [], change, version}: {
+  type: string; typeName?: string; label: string; value: string; aliases?: string[]; version: number;
   change: (id: string, revision?: number, title?: string) => void;
 }) {
   const [offset, setOffset] = useState(0);
@@ -37,10 +37,10 @@ function RecordPicker({type, label, value, aliases = [], change, version}: {
   }, [type, offset, version, retry]);
   const records = page.items.filter(r => r.id);
   const pageTo = (next: number) => {change(''); setLoading(true); setOffset(next);};
-  return <div><label>{label}<NativeSelect aria-label={label} value={value} disabled={!aliases.length && (loading || !!error || !records.length)} onChange={e => {
+  return <div><label><span className="ontology-tx-record-label"><span>{label}</span>{typeName && <small>{typeName}</small>}</span><NativeSelect aria-label={label} value={value} disabled={!aliases.length && (loading || !!error || !records.length)} onChange={e => {
     const id = e.target.value; const record = page.items.find(r => r.id === id);
     change(id, record?.revision ?? undefined, record ? String(record.title ?? record.id) : id);
-  }}><option value="">{aliases.length || records.length ? 'Select record' : loading ? 'Loading records…' : error ? 'Records unavailable' : 'No visible records'}</option>{aliases.map(ref => <option key={ref}>{ref}</option>)}
+  }}><option value="">{aliases.length || records.length ? 'Select record' : loading ? 'Loading records…' : error ? 'Records unavailable' : 'No visible records'}</option>{aliases.map(ref => <option key={ref} value={ref}>{ref} · New object</option>)}
     {records.map(r => <option key={r.id} value={r.id!}>{String(r.title ?? r.id)} · r{r.revision}</option>)}</NativeSelect></label>
     {(offset > 0 || page.hasMore) && <div><Button disabled={!offset || loading} onClick={() => pageTo(offset-50)}>Previous records</Button>
       <Button disabled={!page.hasMore || loading || offset + 50 > 100_000} onClick={() => pageTo(offset+50)}>Next records</Button></div>}
@@ -193,9 +193,9 @@ export default function OntologyTransactions({objectType, onCommitted}: {objectT
         {edge ? <><label>Step relationship<NativeSelect aria-label="Step relationship" value={linkId} onChange={e => {setLinkId(e.target.value);setSource('');setTarget('');}}>
           <option value="">{links.length ? 'Select relationship' : linksLoading ? 'Loading relationships…' : 'No visible relationships'}</option>{links.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</NativeSelect></label>
           {moreLinks && <Button disabled={linksLoading || linkOffset + 50 > 100_000} onClick={() => {setLinksLoading(true);setLinkOffset(linkOffset+50);}}>Load more relationships</Button>}
-          {link && <div className="ontology-tx-fields"><RecordPicker key={'source'+link.id} type={link.sourceDefinitionId} version={version}
+          {link && <div className="ontology-tx-fields"><RecordPicker key={'source'+link.id} type={link.sourceDefinitionId} typeName={types.find(type => type.id === link.sourceDefinitionId)?.definition.name || link.sourceDefinitionId} version={version}
             label="Source record" aliases={aliasesFor(link.sourceDefinitionId)} value={source} change={setSource} />
-            <RecordPicker key={'target'+link.id} type={link.targetDefinitionId} version={version}
+            <RecordPicker key={'target'+link.id} type={link.targetDefinitionId} typeName={types.find(type => type.id === link.targetDefinitionId)?.definition.name || link.targetDefinitionId} version={version}
               label="Target record" aliases={aliasesFor(link.targetDefinitionId)} value={target} change={setTarget} /></div>}</>
           : <>{kind !== 'create' && <RecordPicker key={typeId} type={typeId} label="Step record" value={record.id} version={version}
             change={(id,revision,title) => setRecord({id,revision:revision || 0,title:title || ''})} />}
@@ -216,10 +216,17 @@ export default function OntologyTransactions({objectType, onCommitted}: {objectT
     </div> : <section className="flow-tool-section ontology-transaction-history" aria-label="My transactions"><header><h4><HistoryOutlined />My transactions</h4><p>Inspect committed operations, undo eligible transactions and review writeback delivery.</p></header>
       {historyLoading && <p role="status">Loading transactions…</p>}
       {!historyLoading && !history.length && !error && !requestError && <p>No transactions on this page.</p>}
-      <ul>{history.map(item => <li key={item.id}>{item.name} · {item.stepCount} steps · {new Date(item.createdAt).toLocaleString()} {' '}
-        {item.undoneAt ? <span>Undone</span> : <Button size="small" disabled={pending || historyLoading} onClick={() => perform(item)}>Undo transaction</Button>}
-        <Button size="small" aria-pressed={deliveryId === item.id} onClick={() => selectDelivery(deliveryId === item.id ? '' : item.id)}>Writeback</Button>
-        {deliveryId === item.id && <OntologyWriteback key={item.id} project={project} transaction={item.id}/>}</li>)}</ul>
+      <ul>{history.map(item => <li key={item.id} className="ontology-transaction-history-item">
+        <div className="ontology-transaction-history-summary"><strong>{item.name}</strong>
+          <div className="ontology-transaction-history-meta"><span>{item.stepCount} {item.stepCount === 1 ? 'step' : 'steps'}</span><time dateTime={item.createdAt}>{new Date(item.createdAt).toLocaleString()}</time></div>
+        </div>
+        <div className="ontology-transaction-history-actions"><span className={`ontology-transaction-status${item.undoneAt ? ' is-undone' : ''}`}>{item.undoneAt ? 'Undone' : 'Committed'}</span>
+          {!item.undoneAt && <Button size="small" disabled={pending || historyLoading} onClick={() => perform(item)}>Undo transaction</Button>}
+          <Button size="small" aria-pressed={deliveryId === item.id} aria-expanded={deliveryId === item.id} onClick={() => selectDelivery(deliveryId === item.id ? '' : item.id)}>Writeback</Button>
+        </div>
+        {item.undoneAt && <p className="ontology-transaction-undone-at">Undone <time dateTime={item.undoneAt}>{new Date(item.undoneAt).toLocaleString()}</time></p>}
+        {deliveryId === item.id && <div className="ontology-transaction-history-writeback"><OntologyWriteback key={item.id} project={project} transaction={item.id}/></div>}
+      </li>)}</ul>
       {(offset > 0 || hasMore) && <div><Button disabled={!offset || historyLoading || pending} onClick={() => {setHistoryLoading(true);setOffset(offset-25);}}>Previous transactions</Button>
         <Button disabled={!hasMore || historyLoading || pending || offset + 25 > 100_000} onClick={() => {setHistoryLoading(true);setOffset(offset+25);}}>Next transactions</Button></div>}
     </section>}
