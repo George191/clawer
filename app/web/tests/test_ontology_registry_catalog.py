@@ -115,6 +115,8 @@ async def test_published_catalog_pages_visible_matches_and_projects_fields(db):
             " deleted boolean DEFAULT false, updated_at timestamptz)",
             "CREATE TEMP TABLE ontology_runtime_records (id uuid PRIMARY KEY, definition_id uuid,"
             " deleted boolean DEFAULT false, revision integer DEFAULT 1)",
+            "CREATE TEMP TABLE ontology_revision_snapshots (definition_id uuid, revision integer, snapshot jsonb,"
+            " actor_id uuid, proposal_id uuid, created_at timestamptz, PRIMARY KEY (definition_id, revision))",
         ):
             await session.execute(text(ddl))
         ids = {"u": actor.id, "p": project, "t": tenant}

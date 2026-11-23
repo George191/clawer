@@ -200,6 +200,11 @@ async def read_snapshot(session, row, revision):
     return snapshot
 
 
+async def require_proposal_baseline(session, row):
+    if await session.get(OntologyRevisionSnapshot, (row.id, row.revision)) is None:
+        raise HTTPException(409, "The published revision is missing its baseline snapshot. Run the revision repair migration.")
+
+
 def proposal_view(proposal, row, actor_id):
     return {
         "id": proposal.id, "baseRevision": proposal.base_revision, "restoreRevision": proposal.restore_revision,
@@ -297,6 +302,7 @@ async def validate_change(session, row, current, candidate, source):
 
 async def create_proposal(session, row, current, actor, revision, candidate, summary, restore_revision=None):
     check_revision(row, revision)
+    await require_proposal_baseline(session, row)
     await require_clearance(session, actor, row.project_id, candidate.security.markings)
     if set(current.security.markings) - set(candidate.security.markings) and not (await rights_for(session, row.project_id, actor.id, lock=True)).manage:
         raise HTTPException(403, "Only a project manager can propose removing a required marking")
@@ -315,6 +321,7 @@ async def create_proposal(session, row, current, actor, revision, candidate, sum
 
 async def review_proposal(session, row, proposal, actor, payload):
     ensure_pending(row, proposal)
+    await require_proposal_baseline(session, row)
     await require_clearance(session, actor, row.project_id, Definition.model_validate(proposal.proposed_definition).security.markings)
     if actor.id == proposal.author_id:
         raise HTTPException(403, "A different authorized member must review this proposal")
@@ -331,6 +338,7 @@ async def merge_proposal(session, row, current, proposal, actor):
     check_revision(row, proposal.base_revision)
     if proposal.status != "approved" or proposal.author_id == proposal.reviewer_id:
         raise HTTPException(409, "This proposal requires independent approval")
+    await require_proposal_baseline(session, row)
     author = await rights_for(session, row.project_id, proposal.author_id, lock=True)
     reviewer = await rights_for(session, row.project_id, proposal.reviewer_id, lock=True)
     if not author.edit or not reviewer.review or (current.source.mode == "existing" and not (author.warehouse and reviewer.warehouse)):

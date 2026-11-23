@@ -218,7 +218,7 @@ export default function OntologyRevisions({ definitionId, onMerged, showTitle = 
               <thead><tr><th scope="col">Revision</th><th scope="col">Change</th><th scope="col">Published</th></tr></thead>
               <tbody>{listing.page.items.map(item => <tr key={item.revision} className={selectedRevision === item.revision ? 'is-selected' : undefined}>
                 <th scope="row"><button type="button" className="ontology-revisions__row-link" disabled={busy} onClick={() => { setSelectedRevision(item.revision); clearErrors(); }}>{'Revision ' + item.revision}</button>{item.revision === workspace.revision && <span className="ontology-revisions__current">Current</span>}</th>
-                <td>{item.restoreRevision != null ? 'Restored revision ' + item.restoreRevision : item.proposalId ? 'Merged proposal' : 'Initial publication'}</td>
+                <td>{item.restoreRevision != null ? 'Restored revision ' + item.restoreRevision : item.proposalId ? 'Merged proposal' : item.actorId == null ? 'Recovered baseline' : 'Publication snapshot'}</td>
                 <td><time dateTime={item.createdAt}>{when(item.createdAt)}</time></td>
               </tr>)}</tbody>
             </table></div>}

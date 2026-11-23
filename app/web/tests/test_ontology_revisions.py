@@ -25,6 +25,7 @@ from app.web.api.models import Team, TeamUserJoin, Tenant, User
 from app.web.api.models.ontology_graph import OntologySavedSet
 from app.web.api.models.ontology_registry import OntologyDefinitionRow
 from app.web.api.models.ontology_runtime import OntologyRuntimeRecord
+from app.web.api.models.ontology_revisions import OntologyRevisionProposal
 from app.web.api.models.user import InviteCodes, RoleTypes
 from app.web.api.routes.ontology_registry import router as registry_router
 from app.web.api.models.ontology_markings import OntologyMarking
@@ -142,6 +143,94 @@ class RevisionIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def grant(self, review=True):
         await self.call("PUT", self.roles, 204, {"canEdit": False, "canReview": review})
+
+    async def test_catalog_state_revisions_preserve_definition_and_acting_manager(self):
+        async with AsyncSession(self.engine) as session:
+            membership = await session.scalar(select(TeamUserJoin).where(TeamUserJoin.user_id == self.actors[1].id))
+            membership.role = RoleTypes.ADMIN
+            await session.commit()
+
+        initial = await self.call("GET", f"{self.route}/revisions/{self.head}", 200)
+        revision = self.head
+        for operation, hidden, deleted in (
+            ("hide", True, False), ("delete", True, True),
+            ("restore", True, False), ("unhide", False, False),
+        ):
+            state = await self.call("PATCH", self.route + "/catalog-state", 200, {
+                "operation": operation, "revision": revision,
+            }, actor=1)
+            revision += 1
+            self.assertEqual((state["revision"], state["hidden"], state["deleted"]), (revision, hidden, deleted))
+
+        await self.call("PATCH", self.route + "/catalog-state", 409, {
+            "operation": "hide", "revision": self.head,
+        }, actor=1)
+        history = (await self.call("GET", self.route + "/revisions", 200))["items"]
+        self.assertEqual([item["revision"] for item in history], list(range(revision, self.head - 1, -1)))
+        self.assertEqual(history[-1]["actorId"], str(self.actors[0].id))
+        for item in history[:-1]:
+            self.assertEqual(item["actorId"], str(self.actors[1].id))
+            self.assertIsNone(item["proposalId"])
+            detail = await self.call("GET", f"{self.route}/revisions/{item['revision']}", 200)
+            self.assertEqual(detail["definition"], initial["definition"])
+            self.assertEqual(detail["changesFromCurrent"], [])
+
+        proposal = await self.propose(head=revision)
+        details = await self.call("GET", f"{self.proposals}/{proposal['id']}", 200)
+        self.assertIn({"path": "name", "before": "Invoice", "after": "New invoice"}, details["changes"])
+
+    async def test_repair_recovers_original_proposal_only_from_authoritative_head(self):
+        from app.web.api.models.ontology_registry import Definition
+
+        active_revision = self.head + 2
+        original_history = await self.call("GET", self.route + "/revisions", 200)
+        candidate = deepcopy(self.definition)
+        candidate["properties"].append({"id": "reference", "name": "Reference", "type": "string"})
+        proposed = Definition.model_validate(candidate).model_dump(mode="json", by_alias=True)
+        async with AsyncSession(self.engine, expire_on_commit=False) as session:
+            # Simulate two old catalog actions that advanced the head without snapshots.
+            row = await session.get(OntologyDefinitionRow, self.definition_id)
+            row.revision = active_revision
+            row.updated_at = datetime.now(timezone.utc)
+            older_proposal = OntologyRevisionProposal(definition_id=row.id, base_revision=active_revision - 1,
+                author_id=self.actors[0].id, summary="Older missing baseline", proposed_definition=proposed)
+            current_proposal = OntologyRevisionProposal(definition_id=row.id, base_revision=active_revision,
+                author_id=self.actors[0].id, summary="Add reference field", proposed_definition=proposed)
+            session.add_all([older_proposal, current_proposal])
+            await session.commit()
+
+        await self.grant()
+        await self.call("GET", f"{self.proposals}/{current_proposal.id}", 404)
+        await self.call("POST", f"{self.proposals}/{current_proposal.id}/review", 409, {"approve": True, "note": ""}, actor=1)
+        failure = await self.propose(head=active_revision, expected=409)
+        self.assertIn("missing its baseline snapshot", failure["detail"])
+        self.assertEqual((await self.call("GET", self.proposals, 200))["items"], [])
+
+        migration = import_module("app.web.alembic.versions.8d13f2c9a460_repair_ontology_revision_heads")
+
+        def upgrade(connection):
+            with Operations.context(MigrationContext.configure(connection)):
+                migration.upgrade()
+
+        for _ in range(2):
+            async with self.engine.begin() as connection:
+                await connection.run_sync(upgrade)
+        history = await self.call("GET", self.route + "/revisions", 200)
+        self.assertEqual(history["items"][1:], original_history["items"])
+        self.assertEqual(history["items"][0]["revision"], active_revision)
+        self.assertIsNone(history["items"][0]["actorId"])
+        self.assertIsNone(history["items"][0]["proposalId"])
+        listed = (await self.call("GET", self.proposals, 200))["items"]
+        self.assertEqual([(item["id"], item["status"]) for item in listed], [(str(current_proposal.id), "pending")])
+        details = await self.call("GET", f"{self.proposals}/{current_proposal.id}", 200, actor=1)
+        self.assertEqual([item["path"] for item in details["changes"]], ["properties.reference"])
+        await self.call("GET", f"{self.proposals}/{older_proposal.id}", 404)
+        await self.call("GET", f"{self.route}/revisions/{active_revision - 1}", 404)
+        await self.vote(details, actor=0, expected=403)
+        await self.vote(details)
+        await self.merge(details, head=active_revision)
+        published = await self.call("GET", self.route, 200)
+        self.assertIn("reference", [item["id"] for item in published["definition"]["properties"]])
 
     async def test_downgrading_markings_requires_manager_and_still_cleared_reviewer(self):
         group = [{"kind": "group", "id": self.team_id}]

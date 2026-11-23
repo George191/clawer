@@ -68,6 +68,6 @@ class OntologyRevisionSnapshot(SQLModel, table=True):
     definition_id: UUID = DBField(foreign_key="ontology_registry_definitions.id", primary_key=True)
     revision: int = DBField(primary_key=True)
     snapshot: dict = DBField(sa_column=Column(JSONB, nullable=False))
-    actor_id: UUID
+    actor_id: UUID | None = None
     proposal_id: UUID | None = DBField(default=None, foreign_key="ontology_revision_proposals.id")
     created_at: datetime = DBField(sa_type=DateTime(timezone=True))

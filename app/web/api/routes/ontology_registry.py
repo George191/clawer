@@ -39,6 +39,7 @@ from app.web.services.ontology_registry import (
 )
 from app.web.services.ontology_registry_identity import eligible_principals
 from app.web.services.ontology_registry_policy import definition_principals
+from app.web.services.ontology_revisions import revision_snapshot
 
 router = APIRouter(prefix="/api/ontology/v1", tags=["ontology-registry"])
 
@@ -298,6 +299,7 @@ async def change_catalog_state(definition_id: UUID, payload: CatalogChange, sess
         ).values(deleted=row.deleted, revision=OntologyRuntimeRecord.revision + 1))
     row.revision += 1
     row.updated_at = datetime.now(timezone.utc)
+    session.add(revision_snapshot(row, user.id))
     result = {"id": row.id, "revision": row.revision, "hidden": row.hidden, "deleted": row.deleted}
     await session.commit()
     return result

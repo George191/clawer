@@ -185,6 +185,17 @@ docker compose run --rm --no-deps web python -m app.web.initial_data
 再创建配置的管理员账号。已有账号不会被覆盖或重置密码，重复执行不会重复创建。
 登录使用服务器 `.env` 中的邮箱和密码；初始化只写入密码哈希。
 
+已运行的部署升级本体修订修复时，先构建新 Web 镜像，在维护窗口暂停旧 Web 写入，再单独应用 Alembic，最后启动新 Web。无需运行首次账号初始化，也无需停止采集或迁移进程：
+
+```bash
+docker compose build web &&
+  docker compose stop web &&
+  docker compose run --rm --no-deps web python -m alembic -c app/web/alembic.ini upgrade head &&
+  docker compose up -d --no-deps web
+```
+
+迁移失败时不要启动新镜像；先核对迁移日志，并保留升级前镜像和数据库备份。修复迁移只补写仍可从已发布定义验证的当前基准版本，不重建已被后续版本覆盖的历史快照，也不替原提案审核或发布。已有恢复快照时不要降级这条数据库迁移；如需回退可单独回退 Web 镜像。
+
 部署前应已准备好 AI Collect 数据库表结构。Web 和 Worker 日常启动只建立连接，不执行历史迁移或导入本地模板。来源模板和适配器通过 AI Collect 页面发布到 MinIO；一次性数据修复按实际需求在维护窗口执行，不放入标准运行代码。
 
 ```bash

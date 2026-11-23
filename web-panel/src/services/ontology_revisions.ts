@@ -6,7 +6,7 @@ export type RevisionWorkspace = {
 };
 export type DefinitionChange = { path: string; before: unknown; after: unknown };
 export type RevisionSummary = {
-  revision: number; createdAt: string; actorId: string; proposalId: string | null; restoreRevision: number | null;
+  revision: number; createdAt: string; actorId: string | null; proposalId: string | null; restoreRevision: number | null;
 };
 export type RevisionDetails = { revision: number; definition: SemanticDefinition; changesFromCurrent: DefinitionChange[] };
 export type RevisionProposal = {

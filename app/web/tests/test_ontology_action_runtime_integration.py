@@ -18,7 +18,11 @@ from app.web.api.dependencies.session import get_db
 from app.web.api.models import Team, TeamUserJoin, Tenant, User
 from app.web.api.models.ontology_graph import OntologyLink, OntologyLinkType, SetQuery
 from app.web.api.models.ontology_registry import CatalogChange, Definition, OntologyDefinitionRow
-from app.web.api.models.ontology_revisions import OntologyRevisionGrant
+from app.web.api.models.ontology_revisions import (
+    OntologyRevisionGrant,
+    OntologyRevisionProposal,
+    OntologyRevisionSnapshot,
+)
 from app.web.api.models.ontology_runtime import OntologyActionEvent, OntologyRuntimeRecord
 from app.web.api.models.user import InviteCodes, RoleTypes
 from app.web.api.routes.ontology_registry import change_catalog_state
@@ -66,6 +70,8 @@ async def runtime():
                         "ontology_action_events",
                         "ontology_link_types",
                         OntologyRevisionGrant.__tablename__,
+                        OntologyRevisionProposal.__tablename__,
+                        OntologyRevisionSnapshot.__tablename__,
                         "ontology_markings",
                         "ontology_marking_changes",
                         "ontology_links",
