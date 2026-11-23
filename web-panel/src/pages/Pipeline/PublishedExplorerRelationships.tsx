@@ -29,8 +29,8 @@ function LinkedProperties({ definitionId, record, type, layouts }: { definitionI
   </ExplorerValueProvider>;
 }
 
-type Props = { definitionId: string; recordId: string; sourceTitle: string };
-function RelationshipPage({ definitionId, recordId, sourceTitle }: Props) {
+type Props = { definitionId: string; recordId: string; sourceTitle: string; refreshToken?: number };
+function RelationshipPage({ definitionId, recordId, sourceTitle, refreshToken = 0 }: Props) {
   const [relation, setRelation] = useState<string>();
   const [offset, setOffset] = useState(0);
   const [version, reload] = useState(0);
@@ -51,7 +51,7 @@ function RelationshipPage({ definitionId, recordId, sourceTitle }: Props) {
     }).then(value => { if (value && live(controller.signal, identity)) setRead(value); },
       error => { if (live(controller.signal, identity) && error?.code !== 'ERR_CANCELED') setRead({ key, error: ontologyError(error, 'Unable to read relationships.') }); });
     return () => controller.abort();
-  }, [key, definitionId, recordId, relation, offset, version]);
+  }, [key, definitionId, recordId, relation, offset, version, refreshToken]);
   const current = read?.key === key ? read : undefined;
   const loading = !current;
   const page = current?.page ?? read?.page;

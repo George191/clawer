@@ -7,6 +7,8 @@
 .ontology-graph-workbench :is(.ui-native-select,input:not([type=checkbox])) { box-sizing:border-box; width:100%; min-width:0; min-height:30px; padding:5px 8px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-bg); color:var(--ontology-text); font:inherit; }
 .ontology-graph-workbench .flow-tool-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
 .ontology-graph-workbench .flow-tool-fields > :is(label,.ui-btn) { width:100%; min-width:0; max-width:none; }
+.ontology-graph-target-option { display:inline-flex; align-items:baseline; gap:8px; min-width:0; }
+.ontology-graph-current { flex:none; color:var(--ontology-muted, #8b90a0); font-size:11px; }
 .ontology-graph-workbench .ontology-tool-form > div > label { margin-bottom:10px; }
 .ontology-graph-workbench .ontology-graph-neighbors { display:grid; gap:0; margin:12px 0; padding:0; list-style:none; }
 .ontology-graph-neighbors > li { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 0; border-bottom:1px solid var(--ontology-border); }

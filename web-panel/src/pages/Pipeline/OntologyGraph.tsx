@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Button, Modal, NativeSelect } from '@/components/ui';
+import { Button, Modal, NativeSelect, Select } from '@/components/ui';
 import {
   listOntologyRecords,
   ontologyError,
@@ -92,6 +92,7 @@ function NewType({ object, onSaved }: { object: PublishedOntologyType; onSaved: 
   const {locked, current} = useGraphOperation();
   async function save() {
     if (locked.current || !current()) return;
+    if (!target) { fail('Choose a target object type.'); return; }
     locked.current = true; pending(true);
     fail('');
     try {
@@ -126,26 +127,14 @@ function NewType({ object, onSaved }: { object: PublishedOntologyType; onSaved: 
         />
       </label>
       <label>
-        Find target type
-        <input
-          value={term}
-          onChange={(e) => {
-            search(e.target.value);
-            page(0);
-            choose('');
-          }}
-        />
-      </label>
-      <label>
         Target type
-        <NativeSelect required value={target} onChange={(e) => choose(e.target.value)}>
-          <option value="">Select type</option>
-          {types?.data?.items.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-        </NativeSelect>
+        <Select showSearch filterOption={false} placeholder="Search and select type" aria-label="New relationship target type"
+          value={target || undefined} loading={!types} notFoundContent={types ? 'No matching object types' : 'Loading object types…'}
+          onSearch={value => { search(value); page(0); }}
+          onChange={(value: string) => choose(value || '')}
+          options={(types?.data?.items ?? []).map(t => ({ value: t.id, title: t.name,
+            label: <span className="ontology-graph-target-option"><span>{t.name}</span>{t.id === object.id && <small className="ontology-graph-current">current</small>}</span> }))}
+        />
       </label>
       <Pages
         offset={off}
@@ -293,13 +282,13 @@ function Links({ anchor, move }: { anchor: Anchor; move: (a: Anchor) => void }) 
   );
 }
 
-type Props = { objectType: PublishedOntologyType; recordId?: string; recordTitle?: string; returnTo: string; onOpenExplorer: () => void };
+type Props = { objectType: PublishedOntologyType; recordId?: string; recordTitle?: string; returnTo: string; onOpenExplorer: () => void; onRelationsChanged?: () => void };
 export default function OntologyGraph(props: Props) {
   return props.objectType.definition.source.mode === 'none' ? (
     <Panel key={props.objectType.id + ':' + (props.recordId ?? '')} {...props} />
   ) : null;
 }
-function Panel({ objectType, recordId, recordTitle, returnTo, onOpenExplorer }: Props) {
+function Panel({ objectType, recordId, recordTitle, returnTo, onOpenExplorer, onRelationsChanged }: Props) {
   const [tab, setTab] = useState<'relationships' | 'sets'>('relationships');
   const [create, toggle] = useState(false), [version, reload] = useState(0), [recordOffset, setRecordOffset] = useState(0);
   const [trail, walk] = useState<Anchor[]>([]);
@@ -323,7 +312,7 @@ function Panel({ objectType, recordId, recordTitle, returnTo, onOpenExplorer }: 
           {rights?.data?.canManage && <Button size="small" icon={!create ? <PlusOutlined /> : undefined} aria-expanded={create} onClick={() => toggle(value => !value)}>{create ? 'Cancel' : 'New type'}</Button>}
         </header>
         <div className="ontology-tool-form">
-          {create ? <NewType object={objectType} onSaved={() => { toggle(false); reload(value => value + 1); }} /> : anchor ? <>
+          {create ? <NewType object={objectType} onSaved={() => { toggle(false); reload(value => value + 1); onRelationsChanged?.(); }} /> : anchor ? <>
             {!!trail.length && <div className="ontology-graph-trail"><span>{trail.map(item => item.title).join(' / ')}</span><Button size="small" onClick={() => walk(previous => previous.slice(0, -1))}>Back</Button></div>}
             <Links key={anchor.record + ':' + version} anchor={anchor} move={next => walk(previous => [...previous, next])} />
           </> : <div className="ontology-tool-empty"><ApartmentOutlined /><h4>Choose an object to browse its links</h4><p>Linked objects can be opened without changing the current result set.</p></div>}

@@ -32,6 +32,7 @@ export function usePublishedObjectTools({ objectType, actions, record, returnTo,
   const [inputs, setInputs] = useState<ActionInputs>({});
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
+  const [relationsVersion, setRelationsVersion] = useState(0);
   const locked = useRef(false);
   const active = useRef(true);
   const typeId = useRef(objectType?.id);
@@ -127,6 +128,7 @@ export function usePublishedObjectTools({ objectType, actions, record, returnTo,
     ? <RecordHistory key={selected.id} objectType={objectType.id} recordId={selected.id} onChanged={onChanged} /> : null;
   return {
     tools,
+    relationsVersion,
     createButton: create ? <Button size="small" className="wb-create-object" icon={<PlusOutlined />} disabled={busy || pending} onClick={() => startAction('create', create.fields)}>Create object</Button> : null,
     actionsForRecord, renderHistory, renderMutation, mutationOpen: !!operation && !creating,
     dialogs: objectType ? <>
@@ -136,7 +138,7 @@ export function usePublishedObjectTools({ objectType, actions, record, returnTo,
       <Modal open={!!tool} centered width={1040} className="flow-surface-modal flow-published-dialog explorer-resource-dialog" title={tool} onCancel={() => setTool('')} footer={<Button onClick={() => setTool('')}>Close</Button>}>
         <div className="explorer-resource-context"><strong>{objectType.definition.name}</strong><code>{objectType.definition.id}</code></div>
         <div className="flow-ontology-tool-content" role="region" aria-label={tool || undefined} tabIndex={0}>
-          {tool === 'Relationships and sets' && <OntologyGraph key={objectType.id} objectType={objectType} recordId={record?.id || undefined} recordTitle={record?.title == null ? undefined : String(record.title)} returnTo={returnTo} onOpenExplorer={() => setTool('')} />}
+          {tool === 'Relationships and sets' && <OntologyGraph key={objectType.id} objectType={objectType} recordId={record?.id || undefined} recordTitle={record?.title == null ? undefined : String(record.title)} returnTo={returnTo} onOpenExplorer={() => setTool('')} onRelationsChanged={() => setRelationsVersion(value => value + 1)} />}
           {tool === 'Transactions' && <OntologyTransactions key={objectType.id} objectType={objectType} onCommitted={onChanged} />}
           {tool === 'Functions' && <OntologyFunctions key={objectType.id} id={objectType.id} record={record} onCommitted={name => { message.success('Committed: ' + name); onChanged(); }} />}
           {tool === 'Model revisions' && <OntologyRevisions key={objectType.id} showTitle={false} definitionId={objectType.id} onMerged={onChanged} />}

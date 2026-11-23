@@ -267,7 +267,7 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
           rowActions: row => objectTools.actionsForRecord(original(row)),
           renderMutation: row => objectTools.renderMutation(original(row)),
           extraViews: [{ key: 'history', label: 'History', available: row => !!original(row)?.hasHistory, render: row => objectTools.renderHistory(original(row)) }],
-          renderPublishedRelationships: objectType.definition.source.mode === 'none' ? row => <PublishedExplorerRelationships definitionId={entry.definitionId} recordId={String(row.identity.$recordId)} sourceTitle={row.title} /> : undefined,
+          renderPublishedRelationships: objectType.definition.source.mode === 'none' ? row => <PublishedExplorerRelationships definitionId={entry.definitionId} recordId={String(row.identity.$recordId)} sourceTitle={row.title} refreshToken={objectTools.relationsVersion} /> : undefined,
           footer: <>{result && query.groupBy && <section className="published-explorer-aggregation" aria-label="Object set aggregation"><h3>{names[query.groupBy] || query.groupBy}</h3>
             <p>{result.count.toLocaleString()} matching objects{query.sumField ? ` · Sum: ${display(result.sum)}` : ''}</p>
             <table><thead><tr><th>Value</th><th>Count</th>{query.sumField && <th>Sum</th>}</tr></thead><tbody>{result.groups.map((group, index) => <tr key={index}><td>{display(group.value)}</td><td>{group.count}</td>{query.sumField && <td>{display(group.sum)}</td>}</tr>)}</tbody></table>
