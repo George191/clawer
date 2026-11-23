@@ -128,17 +128,22 @@ def read_migration(kind):
     and summary['stage'] in ('running','complete','failed','paused','canary_complete','pg_alias_tail','mongo_coverage_complete'))
   states=[read_committed_worker(root,plan,n,p) for n,p in enumerate(plan['parts'])]
   count=sum(s['processed'] for s in states);done=sum(s['done'] for s in states)
-  if plan.get('continuation'):
-   lineage=plan['continuation'];parent=Path(lineage['parent_root']);parent_plan=lineage['parent_plan']
-   need(kind=='facts' and parent==base/'facts-migration-20261116' and (parent/'STOP').is_file()
+  ancestor=plan;seen={str(root)}
+  while ancestor.get('continuation'):
+   lineage=ancestor['continuation'];parent=Path(lineage['parent_root']);parent_plan=lineage['parent_plan']
+   need(kind=='facts' and parent.parent==base and parent.name.startswith('facts-migration-20261116')
+     and str(parent) not in seen and (parent/'STOP').is_file()
      and json.loads((parent/'plan.json').read_bytes())==parent_plan
-     and parent_plan['kind']=='facts_full' and not parent_plan.get('continuation')
+     and parent_plan['kind']=='facts_full'
+     and all(parent_plan[k]==plan[k] for k in ('protocol','collection','data_type','aliases','mongo_uuid'))
      and hashlib.sha256(encoded({k:v for k,v in parent_plan.items() if k!='plan_sha256'})).hexdigest()==parent_plan['plan_sha256'])
    previous=[read_committed_worker(parent,parent_plan,n,p) for n,p in enumerate(parent_plan['parts'])]
    offset=sum(s['processed'] for s in previous)
-   need(previous==lineage['checkpoints'] and offset==lineage['processed_offset']
+   need(previous==lineage['checkpoints']
+     and offset+parent_plan.get('continuation',{}).get('processed_offset',0)==lineage['processed_offset']
      and all(not s.get('pending') and not s.get('last_error') for s in previous))
    count+=offset
+   seen.add(str(parent));ancestor=parent_plan
   need(type(summary['processed']) is int and 0<=summary['processed']<=count)
   if summary['stage']=='complete':need(done==6)
   tail=None

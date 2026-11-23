@@ -62,6 +62,9 @@ def reader_fixture(kind='patent', complete=False, bounded=False):
         def exists(self):
             return str(self) in files
 
+        def is_file(self):
+            return self.exists()
+
         def resolve(self):
             return self
 
@@ -181,6 +184,34 @@ def add_tail(files, root, parent_plan, complete=False):
 
 
 class ProgressTests(unittest.TestCase):
+    def test_repeated_facts_continuation_counts_each_generation_once_and_checks_ancestors(self):
+        read, files, root, plan = reader_fixture('facts')
+        original = root
+        for generation in (1, 2):
+            states = [json.loads(files[root + f'/worker-{i}.json']) for i in range(6)]
+            child = copy.deepcopy(plan)
+            child['continuation'] = {'parent_root': root, 'parent_plan': plan, 'checkpoints': states,
+                'processed_offset': plan.get('continuation', {}).get('processed_offset', 0) + 12}
+            child['plan_sha256'] = hashlib.sha256(encoded({k: v for k, v in child.items()
+                                                         if k != 'plan_sha256'})).hexdigest()
+            new_root = BASE + f'/facts-migration-20261116-rebalance-test-{generation}'
+            for path, raw in list(files.items()):
+                if path.startswith(root + '/') and not path.endswith('/STOP'):
+                    files[new_root + path[len(root):]] = raw.replace(plan['plan_sha256'].encode(),
+                                                                   child['plan_sha256'].encode())
+            files[new_root + '/plan.json'] = encoded(child)
+            files[root + '/STOP'] = b'frozen'
+            owner = json.loads(files[BASE + '/source-safe-current-owners.json'])
+            owner['facts'].update(root=new_root.replace('/app/output/', '/data/clawer/output/'),
+                                  plan_sha256=child['plan_sha256'])
+            files[BASE + '/source-safe-current-owners.json'] = encoded(owner)
+            root, plan = new_root, child
+        result = read()
+        self.assertTrue(result['verified'], result)
+        self.assertEqual(result['processed'], 36)
+        files.pop(original + '/STOP')
+        self.assertFalse(read()['verified'])
+
     def history_errors(self, error_time):
         main = next(node for node in ast.parse(progress.PROBE).body
                     if isinstance(node, ast.AsyncFunctionDef) and node.name == 'main')

@@ -114,8 +114,8 @@ def merged_ranges(ranges):
 def validate_continuation(plan):
     lineage = plan["continuation"]
     parent, states = lineage["parent_plan"], lineage["checkpoints"]
-    require(plan["kind"] == parent["kind"] == "facts_full" and not parent.get("continuation"),
-            "continuation requires an original full facts plan")
+    require(plan["kind"] == parent["kind"] == "facts_full",
+            "continuation requires a full facts plan")
     validate_plan(parent)
     require(all(plan[k] == parent[k] for k in ("collection", "data_type", "aliases", "mongo_uuid"))
             and len(states) == WORKERS, "continuation identity changed")
@@ -128,7 +128,8 @@ def validate_continuation(plan):
             lower = int(state["cursor"], 16) + 1 if state["cursor"] else lower
             if lower < upper:
                 remaining.append((lower, upper))
-    require(lineage["processed_offset"] == sum(s["processed"] for s in states)
+    inherited = parent.get("continuation", {}).get("processed_offset", 0)
+    require(lineage["processed_offset"] == inherited + sum(s["processed"] for s in states)
             and merged_ranges(interval(p) for p in plan["parts"]) == merged_ranges(remaining),
             "continuation must cover exactly the uncommitted parent ranges")
 
@@ -142,6 +143,7 @@ def validate_parent_files(plan):
             "parent must remain frozen")
     require(all(pg.read(parent / f"worker-{i}.json") == state
                 for i, state in enumerate(lineage["checkpoints"])), "parent checkpoints changed")
+    validate_parent_files(lineage["parent_plan"])
 
 
 def validate_checkpoint(state, plan, worker, expected):
