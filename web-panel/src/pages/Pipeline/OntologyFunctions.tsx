@@ -9,41 +9,69 @@ import useExplorerErrorToast from './useExplorerErrorToast';
 import './ontology-tool-workbench.css';
 
 type Catalog = {revision: number; items: {key: string; name: string; parameters: {key: string; type: string; nullable: boolean}[]}[]};
+type CatalogLoad = { scope: string; version: number; catalog?: Catalog; error?: string };
 
 export default function OntologyFunctions({id, record, onCommitted}: {
   id: string; record?: OntologyRecord; onCommitted: (name: string) => void;
 }) {
-  const [catalog, setCatalog] = useState<Catalog>();
+  const [load, setLoad] = useState<CatalogLoad>();
   const [selected, setSelected] = useState(''), [search, setSearch] = useState('');
   const [values, setValues] = useState<Record<string, string | null>>({});
   const [pending, setPending] = useState(false), [error, setError] = useState('');
-  const [requestError, setRequestError] = useState(''), [refresh, setRefresh] = useState(0);
-  const [receipt, setReceipt] = useState<TransactionReceipt>();
-  const busy = useRef(false), alive = useRef(true);
+  const [refresh, setRefresh] = useState(0);
+  const [completion, setCompletion] = useState<{ scope: string; receipt: TransactionReceipt }>();
+  const invocation = useRef<{ scope: string }>(), alive = useRef(true);
   const retryIds = useRef(new Map<string, string>());
-  const identity = getSessionState().identity;
+  const { identity, authenticated, locked } = getSessionState();
+  const path = '/object-types/' + encodeURIComponent(id) + '/functions';
+  const scope = JSON.stringify([identity, path]);
+  const liveScope = useRef(scope);
+  liveScope.current = scope;
+  const callScope = JSON.stringify([scope, record?.id]);
+  const liveCallScope = useRef(callScope);
+  liveCallScope.current = callScope;
+  const receipt = completion?.scope === callScope ? completion.receipt : undefined;
+  const allowed = authenticated && !locked;
   const current = () => {
     const session = getSessionState();
-    return alive.current && session.authenticated && !session.locked && session.identity === identity;
+    return alive.current && liveScope.current === scope && session.authenticated && !session.locked && session.identity === identity;
   };
-  const path = '/object-types/' + encodeURIComponent(id) + '/functions';
-  useExplorerErrorToast(requestError, 'Unable to load functions', () => { if (!pending) setRefresh(value => value + 1); });
+  const scopedLoad = allowed && load?.scope === scope ? load : undefined;
+  const catalog = scopedLoad?.catalog;
+  const loading = allowed && scopedLoad?.version !== refresh;
+  const requestError = !loading ? scopedLoad?.error : undefined;
+  const reload = () => { if (!invocation.current && !loading && current()) setRefresh(value => value + 1); };
+  useExplorerErrorToast(requestError, 'Unable to load functions', reload);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
+    if (!allowed) {
+      setLoad(undefined); setError(''); setValues({}); setCompletion(undefined);
+      return;
+    }
     const controller = new AbortController();
-    setCatalog(undefined); setError(''); setRequestError(''); setReceipt(undefined);
     graphRequest<Catalog>('get', path, {signal: controller.signal}).then(result => {
       if (!controller.signal.aborted && current()) {
-        setCatalog(result); setSelected(result.items[0]?.key ?? ''); setValues({});
+        setLoad({ scope, version: refresh, catalog: result });
+        setSelected(previous => catalog && result.items.some(item => item.key === previous) ? previous : result.items[0]?.key ?? '');
+        if (catalog?.revision !== result.revision || !result.items.some(item => item.key === selected)) { setValues({}); setError(''); setCompletion(undefined); }
       }
-    }, failure => { if (!controller.signal.aborted && current()) setRequestError(ontologyError(failure, 'Unable to load functions.')); });
+    }, failure => {
+      if (!controller.signal.aborted && current()) {
+        setLoad({ scope, version: refresh, error: ontologyError(failure, 'Unable to load functions.') });
+        setValues({}); setError(''); setCompletion(undefined);
+      }
+    });
     return () => controller.abort();
-  }, [path, refresh, identity]);
+    // The catalog read here is a snapshot from the start of this refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path, refresh, scope, allowed]);
   const fn = catalog?.items.find(item => item.key === selected);
   const visible = catalog?.items.filter(item => (item.name + ' ' + item.key).toLowerCase().includes(search.toLowerCase())) || [];
   const run = async () => {
-    if (!record?.id || !record.revision || !catalog || !fn || busy.current || !current()) return;
-    busy.current = true; setPending(true); setError(''); setReceipt(undefined);
+    if (!record?.id || !record.revision || !catalog || !fn || loading || requestError || invocation.current || !current()) return;
+    const operation = { scope: callScope };
+    invocation.current = operation; setPending(true); setError(''); setCompletion(undefined);
+    const currentCall = () => current() && liveCallScope.current === callScope && invocation.current === operation;
     let submitted = false;
     try {
       const args = Object.fromEntries(fn.parameters.map(parameter => {
@@ -52,35 +80,37 @@ export default function OntologyFunctions({id, record, onCommitted}: {
         return [parameter.key, value === null ? null : parsePropertyValue(value, parameter.type)];
       }));
       const data = {modelRevision: catalog.revision, recordId: record.id, expectedRevision: record.revision, arguments: args};
-      const signature = JSON.stringify([fn.key, data]);
+      const signature = JSON.stringify([callScope, fn.key, data]);
       const requestId = retryIds.current.get(signature) ?? newOntologyRequestId();
       retryIds.current.set(signature, requestId);
       submitted = true;
       const result = await graphRequest<TransactionReceipt>('post', path + '/' + encodeURIComponent(fn.key) + '/invoke', {data: {...data, requestId}});
-      if (!current()) return;
-      retryIds.current.delete(signature); setReceipt(result); onCommitted(result.name);
+      if (!currentCall()) return;
+      retryIds.current.delete(signature); setCompletion({ scope: callScope, receipt: result }); onCommitted(result.name);
     } catch (failure) {
-      if (!current()) return;
+      if (!currentCall()) return;
       const detail = ontologyError(failure, 'Unable to run function.');
       if (!submitted) setError(detail);
       else message.error({content: 'Unable to run function', description: detail, className: 'explorer-toast'});
     } finally {
-      busy.current = false;
-      if (current()) setPending(false);
+      if (invocation.current === operation) {
+        invocation.current = undefined;
+        if (alive.current) setPending(false);
+      }
     }
   };
   return <section className="ontology-tool-workbench" aria-label="Business function runner">
     <header className="ontology-tool-header"><div><h3><CodeOutlined />Functions</h3><p>Run published business logic on one selected object. Changes are applied together and recorded in its history.</p></div>
-      <Button size="small" icon={<ReloadOutlined />} disabled={pending} onClick={() => setRefresh(value => value + 1)}>Refresh</Button>
+      <Button size="small" icon={<ReloadOutlined />} disabled={pending || !allowed} loading={loading} onClick={reload}>Refresh</Button>
     </header>
-    <div className="ontology-tool-layout">
+    <div className="ontology-tool-layout" aria-busy={loading}>
       <aside className="ontology-tool-catalog" aria-label="Published functions">
         <div className="ontology-tool-search"><Input aria-label="Find functions" placeholder="Find a function" prefix={<SearchOutlined />} value={search} onChange={event => setSearch(event.target.value)} /></div>
         <div className="ontology-tool-catalog-list">
-          {!catalog && !requestError && <p role="status">Loading functions…</p>}
+          {!catalog && loading && <p role="status">Loading functions…</p>}
           {catalog && !catalog.items.length && <p>No published functions are available to this account.</p>}
           {catalog && !!catalog.items.length && !visible.length && <p>No functions match this search.</p>}
-          {visible.map(item => <button type="button" key={item.key} aria-pressed={selected === item.key} disabled={pending} onClick={() => {setSelected(item.key); setValues({}); setError(''); setReceipt(undefined);}}>
+          {visible.map(item => <button type="button" key={item.key} aria-pressed={selected === item.key} disabled={pending || loading} onClick={() => {setSelected(item.key); setValues({}); setError(''); setCompletion(undefined);}}>
             <CodeOutlined /><span><strong>{item.name}</strong><small>{item.parameters.length} parameters</small></span>
           </button>)}
         </div>
@@ -94,13 +124,13 @@ export default function OntologyFunctions({id, record, onCommitted}: {
             {!fn.parameters.length && <p className="ontology-tool-note">This function does not require input parameters.</p>}
             <div className="ontology-tool-fields">{fn.parameters.map(parameter => <div key={parameter.key}>
               <label><span>{parameter.key}<small>{parameter.type}{parameter.nullable ? ' · Nullable' : ' · Required'}</small></span>
-                <Input aria-label={'Argument ' + parameter.key} disabled={pending || values[parameter.key] === null} value={values[parameter.key] ?? ''} onChange={event => setValues(previous => ({...previous, [parameter.key]: event.target.value}))} /></label>
-              {parameter.nullable && <label className="ontology-tool-null"><input type="checkbox" disabled={pending} checked={values[parameter.key] === null} onChange={event => setValues(previous => ({...previous, [parameter.key]: event.target.checked ? null : ''}))} />Set to null</label>}
+                <Input aria-label={'Argument ' + parameter.key} disabled={pending || loading || values[parameter.key] === null} value={values[parameter.key] ?? ''} onChange={event => setValues(previous => ({...previous, [parameter.key]: event.target.value}))} /></label>
+              {parameter.nullable && <label className="ontology-tool-null"><input type="checkbox" disabled={pending || loading} checked={values[parameter.key] === null} onChange={event => setValues(previous => ({...previous, [parameter.key]: event.target.checked ? null : ''}))} />Set to null</label>}
             </div>)}</div>
             {error && <p role="alert" className="ontology-tool-validation">{error}</p>}
             {receipt && <div className="ontology-tool-receipt" role="status"><CheckCircleOutlined /><div><strong>Function completed</strong><p>{receipt.name} · {receipt.stepCount} operations committed</p></div></div>}
           </div>
-          <footer className="ontology-tool-footer"><p>Running this function updates the target object.</p><Button type="primary" icon={<ArrowRightOutlined />} disabled={!record?.id || pending || !!requestError} loading={pending} onClick={() => void run()}>Run function</Button></footer>
+          <footer className="ontology-tool-footer"><p>Running this function updates the target object.</p><Button type="primary" icon={<ArrowRightOutlined />} disabled={!record?.id || pending || loading || !!requestError} loading={pending} onClick={() => void run()}>Run function</Button></footer>
         </> : catalog && <div className="ontology-tool-empty"><CodeOutlined /><h4>Choose a published function</h4><p>Functions encapsulate a published set of property updates. Select a function to inspect its inputs and run it on an object.</p></div>}
       </div>
     </div>

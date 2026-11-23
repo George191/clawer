@@ -58,7 +58,7 @@ export default function PublishedSourceTools({ objectType, resource, onClose, ca
   const definition = objectType.definition, source = definition.source;
   if (resource === 'preview') return null;
   const allowed = explorerResourceCapabilities(source, canManage).includes(resource);
-  return <Modal className="flow-surface-modal published-source-tools explorer-resource-dialog" title={titles[resource]} open onCancel={onClose} width={960} footer={<Button onClick={onClose}>Done</Button>}>
+  return <Modal className={'flow-surface-modal published-source-tools explorer-resource-dialog' + (allowed && resource === 'stream' ? ' explorer-tool-workbench-dialog' : '')} title={titles[resource]} open onCancel={onClose} width={960} footer={<Button onClick={onClose}>Done</Button>}>
     {!allowed ? <p role="alert">This object type does not provide the requested source tool.</p> : <>
       <div className="published-source-context explorer-resource-context"><strong>{definition.name}</strong><span>Physical source <code>{source.schema}.{source.table}</code></span></div>
       <div className="explorer-resource-dialog-body" role="region" aria-label={titles[resource]} tabIndex={0}>

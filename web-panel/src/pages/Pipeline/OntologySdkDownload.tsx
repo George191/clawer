@@ -67,19 +67,19 @@ export default function OntologySdkDownload({ definitionId, open, onClose }: { d
   return <>
     <Modal open={open} centered className="flow-surface-modal flow-published-dialog explorer-resource-dialog ontology-sdk-dialog" title="TypeScript SDK" onCancel={close} footer={<>
       <Button onClick={close}>Close</Button>
-      {download && <a className="ui-btn ui-btn-primary" href={download.url} download={download.filename}
+      {download ? <a className="ui-btn ui-btn-primary" href={download.url} download={download.filename}
         onClick={event => {
           const session = getSessionState();
           if (!session.authenticated || session.locked || session.identity !== download.identity) {
             event.preventDefault();
             close();
           }
-        }}>Download TypeScript SDK</a>}
+        }}>Download TypeScript SDK</a> : <Button type="primary" disabled>Download TypeScript SDK</Button>}
     </>}>
       <p className="ontology-sdk-description">Use the generated client with your API URL and an access token for the account making requests.</p>
-      {error ? null
-        : download ? <p className="ontology-sdk-metadata">Published revision {download.revision} · <code>{download.filename}</code></p>
-          : <p role="status">Preparing the TypeScript SDK…</p>}
+      <p className="ontology-sdk-metadata" role="status">{error ? 'The TypeScript SDK is unavailable.'
+        : download ? <>Published revision {download.revision} · <code>{download.filename}</code></>
+          : 'Preparing the TypeScript SDK…'}</p>
     </Modal>
   </>;
 }

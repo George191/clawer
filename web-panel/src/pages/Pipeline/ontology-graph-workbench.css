@@ -14,11 +14,22 @@
 .ontology-graph-neighbors > li { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 0; border-bottom:1px solid var(--ontology-border); }
 .ontology-graph-neighbors > li > .ui-btn:first-child { justify-content:flex-start; min-width:0; max-width:100%; overflow:hidden; background:transparent; border-color:transparent; text-align:left; }
 .ontology-graph-neighbors > li > .ui-btn:last-child:not(:first-child) { flex:none; color:var(--ui-error); font-size:11px; }
-.ontology-graph-trail { display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--ontology-muted); font-size:11px; }
-.ontology-graph-trail > span { min-width:0; overflow-wrap:anywhere; }
 .ontology-graph-set-body { flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; }
 .ontology-graph-workbench .flow-tool-section { border:0; padding:0; background:transparent; }
 .ontology-graph-workbench .flow-tool-heading p { margin-top:4px; font-size:11px; }
 .ontology-graph-workbench .flow-set-save { display:flex; align-items:flex-end; gap:10px; padding:12px 0; border:0; border-top:1px solid var(--ontology-border); background:transparent; }
 .ontology-graph-workbench .flow-tool-section [aria-label="Object set results"] { padding:12px; border:1px solid var(--ontology-border); border-radius:3px; }
 @media(max-width:640px) { .ontology-graph-workbench .flow-tool-fields { grid-template-columns:minmax(0,1fr); } }
+.ontology-graph-detail-actions { display:flex; flex:none; gap:6px; align-items:center; }
+.ontology-graph-new-source { grid-column:1 / -1; }
+.ontology-graph-definition { flex:none; padding:12px; border:1px solid var(--ontology-border); border-radius:3px; }
+.ontology-graph-definition > h4 { margin:0 0 9px; font-size:12px; font-weight:500; }
+.ontology-graph-endpoints { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); gap:8px; align-items:center; }
+.ontology-graph-endpoints > .ui-icon { color:var(--ontology-muted); }
+.ontology-graph-definition dl { display:flex; flex-wrap:wrap; gap:8px 24px; margin:10px 0 0; }
+.ontology-graph-definition dl > div { display:flex; gap:6px; min-width:0; }
+.ontology-graph-definition dt { flex:none; color:var(--ontology-muted); }
+.ontology-graph-definition dd { min-width:0; margin:0; overflow-wrap:anywhere; }
+.ontology-graph-anchor { margin:6px 0 0; overflow-wrap:anywhere; }
+.ontology-graph-anchor > strong { color:var(--ontology-text); font-weight:500; }
+@media(max-width:420px) { .ontology-graph-detail-actions { flex-direction:column; align-items:flex-end; } }

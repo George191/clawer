@@ -63,8 +63,11 @@
 @media(max-width:640px) {
   .ontology-tool-workbench { height:auto; min-height:0; }
   .ontology-tool-layout { grid-template-columns:minmax(0,1fr); }
+  .explorer-tool-workbench-dialog .ontology-tool-layout { grid-template-rows:minmax(70px,35%) minmax(0,1fr); }
   .ontology-tool-catalog { max-height:180px; border-right:0; border-bottom:1px solid var(--ontology-border); }
+  .explorer-tool-workbench-dialog .ontology-tool-catalog { max-height:none; }
   .ontology-tool-form { max-height:45dvh; }
+  .explorer-tool-workbench-dialog .ontology-tool-empty { justify-content:flex-start; padding:12px; overflow:auto; }
   .ontology-tool-footer { align-items:flex-start; flex-wrap:wrap; }
 }
 

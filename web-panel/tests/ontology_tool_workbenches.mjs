@@ -121,6 +121,7 @@ test('function permissions, target selection and session ownership gate invocati
   finish({ name: 'Old account receipt', stepCount: 3 }); await ui.flush();
   assert.deepEqual(ui.committed, []); assert.equal(ui.notifications.length, 0);
   assert.doesNotMatch(text(ui.tree()), /Old account receipt|Function completed/);
+  assert.equal(button(ui.tree(), 'Refresh').props.disabled, false);
   ui.unmount();
 });
 
@@ -223,4 +224,58 @@ test('mapped proposal editors omit native actions and functions and preserve fix
   for (const label of ['Property ID', 'Source column']) for (const node of nodes(ui.tree()).filter(node => node.type === 'label' && text(node) === label)) {
     assert.equal(nodes(node).find(child => typeof child.type === 'function').props.disabled, true);
   }
+});
+
+test('function refresh keeps a same-scope form in view but blocks invocation until the new catalog arrives', async () => {
+  const waiters = [], writes = [];
+  const ui = mount('OntologyFunctions', { id: 'qa-type', record, onCommitted: () => {} }, {
+    graphRequest: (...args) => {
+      if (args[0] === 'get') return new Promise((resolve, reject) => waiters.push({resolve, reject, signal: args[2].signal}));
+      writes.push(args);
+      return Promise.resolve({ name: 'Committed', stepCount: 1 });
+    },
+  });
+  waiters[0].resolve(catalog); await ui.flush(); fillArguments(ui);
+  button(ui.tree(), 'Refresh').props.onClick(); ui.render();
+  assert.equal(waiters.length, 2);
+  assert.equal(button(ui.tree(), 'Refresh').props.loading, true);
+  assert.equal(button(ui.tree(), 'Run function').props.disabled, true);
+  assert.equal(input(ui.tree(), 'Argument amount').props.value, '2.5');
+  assert.doesNotMatch(text(ui.tree()), /Loading functions/);
+  button(ui.tree(), 'Run function').props.onClick(); await ui.flush();
+  assert.equal(writes.length, 0);
+  waiters[1].resolve(catalog); await ui.flush();
+  assert.equal(button(ui.tree(), 'Refresh').props.loading, false);
+  assert.equal(button(ui.tree(), 'Run function').props.disabled, false);
+  assert.equal(input(ui.tree(), 'Argument amount').props.value, '2.5');
+  button(ui.tree(), 'Refresh').props.onClick(); ui.render();
+  waiters[2].resolve({...catalog, revision: catalog.revision + 1}); await ui.flush();
+  assert.equal(input(ui.tree(), 'Argument amount').props.value, '');
+  button(ui.tree(), 'Refresh').props.onClick(); ui.render();
+  waiters[3].reject(new Error('Access denied')); await ui.flush();
+  assert.equal(button(ui.tree(), 'Run function'), undefined);
+  assert.doesNotMatch(text(ui.tree()), /Update synthetic target/);
+});
+
+test('function refresh aborts on identity or type changes and does not render a previous catalog', async () => {
+  const requests = [];
+  const ui = mount('OntologyFunctions', { id: 'qa-type', record, onCommitted: () => {} }, {
+    graphRequest: (...args) => new Promise(resolve => requests.push({resolve, route: args[1], signal: args[2].signal})),
+  });
+  requests[0].resolve(catalog); await ui.flush(); fillArguments(ui);
+  button(ui.tree(), 'Refresh').props.onClick(); ui.render();
+  ui.session.identity = 'other-account'; ui.render();
+  assert.equal(requests[1].signal.aborted, true);
+  assert.doesNotMatch(text(ui.tree()), /Update synthetic target|2\.5/);
+  requests[1].resolve(catalog);
+  await ui.flush();
+  assert.equal(button(ui.tree(), 'Run function'), undefined);
+
+  ui.props.id = 'other-type'; ui.render();
+  assert.equal(requests[2].signal.aborted, true);
+  assert.equal(requests[3].route, '/object-types/other-type/functions');
+  requests[2].resolve(catalog);
+  requests[3].resolve({ revision: 3, items: [] }); await ui.flush();
+  assert.match(text(ui.tree()), /No published functions are available/);
+  assert.doesNotMatch(text(ui.tree()), /Update synthetic target/);
 });

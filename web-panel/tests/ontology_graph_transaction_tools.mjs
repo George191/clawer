@@ -27,7 +27,7 @@ function mount(file, name, props, api) {
       useRef(initial) { return refs[cursor++] ||= { current: initial }; },
       useEffect(effect, deps) { const i = cursor++; if (!effects[i] || !deps || deps.some((value, j) => !Object.is(value, effects[i].deps[j]))) scheduled.push([i, effect, deps]); },
     };
-    if (dependency === '@/components/ui') return { Button: 'Button', Modal: 'Modal', NativeSelect: 'NativeSelect', message: Object.fromEntries(['success', 'error'].map(kind => [kind, value => notices.push({ kind, value })])) };
+    if (dependency === '@/components/ui') return { Button: 'Button', Modal: 'Modal', NativeSelect: 'NativeSelect', Select: 'Select', message: Object.fromEntries(['success', 'error'].map(kind => [kind, value => notices.push({ kind, value })])) };
     if (dependency === '@/components/ui/icons') return new Proxy({}, { get: (_, key) => String(key) });
     if (dependency === '../../services/session') return { getSessionState: () => session };
     if (dependency === '../../services/ontology') return { ...api, ontologyError: (error, fallback) => error.message || fallback, newOntologyRequestId: () => 'synthetic-request-' + ++requestId };
@@ -49,29 +49,25 @@ function mount(file, name, props, api) {
   return { props, session, notices, routes, render, flush, tree: () => tree, unmount: () => effects.forEach(effect => effect?.cleanup?.()) };
 }
 
-const relation = { id: 'synthetic-link-type', name: 'Synthetic relation', sourceDefinitionId: 'source-type', targetDefinitionId: 'target-type' };
+const relation = { id: 'synthetic-link-type', key: 'synthetic_relation', cardinality: 'many_to_many', name: 'Synthetic relation', sourceDefinitionId: 'source-type', targetDefinitionId: 'target-type' };
 const neighbor = { linkId: 'synthetic-edge', canUnlink: true, record: { id: 'target-record', title: 'Synthetic neighbor', revision: 3, properties: {} } };
 function graphLinks(mutate = async () => {}, canUnlink = true, direction = 'outgoing', canManage = false) {
   const writes = [], recordReads = [], moves = [];
-  const ui = mount('OntologyGraph', 'Links', { anchor: { type: direction === 'outgoing' ? 'source-type' : 'target-type', record: 'anchor-record', title: 'Anchor' }, move: item => moves.push(item) }, {
+  const ui = mount('OntologyGraph', 'Links', { anchor: { type: direction === 'outgoing' ? 'source-type' : 'target-type', record: 'anchor-record', title: 'Anchor' }, relationship: relation, direction, move: item => moves.push(item) }, {
     listOntologyRecords: async (...args) => { recordReads.push(args); return { items: [], hasMore: false }; },
     graphRequest: async (...args) => {
       if (args[0] !== 'get') { writes.push(args); return mutate(...args); }
       return args[1].endsWith('/link-types') ? { items: [relation], hasMore: false, canManage } : { items: [{ ...neighbor, canUnlink }], hasMore: false };
     },
   });
-  return { ...ui, writes, recordReads, moves, async select() {
-    await ui.flush();
-    nodes(ui.tree()).find(node => node.type === 'NativeSelect').props.onChange({ target: { value: relation.id + ':' + direction } });
-    await ui.flush();
-  }, confirmation: () => nodes(ui.tree()).find(node => node.type === 'Modal') };
+  return { ...ui, writes, recordReads, moves, select: () => ui.flush(), confirmation: () => nodes(ui.tree()).find(node => node.type === 'Modal') };
 }
 
 test('graph Links has no independent object picker or Add link action for managers', async () => {
   const ui = graphLinks(undefined, true, 'outgoing', true); await ui.select();
   assert.equal(button(ui.tree(), 'Add link'), undefined);
   assert.ok(!text(ui.tree()).includes('Record to link'));
-  assert.equal(nodes(ui.tree()).filter(node => node.type === 'NativeSelect').length, 1);
+  assert.equal(nodes(ui.tree()).filter(node => node.type === 'NativeSelect').length, 0);
   assert.deepEqual(ui.recordReads, []);
   button(ui.tree(), 'Synthetic neighbor').props.onClick();
   assert.deepEqual(ui.moves, [{ type: 'target-type', record: 'target-record', title: 'Synthetic neighbor' }]);
@@ -124,23 +120,76 @@ const objectType = { id: 'source-type', definition: { projectId: 'synthetic-proj
 
 test('new relationship type submission is single-flight and cannot notify after unmount', async () => {
   const writes = []; let finish, saved = 0;
-  const ui = mount('OntologyGraph', 'NewType', { object: objectType, onSaved: () => saved++ }, {
+  const ui = mount('OntologyGraph', 'NewRelationship', { object: objectType, onSaved: () => saved++ }, {
     graphRequest: async (...args) => {
       if (args[0] === 'get') return { items: [{ id: 'target-type', name: 'Target type' }], hasMore: false };
       writes.push(args); return new Promise(resolve => { finish = resolve; });
     },
   });
   await ui.flush();
-  for (const [label, value] of [['Relationship name', 'Synthetic relation'], ['Relationship key', 'synthetic_relation'], ['Target type', 'target-type']]) {
+  for (const [label, value] of [['Relationship name', 'Synthetic relation'], ['Relationship key', 'synthetic_relation']]) {
     const node = nodes(ui.tree()).find(item => item.type === 'label' && text(item).startsWith(label));
-    nodes(node).find(item => ['input', 'NativeSelect'].includes(item.type)).props.onChange({ target: { value } }); ui.render();
+    nodes(node).find(item => item.type === 'input').props.onChange({ target: { value } }); ui.render();
   }
+  input(ui.tree(), 'New relationship target type').props.onChange('target-type');
+  ui.render();
   const submit = ui.tree().props.onSubmit;
   submit({ preventDefault() {} }); submit({ preventDefault() {} });
   assert.equal(writes.length, 1);
   assert.deepEqual(writes[0][2].data, { sourceDefinitionId: 'source-type', targetDefinitionId: 'target-type', key: 'synthetic_relation', name: 'Synthetic relation', cardinality: 'many_to_many' });
   ui.unmount(); finish({}); await Promise.resolve(); await Promise.resolve();
   assert.equal(saved, 0); assert.equal(ui.notices.length, 0);
+});
+
+test('incoming relationship creation reverses endpoints without changing cardinality', async () => {
+  const writes = [], saved = [];
+  const ui = mount('OntologyGraph', 'NewRelationship', { object: objectType, onSaved: value => saved.push(value) }, {
+    graphRequest: async (...args) => {
+      if (args[0] === 'get') return { items: [{ id: 'target-type', name: 'Target type' }], hasMore: false };
+      writes.push(args);
+      return relation;
+    },
+  });
+  await ui.flush();
+  input(ui.tree(), 'New relationship direction').props.onChange({ target: { value: 'incoming' } });
+  ui.render();
+  input(ui.tree(), 'New relationship source type').props.onChange('target-type');
+  ui.render();
+  ui.tree().props.onSubmit({ preventDefault() {} });
+  await ui.flush();
+  assert.deepEqual(writes[0][2].data, { sourceDefinitionId: 'target-type', targetDefinitionId: 'source-type', key: '', name: '', cardinality: 'many_to_many' });
+  assert.deepEqual(saved, [relation]);
+});
+
+test('graph lists relationship definitions first and removes them when the session locks', async () => {
+  const reads = [];
+  let pageResult;
+  const ui = mount('OntologyGraph', 'RelationshipWorkbench', { objectType, recordId: 'anchor-record', recordTitle: 'Selected object', move() {} }, {
+    graphRequest: async (...args) => {
+      reads.push(args);
+      if (pageResult) return pageResult();
+      return { items: [relation], hasMore: true, canManage: true };
+    },
+  });
+  await ui.flush();
+  const catalog = input(ui.tree(), 'Ontology relationships');
+  assert.ok(text(catalog).includes('Synthetic relation'));
+  assert.ok(!text(catalog).includes('Selected object'));
+  assert.ok(button(ui.tree(), 'New relationship'));
+  assert.equal(reads.length, 1);
+  assert.deepEqual(reads[0][2].params, { limit: 20, offset: 0 });
+  ui.session.locked = true;
+  ui.render();
+  assert.ok(reads[0][2].signal.aborted);
+  assert.ok(!text(input(ui.tree(), 'Ontology relationships')).includes('Synthetic relation'));
+  assert.equal(button(ui.tree(), 'New relationship'), undefined);
+  assert.equal(reads.length, 1);
+  pageResult = () => ({ items: [], hasMore: false, canManage: false });
+  ui.session.identity = 'other-user'; ui.session.locked = false;
+  ui.render();
+  await ui.flush();
+  assert.ok(text(input(ui.tree(), 'Ontology relationships')).includes('No relationships'));
+  assert.equal(button(ui.tree(), 'New relationship'), undefined);
 });
 
 test('saved set deletion uses explicit confirmation and its guard blocks duplicate or stale-session writes', async () => {
