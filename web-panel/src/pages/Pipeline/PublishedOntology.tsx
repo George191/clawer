@@ -13,9 +13,9 @@ import './published-results.css';
 const pageSize = 25;
 const maxOffset = 100_000;
 export type PublishedCatalogPage = PublishedOntologyPage & { offset: number; keyword: string; identity: string; includeHidden: boolean; includeDeleted: boolean };
-type Props = { selection: string; view: 'grid' | 'list'; includeHidden: boolean; includeDeleted: boolean; managedProjects: string[]; catalogPage?: PublishedCatalogPage; onCatalogPage: (page?: PublishedCatalogPage) => void; onSelect: (id: string) => void; onClearSearch: () => void };
+type Props = { selection: string; view: 'grid' | 'list'; includeHidden: boolean; includeDeleted: boolean; managedProjects: string[]; refreshToken?: number; catalogPage?: PublishedCatalogPage; onCatalogPage: (page?: PublishedCatalogPage) => void; onSelect: (id: string) => void; onClearSearch: () => void };
 
-export default function PublishedOntology({ selection, view, includeHidden, includeDeleted, managedProjects, catalogPage, onCatalogPage, onSelect, onClearSearch }: Props) {
+export default function PublishedOntology({ selection, view, includeHidden, includeDeleted, managedProjects, refreshToken = 0, catalogPage, onCatalogPage, onSelect, onClearSearch }: Props) {
   const [params, setParams] = useSearchParams();
   const keyword = (params.get('publishedQ') || '').trim();
   const requestedOffset = Number(params.get('publishedOffset'));
@@ -52,7 +52,7 @@ export default function PublishedOntology({ selection, view, includeHidden, incl
         .finally(() => { if (!request.signal.aborted && current()) setCatalogLoading(false); });
     }, keyword ? 250 : 0);
     return () => { request.abort(); window.clearTimeout(timer); };
-  }, [catalogOffset, keyword, version, identity, onCatalogPage, includeHidden, includeDeleted]);
+  }, [catalogOffset, keyword, version, refreshToken, identity, onCatalogPage, includeHidden, includeDeleted]);
   const loading = catalogLoading || (!catalogError && (!catalogPage || !sameCatalogQuery || !sameFilters));
   return <main className="flow-ontology__published flow-foundry-workbench flow-published-catalog" data-testid="published-ontology" aria-label="Published object types" aria-busy={loading}>
     <header className="flow-ontology__published-header"><h2>Published object types</h2></header>

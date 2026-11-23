@@ -52,7 +52,7 @@ test('request error toast does not repeat on rerender and Retry uses the latest 
   ui.render('Service unavailable', () => { retried = 'current'; });
   assert.equal(ui.calls.length, 1);
   assert.equal(ui.calls[0].value.className, 'explorer-toast');
-  assert.equal(ui.calls[0].value.duration, 0);
+  assert.equal(ui.calls[0].value.duration, 5);
   nodes(ui.calls[0].value.description).find(node => node.type === 'a').props.onClick({ preventDefault() {} });
   assert.equal(retried, 'current');
   ui.render(''); assert.equal(ui.calls[0].closed, true);

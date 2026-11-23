@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Checkbox } from '@/components/ui';
+import { Checkbox, message } from '@/components/ui';
 import {
   ApartmentOutlined, AppstoreOutlined, ArrowRightOutlined, BarsOutlined,
   CloseOutlined, DatabaseOutlined, InfoCircleOutlined,
@@ -158,6 +158,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const publishedHidden = semanticProjectAccess && params.get('publishedHidden') === 'true';
   const publishedDeleted = semanticProjectAccess && params.get('publishedDeleted') === 'true';
   const [createSchema, setCreateSchema] = useState<string>();
+  const [publishedRefresh, setPublishedRefresh] = useState(0);
   const [favoriteState, setFavoriteState] = useState<{ userId: string; ids: string[] }>({ userId: '', ids: [] });
   const favorites = favoriteState.userId === currentUserId ? favoriteState.ids : [];
   const favoriteReady = !!currentUserId && favoriteState.userId === currentUserId;
@@ -560,7 +561,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
         </div>
       </header>
       <div className="flow-ontology__body">
-        {publishedCatalog ? <PublishedOntology selection={publishedId} view={view} managedProjects={managedProjects} includeHidden={publishedHidden} includeDeleted={publishedDeleted} catalogPage={publishedPage?.identity === getSessionState().identity ? publishedPage : undefined} onCatalogPage={setPublishedPage} onSelect={selectPublished} onClearSearch={() => changeCatalogSearch('')} /> : <>
+        {publishedCatalog ? <PublishedOntology selection={publishedId} view={view} managedProjects={managedProjects} includeHidden={publishedHidden} includeDeleted={publishedDeleted} refreshToken={publishedRefresh} catalogPage={publishedPage?.identity === getSessionState().identity ? publishedPage : undefined} onCatalogPage={setPublishedPage} onSelect={selectPublished} onClearSearch={() => changeCatalogSearch('')} /> : <>
         <aside className="flow-ontology__sidebar" aria-label="Object type groups"><nav aria-busy={loading}>
           {groups.map((item) => {
             const expanded = expandedGroup === item.key;
@@ -635,6 +636,10 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
       allProperties={allProperties} onPropertiesToggle={() => updateQuery({ tab: allProperties ? null : 'properties' })}
       onClose={() => updateQuery({ objectType: null, tab: null }, true)} onSelect={selectPublished}
       onExplore={() => navigate(publishedExplorerHref(publishedId, { returnTo: publishedCatalogHref(params.toString()) }))} />}
-    {createOpen && (canManage || semanticProjectAccess) && <SemanticObjectWizard allowedSource={canManage} schemas={creationSchemas} initialSchema={createSchema} onCancel={() => setCreateOpen(false)} onPublished={(object) => { setCreateOpen(false); selectPublished(object.id); }} />}
+    {createOpen && (canManage || semanticProjectAccess) && <SemanticObjectWizard allowedSource={canManage} schemas={creationSchemas} initialSchema={createSchema} onCancel={() => setCreateOpen(false)} onPublished={(object) => {
+      setCreateOpen(false); setPublishedRefresh((value) => value + 1);
+      message.success({ content: 'Object type published', description: object.definition.name, className: 'explorer-toast' });
+      updateQuery({ catalog: 'published', objectType: object.id, schema: null, table: null, tab: null, publishedOffset: null, publishedQ: null });
+    }} />}
   </div>;
 }

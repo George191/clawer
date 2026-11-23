@@ -58,7 +58,7 @@
 .ui-message{position:fixed;left:0;right:0;z-index:3000;pointer-events:none;display:flex;align-items:center;flex-direction:column;gap:8px;padding:0 16px;box-sizing:border-box}
 .ui-message-rtl{direction:rtl}
 .ui-message-notice{width:max-content;min-width:min(300px,100%);max-width:min(440px,100%);pointer-events:auto;animation:ui-message-enter 160ms ease-out both}
-.ui-message-notice-content{--toast-bg:var(--ui-elevated,#2f343c);--toast-fg:var(--ui-text,#f0f2f5);display:flex;align-items:flex-start;gap:10px;min-height:40px;box-sizing:border-box;padding:9px 12px;border-radius:3px;background:var(--toast-bg);border:1px solid color-mix(in srgb,var(--toast-fg) 14%,transparent);box-shadow:0 2px 5px #0002,0 8px 24px #0003;color:var(--toast-fg);font-size:13px;font-weight:400;line-height:18px;text-align:start;overflow-wrap:anywhere}
+.ui-message-notice-content{--toast-bg:var(--ui-elevated,#2f343c);--toast-fg:var(--ui-text,#f0f2f5);display:flex;align-items:center;gap:10px;min-height:40px;box-sizing:border-box;padding:9px 12px;border-radius:3px;background:var(--toast-bg);border:1px solid color-mix(in srgb,var(--toast-fg) 14%,transparent);box-shadow:0 2px 5px #0002,0 8px 24px #0003;color:var(--toast-fg);font-size:13px;font-weight:400;line-height:18px;text-align:start;overflow-wrap:anywhere}
 .ui-message-success{--toast-bg:#0d8050;--toast-fg:#fff}
 .ui-message-error{--toast-bg:#a83242;--toast-fg:#fff}
 .ui-message-warning{--toast-bg:#805d19;--toast-fg:#fff}
@@ -71,7 +71,7 @@
 .ui-message-close:hover{background:#ffffff1f;opacity:1}
 .ui-message-notice-content:focus-visible,.ui-message-close:focus-visible{outline:2px solid currentColor;outline-offset:2px}
 .ui-message-info .ui-message-icon{color:var(--ui-action-link,var(--ui-primary))}
-.ui-message-icon.ui-overlay-spinner{width:16px;height:16px;min-width:16px;margin-top:2px}
+.ui-message-icon.ui-overlay-spinner{width:16px;height:16px;min-width:16px}
 @keyframes ui-message-enter{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
 @keyframes ui-dropdown-enter{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
 @keyframes ui-dropdown-exit{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(-4px)}}

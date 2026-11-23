@@ -1,9 +1,10 @@
 import { useRef, useState } from 'react';
-import { Dropdown, Modal } from '@/components/ui';
+import { Dropdown, message, Modal } from '@/components/ui';
 import { MoreOutlined } from '@/components/ui/icons';
 import { changePublishedCatalogState, ontologyError, type PublishedCatalogItem } from '../../services/ontology';
 
 const labels = { hide: 'Hide object type', unhide: 'Unhide object type', delete: 'Delete object type', restore: 'Restore object type' };
+const doneLabels = { hide: 'Object type hidden', unhide: 'Object type is now visible', delete: 'Object type deleted', restore: 'Object type restored' };
 const details = {
   hide: 'Hide this type from the default catalog. Project administrators can find it using Show hidden object types.',
   unhide: 'Show this type in the default catalog for its authorized readers.',
@@ -23,8 +24,11 @@ export function PublishedTypeActions({ item, onChanged }: { item: PublishedCatal
     try {
       await changePublishedCatalogState(item.id, item.revision, operation);
       setOperation(undefined); onChanged();
-    } catch (failure) { setError(ontologyError(failure, 'Unable to update the object type.')); }
-    finally { locked.current = false; setBusy(false); }
+      message.success({ content: doneLabels[operation], description: item.definition.name, className: 'explorer-toast' });
+    } catch (failure) {
+      setError(ontologyError(failure, 'Unable to update the object type.'));
+      message.error({ content: labels[operation] + ' failed', description: ontologyError(failure, 'Unable to update the object type.'), className: 'explorer-toast' });
+    } finally { locked.current = false; setBusy(false); }
   };
   return <span className="flow-published-type-actions" onClick={event => event.stopPropagation()}>
     <Dropdown trigger={['click']} overlayClassName="flow-menu-popup" menu={{ items: choices.map(key => ({ key, label: labels[key], danger: key === 'delete', onClick: () => { setError(''); setOperation(key); } })) }}>

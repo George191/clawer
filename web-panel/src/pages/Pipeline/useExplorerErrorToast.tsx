@@ -19,7 +19,7 @@ export default function useExplorerErrorToast(error: string | undefined, title: 
       description: <>{error}{retryAction.current && <> <a href={window.location.href} onClick={event => {
         event.preventDefault(); if (current()) retryAction.current?.();
       }}>Retry</a></>}</>,
-      className: 'explorer-toast', duration: retryAction.current ? 0 : 5,
+      className: 'explorer-toast', duration: 5,
     });
   }, [error, title, identity]);
 }
