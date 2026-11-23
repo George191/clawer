@@ -59,8 +59,6 @@
 .api-document-footer button { display:inline-flex; flex:none; align-items:center; gap:5px; padding:4px 7px; border:1px solid var(--ontology-control-border); border-radius:3px; background:transparent; color:var(--ontology-text); font:inherit; cursor:pointer; }.api-document-footer button:hover { color:var(--ui-error); border-color:var(--ui-error); }.api-document-footer button:disabled { opacity:.4; cursor:default; }
 .api-workbench-empty { display:flex; flex:1; flex-direction:column; align-items:center; justify-content:center; gap:10px; min-height:260px; padding:24px; text-align:center; }.api-workbench-empty > .ui-icon { color:var(--ontology-muted); font-size:26px; }.api-workbench-empty strong { font-size:13px; font-weight:500; }.api-workbench-empty p { max-width:370px; margin:0; color:var(--ontology-muted); font-size:12px; }.api-no-match { padding:10px; color:var(--ontology-muted); font-size:11px; }
 .published-api-workbench .api-workbench-error { margin:8px 0; color:var(--ui-error); font-size:12px; }
-.published-source-tools:has(.published-api-workbench) .explorer-resource-dialog-body { overflow:hidden; }
-.published-source-tools .published-api-workbench { height:min(580px,calc(100dvh - 260px)); min-height:300px; }
 @media (max-width:760px) { .api-workbench-layout { grid-template-columns:170px minmax(0,1fr); }.api-document-heading { flex-direction:column; gap:4px; }.api-publication-id { max-width:100%; }.api-access-summary,.api-validity-fields { grid-template-columns:1fr; }.api-document-footer > span { display:none; } }
 
 .api-sdk-controls { display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px; margin:12px 0; }

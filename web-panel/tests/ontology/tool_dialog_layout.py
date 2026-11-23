@@ -61,6 +61,9 @@ async def main():
                     await route.fulfill(status=503, json={"detail": "Synthetic function catalog error"})
 
             await page.route(function_path, catalog)
+            await page.get_by_role("button", name="Explore", exact=True).click()
+            chart = page.get_by_role("region", name="Explore results")
+            await expect(chart).to_be_visible()
             await page.get_by_role("button", name="Open in", exact=True).click()
             await page.get_by_role("menuitem", name="Functions", exact=True).click()
             dialog = page.get_by_role("dialog", name="Functions", exact=True)
@@ -93,6 +96,7 @@ async def main():
             await check_position()
             await close.click()
             await expect(dialog).to_have_count(0)
+            await expect(chart).to_be_visible()
             await context.close()
         await browser.close()
     print("Functions dialog holds size through empty, delayed refresh, long content, and failure on desktop and mobile.")

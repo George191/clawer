@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Button, Modal } from '@/components/ui';
+import { Button } from '@/components/ui';
 import { ReloadOutlined } from '@/components/ui/icons';
 import { fetchEtlApis, fetchTableStream, type EtlPublishedApi } from '../../services/api';
 import PublishedApiWorkbench from './PublishedApiWorkbench';
@@ -8,10 +8,10 @@ import { ontologyError, type PublishedOntologyType } from '../../services/ontolo
 import type { EtlStreamState } from '../../services/types';
 import type { ResourceView } from './ExplorerWorkbenchHeader';
 import ExplorerStreamPositions, { topicRate } from './ExplorerStreamPositions';
+import ExplorerToolDialog from './ExplorerToolDialog';
 import ExplorerTableEvidence from './ExplorerTableEvidence';
 import useExplorerErrorToast from './useExplorerErrorToast';
 import './published-source-tools.css';
-import './explorer-resource-tools.css';
 
 function SourceStream({ schema, table }: { schema: string; table: string }) {
   const [result, setResult] = useState<EtlStreamState>();
@@ -58,17 +58,15 @@ export default function PublishedSourceTools({ objectType, resource, onClose, ca
   const definition = objectType.definition, source = definition.source;
   if (resource === 'preview') return null;
   const allowed = explorerResourceCapabilities(source, canManage).includes(resource);
-  return <Modal className={'flow-surface-modal published-source-tools explorer-resource-dialog' + (allowed && resource === 'stream' ? ' explorer-tool-workbench-dialog' : '')} title={titles[resource]} open onCancel={onClose} width={960} footer={<Button onClick={onClose}>Done</Button>}>
+  return <ExplorerToolDialog title={titles[resource]} onClose={onClose} bodyClassName="published-source-tools"
+    context={allowed && <><strong>{definition.name}</strong><span>Physical source <code>{source.schema}.{source.table}</code></span></>}>
     {!allowed ? <p role="alert">This object type does not provide the requested source tool.</p> : <>
-      <div className="published-source-context explorer-resource-context"><strong>{definition.name}</strong><span>Physical source <code>{source.schema}.{source.table}</code></span></div>
-      <div className="explorer-resource-dialog-body" role="region" aria-label={titles[resource]} tabIndex={0}>
       {resource === 'stream' && <SourceStream key={objectType.id} schema={source.schema!} table={source.table!} />}
       {resource === 'evidence' && <ExplorerTableEvidence key={objectType.id} schema={source.schema!} table={source.table!} canManage={canManage} />}
       {resource === 'schema' && <section className="flow-schema-details" aria-label="Source column mapping"><header><div><h3>Source column mapping</h3><p>Published property mappings. Edit the object type through Model revisions to change this definition.</p></div></header>
         <div className="explorer-resource-table" role="region" aria-label="Published property source columns" tabIndex={0}><table><thead><tr><th scope="col">Property</th><th scope="col">Property ID</th><th scope="col">Type</th><th scope="col">Source column</th></tr></thead><tbody>{definition.properties.map(property => <tr key={property.id}><td>{property.name}</td><td><code>{property.id}</code></td><td>{property.type}</td><td><code>{property.sourceColumn || '—'}</code></td></tr>)}</tbody></table></div>
       </section>}
       {resource === 'api' && <SourceApis key={objectType.id} schema={source.schema!} table={source.table!} />}
-      </div>
     </>}
-  </Modal>;
+  </ExplorerToolDialog>;
 }

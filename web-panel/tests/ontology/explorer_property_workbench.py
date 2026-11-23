@@ -38,6 +38,26 @@ def run():
             return ctx, page
 
         ctx, page = login(fixture["owner"])
+        dialog = page.get_by_role("dialog", name="Properties & column mapping", exact=True)
+        expect(dialog.get_by_role("table", name="Registered properties")).to_be_visible()
+        dialog.get_by_role("button", name="Close", exact=True).click()
+        expect(page).to_have_url(url.removesuffix("&view=schema"))
+        expect(page.get_by_role("region", name="Object results")).to_be_visible()
+        page.get_by_role("button", name="Explore", exact=True).click()
+        chart = page.get_by_role("region", name="Explore results")
+        expect(chart).to_be_visible()
+        for dismiss in ("back", "close"):
+            page.get_by_role("button", name="Open in", exact=True).click()
+            page.get_by_role("menuitem", name="Properties & column mapping", exact=True).click()
+            expect(dialog.get_by_role("table", name="Registered properties")).to_be_visible()
+            if dismiss == "back":
+                page.go_back()
+            else:
+                dialog.get_by_role("button", name="Close", exact=True).click()
+            expect(dialog).to_have_count(0)
+            expect(chart).to_be_visible()
+        page.get_by_role("button", name="Open in", exact=True).click()
+        page.get_by_role("menuitem", name="Properties & column mapping", exact=True).click()
         work = page.get_by_role("region", name="Property workbench")
         reg = work.get_by_role("table", name="Registered properties")
         editor = work.get_by_role("complementary", name="Property editor")
@@ -66,6 +86,11 @@ def run():
         button("Inspect name").click()
         editor.get_by_label("Name", exact=True).fill("Asset title")
         editor.get_by_label("Description").fill("QA description")
+        page.go_back()
+        expect(page.get_by_text("Save or cancel current changes before switching views", exact=True)).to_be_visible()
+        expect(dialog).to_be_visible()
+        expect(page).to_have_url(url)
+        expect(editor.get_by_label("Description")).to_have_value("QA description")
         editor.get_by_label("Status", exact=True).select_option("experimental")
         editor.get_by_label("Title key").check()
         button("Display", editor).click()

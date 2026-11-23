@@ -210,7 +210,7 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
     }
     const field = chart && p.fields.includes(chart) ? chart : chooseExploreField(p.fields, p.types, p.rows, p.names);
     const aggregation = useExplorerAggregation(p.aggregate, JSON.stringify([p.source, p.query, p.analysisRevision]), field,
-        p.available && p.resource === 'preview' && p.mode === 'explore' && !p.savedLoading && !p.savedError && explorerPropertyType(p.types?.[field] || '') !== 'json');
+        p.available && p.mode === 'explore' && !p.savedLoading && !p.savedError && explorerPropertyType(p.types?.[field] || '') !== 'json');
     const find = p.fields.filter(f => [f, p.names?.[f]].join(' ').toLowerCase().includes(search.trim().toLowerCase()))
         .sort((a, b) => (p.names?.[a] || a).localeCompare(p.names?.[b] || b)).slice(0, 30);
     const hasValueSearch = !!search.trim();
@@ -222,7 +222,7 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
     };
     const changeField = (f: string) => { choose(f); setSearch(p.names?.[f] || f); show('property'); };
     const closeOpenIn = () => { show(''); openInTrigger.current?.focus(); };
-    const openResource = (view: ResourceView) => { p.selectResource(view); if (p.source.kind === 'backed' || view === 'preview') p.setMode('results'); closeOpenIn(); };
+    const openResource = (view: ResourceView) => { p.selectResource(view); if (view === 'preview') p.setMode('results'); closeOpenIn(); };
     const exportDescription = p.selected.length ? `Download ${p.selected.length} selected object${p.selected.length === 1 ? '' : 's'}.` : `Download ${p.rows.length} object${p.rows.length === 1 ? '' : 's'} on this results page.`;
     const resources = p.availableResources;
     const sourceTool = p.source.kind === 'published';
@@ -346,14 +346,14 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
                     <button type="button" className="wb-selection-clear" aria-label="Clear selected objects" title="Clear selection" onClick={p.clearSelection}><CloseOutlined /></button>
                 </div>}
             </div>
-            <div className="wb-views"><button aria-pressed={p.resource === 'preview' && p.mode === 'explore'} onClick={() => selectMode('explore')}><BarChartOutlined /> Explore</button><button aria-pressed={p.resource === 'preview' && p.mode === 'results'} onClick={() => selectMode('results')}><AppstoreOutlined /> Results</button></div>
+            <div className="wb-views"><button aria-pressed={p.mode === 'explore'} onClick={() => selectMode('explore')}><BarChartOutlined /> Explore</button><button aria-pressed={p.mode === 'results'} onClick={() => selectMode('results')}><AppstoreOutlined /> Results</button></div>
             <div className="wb-right"><Dropdown trigger={['click']} placement="bottomRight" open={menu === 'asset'} onOpenChange={next => { if (next) { openMenu('asset'); setAppSearch(''); setAppGroup('all'); } else show(current => current === 'asset' ? '' : current); }} overlayClassName="flow-menu-popup wb-open-in-popup" popupRender={() => appMenu}>
                 <button type="button" className="wb-open-in-trigger" ref={openInTrigger}>Open in <DownOutlined /></button>
             </Dropdown>
             {p.createControl}
             </div>
         </div>
-        {p.resource === 'preview' && p.mode === 'explore' && !p.savedLoading && !p.savedError && <ExplorerExploreView field={field} select={setChart} fields={p.fields} names={p.names} types={p.types} rows={p.rows} aggregation={aggregation}
+        {p.mode === 'explore' && !p.savedLoading && !p.savedError && <ExplorerExploreView field={field} select={setChart} fields={p.fields} names={p.names} types={p.types} rows={p.rows} aggregation={aggregation}
             onFilter={f => { selectMode('results'); p.addFilter(f); }} onFilterValue={(field, value) => { p.onExploreFilterValue(field, value); }} />}</>}
         <Modal className="flow-surface-modal wb-saved-dialog" title="Save your work" open={dialog === 'save'} width={460} onCancel={() => { if (!busy) setDialog(''); }} keyboard={!busy} maskClosable={!busy} footer={<><Button disabled={busy} onClick={() => setDialog('')}>Cancel</Button><Button type="primary" loading={busy} disabled={!name.trim() || (saveKind === 'list' && !listKeys.length) || (saveKind === 'exploration' && saved?.kind === 'list')} onClick={() => void save()}>Save {saveKind}</Button></>}>
             <div className="wb-save-kind"><button type="button" aria-pressed={saveKind === 'exploration'} disabled={saved?.kind === 'list'} onClick={() => setSaveKind('exploration')}><BarChartOutlined /><strong>Exploration</strong><span>Search, filters, sorting and chart</span>{saveKind === 'exploration' && <CheckOutlined className="wb-save-kind-check" />}</button><button type="button" aria-pressed={saveKind === 'list'} disabled={!listKeys.length} onClick={() => setSaveKind('list')}><TableOutlined /><strong>List</strong><span>{listKeys.length} selected objects</span>{saveKind === 'list' && <CheckOutlined className="wb-save-kind-check" />}</button></div>

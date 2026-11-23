@@ -228,7 +228,7 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
     filterValue: (field, value, exclude) => { if (canChange() && canAppendFilter() && requireDraftApplied()) applyRules(appendAndFilters(activeFilters, cellFilterRows(field, value, exclude, randomId()), randomId())); },
   });
   const selectionSource = { kind: 'published' as const, definitionId: entry.definitionId };
-  return <div className={`flow-layers flow-layers--tagged flow-schema-workbench explorer-object-workspace has-asset${catalogOpen ? ' is-catalog-open' : ''}${mode === 'explore' && resource === 'preview' ? ' is-exploring' : ''}`}>
+  return <div className={`flow-layers flow-layers--tagged flow-schema-workbench explorer-object-workspace has-asset${catalogOpen ? ' is-catalog-open' : ''}${mode === 'explore' ? ' is-exploring' : ''}`}>
     <div className="flow-layer-layout"><ExplorerCatalog published={{ selectedId: entry.definitionId, onSelect: id => { if (canChange()) navigate(publishedExplorerHref(id)); } }} overlayOpen={catalogOpen} onDismiss={() => setCatalogOpen(false)} /><section className="flow-layer-main">
       <ExplorerWorkbench<PublishedExploration> locked={busy || !!fatalError || objectTools.mutationOpen} header={{ source: selectionSource,
         label: objectType?.definition.name || entry.definitionId, available: !!objectType, glyph: objectType && <SemanticTypeGlyph definition={objectType.definition} />,

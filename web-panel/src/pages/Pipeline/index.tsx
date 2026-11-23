@@ -17,6 +17,7 @@ import './ontology-frame.css';
 import './foundry-workbench-tokens.css';
 import './ontology-workspace.css';
 import './explorer-resource-tools.css';
+import ExplorerToolDialog from './ExplorerToolDialog';
 import ExplorerCatalog from './ExplorerCatalog';
 import ExplorerWorkbench, { ExplorerFilterButton, ExplorerResults, ExplorerResultsFooter, explorerResultColumns } from './ExplorerWorkbench';
 import ExplorerFilterIndexNotice, { ExplorerSortIndexNotice } from './ExplorerFilterIndexNotice';
@@ -54,6 +55,7 @@ type RowSnapshot = { data: QueryResult; row: Record<string, unknown>; version: s
 const emptyPreviewRows: Record<string, unknown>[] = [];
 const emptyPreviewColumns: string[] = [];
 type OpenApiAccess = EtlPublishedApi;
+const storageToolTitles = { schema: 'Properties & column mapping', evidence: 'Evidence', stream: 'Stream', api: 'Published APIs' };
 const  EditIcon:  React.FC<{  className?:  string  }>  =  ({  className  })  =>  <svg  className={className}  viewBox="0  0  24  24"  role="img"  aria-label="Edit"  fill="none"><path  d="M5.5  17.8V19h1.2l9.9-9.9-1.2-1.2-9.9  9.9Z"  stroke="currentColor"  strokeWidth="1.6"  strokeLinejoin="round"/><path  d="m14.7  7.9  1.4-1.4a1.7  1.7  0  0  1  2.4  2.4l-1.4  1.4"  stroke="currentColor"  strokeWidth="1.6"  strokeLinecap="round"/></svg>;
 const  DeleteIcon:  React.FC<{  className?:  string  }>  =  ({  className  })  =>  <svg  className={className}  viewBox="0  0  24  24"  role="img"  aria-label="Delete"  fill="none"><path  d="M6.5  7.5h11M9.5  7.5V5.8h5v1.7m-6.7  0  .7  11h5l.7-11"  stroke="currentColor"  strokeWidth="1.6"  strokeLinecap="round"  strokeLinejoin="round"/></svg>;
 const Pipeline: React.FC = () => {
@@ -384,21 +386,36 @@ const DataLayersWorkspace: React.FC = () => {
     const selectedTableAvailable = selectedSchemaAvailable && tablesLoadedSchema === selectedSchema
         && (!isSchemas || !!requestedTable && requestedTable === table.name)
         && !closedTables.has(table.name) && serverTables.some((item) => item.name === table.name);
-    const resourceView = isSchemas && (requestedView === 'schema' || requestedView === 'stream' || requestedView === 'api' || requestedView === 'evidence') ? requestedView : 'preview';
+    const requestedResource = isSchemas && (requestedView === 'schema' || requestedView === 'stream' || requestedView === 'api' || requestedView === 'evidence') ? requestedView : 'preview';
+    const scriptDirty = scriptLoaded && script !== savedScript;
+    const openTool = useRef<{ view: typeof requestedResource; previewKey?: string }>();
+    const toolToRestore = requestedResource === 'preview' && openTool.current?.previewKey === location.key &&
+        (mappingDirty || apisDirty || scriptDirty || mutationLoading) ? openTool.current : undefined;
+    const resourceView = toolToRestore?.view ?? requestedResource;
+    useEffect(() => {
+        if (requestedResource !== 'preview') {
+            openTool.current = { view: requestedResource, previewKey: location.state?.previewKey };
+        } else if (toolToRestore) {
+            // Keep the editor mounted while returning to its history entry.
+            navigate(1);
+            message.warning('Save or cancel current changes before switching views');
+        } else {
+            openTool.current = undefined;
+        }
+    }, [location.key, requestedResource, toolToRestore, navigate]);
     useEffect(() => {
         setScriptOpen(!isSchemas && selectedTableAvailable);
     }, [isSchemas, selectedSchema, table.name, selectedTableAvailable]);
-    const scriptDirty = scriptLoaded && script !== savedScript;
     const closeScript = () => {
         if (mutationPending.current) return;
         if (scriptDirty) Modal.confirm({ className: 'flow-surface-modal', title: 'Discard unsaved script changes?', content: 'Your changes have not been saved as a draft.', okText: 'Discard changes', onOk: () => { setScript(savedScript); setScriptOpen(false); } });
         else setScriptOpen(false);
     };
     useEffect(() => {
-        if (!scriptDirty && !mappingDirty) return;
+        if (!scriptDirty && !mappingDirty && !(isSchemas && apisDirty)) return;
         const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
         window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn);
-    }, [scriptDirty,mappingDirty]);
+    }, [scriptDirty, mappingDirty, isSchemas, apisDirty]);
     const appliedTerms = explorerFilterTerms(appliedQuery.filters);
     const filterCount = countFilterTerms(appliedTerms) + Number(Boolean(appliedQuery.search?.trim()));
     const sortCount = appliedQuery.sorts.length;
@@ -434,11 +451,12 @@ const DataLayersWorkspace: React.FC = () => {
     );
     const [policyRetry, setPolicyRetry] = useState(0);
     const [policy, setPolicy] = useState<{ key: string; mode: RowPreviewMode | 'unavailable'; error?: string }>();
-    const previewRequested = (!isSchemas || resourceView === 'preview') && !indexPreviewAsset;
+    const previewVisible = requestedResource === 'preview' || !!location.state?.previewKey;
+    const previewRequested = previewVisible && !indexPreviewAsset;
     const policyKey = previewIdentity && selectedTableAvailable && previewRequested ?
         JSON.stringify([previewIdentity, pathname, selectedSchema, table.name, refreshVersion, policyRetry]) : '';
     const policyMode = policyKey && policy?.key === policyKey ? policy.mode : undefined;
-    const showIndexPreview = isSchemas && resourceView === 'preview' && indexPreviewAsset;
+    const showIndexPreview = isSchemas && previewVisible && indexPreviewAsset;
     const showPreview = policyMode === 'classic';
     const classicPreviewScope = useRef('');
     classicPreviewScope.current = showPreview ? policyKey : '';
@@ -933,9 +951,14 @@ const DataLayersWorkspace: React.FC = () => {
         if (editingRowKey || scriptDirty || apisDirty || mappingDirty || mutationPending.current) { message.warning('Save or cancel current changes before switching views'); return; }
         if (view === resourceView) return;
         const params = new URLSearchParams(search);
-        if (view === 'preview') params.delete('view');
-        else params.set('view', view);
-        navigate(`${workspacePath}?${params.toString()}`);
+        if (view === 'preview') {
+            if (location.state?.previewKey) { navigate(-1); return; }
+            params.delete('view');
+            navigate(`${workspacePath}?${params.toString()}`, { replace: true });
+        } else {
+            params.set('view', view);
+            navigate(`${workspacePath}?${params.toString()}`, { state: { previewKey: location.key } });
+        }
     };
     const openSavedItem = (id: string) => {
         if (currentQueryScope.current !== requestedScope) return;
@@ -1075,7 +1098,7 @@ const DataLayersWorkspace: React.FC = () => {
         <p>Open a Storage-backed object type to see its results in Explorer.</p>
         <Link to="/ontology">Browse Storage-backed object types</Link>
     </section>;
-    return <div className={`flow-layers flow-layers--tagged${isSchemas ? ' flow-schema-workbench explorer-object-workspace has-asset' : ''}${catalogOpen ? ' is-catalog-open' : ''}${workbenchMode === 'explore' && resourceView === 'preview' && !savedBlocked && queryScopeReady ? ' is-exploring' : ''}`}>
+    return <div className={`flow-layers flow-layers--tagged${isSchemas ? ' flow-schema-workbench explorer-object-workspace has-asset' : ''}${catalogOpen ? ' is-catalog-open' : ''}${workbenchMode === 'explore' && previewVisible && !savedBlocked && queryScopeReady ? ' is-exploring' : ''}`}>
         <div  className="flow-layer-layout">
             {isSchemas ? <ExplorerCatalog schemas={schemas} tables={tablesLoadedSchema === selectedSchema ? serverTables : []}
                 selectedSchema={selectedSchema} selectedTable={table.name} catalogLoaded={catalogLoaded} tablesLoading={tablesLoading}
@@ -1275,27 +1298,6 @@ footer: previewPage && <ExplorerResultsFooter offset={previewPage.offset} rowCou
                             <button type="button" className={`flow-tool ${filterOpen ? 'is-active' : ''}`} aria-expanded={filterOpen} onClick={() => activateTool('filter')}>{canManage ? 'Filter & API' : 'Filter'}</button>
                             <button type="button" className={`flow-tool ${scriptOpen ? 'is-active' : ''}`} onClick={() => activateTool('script')}>Layer script</button>
                         </div>}
-                        {isSchemas && resourceView !== 'preview' && <div className={`explorer-resource-view explorer-resource-view--${resourceView}`} role="region" aria-label="Object inspection tool" tabIndex={0}>
-                        {isSchemas && resourceView === 'schema' && <ExplorerTableSchema key={`${selectedSchema}.${table.name}`} schema={selectedSchema} table={table.name} canManage={canManage} onDirtyChange={setMappingDirty} onSaved={() => setPreviewRevision(v=>v+1)} />}
-                        {isSchemas && resourceView === 'evidence' && <ExplorerTableEvidence key={tableDescription} schema={selectedSchema} table={table.name} canManage={canManage} />}
-                        {isSchemas && resourceView === 'stream' && <section className="flow-schema-details flow-explorer-stream" aria-label="Stream status">
-                            <header>
-                                <div><h3>Stream</h3><p>Kafka input topic and consumer group positions. Shared topics include traffic for other tables.</p></div>
-                                <div className="flow-explorer-stream-actions">
-                                    <Button size="small" icon={<CodeOutlined />} onClick={() => activateTool('script')}>Layer script</Button>
-                                    {canManage && <Button size="small" disabled={!stream?.resumeAvailable || !offsets.length} onClick={() => { setOffsetPartition(offsets[0]?.partition); setOffset(offsets[0]?.offset); setTopicDraft(stream?.topic || ''); setOffsetOpen(true); }}>Adjust offset</Button>}
-                                </div>
-                            </header>
-                            {!!inputTopics.length && <label>Input topic <NativeSelect aria-label="Input topic" value={inputTopics[activeTopicIndex] || ''} onChange={event => { setActiveTopicIndex(inputTopics.indexOf(event.target.value)); setStream(undefined); setOffsets([]); setStreamLoading(true); }}>
-                                {inputTopics.map(topic => <option key={topic} value={topic}>{topic}</option>)}
-                            </NativeSelect></label>}
-                            {streamLoading && !stream && !streamError ? <div className="flow-schema-state" role="status">Checking stream status…</div>
-                                : streamError ? null
-                                : !stream?.available ? <div className="flow-schema-state" role="status"><strong>{stream?.topic ? 'Stream unavailable' : 'No active stream'}</strong><p>{stream?.reason || 'There is no stream information for this table.'}</p></div>
-                                : <ExplorerStreamPositions stream={stream} />}
-                        </section>}
-                            {resourceView === 'api' && (canManage ? apiPanel : <div className="flow-schema-state" role="status">Published APIs are available to administrators only.</div>)}
-                        </div>}
                         {!isSchemas && showPreview && !savedBlocked && queryScopeReady && previewError && <div className="flow-schema-state flow-preview-error" role="alert">
                             <strong>Data preview unavailable</strong><p>{previewError}</p>
                             {previewUnavailable && <p>For an expensive query, narrow the filters before trying again.</p>}
@@ -1319,6 +1321,30 @@ footer: previewPage && <ExplorerResultsFooter offset={previewPage.offset} rowCou
                         </ExplorerFilterEditor>}
                             {showPreview && !savedBlocked && queryScopeReady && !previewError && (!isSchemas && (<ConfigProvider locale={enUS}><Table className="flow-data-table" size="small" loading={loading} pagination={{ current: pageNumber, pageSize, total: data?.total ?? data?.rowCount ?? 0, size: 'small', showTotal: (total: number, range: [number, number]) => `${range[0]}–${range[1]} / ${data?.totalEstimated ? '~' : ''}${total.toLocaleString('en-US')} rows${data?.totalEstimated ? ' (estimated)' : ''} · ${table.size} · ${fieldCount} fields`, showSizeChanger: true, pageSizeOptions: [10, 20, 50], onChange: (page, size) => { if (editingRowKey) { message.warning('Save or cancel the current row edit first'); return; } setPageNumber(size !== pageSize ? 1 : page); setPageSize(size); } }} rowKey={rowKey} scroll={{ x: 'max-content' }} dataSource={dataRows} columns={dataColumns} onRow={(row) => ({ onDoubleClick: () => startRowEdit(rowKey(row)), className: editingRowKey === rowKey(row) ? 'flow-row-editing' : undefined })} /></ConfigProvider>))}
                     </ExplorerResults>
+                    {isSchemas && resourceView !== 'preview' && <ExplorerToolDialog title={storageToolTitles[resourceView]}
+                        context={<><strong>{mapping?.displayName || table.name}</strong><code>{tableDescription}</code></>}
+                        bodyClassName={`explorer-resource-view explorer-resource-view--${resourceView}`}
+                        onClose={() => selectResourceView('preview')}>
+                        {resourceView === 'schema' && <ExplorerTableSchema key={`${selectedSchema}.${table.name}`} schema={selectedSchema} table={table.name} canManage={canManage} onDirtyChange={setMappingDirty} onSaved={() => setPreviewRevision(v=>v+1)} />}
+                        {resourceView === 'evidence' && <ExplorerTableEvidence key={tableDescription} schema={selectedSchema} table={table.name} canManage={canManage} />}
+                        {resourceView === 'stream' && <section className="flow-schema-details flow-explorer-stream" aria-label="Stream status">
+                            <header>
+                                <div><h3>Stream</h3><p>Kafka input topic and consumer group positions. Shared topics include traffic for other tables.</p></div>
+                                <div className="flow-explorer-stream-actions">
+                                    <Button size="small" icon={<CodeOutlined />} onClick={() => activateTool('script')}>Layer script</Button>
+                                    {canManage && <Button size="small" disabled={!stream?.resumeAvailable || !offsets.length} onClick={() => { setOffsetPartition(offsets[0]?.partition); setOffset(offsets[0]?.offset); setTopicDraft(stream?.topic || ''); setOffsetOpen(true); }}>Adjust offset</Button>}
+                                </div>
+                            </header>
+                            {!!inputTopics.length && <label>Input topic <NativeSelect aria-label="Input topic" value={inputTopics[activeTopicIndex] || ''} onChange={event => { setActiveTopicIndex(inputTopics.indexOf(event.target.value)); setStream(undefined); setOffsets([]); setStreamLoading(true); }}>
+                                {inputTopics.map(topic => <option key={topic} value={topic}>{topic}</option>)}
+                            </NativeSelect></label>}
+                            {streamLoading && !stream && !streamError ? <div className="flow-schema-state" role="status">Checking stream status…</div>
+                                : streamError ? null
+                                : !stream?.available ? <div className="flow-schema-state" role="status"><strong>{stream?.topic ? 'Stream unavailable' : 'No active stream'}</strong><p>{stream?.reason || 'There is no stream information for this table.'}</p></div>
+                                : <ExplorerStreamPositions stream={stream} />}
+                        </section>}
+                        {resourceView === 'api' && (canManage ? apiPanel : <div className="flow-schema-state" role="status">Published APIs are available to administrators only.</div>)}
+                    </ExplorerToolDialog>}
                     <Modal  className="flow-surface-modal flow-script-modal"  title="Layer  script"  open={scriptOpen} onCancel={closeScript} keyboard={!mutationLoading} maskClosable={!mutationLoading}  footer={null}  width={720}>
                         <div  className="flow-script-editor">
                             <div  className="flow-script-note">{scriptNote}. Drafts are stored separately and are not deployed to workers.</div>

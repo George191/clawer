@@ -63,9 +63,6 @@
 .explorer-resource-dialog.explorer-tool-workbench-dialog .ui-modal-content {
   height:min(560px, calc(100dvh - 48px));
 }
-.explorer-resource-dialog.explorer-tool-workbench-dialog.published-source-tools .ui-modal-content {
-  height:min(560px, calc(100dvh - 104px));
-}
 .explorer-resource-dialog.explorer-tool-workbench-dialog .ui-modal-body {
   flex:1; max-height:none;
 }
