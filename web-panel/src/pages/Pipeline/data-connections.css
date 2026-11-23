@@ -18,10 +18,13 @@
 .ontology-connectors h2 { margin: 0; font-size: 17px; line-height: 1.35; }
 .ontology-connectors__wizard h2 { font-size: 13px; font-weight: 500; line-height: 20px; }
 .ontology-connectors :is(.ui-input, .ui-input-affix-wrapper) { background: var(--ontology-bg); color: inherit; font: inherit; }
-.ontology-connectors .ui-native-select {
+.ontology-connectors :is(.ui-native-select, .ontology-connectors__provider-select) {
   min-height: 32px; padding: 4px 7px; border: 1px solid var(--ontology-control-border); border-radius: 4px;
   background: var(--ontology-panel); color: var(--ontology-text); font: inherit;
 }
+.ontology-connectors__provider { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.ontology-connectors__provider > svg { flex: none; }
+.ontology-connectors__provider > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .ontology-connections-workspace {
   flex: 1; min-width: 0; padding: 20px clamp(16px, 2.4vw, 36px);

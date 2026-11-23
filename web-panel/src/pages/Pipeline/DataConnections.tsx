@@ -6,6 +6,7 @@ import apiClient, { createDataSource, deleteDataSource, fetchCurrentUserContext,
 import type { DataConnectorEngine, DataConnectorType, DataSource, DataSourceCatalog, DataSourceColumns, DataSourceConfig, DataSourcePayload, DataSourceProvider, DataSourceRelation, DataSourceTest, BatchSourceIdentity } from '../../services/api';
 import { getSessionState } from '../../services/session';
 import ConnectorMark from './ConnectorMark';
+import HostingProviderIcon from './HostingProviderIcon';
 import SourceBatchSyncs from './SourceBatchSyncs';
 import SourceIdentity from './SourceIdentity';
 import SourceCatalogReferences from './SourceCatalogReferences';
@@ -27,6 +28,10 @@ const providerNames: Record<DataSourceProvider, string> = {
   self_hosted: 'Self-hosted', aws: 'Amazon Web Services', azure: 'Microsoft Azure', gcp: 'Google Cloud',
   aliyun: 'Alibaba Cloud', tencent: 'Tencent Cloud', huawei: 'Huawei Cloud', oracle_cloud: 'Oracle Cloud', other: 'Other cloud provider',
 };
+function providerLabel(provider: DataSourceProvider = 'self_hosted') {
+  return <span className="ontology-connectors__provider"><HostingProviderIcon provider={provider} /><span>{providerNames[provider]}</span></span>;
+}
+const providerOptions = (Object.keys(providerNames) as DataSourceProvider[]).map(value => ({ value, label: providerLabel(value) }));
 const addressingStyles = { path: 'Path style', virtual: 'Virtual-hosted style' };
 const authFields = {
   password: { method: 'Username and password', label: 'Password', key: 'password' },
@@ -499,7 +504,7 @@ export default function DataConnections({ onChanged }: Props = {}) {
         </header>
         <dl className="ontology-connections-summary">
           <div><dt>Endpoint</dt><dd><code>{endpoint(viewedSource.config)}</code></dd></div>
-          <div><dt>Hosting provider</dt><dd>{providerNames[viewedSource.config.provider ?? 'self_hosted']}</dd></div>
+          <div><dt>Hosting provider</dt><dd>{providerLabel(viewedSource.config.provider)}</dd></div>
           {viewedSource.engine === 's3' && <>
             <div><dt>Bucket</dt><dd>{viewedSource.config.bucket}</dd></div><div><dt>Signing region</dt><dd>{viewedSource.config.region}</dd></div>
             <div><dt>Bucket addressing</dt><dd>{addressingStyles[viewedSource.config.addressingStyle ?? 'path']}</dd></div>
@@ -579,10 +584,9 @@ export default function DataConnections({ onChanged }: Props = {}) {
               <section className="ontology-connectors__section"><h3>Source details</h3>
                 <div className="ontology-connectors__credentials">
                   <label>Connection name<Input aria-label="Connection name" value={draft.name} maxLength={200} autoComplete="off" placeholder="Production source" onChange={(event) => change({ name: event.target.value })} /></label>
-                  <label>Hosting provider<NativeSelect aria-label="Hosting provider" value={draft.config.provider ?? 'self_hosted'} disabled={blocked || editConflict}
-                    onChange={event => changeConfig({ provider: event.target.value === 'self_hosted' ? undefined : event.target.value as DataSourceProvider })}>
-                    {Object.entries(providerNames).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                  </NativeSelect></label>
+                  <label>Hosting provider<Select<DataSourceProvider> aria-label="Hosting provider" className="ontology-connectors__provider-select"
+                    value={draft.config.provider ?? 'self_hosted'} options={providerOptions} disabled={blocked || editConflict}
+                    onChange={provider => changeConfig({ provider: provider === 'self_hosted' ? undefined : provider })} /></label>
                 </div>
               </section>
               <section className="ontology-connectors__section"><h3>Connection</h3><div className="ontology-connectors__endpoint"><label>Host<Input aria-label="Host" value={draft.config.host} maxLength={253} autoComplete="off" placeholder={draft.engine === 's3' ? 's3.region.example.com' : 'database.example.com'} onChange={(event) => changeConfig({ host: event.target.value })} /></label><label>Port<Input aria-label="Port" value={draft.config.port} inputMode="numeric" maxLength={5} onChange={(event) => changeConfig({ port: event.target.value })} /></label></div>

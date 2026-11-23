@@ -78,7 +78,11 @@ async function mount({ sources = [], selected = '', overrides = {} } = {}) {
     wizard: () => nodes(tree).find(node => node.type === 'Modal' && node.props.className.includes('ontology-connectors__wizard')),
     click(name) { const button = this.button(name); assert.ok(button, 'Missing button: ' + name); assert.ok(!button.props.disabled, 'Disabled button: ' + name); const result = button.props.onClick(); render(); return result; },
     fill(name, value) { const field = this.field(name); assert.ok(field, 'Missing input: ' + name); field.props.onChange({ target: { value } }); render(); },
-    select(name, value) { const field = nodes(tree).find(node => node.type === 'NativeSelect' && node.props['aria-label'] === name); assert.ok(field); field.props.onChange({ target: { value } }); render(); },
+    select(name, value) {
+      const field = nodes(tree).find(node => ['Select', 'NativeSelect'].includes(node.type) && node.props['aria-label'] === name);
+      assert.ok(field, 'Missing select: ' + name);
+      field.props.onChange(field.type === 'Select' ? value : { target: { value } }); render();
+    },
     async settle() { for (let i = 0; i < 4; i++) { await new Promise(resolve => setImmediate(resolve)); render(); } },
     choose(engine = 'mysql', category) { this.click('New source'); if (category) this.select('Filter connector category', category); const card = nodes(tree).find(node => node.type === 'button' && node.props['aria-label'] === types.find(type => type.engine === engine).name); card.props.onClick(); render(); this.click('Continue'); },
     valid() { for (const [name, value] of Object.entries({ 'Connection name': 'Synthetic source', Host: 'db.synthetic.test', Database: 'analytics', Username: 'reader', Password: 'synthetic-password' })) this.fill(name, value); },
@@ -166,6 +170,29 @@ test('registry loading errors retain blocked controls and toast retry, without a
   failing = false; retry(); await ui.settle();
   assert.equal(ui.calls('fetchDataSources').length, 2); assert.equal(ui.button('New source').props.disabled, false);
   assert.equal(ui.errorHooks.find(([, title]) => title === 'Unable to load data sources')[0], ''); ui.unmount();
+});
+
+test('hosting providers pair every name with its icon in the picker, saved details and editor', async () => {
+  const labels = {
+    self_hosted: 'Self-hosted', aws: 'Amazon Web Services', azure: 'Microsoft Azure', gcp: 'Google Cloud',
+    aliyun: 'Alibaba Cloud', tencent: 'Tencent Cloud', huawei: 'Huawei Cloud', oracle_cloud: 'Oracle Cloud', other: 'Other cloud provider',
+  };
+  const assertLabel = (label, provider) => {
+    assert.equal(text(label), labels[provider]);
+    assert.deepEqual(nodes(label).filter(n => n.type === 'HostingProviderIcon').map(n => n.props.provider), [provider]);
+  };
+  const ui = await mount(); ui.choose();
+  const picker = () => ui.nodes().find(n => n.type === 'Select' && n.props['aria-label'] === 'Hosting provider').props;
+  assert.deepEqual(picker().options.map(option => option.value).sort(), Object.keys(labels).sort());
+  for (const option of picker().options) assertLabel(option.label, option.value);
+  ui.valid(); ui.select('Hosting provider', 'tencent');
+  ui.click('Save source'); await ui.settle();
+  const detail = ui.nodes().find(n => n.type === 'dd' && text(n.props.children) === labels.tencent);
+  assert.ok(detail); assertLabel(detail, 'tencent');
+  ui.click('Edit connection');
+  const { options, value } = picker(); assert.equal(value, 'tencent');
+  assertLabel(options.find(option => option.value === value).label, 'tencent');
+  ui.unmount();
 });
 
 test('S3 bucket, signing region and provider survive saving and editing while the secret stays write-only', async () => {
