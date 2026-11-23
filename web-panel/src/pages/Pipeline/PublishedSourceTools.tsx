@@ -11,6 +11,7 @@ import ExplorerStreamPositions, { topicRate } from './ExplorerStreamPositions';
 import ExplorerToolDialog from './ExplorerToolDialog';
 import ExplorerTableEvidence from './ExplorerTableEvidence';
 import useExplorerErrorToast from './useExplorerErrorToast';
+import useStoragePublicationKey from './useStoragePublicationKey';
 import './published-source-tools.css';
 
 function SourceStream({ schema, table }: { schema: string; table: string }) {
@@ -41,14 +42,20 @@ function SourceApis({ schema, table }: { schema: string; table: string }) {
   const [items, setItems] = useState<EtlPublishedApi[]>();
   const [error, setError] = useState('');
   const [version, refresh] = useState(0);
+  const publicationKey = useStoragePublicationKey(JSON.stringify([schema, table]), (id, keyStatus) => {
+    setItems(items => items?.map(api => api.id === id ? {...api, keyStatus} : api));
+  });
   useEffect(() => {
     let active = true;
     setItems(undefined); setError('');
     fetchEtlApis(schema, table).then(result => { if (active) setItems(result); }, failure => { if (active) setError(ontologyError(failure, 'Unable to read source APIs.')); });
     return () => { active = false; };
   }, [schema, table, version]);
-  return <PublishedApiWorkbench title="Source APIs" items={items || []} loading={!items && !error} error={error}
-    onReload={() => refresh(value => value + 1)} />;
+  return <>
+    <PublishedApiWorkbench title="Source APIs" items={items || []} loading={!items && !error} error={error} busy={publicationKey.busy}
+      onReload={() => refresh(value => value + 1)} onManageKey={publicationKey.open} />
+    {publicationKey.dialog}
+  </>;
 }
 
 const titles = { preview: '', stream: 'Source stream', evidence: 'Source evidence', schema: 'Source column mapping', api: 'Source APIs' };

@@ -34,9 +34,15 @@ function mount(props, file = 'PublishedApiWorkbench.tsx', dependencies = {}) {
     if (name in dependencies) return dependencies[name];
     if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
     if (name === 'react') return {
-      useState(initial) { const index = cursor++; if (!(index in state)) state[index] = initial; return [state[index], update => { const next = typeof update === 'function' ? update(state[index]) : update; if (!Object.is(next, state[index])) { state[index] = next; dirty = true; } }]; },
+      useState(initial) { const index = cursor++; if (!(index in state)) state[index] = typeof initial === 'function' ? initial() : initial; return [state[index], update => { const next = typeof update === 'function' ? update(state[index]) : update; if (!Object.is(next, state[index])) { state[index] = next; dirty = true; } }]; },
       useRef(initial) { const index = cursor++; return refs[index] ||= { current: initial }; },
-      useEffect(effect, deps) { const index = cursor++; if (!effects[index] || deps.some((value, i) => !Object.is(value, effects[index][i]))) { effects[index] = deps; pending.push(effect); } },
+      useEffect(effect, deps) {
+        const index = cursor++;
+        if (!effects[index] || deps.some((value, i) => !Object.is(value, effects[index].deps[i]))) pending.push(() => {
+          effects[index]?.cleanup?.();
+          effects[index] = {deps, cleanup: effect()};
+        });
+      },
     };
     if (name === '@/components/ui') return { NativeSelect: 'NativeSelect', Button: 'Button', Input: 'Input', Select: 'Select', message: {} };
     if (name === '@/components/ui/icons') return new Proxy({}, { get: (_, key) => String(key) });
@@ -50,7 +56,7 @@ function mount(props, file = 'PublishedApiWorkbench.tsx', dependencies = {}) {
     throw new Error('Unexpected component dependency ' + name);
   });
   const pending = [];
-  const render = () => { do { dirty = false; cursor = 0; pending.length = 0; tree = module.default(props); pending.splice(0).forEach(effect => effect()); } while (dirty); return tree; };
+  const render = () => { do { dirty = false; cursor = 0; pending.length = 0; tree = module.default(...(Array.isArray(props) ? props : [props])); pending.splice(0).forEach(effect => effect()); } while (dirty); return tree; };
   render();
   return { view: () => tree, notifications, render, click(label) { const button = nodes(tree).find(node => node.type === 'button' && (node.props['aria-label'] === label || copy(node).trim() === label)); assert.ok(button, 'Missing button: ' + label); button.props.onClick(); return render(); } };
 }
@@ -264,4 +270,100 @@ test('semantic model changes are visible and key management uses the explicit ca
   assert.ok(copy(ui.view()).includes('Model changed'));
   assert.ok(copy(ui.view()).includes('Published model revision 3'));
   ui.click('Manage API key'); assert.equal(managed, api);
+});
+
+test('a storage publication manages only the selected key and disables key changes during edits', () => {
+  const items = [publication('first'), publication('second')];
+  let managed;
+  const ui = mount({items, onManageKey: item => {managed = item;}});
+  ui.click('Select API second');
+  ui.click('Manage API key');
+  assert.equal(managed, items[1]);
+  for (const props of [{busy: true}, {dirty: true}, {loading: true}]) {
+    const state = mount({items, onManageKey() {}, ...props});
+    assert.equal(nodes(state.view()).find(node => node.type === 'button' && copy(node) === 'Manage API key').props.disabled, true);
+  }
+  const readOnly = mount({items});
+  assert.ok(!nodes(readOnly.view()).some(node => ['a', 'button'].includes(node.type) && copy(node).trim() === 'Manage API key'));
+});
+
+function deferred() {
+  let resolve;
+  const promise = new Promise(settle => {resolve = settle;});
+  return {resolve, promise};
+}
+
+function mountStorageKey(api) {
+  const changes = [];
+  const args = ['storage:companies', (...change) => changes.push(change)];
+  const ui = mount(args, 'useStoragePublicationKey.tsx', {
+    '../../services/api': api,
+    '../../services/session': {getSessionState: () => ({identity: 'admin', authenticated: true, locked: false})},
+    '../../services/ontology': {ontologyError: error => error.message},
+    './SandboxMarkings': {useSandboxIdentity: () => 'admin'},
+    './PublicationKeyDialog': {default: 'PublicationKeyDialog'},
+  });
+  return {
+    changes,
+    ui,
+    dialog: () => ui.render().dialog.props,
+    open: item => ui.render().open(item),
+    changeScope: scope => {args[0] = scope; ui.render();},
+  };
+}
+
+test('issuing or revoking a storage publication updates status and reveals the issued key only while open', async () => {
+  const requests = [];
+  const issued = deferred();
+  const {changes, ui, dialog, open} = mountStorageKey({
+    issuePublicationKey: async id => {requests.push(['issue', id]); return issued.promise;},
+    revokePublicationKey: async id => {requests.push(['revoke', id]); return {keyStatus: 'revoked'};},
+  });
+  const initial = publication('company', {keyStatus: 'unissued'});
+  open(initial);
+  assert.equal(dialog().item.keyStatus, 'unissued');
+  await dialog().onChange(true);
+  assert.deepEqual(requests, []);
+  const issue = dialog().onChange;
+  issue(false);
+  issue(false);
+  assert.deepEqual(requests, [['issue', 'company']]);
+  assert.equal(ui.render().busy, true);
+  issued.resolve({keyStatus: 'active', key: 'synthetic-test-key'});
+  await new Promise(setImmediate);
+  assert.deepEqual(changes, [['company', 'active']]);
+  assert.equal(dialog().item.keyStatus, 'active');
+  assert.equal(dialog().issuedKey, 'synthetic-test-key');
+  dialog().onClose();
+  assert.ok(!dialog().item);
+  assert.ok(!dialog().issuedKey);
+  open({...initial, keyStatus: 'active'});
+  assert.ok(!dialog().issuedKey);
+  dialog().onChange(true);
+  await new Promise(setImmediate);
+  assert.deepEqual(requests.at(-1), ['revoke', 'company']);
+  assert.deepEqual(changes.at(-1), ['company', 'revoked']);
+  assert.equal(dialog().item.keyStatus, 'revoked');
+  assert.ok(!dialog().issuedKey);
+  dialog().onClose();
+  assert.ok(!dialog().item);
+  open(publication('other'));
+  assert.ok(!dialog().issuedKey);
+});
+
+test('a pending key operation cannot reveal a key or update status in a different storage scope', async () => {
+  const issued = deferred();
+  let signal;
+  const {changes, dialog, open, changeScope} = mountStorageKey({
+    issuePublicationKey: async (_id, abortSignal) => { signal = abortSignal; return issued.promise; },
+  });
+  open(publication('company'));
+  dialog().onChange(false);
+  changeScope('storage:other');
+  assert.equal(signal.aborted, true);
+  issued.resolve({keyStatus: 'active', key: 'stale-test-key'});
+  await new Promise(setImmediate);
+  assert.deepEqual(changes, []);
+  assert.ok(!dialog().item);
+  assert.ok(!dialog().issuedKey);
 });

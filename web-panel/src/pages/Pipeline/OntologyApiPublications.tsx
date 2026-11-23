@@ -7,6 +7,7 @@ import { changeOntologyPublicationKey, deleteOntologyPublication, listOntologyPu
   type OntologyPublication, type PublicationInput } from '../../services/ontologyPublications';
 import PublishedApiWorkbench from './PublishedApiWorkbench';
 import OntologySdkDownload from './OntologySdkDownload';
+import PublicationKeyDialog from './PublicationKeyDialog';
 import { publicationDateInput, publicationDateValue } from './publishedApiPresentation';
 
 type Form = PublicationInput & {id?: string};
@@ -87,14 +88,8 @@ export default function OntologyApiPublications({objectType, query = {filters: [
         <details><summary>Review saved range</summary><pre>{JSON.stringify(form.query, null, 2)}</pre></details>
       </div>}
     </Modal>
-    <Modal open={!!keyItem} title="Publication API key" className="flow-surface-modal explorer-resource-dialog" width={560}
-      maskClosable={!busy} closable={!busy} keyboard={!busy} onCancel={() => {if (!busy) {setKeyItem(undefined); setIssuedKey('');}}}
-      footer={<><Button disabled={busy} onClick={() => {setKeyItem(undefined); setIssuedKey('');}}>Close</Button><Button disabled={busy || keyItem?.keyStatus !== 'active'} danger onClick={() => key(true)}>Revoke key</Button>
-        <Button type="primary" disabled={busy} onClick={() => key(false)}>{keyItem?.keyStatus === 'active' ? 'Rotate key' : 'Issue key'}</Button></>}>
-      <p>Rotation immediately invalidates the previous key. Revocation stops new requests. A new key is shown only here; store it before closing.</p>
-      {issuedKey && <label>New API key<Input aria-label="New publication API key" readOnly value={issuedKey} onFocus={event => event.target.select()} /></label>}
-      {keyItem && <p>Key status: {keyItem.keyStatus}</p>}
-    </Modal>
+    <PublicationKeyDialog item={keyItem} issuedKey={issuedKey} busy={busy} onChange={key}
+      onClose={() => {setKeyItem(undefined); setIssuedKey('');}} />
     <Modal open={!!deleting} title="Delete API publication?" className="flow-surface-modal explorer-resource-dialog"
       confirmLoading={busy} okText="Delete publication" onCancel={() => {if (!busy) setDeleting(undefined);}}
       onOk={() => void run(async signal => {

@@ -19,6 +19,7 @@ import ExplorerCatalog from './ExplorerCatalog';
 import ExplorerWorkbench, { ExplorerFilterButton, ExplorerResults, ExplorerResultsFooter, explorerResultColumns } from './ExplorerWorkbench';
 import ExplorerFilterIndexNotice, { ExplorerSortIndexNotice } from './ExplorerFilterIndexNotice';
 import PublishedApiWorkbench from './PublishedApiWorkbench';
+import useStoragePublicationKey from './useStoragePublicationKey';
 import PublishedExplorer from './PublishedExplorer';
 import { openSaved, savedPath, type SavedDetail } from '../../services/explorerSaved';
 import { catalogReturnHref, compactExplorerSearch } from '../../services/explorerNavigation';
@@ -947,11 +948,19 @@ const DataLayersWorkspace: React.FC = () => {
         catch (error) { message.error(errorText(error)); } finally { endMutation(); }
     };
 
-    const apiPanel = <PublishedApiWorkbench items={openApis} loading={apisLoading} busy={mutationLoading || !selectedTableAvailable}
-        dirty={apisDirty} error={apisError} onReload={() => { if (!apisDirty && !mutationLoading) setApiRevision(value => value + 1); }}
-        onAdd={() => void addApi()} onUpdate={updateApi} onSave={() => void saveApis()} onDelete={removeApi}
-        onDiscard={() => { if (!mutationLoading && !apisLoading) setApiRevision(value => value + 1); }}
-        storageAsset={{schema: selectedSchema, table: table.name}} />;
+    const publicationKey = useStoragePublicationKey(canManage && selectedTableAvailable && resourceView === 'api'
+        ? JSON.stringify([selectedSchema, table.name]) : '', (id, keyStatus) => {
+        setOpenApis(items => items.map(api => api.id === id ? {...api, keyStatus} : api));
+    });
+    const apiPanel = <>
+        <PublishedApiWorkbench items={openApis} loading={apisLoading} busy={mutationLoading || !selectedTableAvailable || publicationKey.busy}
+            dirty={apisDirty} error={apisError} onReload={() => { if (!apisDirty && !mutationLoading) setApiRevision(value => value + 1); }}
+            onManageKey={publicationKey.open}
+            onAdd={() => void addApi()} onUpdate={updateApi} onSave={() => void saveApis()} onDelete={removeApi}
+            onDiscard={() => { if (!mutationLoading && !apisLoading) setApiRevision(value => value + 1); }}
+            storageAsset={{schema: selectedSchema, table: table.name}} />
+        {publicationKey.dialog}
+    </>;
 
     useEffect(() => {
         if (!catalogOpen) return;

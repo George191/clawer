@@ -115,7 +115,7 @@ export default function PublishedApiWorkbench({ items, title = 'Published APIs',
           <div className="api-endpoint"><span className="api-method">GET</span><code>{endpoint}</code><button type="button" aria-label="Copy API endpoint" title="Copy endpoint" onClick={() => void copy(endpoint, 'API endpoint copied')}><CopyOutlined /></button></div>
           {tab === 'overview' && <>
             <section className="api-document-section"><h4>Access</h4><div className="api-access-summary"><div><span>Authentication</span><strong>X-API-Key</strong></div><div><span>API key</span><strong>{item.keyStatus === 'active' ? 'Issued' : item.keyStatus === 'unissued' ? 'Not issued' : 'Revoked'}</strong></div><div><span>Permission</span><strong>Read published range</strong></div></div>
-              {onManageKey ? <button type="button" className="api-key-link" disabled={disabled || dirty} onClick={() => onManageKey(item)}>Manage API key</button> : <a className="api-key-link" href={'/account/settings?tab=security&publication=' + encodeURIComponent(item.id)} onClick={event => { if (dirty) { event.preventDefault(); message.warning({ content: 'Save API changes before managing the key', className: 'explorer-toast' }); } }}>Manage API key</a>}
+              {onManageKey && <button type="button" className="api-key-link" disabled={disabled || dirty} onClick={() => { if (!disabled && !dirty) onManageKey(item); }}>Manage API key</button>}
               {onEdit && <Button size="small" disabled={disabled || dirty} onClick={() => onEdit(item)}>Edit publication</Button>}
             </section>
             <section className="api-document-section"><h4>Validity <small>Local time</small></h4><div className="api-validity-fields">

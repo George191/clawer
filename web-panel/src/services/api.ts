@@ -1074,9 +1074,10 @@ export type PublishedKey = Pick<EtlPublishedApi,'id'|'keyStatus'|'validFrom'|'va
 export type TeamKey = {id: string; short_key:string; description:string | null; status:number};
 export const publicationKeys = (q:string, offset:number) =>
   client.get('/apikey/publications', {params:{q,offset,limit:25}}).then(r=>unwrap<{items:PublishedKey[];hasMore:boolean}>(r.data));
-export const issuePublicationKey = (id:string) =>
-  client.post('/apikey/publications/'+id+'/rotate').then(r=>unwrap<{key:string}>(r.data));
-export const revokePublicationKey = (id:string) => client.delete('/apikey/publications/'+id+'/key');
+export const issuePublicationKey = (id: string, signal?: AbortSignal) =>
+  client.post('/apikey/publications/'+id+'/rotate', undefined, {signal}).then(r=>unwrap<{key: string; keyStatus: 'active'}>(r.data));
+export const revokePublicationKey = (id: string, signal?: AbortSignal) =>
+  client.delete('/apikey/publications/'+id+'/key', {signal}).then(r=>unwrap<{keyStatus: 'revoked'}>(r.data));
 export const teamKeys = (team:string,page:number) =>
   client.get('/apikey/'+team,{params:{page,size:25}}).then(r=>unwrap<{items:TeamKey[];pages:number}>(r.data));
 export const createTeamKey = (team:string,description:string) =>
