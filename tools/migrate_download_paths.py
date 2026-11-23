@@ -46,6 +46,7 @@ def journal(path):
     db.execute('CREATE TABLE IF NOT EXISTS objects (old TEXT PRIMARY KEY,prefix TEXT,record_id TEXT,shard INTEGER,new TEXT,phase TEXT NOT NULL DEFAULT "planned",error TEXT)')
     db.execute('CREATE INDEX IF NOT EXISTS objects_work ON objects(shard,phase,prefix,record_id)')
     db.execute('CREATE TABLE IF NOT EXISTS progress (prefix TEXT PRIMARY KEY,last_key TEXT NOT NULL,done INTEGER NOT NULL DEFAULT 0)')
+    db.execute('CREATE TABLE IF NOT EXISTS error_history (id INTEGER PRIMARY KEY,old TEXT NOT NULL,error TEXT NOT NULL,recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)')
     db.commit()
     return db
 
@@ -147,10 +148,15 @@ def inventory(path):
                         if len(parts)<4 or not RECORD.fullmatch(parts[2]):
                             if value:raise ValueError('Unsupported resource reference: '+value)
                             continue
-                        if parts[2]!=doc['_meta']['record_id']:raise ValueError('Resource owned by another record: '+value)
+                        record_id=doc['_meta']['record_id']
+                        if not RECORD.fullmatch(record_id):raise ValueError('Invalid source record identity: '+record_id)
+                        prefix=f"{route['data_type']}/{route['template_name']}"
+                        existing=db.execute('SELECT record_id FROM objects WHERE old=?',(value,)).fetchone()
+                        if existing and existing[0]!=record_id:
+                            raise ValueError('Resource has conflicting source owners: '+value)
                         canonical=(len(parts)==4 and HEX.fullmatch(Path(parts[-1]).stem)
-                                   and '/'.join(parts[:2])==f"{route['data_type']}/{route['template_name']}")
-                        pending.append((value,'/'.join(parts[:2]),parts[2],int(parts[2],16)%WORKERS,value if canonical else None,'canonical' if canonical else 'planned'))
+                                   and '/'.join(parts[:2])==prefix and parts[2]==record_id)
+                        pending.append((value,prefix,record_id,int(record_id,16)%WORKERS,value if canonical else None,'canonical' if canonical else 'planned'))
                         if len(pending)==BATCH:
                             db.executemany('INSERT OR IGNORE INTO objects(old,prefix,record_id,shard,new,phase) VALUES(?,?,?,?,?,?)',pending);db.commit();pending.clear()
                 if pending:db.executemany('INSERT OR IGNORE INTO objects(old,prefix,record_id,shard,new,phase) VALUES(?,?,?,?,?,?)',pending)
@@ -390,6 +396,8 @@ def worker(path, shard, mode, db_gate):
     mongo_client=MongoClient(settings.db_url,serverSelectionTimeoutMS=15000)
     mongo=mongo_client[settings.db_name]
     phase='planned' if mode=='apply' else 'source_updated' if mode=='verify' else 'verified'
+    phases_to_retry=(phase,'source_updated') if mode=='apply' else (phase,)
+    db.execute('INSERT INTO error_history(old,error) SELECT old,error FROM objects WHERE shard=? AND error IS NOT NULL AND phase IN ('+','.join('?' for _ in phases_to_retry)+')',(shard,*phases_to_retry))
     db.execute('UPDATE objects SET error=NULL WHERE shard=? AND phase=?',(shard,phase))
     if mode=='apply':db.execute('UPDATE objects SET error=NULL WHERE shard=? AND phase="source_updated"',(shard,))
     db.commit()

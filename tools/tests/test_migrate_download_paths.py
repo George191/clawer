@@ -171,11 +171,12 @@ def test_active_download_claim_is_checked_before_transferring_bytes(tmp_path):
     client.fput_object.assert_not_called()
     db.close()
 
-def test_indexed_inventory_resumes_without_relisting_sources(tmp_path):
+@pytest.mark.parametrize('legacy_owner', [False, True])
+def test_indexed_inventory_resumes_without_relisting_sources(tmp_path, legacy_owner):
     from datetime import datetime, timezone
     from unittest.mock import MagicMock
     record_id = 'a' * 32
-    old = 'news/source/' + record_id + '/image.jpg.jpg'
+    old = 'news/old_source/'+'b'*32+'/image.jpg.jpg' if legacy_owner else 'news/source/'+record_id+'/image.jpg.jpg'
     client = MagicMock()
     collection = client.__getitem__.return_value.__getitem__.return_value
     collection.index_information.return_value = {'downloads': {'key': [
@@ -216,6 +217,7 @@ def test_indexed_inventory_resumes_without_relisting_sources(tmp_path):
     assert 0 < migration.SOURCE_PAGE_SIZE <= migration.BATCH
     db = migration.journal(path)
     assert db.execute('SELECT old,phase FROM objects').fetchall() == [(old,'planned')]
+    assert db.execute('SELECT prefix,record_id,shard FROM objects').fetchone()==('news/source',record_id,int(record_id,16)%migration.WORKERS)
     assert db.execute('SELECT done FROM progress WHERE prefix="__inventory__"').fetchone()[0] == 1
     db.close()
 
