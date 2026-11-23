@@ -60,7 +60,7 @@
 .explorer-resource-dialog .ui-modal-footer { padding:10px 16px; }
 .explorer-resource-dialog .ui-modal-body { display:flex; flex-direction:column; min-height:0; max-height:70vh; gap:12px; padding:12px 16px; overflow:auto; color:var(--ontology-text); font-size:12px; line-height:1.5; }
 /* Loading, results, and errors share the same frame; panes scroll within it. */
-.explorer-tool-workbench-dialog:has(.explorer-resource-view--schema) {
+.explorer-tool-workbench-dialog:has(.explorer-resource-view--schema,.ontology-revisions) {
   --explorer-tool-width:min(1600px, 100%);
   --explorer-tool-height:960px;
 }

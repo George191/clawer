@@ -136,7 +136,7 @@ export function usePublishedObjectTools({ objectType, publicationQuery, actions,
       {operation?.kind === 'delete' && operation.record && <ExplorerRecordMutation mode="delete" title={title(operation.record.title)}
         busy={pending} disabled={busy} onSubmit={applyAction}
         onCancel={() => { if (!locked.current) { setOperation(undefined); setError(''); } }} />}
-      <Modal key={objectType.id} open={!!tool} motion centered width={1040} className={`flow-surface-modal flow-published-dialog explorer-resource-dialog explorer-tool-workbench-dialog${tool === 'Relationships' ? ' ontology-relationships-dialog' : ''}`} title={tool} onCancel={() => setTool('')} footer={<Button onClick={() => setTool('')}>Close</Button>}>
+      <Modal key={objectType.id} open={!!tool} motion centered width="var(--explorer-tool-width, 1040px)" className={`flow-surface-modal flow-published-dialog explorer-resource-dialog explorer-tool-workbench-dialog${tool === 'Relationships' ? ' ontology-relationships-dialog' : ''}`} title={tool} onCancel={() => setTool('')} footer={<Button onClick={() => setTool('')}>Close</Button>}>
         <div className="explorer-resource-context"><strong>{objectType.definition.name}</strong><code>{objectType.definition.id}</code></div>
         <div className="flow-ontology-tool-content" role="region" aria-label={tool || undefined} tabIndex={0}>
           {tool === 'Published APIs' && <OntologyApiPublications key={objectType.id} objectType={objectType} query={publicationQuery} />}

@@ -171,20 +171,20 @@ export default function OntologyRevisions({ definitionId, onMerged, showTitle = 
   };
 
   return <section className="ontology-revisions" aria-label="Model revisions">
-    <header className="ontology-revisions__header">
+    {!composer && <header className="ontology-revisions__header">
       <div>{showTitle && <h3>Model revisions</h3>}{workspace && <span className="ontology-revisions__publication"><span aria-hidden="true" />Published <strong>Revision {workspace.revision}</strong></span>}</div>
       {workspace && <div className="ontology-revisions__tools">
-        <Button size="small" icon={<ReloadOutlined />} disabled={busy || !!composer} onClick={() => { clearErrors(); refresh(); }}>Refresh</Button>
-        {workspace.canEdit && <Button size="small" type="primary" icon={<PlusOutlined />} disabled={busy || !!composer} onClick={() => {
+        <Button size="small" icon={<ReloadOutlined />} disabled={busy} onClick={() => { clearErrors(); refresh(); }}>Refresh</Button>
+        {workspace.canEdit && <Button size="small" type="primary" icon={<PlusOutlined />} disabled={busy} onClick={() => {
           clearErrors(); setPrincipalQuery('');
           setComposer({ kind: 'revision', revision: workspace.revision, definition: workspace.definition, summary: '' });
         }}>Propose change</Button>}
       </div>}
-    </header>
-    {workspace && <nav className="ontology-revisions__tabs" aria-label="Revision views">
-      <button type="button" aria-pressed={tab === 'proposals'} disabled={busy || !!composer} onClick={() => switchTab('proposals')}>Proposals</button>
-      <button type="button" aria-pressed={tab === 'history'} disabled={busy || !!composer} onClick={() => switchTab('history')}>Revision history</button>
-      {workspace.canManageRoles && <button type="button" aria-pressed={tab === 'roles'} disabled={busy || !!composer} onClick={() => switchTab('roles')}>Revision roles</button>}
+    </header>}
+    {workspace && !composer && <nav className="ontology-revisions__tabs" aria-label="Revision views">
+      <button type="button" aria-pressed={tab === 'proposals'} disabled={busy} onClick={() => switchTab('proposals')}>Proposals</button>
+      <button type="button" aria-pressed={tab === 'history'} disabled={busy} onClick={() => switchTab('history')}>Revision history</button>
+      {workspace.canManageRoles && <button type="button" aria-pressed={tab === 'roles'} disabled={busy} onClick={() => switchTab('roles')}>Revision roles</button>}
     </nav>}
     <div className={`ontology-revisions__body${composer ? ' is-composing' : ''}`} role="region" aria-label="Revision workspace" tabIndex={0}>
       {!workspace && !error && !requestError && <p className="ontology-revisions__loading" role="status"><ReloadOutlined spin />Loading revision workspace…</p>}

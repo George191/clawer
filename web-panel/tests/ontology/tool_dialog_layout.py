@@ -34,6 +34,44 @@ async def close_functions_dialog(page, dialog):
     await expect(page.get_by_role("button", name="Open in", exact=True)).to_be_focused()
 
 
+async def check_revision_form(page, width, height):
+    await page.set_viewport_size({"width": width, "height": height})
+    await page.get_by_role("button", name="Open in", exact=True).click()
+    await page.get_by_role("menuitem", name="Model revisions", exact=True).click()
+    dialog = page.get_by_role("dialog", name="Model revisions", exact=True)
+    propose = dialog.get_by_role("button", name="Propose change", exact=True)
+    await propose.click()
+    form = dialog.get_by_role("region", name="Proposal form", exact=True)
+    general = form.get_by_role("region", name="General", exact=True)
+    summary = form.get_by_role("textbox", name="Proposal summary")
+    await expect(summary).to_be_in_viewport(ratio=1)
+    await summary.fill("Check revision form layout")
+    if height >= 670:
+        for name in ("Display name", "Plural display name"):
+            await expect(general.get_by_role("textbox", name=name, exact=True)).to_be_in_viewport(ratio=1)
+    groups = general.get_by_role("combobox", name="Groups", exact=True)
+    if width >= 1000:
+        await expect(general.get_by_role("textbox", name="Description")).to_be_in_viewport(ratio=1)
+    else:
+        await groups.scroll_into_view_if_needed()
+        assert await form.evaluate("el => el.scrollTop > 0"), (width, height)
+    await expect(groups).to_be_in_viewport(ratio=1)
+    sections = form.get_by_role("navigation", name="Proposal sections")
+    await sections.get_by_role("button", name="Properties").click()
+    last_name = form.get_by_role("textbox", name="Property name", exact=True).last
+    await last_name.scroll_into_view_if_needed()
+    await expect(last_name).to_be_in_viewport(ratio=1)
+    await expect(dialog.get_by_role("button", name="Submit proposal", exact=True)).to_be_in_viewport(ratio=1)
+    close = dialog.get_by_role("button", name="Close", exact=True)
+    await expect(close).to_be_in_viewport(ratio=1)
+    await sections.get_by_role("button", name="General", exact=True).click()
+    await expect(summary).to_have_value("Check revision form layout")
+    await dialog.get_by_role("button", name="Cancel proposal", exact=True).click()
+    await expect(propose).to_be_enabled()
+    await close.click()
+    await expect(dialog).to_have_count(0)
+
+
 async def main():
     fixture = json.loads(Path(os.environ["ONTOLOGY_QA_FIXTURE"]).read_text(encoding="utf-8"))
     base = fixture["base"].rstrip("/")
@@ -118,8 +156,12 @@ async def main():
             await check_position()
             await close_functions_dialog(page, dialog)
             await expect(chart).to_be_visible()
+            sizes = [(1440, 900), (1280, 720)] if viewport["width"] == 1440 else [(390, 670), (844, 390)]
+            for width, height in sizes:
+                await check_revision_form(page, width, height)
             await context.close()
         await browser.close()
+    print("Revision form fields and actions are reachable on desktop, laptop, and phone.")
     print("Functions dialog keeps its size and content through dismissal and restores focus on desktop and mobile.")
 
 
