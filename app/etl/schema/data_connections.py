@@ -1,10 +1,13 @@
 """External source registry, installed only by the explicit migration tool."""
 
-DATA_CONNECTIONS_DDL = """
+ENGINE_CHECK = """CONSTRAINT ck_ontology_source_engine_v2 CHECK (
+    engine IN ('postgresql','mysql','oracle','dameng','elasticsearch','milvus','redis','clickhouse','s3'))"""
+
+DATA_CONNECTIONS_DDL = f"""
 CREATE TABLE public.ontology_data_connections (
     id UUID PRIMARY KEY,
     name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 200),
-    engine TEXT NOT NULL CHECK (engine IN ('postgresql','mysql','oracle','dameng','elasticsearch','milvus')),
+    engine TEXT NOT NULL {ENGINE_CHECK},
     config JSONB NOT NULL CHECK (jsonb_typeof(config) = 'object'),
     credentials_ciphertext TEXT NOT NULL,
     created_by TEXT NOT NULL,
@@ -15,6 +18,16 @@ CREATE TABLE public.ontology_data_connections (
     CONSTRAINT ck_ontology_pg_source_pause CHECK (paused_at IS NULL OR (engine = 'postgresql' AND tested_at IS NULL))
 )
 """
+
+DATA_CONNECTIONS_ENGINE_DDL = f"""
+ALTER TABLE public.ontology_data_connections
+  DROP CONSTRAINT ontology_data_connections_engine_check,
+  ADD {ENGINE_CHECK}
+"""
+
+ENGINE_CHECK_INSTALLED = """SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint
+    WHERE conrelid=to_regclass('public.ontology_data_connections')
+    AND conname='ck_ontology_source_engine_v2' AND contype='c' AND convalidated)"""
 
 
 DATA_CONNECTIONS_PAUSE_DDL = """

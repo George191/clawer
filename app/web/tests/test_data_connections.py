@@ -24,20 +24,45 @@ async def stub_registry_session():
 
 def payload(engine="postgresql", **changes):
     config = {"host": "db.example.test", "port": 5432, "database": "analytics", "username": "reader", "auth": "password", "tls": True}
-    if engine in {"dameng", "elasticsearch"}:
+    credentials = {"password": "test-only-password"}
+    if engine in {"dameng", "elasticsearch", "s3"}:
         config["database"] = ""
+    if engine == "s3":
+        config.update(port=443, auth="access_key", username="test-key-id", region="us-east-1", bucket="test-bucket")
+        credentials = {"secretAccessKey": "test-only-secret-key"}
+    if engine == "redis":
+        config.update(port=6379, database="0")
     if engine == "dameng":
         config["tls"] = False
     config.update(changes)
-    return DataConnectionPayload(name="Test source", engine=engine, config=config, credentials={"password": "test-only-password"})
+    return DataConnectionPayload(name="Test source", engine=engine, config=config, credentials=credentials)
 
 
 class DataConnectionContracts(unittest.TestCase):
-    def test_six_engine_contracts_and_safe_ipv6_host(self):
-        for engine in ("postgresql", "mysql", "oracle", "dameng", "elasticsearch", "milvus"):
+    def test_engine_contracts_and_safe_ipv6_host(self):
+        for engine in ("postgresql", "mysql", "oracle", "dameng", "elasticsearch", "milvus", "s3", "redis", "clickhouse"):
             with self.subTest(engine=engine):
                 self.assertEqual(payload(engine).engine, engine)
         self.assertEqual(payload(host="2001:db8::1").config.host, "2001:db8::1")
+
+    def test_cloud_provider_and_engine_specific_fields(self):
+        self.assertNotIn("provider", payload(provider="self_hosted").config.model_dump())
+        self.assertNotIn("bucket", payload().config.model_dump())
+        self.assertNotIn("region", payload().config.model_dump())
+        for provider in ("aws", "azure", "gcp", "aliyun", "tencent", "huawei", "oracle_cloud", "other"):
+            self.assertEqual(payload(provider=provider).config.model_dump()["provider"], provider)
+        for engine, changes in (
+            ("postgresql", {"provider": "invalid"}), ("mysql", {"bucket": "test-bucket"}),
+            ("clickhouse", {"region": "us-east-1"}), ("clickhouse", {"database": ""}), ("redis", {"addressingStyle": "virtual"}),
+            ("redis", {"database": "1e2"}), ("redis", {"database": "-1"}), ("redis", {"database": "01"}),
+            ("s3", {"auth": "password"}), ("s3", {"username": ""}), ("s3", {"bucket": None}),
+            ("s3", {"bucket": "../logs"}), ("s3", {"region": None}), ("s3", {"database": "db"}),
+        ):
+            with self.subTest(engine=engine, changes=changes), self.assertRaises(ValidationError):
+                payload(engine, **changes)
+        with self.assertRaises(ValidationError):
+            DataConnectionPayload.model_validate({**payload("s3").model_dump(), "credentials": {"password": "wrong-kind"}})
+        self.assertNotIn("test-only-secret-key", repr(payload("s3")))
 
     def test_invalid_host_port_auth_and_unused_scope_are_rejected(self):
         for changes in ({"host": "https://user:password@example.test/path"}, {"host": "a\nb"}, {"port": "5432"}, {"port": 0}, {"auth": "token"}, {"database": ""}, {"username": ""}):
@@ -73,6 +98,56 @@ class DataConnectionContracts(unittest.TestCase):
 
 
 class DataConnectionProbes(unittest.IsolatedAsyncioTestCase):
+    async def test_s3_signed_read_only_bucket_probe(self):
+        from botocore.awsrequest import AWSResponse
+        from botocore.httpsession import URLLib3Session
+
+        xml = b'<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>test-bucket</Name><KeyCount>0</KeyCount></ListBucketResult>'
+        for style, status, response_body, ok in [
+            (None, 200, xml, True), ("virtual", 200, xml, True), ("path", 200, b"<other/>", False),
+            ("path", 403, b"<Error><Code>AccessDenied</Code></Error>", False),
+        ]:
+            def respond(session, req):
+                self.assertEqual(req.method, "GET")
+                expected_host = "test-bucket.db.example.test" if style == "virtual" else "db.example.test"
+                self.assertEqual(httpx.URL(req.url).host, expected_host)
+                self.assertEqual(httpx.URL(req.url).path, "/" if style == "virtual" else "/test-bucket")
+                self.assertEqual(httpx.URL(req.url).params["max-keys"], "0")
+                self.assertIn(b"Credential=test-key-id/", req.headers["Authorization"])
+                self.assertIn(b"/us-east-1/s3/aws4_request", req.headers["Authorization"])
+                return AWSResponse(req.url, status, {}, SimpleNamespace(stream=lambda: [response_body]))
+
+            with self.subTest(status=status, ok=ok), patch.object(URLLib3Session, "send", respond):
+                result = await object.__new__(sources.DataConnections).test(payload("s3", provider="aws", addressingStyle=style))
+                self.assertEqual(result["ok"], ok, result)
+                self.assertNotIn("test-only-secret-key", json.dumps(result))
+
+    async def test_clickhouse_checks_database_with_authenticated_read_only_query(self):
+        original_client = httpx.AsyncClient
+        for status, response_body, ok in [(200, b"analytics\n", True), (200, b"default\n", False), (302, b"", False)]:
+            def respond(request):
+                self.assertEqual(request.method, "GET")
+                self.assertEqual(request.url.params["database"], "analytics")
+                self.assertEqual(request.url.params["query"], "SELECT currentDatabase() FORMAT TabSeparatedRaw")
+                self.assertTrue(request.headers["Authorization"].startswith("Basic "))
+                return httpx.Response(status, content=response_body)
+            client = original_client(transport=httpx.MockTransport(respond))
+            with patch.object(sources.httpx, "AsyncClient", return_value=client) as factory:
+                result = await object.__new__(sources.DataConnections).test(payload("clickhouse", provider="other"))
+                self.assertEqual(result["ok"], ok, result)
+                self.assertEqual(factory.call_args.kwargs, dict(timeout=5, trust_env=False, follow_redirects=False))
+
+    async def test_redis_authenticates_and_pings_selected_database(self):
+        driver = MagicMock()
+        client = driver.Redis.return_value.__aenter__.return_value
+        client.ping = AsyncMock(return_value=True)
+        with patch.object(sources, "_driver", return_value=driver):
+            await sources._probe(payload("redis", database="2"), {"password": "private"})
+        driver.Redis.assert_called_once_with(host="db.example.test", port=6379, db=2, username="reader", password="private",
+                                            ssl=True, ssl_check_hostname=True, socket_connect_timeout=5, socket_timeout=5)
+        client.ping.assert_awaited_once_with()
+        driver.Redis.return_value.__aexit__.assert_awaited_once()
+
     async def test_postgres_performs_read_only_query_and_closes(self):
         connection = SimpleNamespace(fetchval=AsyncMock(return_value=1), close=AsyncMock())
         driver = SimpleNamespace(connect=AsyncMock(return_value=connection))
@@ -167,7 +242,7 @@ class StoredConnectionCredentialsTests(unittest.IsolatedAsyncioTestCase):
         stored = {"engine": original.engine, "config": original.config.model_dump(), "updated_at": revision}
         changes = (
             {"host": "other-db.example.test"}, {"port": 6543},
-            {"database": "other"}, {"username": "other"}, {"tls": False},
+            {"database": "other"}, {"username": "other"}, {"tls": False}, {"provider": "aws"},
         )
         with (patch.object(service, "_session", stub_registry_session),
               patch.object(service, "_stored", return_value=stored), patch.object(service, "_probe_result") as probe):

@@ -7,7 +7,11 @@ import ts from 'typescript';
 const jsx = (type, props) => ({ type, props });
 const nodes = tree => tree && typeof tree === 'object' ? [tree, ...[tree.props?.children].flat(Infinity).flatMap(nodes)] : [];
 const text = value => Array.isArray(value) ? value.map(text).join('') : value?.props ? text(value.props.children) : value == null || value === false ? '' : String(value);
-const types = ['mysql', 'postgresql'].map(engine => ({ engine, name: engine === 'mysql' ? 'MySQL' : 'PostgreSQL', port: engine === 'mysql' ? 3306 : 5432, category: 'relational', driverAvailable: true, catalogAvailable: false }));
+const types = [
+  ['mysql', 'MySQL', 3306, 'relational'], ['postgresql', 'PostgreSQL', 5432, 'relational'],
+  ['s3', 'S3-compatible storage', 443, 'object_storage'], ['redis', 'Redis', 6379, 'non_relational'],
+  ['clickhouse', 'ClickHouse', 8443, 'relational'],
+].map(([engine, name, port, category]) => ({ engine, name, port, category, driverAvailable: true, catalogAvailable: false }));
 const source = (engine = 'mysql', patch = {}) => ({ id: 'source-a', name: 'Synthetic source', engine,
   config: { host: 'db.synthetic.test', port: engine === 'mysql' ? 3306 : 5432, database: 'analytics', username: 'reader', auth: 'password', tls: true },
   credentialsConfigured: true, catalogAvailable: false, updatedAt: '2026-01-01T00:00:00Z', testedAt: null, ...patch });
@@ -43,7 +47,7 @@ async function mount({ sources = [], selected = '', overrides = {} } = {}) {
     if (name === 'react') return react;
     if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx, Fragment: 'Fragment' };
     if (name === 'react-router-dom') return { Link: 'Link', useSearchParams: () => [params, next => { params = typeof next === 'function' ? next(params) : next; }] };
-    if (name === '@/components/ui') return { Button: 'Button', Checkbox: 'Checkbox', Input: 'Input', Modal: 'Modal', Select: 'Select', message };
+    if (name === '@/components/ui') return { Button: 'Button', Checkbox: 'Checkbox', Input: 'Input', Modal: 'Modal', Select: 'Select', NativeSelect: 'NativeSelect', message };
     if (name === '@/components/ui/icons') return new Proxy({}, { get: (_, key) => String(key) });
     if (name === '../../services/api') return api;
     if (name === '../../services/session') return { getSessionState: () => session };
@@ -74,8 +78,9 @@ async function mount({ sources = [], selected = '', overrides = {} } = {}) {
     wizard: () => nodes(tree).find(node => node.type === 'Modal' && node.props.className.includes('ontology-connectors__wizard')),
     click(name) { const button = this.button(name); assert.ok(button, 'Missing button: ' + name); assert.ok(!button.props.disabled, 'Disabled button: ' + name); const result = button.props.onClick(); render(); return result; },
     fill(name, value) { const field = this.field(name); assert.ok(field, 'Missing input: ' + name); field.props.onChange({ target: { value } }); render(); },
+    select(name, value) { const field = nodes(tree).find(node => node.type === 'NativeSelect' && node.props['aria-label'] === name); assert.ok(field); field.props.onChange({ target: { value } }); render(); },
     async settle() { for (let i = 0; i < 4; i++) { await new Promise(resolve => setImmediate(resolve)); render(); } },
-    choose(engine = 'mysql') { this.click('New source'); const card = nodes(tree).find(node => node.type === 'button' && node.props['aria-label'] === types.find(type => type.engine === engine).name); card.props.onClick(); render(); this.click('Continue'); },
+    choose(engine = 'mysql', category) { this.click('New source'); if (category) this.select('Filter connector category', category); const card = nodes(tree).find(node => node.type === 'button' && node.props['aria-label'] === types.find(type => type.engine === engine).name); card.props.onClick(); render(); this.click('Continue'); },
     valid() { for (const [name, value] of Object.entries({ 'Connection name': 'Synthetic source', Host: 'db.synthetic.test', Database: 'analytics', Username: 'reader', Password: 'synthetic-password' })) this.fill(name, value); },
     noInlineErrors() { assert.equal(nodes(tree).filter(node => node.props?.role === 'alert').length, 0); },
     unmount() { mounted = false; effects.forEach(effect => effect?.cleanup?.()); },
@@ -161,4 +166,56 @@ test('registry loading errors retain blocked controls and toast retry, without a
   failing = false; retry(); await ui.settle();
   assert.equal(ui.calls('fetchDataSources').length, 2); assert.equal(ui.button('New source').props.disabled, false);
   assert.equal(ui.errorHooks.find(([, title]) => title === 'Unable to load data sources')[0], ''); ui.unmount();
+});
+
+test('S3 bucket, signing region and provider survive saving and editing while the secret stays write-only', async () => {
+  const ui = await mount(); ui.choose('s3', 'object_storage');
+  assert.equal(ui.field('Port').props.value, '443'); assert.equal(ui.field('Database'), undefined);
+  ui.fill('Connection name', 'Reports bucket'); ui.fill('Host', 's3.us-east-1.amazonaws.com');
+  ui.select('Hosting provider', 'aws'); ui.fill('Access key ID', 'synthetic-reader'); ui.fill('Secret access key', 'synthetic-secret');
+  ui.click('Test connection'); assert.equal(ui.calls('testDataSource').length, 0);
+  ui.fill('Bucket', 'reports'); ui.fill('Signing region', 'us-east-1');
+  assert.equal(ui.nodes().find(node => node.props['aria-label'] === 'Bucket addressing').props.value, 'path');
+  ui.select('Bucket addressing', 'virtual');
+  ui.click('Save source'); await ui.settle();
+  const { config, credentials } = ui.calls('createDataSource')[0].args[0];
+  assert.deepEqual(config, { host: 's3.us-east-1.amazonaws.com', port: 443, username: 'synthetic-reader', auth: 'access_key', database: '', tls: true, bucket: 'reports', region: 'us-east-1', provider: 'aws', addressingStyle: 'virtual' });
+  assert.deepEqual(credentials, { secretAccessKey: 'synthetic-secret' });
+  const summary = ui.nodes().filter(n => n.type === 'dd').map(n => text(n.props.children));
+  for (const expected of ['Amazon Web Services', 'reports', 'us-east-1', 'Virtual-hosted style']) assert.ok(summary.includes(expected));
+  ui.click('Edit connection'); assert.equal(ui.field('Secret access key').props.value, '');
+  assert.equal(ui.nodes().find(node => node.props['aria-label'] === 'Bucket addressing').props.value, 'virtual');
+  assert.equal(ui.field('Bucket').props.value, 'reports'); assert.equal(ui.field('Signing region').props.value, 'us-east-1');
+  ui.fill('Connection name', 'Renamed bucket'); ui.click('Test connection'); await ui.settle();
+  assert.deepEqual(ui.calls('testDataSource')[0].args[0].credentials, {});
+  ui.fill('Bucket', 'different-bucket'); ui.click('Test connection'); assert.equal(ui.calls('testDataSource').length, 1);
+  ui.unmount();
+});
+
+test('Redis validates the database index and ClickHouse starts with its HTTP TLS port and default database', async () => {
+  for (const engine of ['redis', 'clickhouse']) {
+    const ui = await mount(); ui.choose(engine);
+    ui.select('Hosting provider', 'aliyun'); ui.fill('Connection name', 'Hosted source'); ui.fill('Host', 'cloud.synthetic.test'); ui.fill('Password', 'synthetic-password');
+    if (engine === 'redis') {
+      assert.equal(ui.field('Database index').props.value, '0'); assert.equal(ui.field('Username').props.value, 'default');
+      for (const invalid of ['-1', '01', '1.5']) {
+        ui.fill('Database index', invalid); ui.click('Test connection'); assert.equal(ui.calls('testDataSource').length, 0);
+      }
+      ui.fill('Database index', '2');
+    } else { assert.equal(ui.field('Database').props.value, 'default'); ui.fill('Username', 'reader'); }
+    ui.click('Test connection'); await ui.settle();
+    const { config } = ui.calls('testDataSource')[0].args[0];
+    assert.equal(config.port, engine === 'redis' ? 6379 : 8443); assert.equal(config.provider, 'aliyun'); assert.equal(config.tls, true); ui.unmount();
+  }
+});
+
+test('editing an existing database shows self-hosted and changing providers requires fresh credentials', async () => {
+  const saved = source(); const ui = await mount({ sources: [saved], selected: saved.id });
+  ui.click('Edit connection');
+  const provider = ui.nodes().find(node => node.props['aria-label'] === 'Hosting provider');
+  assert.equal(provider.props.value, 'self_hosted');
+  ui.select('Hosting provider', 'azure'); ui.click('Save source'); assert.equal(ui.calls('updateDataSource').length, 0);
+  ui.select('Hosting provider', 'self_hosted'); ui.fill('Connection name', 'Renamed'); ui.click('Save source'); await ui.settle();
+  const payload = ui.calls('updateDataSource')[0].args[1];
+  assert.equal(payload.config.provider, undefined); assert.deepEqual(payload.credentials, {}); ui.unmount();
 });

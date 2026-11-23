@@ -218,8 +218,11 @@
 .ontology-connectors__mark.is-milvus { color: #50bbce; }
 .ontology-connectors__mark.is-mysql { color: #e4a84c; }
 .ontology-connectors__mark.is-dameng { color: #e85d5d; }
+.ontology-connectors__mark.is-redis { color: #e85d5d; }
+.ontology-connectors__mark.is-clickhouse { color: #e4a84c; }
+.ontology-connectors__mark.is-s3 { color: #81b351; }
 .ontology-connectors__wordmark { flex: none; white-space: nowrap; font-size: 7.5px; font-weight: 600; line-height: 1; }
-.ontology-connectors__mark.is-dameng .ontology-connectors__wordmark { font-size: 12px; }
+.ontology-connectors__mark:is(.is-dameng, .is-clickhouse, .is-s3) .ontology-connectors__wordmark { font-size: 12px; }
 .ontology-connectors__oracle { width: 19px; height: 11px; border: 2px solid #ed685b; border-radius: 12px; }
 .ontology-connectors__scope {
   display: flex; gap: 7px; align-items: flex-start; margin: 14px 0 0; padding-top: 12px;

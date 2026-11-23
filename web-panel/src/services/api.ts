@@ -835,19 +835,21 @@ export const fetchLayerScript = (layer: string, table: string): Promise<EtlScrip
   client.get(`/etl/${layer}/${table}/script`).then((r) => unwrap<EtlScript>(r.data));
 
 export interface EtlConnection { id: string; name: string; database: string; schemas: string[]; }
-export type DataConnectorEngine = 'postgresql' | 'mysql' | 'oracle' | 'dameng' | 'elasticsearch' | 'milvus';
+export type DataConnectorEngine = 'postgresql' | 'mysql' | 'oracle' | 'dameng' | 'elasticsearch' | 'milvus' | 's3' | 'redis' | 'clickhouse';
+export type DataSourceProvider = 'self_hosted' | 'aws' | 'azure' | 'gcp' | 'aliyun' | 'tencent' | 'huawei' | 'oracle_cloud' | 'other';
 export interface DataConnectorType {
-  engine: DataConnectorEngine; name: string; category: 'relational' | 'non_relational' | 'vector';
+  engine: DataConnectorEngine; name: string; category: 'relational' | 'non_relational' | 'vector' | 'object_storage';
   port: number; description: string; driverAvailable: boolean; prerequisite: string; catalogAvailable: boolean;
 }
 export interface DataSourceConfig {
   host: string; port: number; database: string; username: string;
-  auth: 'password' | 'api_key' | 'token'; tls: boolean;
+  auth: 'password' | 'api_key' | 'token' | 'access_key'; tls: boolean;
+  provider?: DataSourceProvider; bucket?: string; region?: string; addressingStyle?: 'path' | 'virtual';
 }
 export interface DataSourcePayload {
   name: string; engine: DataConnectorEngine; config: DataSourceConfig;
   expectedUpdatedAt?: string;
-  credentials: { password?: string; apiKey?: string; token?: string };
+  credentials: { password?: string; apiKey?: string; token?: string; secretAccessKey?: string };
 }
 export type DataSourceCapabilityKey = 'connectionTest' | 'catalog' | 'snapshot' | 'committedBatch' | 'reviewedRange';
 export type DataSourceCapability = { status: 'available_to_try' | 'unavailable'; reason?: string | null };

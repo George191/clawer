@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { Button, Checkbox, Input, message, Modal, Select, NativeSelect } from '@/components/ui';
 import { ArrowLeftOutlined, DatabaseOutlined, DeleteOutlined, EyeOutlined, FolderOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, TableOutlined } from '@/components/ui/icons';
 import apiClient, { createDataSource, deleteDataSource, fetchCurrentUserContext, fetchDataConnectorTypes, fetchDataSourceCatalog, fetchDataSourceColumns, fetchDataSources, setDataSourcePaused, testDataSource, updateDataSource } from '../../services/api';
-import type { DataConnectorEngine, DataConnectorType, DataSource, DataSourceCatalog, DataSourceColumns, DataSourceConfig, DataSourcePayload, DataSourceRelation, DataSourceTest, BatchSourceIdentity } from '../../services/api';
+import type { DataConnectorEngine, DataConnectorType, DataSource, DataSourceCatalog, DataSourceColumns, DataSourceConfig, DataSourcePayload, DataSourceProvider, DataSourceRelation, DataSourceTest, BatchSourceIdentity } from '../../services/api';
 import { getSessionState } from '../../services/session';
 import ConnectorMark from './ConnectorMark';
 import SourceBatchSyncs from './SourceBatchSyncs';
@@ -22,18 +22,36 @@ import './data-connections.css';
 type Props = { onCancel?: () => void; onChanged?: () => void };
 type Draft = { name: string; engine: DataConnectorEngine; config: Omit<DataSourceConfig, 'port'> & { port: string }; secret: string };
 type Confirmation = { title: string; detail: string; label: string; action: () => Promise<boolean> };
-const categories = [{ key: 'all', label: 'All connectors' }, { key: 'relational', label: 'Relational databases' }, { key: 'non_relational', label: 'Non-relational databases' }, { key: 'vector', label: 'Vector databases' }];
+const categories = [{ key: 'all', label: 'All connectors' }, { key: 'relational', label: 'Relational databases' }, { key: 'non_relational', label: 'Non-relational databases' }, { key: 'vector', label: 'Vector databases' }, { key: 'object_storage', label: 'Object storage' }];
+const providerNames: Record<DataSourceProvider, string> = {
+  self_hosted: 'Self-hosted', aws: 'Amazon Web Services', azure: 'Microsoft Azure', gcp: 'Google Cloud',
+  aliyun: 'Alibaba Cloud', tencent: 'Tencent Cloud', huawei: 'Huawei Cloud', oracle_cloud: 'Oracle Cloud', other: 'Other cloud provider',
+};
+const addressingStyles = { path: 'Path style', virtual: 'Virtual-hosted style' };
+const authFields = {
+  password: { method: 'Username and password', label: 'Password', key: 'password' },
+  api_key: { method: 'API key', label: 'API key', key: 'apiKey' },
+  token: { method: 'Token', label: 'Token', key: 'token' },
+  access_key: { method: 'Access key', label: 'Secret access key', key: 'secretAccessKey' },
+} as const;
 const errorText = (error: unknown) => {
   const response = (error as { response?: { data?: { errors?: unknown; detail?: unknown; message?: unknown } }; message?: string })?.response?.data;
   const detail = response?.errors ?? response?.detail ?? response?.message;
   return typeof detail === 'string' ? detail : detail ? JSON.stringify(detail) : (error as Error)?.message || 'Request failed';
 };
-const initialDraft = (connector: DataConnectorType): Draft => ({ name: '', engine: connector.engine, secret: '', config: { host: '', port: String(connector.port), database: connector.engine === 'milvus' ? 'default' : '', username: '', auth: 'password', tls: connector.engine !== 'dameng' } });
+const initialDraft = ({ engine, port }: DataConnectorType): Draft => ({
+  name: '', engine, secret: '',
+  config: {
+    host: '', port: String(port), database: engine === 'redis' ? '0' : ['milvus', 'clickhouse'].includes(engine) ? 'default' : '',
+    username: engine === 'redis' ? 'default' : '', auth: engine === 's3' ? 'access_key' : 'password', tls: engine !== 'dameng',
+    ...(engine === 's3' ? { bucket: '', region: '' } : {}),
+  },
+});
 
 
 const formatDate = (value?: string | null) => value && !Number.isNaN(Date.parse(value)) ? new Date(value).toLocaleString() : 'Not recorded';
 const isConnectionPaused = (source?: DataSource) => source?.engine === 'postgresql' && Boolean(source.pausedAt);
-const authName = (auth: DataSourceConfig['auth']) => auth === 'api_key' ? 'API key' : auth === 'token' ? 'Token' : 'Username and password';
+const databaseLabel = (engine: DataConnectorEngine) => engine === 'oracle' ? 'Service name' : engine === 'redis' ? 'Database index' : 'Database';
 const endpoint = (config: DataSourceConfig) => `${config.host.includes(':') && !config.host.startsWith('[') ? `[${config.host}]` : config.host}:${config.port}`;
 
 const relationLabel: Record<DataSourceRelation['kind'], string> = {
@@ -228,6 +246,8 @@ export default function DataConnections({ onChanged }: Props = {}) {
   const viewedType = connectors.find((item) => item.engine === viewedSource?.engine);
   const sameDestination = !!draft && !!selected && Object.entries(draft.config).every(([key, value]) => {
     const saved = selected.config[key as keyof DataSourceConfig];
+    if (key === 'provider') return (value ?? 'self_hosted') === (saved ?? 'self_hosted');
+    if (key === 'addressingStyle') return (value ?? 'path') === (saved ?? 'path');
     return typeof value === 'string' ? value.trim() === String(saved) : value === saved;
   });
   const canReuseSecret = !!selected?.credentialsConfigured && sameDestination;
@@ -306,13 +326,17 @@ export default function DataConnections({ onChanged }: Props = {}) {
     const name = draft.name.trim(), config = draft.config;
     if (!name || !config.host.trim() || !/^\d+$/.test(config.port) || Number(config.port) < 1 || Number(config.port) > 65535) { notify('error', 'Enter a connection name, host and port between 1 and 65535.'); return null; }
     if (config.auth === 'password' && !config.username.trim()) { notify('error', 'Enter the database username.'); return null; }
-    if (['postgresql', 'mysql', 'oracle', 'milvus'].includes(draft.engine) && !config.database.trim()) { notify('error', 'Enter the database or service name.'); return null; }
+    if (['postgresql', 'mysql', 'oracle', 'milvus', 'clickhouse'].includes(draft.engine) && !config.database.trim()) { notify('error', 'Enter the database or service name.'); return null; }
+    if (draft.engine === 'redis' && !/^(0|[1-9]\d*)$/.test(config.database.trim())) { notify('error', 'Enter a non-negative Redis database index without leading zeros.'); return null; }
+    if (draft.engine === 's3' && (!config.bucket?.trim() || !config.region?.trim() || !config.username.trim())) { notify('error', 'Enter a bucket, signing region and access key ID.'); return null; }
     if (!draft.secret && !canReuseSecret) {
       notify('error', editingId ? 'Enter credentials again after changing the destination, transport, or authentication.' : 'Enter credentials for this data source.');
       return null;
     }
-    const key = config.auth === 'api_key' ? 'apiKey' : config.auth === 'token' ? 'token' : 'password';
-    return { name, engine: draft.engine, ...(postgresEdit && editingRevision ? { expectedUpdatedAt: editingRevision.updatedAt } : {}), config: { ...config, host: config.host.trim(), port: Number(config.port), username: config.username.trim(), database: config.database.trim() }, credentials: draft.secret ? { [key]: draft.secret } : {} };
+    return { name, engine: draft.engine, ...(postgresEdit && editingRevision ? { expectedUpdatedAt: editingRevision.updatedAt } : {}),
+      config: { ...config, host: config.host.trim(), port: Number(config.port), username: config.username.trim(), database: config.database.trim(),
+        ...(draft.engine === 's3' ? { bucket: config.bucket?.trim(), region: config.region?.trim() } : {}) },
+      credentials: draft.secret ? { [authFields[config.auth].key]: draft.secret } : {} };
   };
   const mutate = async (kind: 'test' | 'save' | 'delete' | 'pause', action: () => Promise<void>, draftEdit = false) => {
     if (!current() || pendingRef.current || blocked) return false;
@@ -442,11 +466,12 @@ export default function DataConnections({ onChanged }: Props = {}) {
     } });
   };
   const filtered = connectors.filter((item) => (category === 'all' || item.category === category) && `${item.name} ${item.description}`.toLowerCase().includes(search.trim().toLowerCase()));
-  const secretLabel = draft?.config.auth === 'api_key' ? 'API key' : draft?.config.auth === 'token' ? 'Token' : 'Password';
+  const secretLabel = draft ? authFields[draft.config.auth].label : '';
+  const usernameLabel = draft?.config.auth === 'access_key' ? 'Access key ID' : 'Username';
 
   const labelFor = (engine: DataConnectorEngine) => connectors.find((type) => type.engine === engine)?.name || engine;
   const filteredSources = sources.filter((source) => (sourceEngine === 'all' || source.engine === sourceEngine)
-    && `${source.name} ${source.config.host} ${source.config.database} ${labelFor(source.engine)}`.toLowerCase().includes(sourceSearch.trim().toLowerCase()));
+    && `${source.name} ${source.config.host} ${source.config.bucket || source.config.database} ${labelFor(source.engine)}`.toLowerCase().includes(sourceSearch.trim().toLowerCase()));
   useExplorerErrorToast(loadError, 'Unable to load data sources', () => { if (!pendingRef.current) setReload(value => value + 1); });
   useExplorerErrorToast(!loading && !loadError && !canManage ? 'Only administrators can manage data sources.' : undefined, 'Access unavailable');
   useExplorerErrorToast(!loading && !loadError && canManage && sourceId && !viewedSource ? 'The linked data source is not available.' : undefined, 'Source unavailable');
@@ -456,7 +481,7 @@ export default function DataConnections({ onChanged }: Props = {}) {
   return <>
     <div className="ontology-connectors ontology-connections-workspace" aria-busy={loading || pending}>
       <header className="ontology-connections-workspace__header">
-        <div><Link to="/ontology" className="ontology-connectors__eyebrow">Object types</Link><h1>Data connections</h1><p>Manage saved sources and verify access to external databases.</p></div>
+        <div><Link to="/ontology" className="ontology-connectors__eyebrow">Object types</Link><h1>Data connections</h1><p>Manage saved sources and verify access to databases and object storage.</p></div>
         {canManage && <Button type="primary" icon={<PlusOutlined />} disabled={blocked} onClick={newSource}>New source</Button>}
       </header>
 
@@ -474,8 +499,13 @@ export default function DataConnections({ onChanged }: Props = {}) {
         </header>
         <dl className="ontology-connections-summary">
           <div><dt>Endpoint</dt><dd><code>{endpoint(viewedSource.config)}</code></dd></div>
-          {viewedSource.config.database && <div><dt>{viewedSource.engine === 'oracle' ? 'Service name' : 'Database'}</dt><dd>{viewedSource.config.database}</dd></div>}
-          <div><dt>Authentication</dt><dd>{authName(viewedSource.config.auth)}</dd></div>
+          <div><dt>Hosting provider</dt><dd>{providerNames[viewedSource.config.provider ?? 'self_hosted']}</dd></div>
+          {viewedSource.engine === 's3' && <>
+            <div><dt>Bucket</dt><dd>{viewedSource.config.bucket}</dd></div><div><dt>Signing region</dt><dd>{viewedSource.config.region}</dd></div>
+            <div><dt>Bucket addressing</dt><dd>{addressingStyles[viewedSource.config.addressingStyle ?? 'path']}</dd></div>
+          </>}
+          {viewedSource.config.database && <div><dt>{databaseLabel(viewedSource.engine)}</dt><dd>{viewedSource.config.database}</dd></div>}
+          <div><dt>Authentication</dt><dd>{authFields[viewedSource.config.auth].method}</dd></div>
           <div><dt>Transport</dt><dd>{viewedSource.engine === 'dameng' ? 'Vendor client default' : viewedSource.config.tls ? 'TLS verification enabled' : 'TLS disabled'}</dd></div>
           <div><dt>Credentials</dt><dd>{viewedSource.credentialsConfigured ? 'Configured' : 'Not configured'}</dd></div>
           <div><dt>Last connectivity test</dt><dd>{formatDate(viewedSource.testedAt)}</dd></div>
@@ -532,7 +562,7 @@ export default function DataConnections({ onChanged }: Props = {}) {
             <li aria-current={wizard === 'configure' ? 'step' : undefined}><span>2</span> Configure &amp; verify</li>
           </ol>}
           {wizard === 'choose' && <section className="ontology-connectors__catalog">
-            <header><h2>Choose a connector</h2><p>Select a supported external database type.</p></header>
+            <header><h2>Choose a connector</h2><p>Select a database or object storage type.</p></header>
             <div className="ontology-connectors__picker-tools">
               <Input aria-label="Search connector types" prefix={<SearchOutlined />} value={search} placeholder="Search connectors" onChange={(event) => setSearch(event.target.value)} allowClear />
               <label>Category <NativeSelect aria-label="Filter connector category" value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}</NativeSelect></label>
@@ -546,22 +576,42 @@ export default function DataConnections({ onChanged }: Props = {}) {
           {wizard === 'configure' && draft && connector && <form className="ontology-connectors__form" onSubmit={(event) => event.preventDefault()} onKeyDown={(event) => { if (event.key === 'Enter' && !event.nativeEvent.isComposing && event.target instanceof HTMLInputElement && !event.target.closest('[role="combobox"]')) event.preventDefault(); }}>
             <header className="ontology-connectors__form-heading"><div><ConnectorMark engine={draft.engine} /><span><span className="ontology-connectors__eyebrow">{connector.name}</span><h2>{editingId ? 'Source settings' : `New ${connector.name} source`}</h2></span></div>{!editingId && <Button size="small" icon={<ArrowLeftOutlined />} disabled={blocked} onClick={chooseAgain}>Change connector</Button>}</header>
             <fieldset disabled={blocked || editConflict}>
-              <section className="ontology-connectors__section"><h3>Source details</h3><label>Connection name<Input aria-label="Connection name" value={draft.name} maxLength={200} autoComplete="off" placeholder="Production database" onChange={(event) => change({ name: event.target.value })} /></label></section>
-              <section className="ontology-connectors__section"><h3>Connection</h3><div className="ontology-connectors__endpoint"><label>Host<Input aria-label="Host" value={draft.config.host} maxLength={253} autoComplete="off" placeholder="database.example.com" onChange={(event) => changeConfig({ host: event.target.value })} /></label><label>Port<Input aria-label="Port" value={draft.config.port} inputMode="numeric" maxLength={5} onChange={(event) => changeConfig({ port: event.target.value })} /></label></div>
-                {!['elasticsearch', 'dameng'].includes(draft.engine) && <label>{draft.engine === 'oracle' ? 'Service name' : 'Database'}<Input aria-label={draft.engine === 'oracle' ? 'Service name' : 'Database'} value={draft.config.database} maxLength={128} autoComplete="off" onChange={(event) => changeConfig({ database: event.target.value })} /></label>}
+              <section className="ontology-connectors__section"><h3>Source details</h3>
+                <div className="ontology-connectors__credentials">
+                  <label>Connection name<Input aria-label="Connection name" value={draft.name} maxLength={200} autoComplete="off" placeholder="Production source" onChange={(event) => change({ name: event.target.value })} /></label>
+                  <label>Hosting provider<NativeSelect aria-label="Hosting provider" value={draft.config.provider ?? 'self_hosted'} disabled={blocked || editConflict}
+                    onChange={event => changeConfig({ provider: event.target.value === 'self_hosted' ? undefined : event.target.value as DataSourceProvider })}>
+                    {Object.entries(providerNames).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                  </NativeSelect></label>
+                </div>
+              </section>
+              <section className="ontology-connectors__section"><h3>Connection</h3><div className="ontology-connectors__endpoint"><label>Host<Input aria-label="Host" value={draft.config.host} maxLength={253} autoComplete="off" placeholder={draft.engine === 's3' ? 's3.region.example.com' : 'database.example.com'} onChange={(event) => changeConfig({ host: event.target.value })} /></label><label>Port<Input aria-label="Port" value={draft.config.port} inputMode="numeric" maxLength={5} onChange={(event) => changeConfig({ port: event.target.value })} /></label></div>
+                {draft.engine === 's3' && <>
+                  <p className="ontology-connectors__help">Use the regional hostname of your S3-compatible service. Enter the bucket name separately.</p>
+                  <div className="ontology-connectors__credentials">
+                    <label>Bucket<Input aria-label="Bucket" value={draft.config.bucket} maxLength={63} autoComplete="off" onChange={event => changeConfig({ bucket: event.target.value })} /></label>
+                    <label>Signing region<Input aria-label="Signing region" value={draft.config.region} maxLength={128} autoComplete="off" placeholder="us-east-1" onChange={event => changeConfig({ region: event.target.value })} /></label>
+                  </div>
+                  <label>Bucket addressing<NativeSelect aria-label="Bucket addressing" value={draft.config.addressingStyle ?? 'path'} disabled={blocked || editConflict}
+                    onChange={event => changeConfig({ addressingStyle: event.target.value === 'virtual' ? 'virtual' : undefined })}>
+                    {Object.entries(addressingStyles).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                  </NativeSelect></label>
+                </>}
+                {draft.engine === 'clickhouse' && <p className="ontology-connectors__help">Enter your ClickHouse HTTP or HTTPS endpoint.</p>}
+                {!['elasticsearch', 'dameng', 's3'].includes(draft.engine) && <label>{databaseLabel(draft.engine)}<Input aria-label={databaseLabel(draft.engine)} value={draft.config.database} maxLength={128} inputMode={draft.engine === 'redis' ? 'numeric' : undefined} autoComplete="off" onChange={(event) => changeConfig({ database: event.target.value })} /></label>}
                 {draft.engine !== 'dameng' ? <><Checkbox aria-label="Use TLS" checked={draft.config.tls} onChange={(event) => changeConfig({ tls: event.target.checked })}>Use TLS</Checkbox><p className="ontology-connectors__help">{draft.config.tls ? 'Verify the server certificate and hostname using the API image’s trusted certificate authorities.' : 'TLS is disabled. Connection traffic is not protected by this application.'}</p></> : <p className="ontology-connectors__help">Uses the DPI client’s default transport. Vendor certificate configuration is not managed by this form.</p>}
               </section>
               <section className="ontology-connectors__section"><h3>Authentication</h3>
                 {['elasticsearch', 'milvus'].includes(draft.engine) && <label>Authentication method<Select aria-label="Authentication method" value={draft.config.auth} disabled={blocked} onChange={(auth: DataSourceConfig['auth']) => { change({ config: { ...draft.config, auth, username: '' }, secret: '' }); }} options={[{ value: 'password', label: 'Username and password' }, draft.engine === 'elasticsearch' ? { value: 'api_key', label: 'API key' } : { value: 'token', label: 'Token' }]} /></label>}
                 <div className="ontology-connectors__credentials">
-                  {draft.config.auth === 'password' && <label>Username<Input aria-label="Username" value={draft.config.username} maxLength={200} autoComplete="off" onChange={(event) => changeConfig({ username: event.target.value })} /></label>}
+                  {(draft.config.auth === 'password' || draft.config.auth === 'access_key') && <label>{usernameLabel}<Input aria-label={usernameLabel} value={draft.config.username} maxLength={200} autoComplete="off" onChange={(event) => changeConfig({ username: event.target.value })} /></label>}
                   <label>{secretLabel}<Input aria-label={secretLabel} type="password" value={draft.secret} maxLength={8192} autoComplete="new-password" placeholder={canReuseSecret ? `Leave blank to keep the stored ${secretLabel.toLowerCase()}` : `Enter ${secretLabel.toLowerCase()}`} onChange={(event) => change({ secret: event.target.value })} /></label>
                 </div>
                 {postgresEdit && <p className="ontology-connectors__help">Replacing the saved password does not revoke the old password on the PostgreSQL server. Saving changes requires a new review of existing sync plans and schedules before they can use the new revision.</p>}
                 <p className="ontology-connectors__help">Credentials are encrypted at rest and are never returned by the API. Use a dedicated account with read access.</p>
               </section>
             </fieldset>
-            <p className="ontology-connectors__help">Saving verifies the connection again. It does not import tables or change the external database.</p>
+            <p className="ontology-connectors__help">Saving runs a read-only connection test.</p>
             <div className="ontology-connectors__actions ontology-connectors__wizard-footer"><span /><Button disabled={pending} onClick={() => navigate(closeWizard)}>Cancel</Button><Button onClick={() => editConflict ? reloadSavedSource() : void test()} loading={operation === 'test'} disabled={blocked || !editConflict && !connector.driverAvailable}>{editConflict ? 'Reload saved source' : 'Test connection'}</Button><Button type="primary" onClick={() => void save()} loading={operation === 'save'} disabled={blocked || editConflict || !connector.driverAvailable || !!editingId && !dirty}>Save source</Button></div>
           </form>}
       </div>

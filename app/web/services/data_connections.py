@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import base64
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing
 from datetime import datetime, timezone
 from functools import lru_cache
 import importlib
@@ -44,6 +44,9 @@ CONNECTORS = (
     {"engine": "dameng", "name": "Dameng", "category": "relational", "port": 5236, "driver": "dmPython", "description": "Requires the vendor dmPython driver and matching DPI libraries."},
     {"engine": "elasticsearch", "name": "Elasticsearch", "category": "non_relational", "port": 9200, "driver": "httpx", "description": "Connect a search cluster using its REST API."},
     {"engine": "milvus", "name": "Milvus", "category": "vector", "port": 19530, "driver": "pymilvus", "description": "Connect a Milvus vector database."},
+    {"engine": "s3", "name": "S3-compatible storage", "category": "object_storage", "port": 443, "driver": "boto3", "description": "Connect a bucket through an S3-compatible service endpoint."},
+    {"engine": "redis", "name": "Redis", "category": "non_relational", "port": 6379, "driver": "redis.asyncio", "description": "Connect a Redis database using its RESP endpoint."},
+    {"engine": "clickhouse", "name": "ClickHouse", "category": "relational", "port": 8443, "driver": "httpx", "description": "Connect a ClickHouse database through its HTTP interface."},
 )
 _PUBLIC_COLUMNS = "id, name, engine, config, created_by, created_at, updated_at, tested_at"
 _TIMEOUT = 5
@@ -207,6 +210,11 @@ def _public(row, *, pause_available: bool = False, driver_available: bool | None
     return result
 
 
+def _http_endpoint(config):
+    host = f"[{config.host}]" if ":" in config.host else config.host
+    return f"{'https' if config.tls else 'http'}://{host}:{config.port}"
+
+
 async def _probe(payload: DataConnectionPayload, credentials: dict[str, str]) -> None:
     driver = _driver(payload.engine)
     config = payload.config
@@ -223,22 +231,33 @@ async def _probe(payload: DataConnectionPayload, credentials: dict[str, str]) ->
             except BaseException:
                 connection.terminate()
                 raise
-    elif payload.engine == "elasticsearch":
-        host = f"[{config.host}]" if ":" in config.host else config.host
-        url = f"{'https' if config.tls else 'http'}://{host}:{config.port}/"
+    elif payload.engine in {"elasticsearch", "clickhouse"}:
+        url = _http_endpoint(config) + "/"
         auth = httpx.BasicAuth(config.username, credentials["password"]) if config.auth == "password" else None
         headers = {"Authorization": f"ApiKey {credentials['apiKey']}"} if config.auth == "api_key" else {}
+        params = ({"database": config.database, "query": "SELECT currentDatabase() FORMAT TabSeparatedRaw"}
+                  if payload.engine == "clickhouse" else None)
         async with httpx.AsyncClient(timeout=_TIMEOUT, trust_env=False, follow_redirects=False) as client:
-            async with client.stream("GET", url, auth=auth, headers=headers) as response:
+            async with client.stream("GET", url, auth=auth, headers=headers, params=params) as response:
                 response.raise_for_status()
                 body = bytearray()
                 async for chunk in response.aiter_bytes():
                     body.extend(chunk)
                     if len(body) > 65_536:
-                        raise ValueError("Invalid Elasticsearch information response")
+                        raise ValueError("Connection probe response exceeds the size limit")
+                if payload.engine == "clickhouse":
+                    if body != (config.database + "\n").encode():
+                        raise ValueError("ClickHouse did not confirm the selected database")
+                    return
                 data = json.loads(body)
                 if not isinstance(data, dict) or not data.get("cluster_name") or not isinstance(data.get("version"), dict) or not data["version"].get("number"):
                     raise ValueError("Endpoint is not an Elasticsearch cluster")
+    elif payload.engine == "redis":
+        async with driver.Redis(host=config.host, port=config.port, db=int(config.database),
+                                username=config.username, password=credentials["password"], ssl=config.tls,
+                                ssl_check_hostname=True, socket_connect_timeout=_TIMEOUT, socket_timeout=_TIMEOUT) as client:
+            if await client.ping() is not True:
+                raise ValueError("Redis did not acknowledge PING")
     elif payload.engine == "oracle":
         params = driver.ConnectParams(host=config.host, port=config.port, service_name=config.database,
                                       protocol="tcps" if config.tls else "tcp", tcp_connect_timeout=_TIMEOUT,
@@ -252,7 +271,19 @@ async def _probe(payload: DataConnectionPayload, credentials: dict[str, str]) ->
         # These drivers expose synchronous clients. Their own network/query deadlines
         # remain active even if the awaiting request is cancelled.
         def synchronous_probe():
-            if payload.engine == "mysql":
+            if payload.engine == "s3":
+                from botocore.config import Config
+
+                options = Config(signature_version="s3v4", s3={"addressing_style": config.addressingStyle or "path"}, proxies={},
+                                 connect_timeout=_TIMEOUT, read_timeout=_TIMEOUT, retries={"total_max_attempts": 1})
+                with closing(driver.Session().client(
+                    "s3", endpoint_url=_http_endpoint(config), region_name=config.region, config=options,
+                    aws_access_key_id=config.username, aws_secret_access_key=credentials["secretAccessKey"],
+                )) as client:
+                    result = client.list_objects_v2(Bucket=config.bucket, MaxKeys=0)
+                    if result.get("Name") != config.bucket:
+                        raise ValueError("S3 did not confirm the selected bucket")
+            elif payload.engine == "mysql":
                 connection = driver.connect(host=config.host, port=config.port, database=config.database,
                                             user=config.username, password=credentials["password"],
                                             connect_timeout=_TIMEOUT, read_timeout=_TIMEOUT, write_timeout=_TIMEOUT,
@@ -282,9 +313,8 @@ async def _probe(payload: DataConnectionPayload, credentials: dict[str, str]) ->
                 finally:
                     connection.close()
             else:
-                host = f"[{config.host}]" if ":" in config.host else config.host
                 options = {"token": credentials["token"]} if config.auth == "token" else {"user": config.username, "password": credentials["password"]}
-                client = driver.MilvusClient(uri=f"{'https' if config.tls else 'http'}://{host}:{config.port}",
+                client = driver.MilvusClient(uri=_http_endpoint(config),
                                              db_name=config.database, timeout=_TIMEOUT, **options)
                 try:
                     client.list_collections(timeout=_TIMEOUT)

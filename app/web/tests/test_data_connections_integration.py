@@ -91,6 +91,40 @@ class DataConnectionsIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(before, await self.pg.fetch_all("SELECT oid,nspname FROM pg_namespace ORDER BY oid"))
         self.assertEqual(await self.service.list(), [])
 
+    async def test_engine_upgrade_preserves_sources_and_accepts_new_bucket_credentials(self):
+        original = await self.service.save(payload(), "admin")
+        original_row = await self.stored(original["id"])
+        migration = import_module("app.web.alembic.versions.18f214f739c5_ontology_source_engines")
+
+        def apply(session, action):
+            with Operations.context(MigrationContext.configure(session.connection())):
+                action()
+
+        async with self.pg.session() as session:
+            await session.run_sync(apply, migration.downgrade)
+        self.assertEqual((await migrate(self.pg))["changes"], ["expand_source_engines"])
+        self.assertTrue((await migrate(self.pg, apply=True))["ready"])
+        async with self.pg.session() as session:
+            await session.run_sync(apply, migration.upgrade)
+        self.assertEqual((await migrate(self.pg, apply=True))["changes"], [])
+        self.assertEqual(await self.stored(original["id"]), original_row)
+
+        bucket_config = dict(host="objects.example.org", port=443, database="", auth="access_key",
+                             bucket="analytics", region="us-east-1", username="reader", provider="aws", tls=True)
+        new_source = payload(name="Archive", engine="s3", config=bucket_config,
+                             credentials={"secretAccessKey": "isolated-storage-secret"})
+        saved = await self.service.save(new_source, "admin")
+        self.assertEqual(saved["config"], bucket_config)
+        self.assertNotIn("isolated-storage-secret", json.dumps(saved))
+        self.assertTrue((await self.service.test_saved(saved["id"]))["ok"])
+        self.assertEqual(self.probe.await_args.args[0].config, new_source.config)
+        self.assertEqual(self.probe.await_args.args[1], {"secretAccessKey": "isolated-storage-secret"})
+        with self.assertRaises(DBAPIError):
+            async with self.pg.session() as session:
+                await session.run_sync(apply, migration.downgrade)
+        self.assertTrue((await migrate(self.pg))["ready"])
+        self.assertEqual((await self.stored(saved["id"]))["engine"], "s3")
+
     async def test_crud_encrypts_and_keeps_original_ciphertext_when_password_is_blank(self):
         saved = await self.service.save(payload(), "admin")
         self.assertTrue(await self.service.exists(UUID(saved["id"])))

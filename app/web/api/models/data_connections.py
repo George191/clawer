@@ -9,7 +9,8 @@ from typing import Literal
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 
-Engine = Literal["postgresql", "mysql", "oracle", "dameng", "elasticsearch", "milvus"]
+Engine = Literal["postgresql", "mysql", "oracle", "dameng", "elasticsearch", "milvus", "s3", "redis", "clickhouse"]
+Provider = Literal["self_hosted", "aws", "azure", "gcp", "aliyun", "tencent", "huawei", "oracle_cloud", "other"]
 
 
 class SourceConfig(BaseModel):
@@ -18,8 +19,13 @@ class SourceConfig(BaseModel):
     port: int = Field(ge=1, le=65535, strict=True)
     database: str = Field(default="", max_length=128)
     username: str = Field(default="", max_length=200)
-    auth: Literal["password", "api_key", "token"] = "password"
+    auth: Literal["password", "api_key", "token", "access_key"] = "password"
     tls: bool = Field(default=True, strict=True)
+    # Keep self-hosted settings identical to existing saved credential bindings.
+    provider: Provider = Field(default="self_hosted", exclude_if=lambda value: value == "self_hosted")
+    bucket: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$", exclude_if=lambda value: value is None)
+    region: str | None = Field(default=None, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9-]*$", exclude_if=lambda value: value is None)
+    addressingStyle: Literal["path", "virtual"] | None = Field(default=None, exclude_if=lambda value: value in {None, "path"})
 
     @field_validator("host")
     @classmethod
@@ -44,6 +50,7 @@ class SourceCredentials(BaseModel):
     password: SecretStr | None = None
     apiKey: SecretStr | None = None
     token: SecretStr | None = None
+    secretAccessKey: SecretStr | None = None
 
 
 class DataConnectionPayload(BaseModel):
@@ -56,20 +63,29 @@ class DataConnectionPayload(BaseModel):
     @model_validator(mode="after")
     def engine_configuration(self):
         config = self.config
-        allowed = {"password", "api_key"} if self.engine == "elasticsearch" else {"password", "token"} if self.engine == "milvus" else {"password"}
+        allowed = {
+            "elasticsearch": {"password", "api_key"}, "milvus": {"password", "token"}, "s3": {"access_key"},
+        }.get(self.engine, {"password"})
         if config.auth not in allowed:
             raise ValueError("This authentication method is not supported by the selected connector")
         if config.auth == "password" and not config.username:
             raise ValueError("Username is required for password authentication")
-        if config.auth != "password" and config.username:
+        if config.auth in {"api_key", "token"} and config.username:
             raise ValueError("Username must be empty for token or API key authentication")
-        if self.engine in {"postgresql", "mysql", "oracle", "milvus"} and not config.database:
+        if self.engine in {"postgresql", "mysql", "oracle", "milvus", "clickhouse"} and not config.database:
             raise ValueError("Database or service name is required")
-        if self.engine in {"elasticsearch", "dameng"} and config.database:
+        if self.engine in {"elasticsearch", "dameng", "s3"} and config.database:
             raise ValueError("This connector does not accept a database scope")
+        if self.engine == "s3":
+            if not (config.bucket and config.region and config.username):
+                raise ValueError("Bucket, region and access key ID are required")
+        elif config.bucket is not None or config.region is not None or config.addressingStyle is not None:
+            raise ValueError("Only S3 sources accept a bucket, signing region and addressing style")
+        if self.engine == "redis" and not re.fullmatch(r"0|[1-9][0-9]*", config.database):
+            raise ValueError("Redis database must be a non-negative integer without leading zeros")
         if self.engine == "dameng" and config.tls:
             raise ValueError("Dameng certificate transport requires a vendor-configured DPI client; this connector currently supports its default transport only")
-        expected = {"password": "password", "api_key": "apiKey", "token": "token"}[config.auth]
+        expected = {"password": "password", "api_key": "apiKey", "token": "token", "access_key": "secretAccessKey"}[config.auth]
         for key, value in self.credentials:
             if value is not None and key != expected:
                 raise ValueError("Credentials must match the selected authentication method")

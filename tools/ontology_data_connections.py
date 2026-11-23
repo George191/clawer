@@ -12,7 +12,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import text
 
-from app.etl.schema.data_connections import DATA_CONNECTIONS_DDL, DATA_CONNECTIONS_PAUSE_DDL
+from app.etl.schema.data_connections import (
+    DATA_CONNECTIONS_DDL, DATA_CONNECTIONS_ENGINE_DDL, DATA_CONNECTIONS_PAUSE_DDL, ENGINE_CHECK_INSTALLED,
+)
 from app.storage.postgres_client import get_pg_client
 
 
@@ -22,13 +24,13 @@ EXPECTED = {"id": "uuid", "name": "text", "engine": "text", "config": "jsonb",
 PAUSED_CONTRACT = {**EXPECTED, "paused_at": "timestamp with time zone"}
 
 
-async def definition(session):
+async def required_changes(session):
     rows = (await session.execute(text("""SELECT a.attname AS name,
         format_type(a.atttypid,a.atttypmod) AS type, a.attnotnull AS not_null
         FROM pg_attribute a WHERE a.attrelid=to_regclass('public.ontology_data_connections')
         AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum"""))).mappings().all()
     if not rows:
-        return False
+        return ["create_external_source_registry"]
     actual = {row["name"]: row["type"] for row in rows}
     legacy = actual == EXPECTED and all(row["not_null"] for row in rows)
     upgraded = actual == PAUSED_CONTRACT and all(
@@ -42,7 +44,10 @@ async def definition(session):
         AND k.conkey=ARRAY[a.attnum]::smallint[])"""))).scalar_one()
     if not primary:
         raise RuntimeError("External source registry is missing its UUID primary key")
-    return "legacy" if legacy else "current"
+    changes = ["enable_postgresql_source_pause"] if legacy else []
+    if not await session.scalar(text(ENGINE_CHECK_INSTALLED)):
+        changes.append("expand_source_engines")
+    return changes
 
 
 async def migrate(pg, *, apply=False):
@@ -53,13 +58,14 @@ async def migrate(pg, *, apply=False):
             await session.execute(text("SELECT pg_advisory_xact_lock(hashtext('public.ontology_data_connections_migration'))"))
         else:
             await session.execute(text("SET TRANSACTION READ ONLY"))
-        before = await definition(session)
-        changes = [] if before == "current" else [
-            "enable_postgresql_source_pause" if before == "legacy" else "create_external_source_registry",
-        ]
-        if changes and apply:
-            await session.execute(text(DATA_CONNECTIONS_PAUSE_DDL if before == "legacy" else DATA_CONNECTIONS_DDL))
-        ready = (await definition(session) if apply else before) == "current"
+        changes = await required_changes(session)
+        if apply:
+            statements = {"create_external_source_registry": DATA_CONNECTIONS_DDL,
+                          "enable_postgresql_source_pause": DATA_CONNECTIONS_PAUSE_DDL,
+                          "expand_source_engines": DATA_CONNECTIONS_ENGINE_DDL}
+            for change in changes:
+                await session.execute(text(statements[change]))
+        ready = not (await required_changes(session) if apply else changes)
         return {"applied": apply, "ready": ready, "changes": changes,
                 "business_rows_read": 0, "business_rows_written": 0}
 
