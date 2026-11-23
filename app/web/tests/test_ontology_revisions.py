@@ -76,7 +76,6 @@ class RevisionIntegration(unittest.IsolatedAsyncioTestCase):
                 )])
                 with Operations.context(MigrationContext.configure(sync)):
                     migration.upgrade()
-                    import_module("app.web.alembic.versions.8e24a3d0b571_allow_manager_revision_self_review").upgrade()
 
             await connection.run_sync(setup)
 
