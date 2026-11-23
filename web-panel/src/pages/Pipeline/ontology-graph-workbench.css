@@ -25,3 +25,13 @@
 .ontology-graph-definition dt { flex:none; color:var(--ontology-muted); }
 .ontology-graph-definition dd { min-width:0; margin:0; overflow-wrap:anywhere; }
 @media(max-width:420px) { .ontology-graph-detail-actions { flex-direction:column; align-items:flex-end; } }
+
+.ontology-graph-workbench .ontology-graph-set-results { display:flex; flex-direction:column; gap:12px; margin-top:12px; font-size:12px; }
+.ontology-graph-set-summary { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 12px; }
+.ontology-graph-set-summary p { margin:0; color:var(--ontology-muted); font-size:11px; font-variant-numeric:tabular-nums; }
+.ontology-graph-set-summary .ui-btn { flex:none; max-width:100%; }
+.ontology-graph-set-records { display:flex; flex-direction:column; min-width:0; max-height:240px; overflow:auto; margin:0; padding:0; list-style:none; border:1px solid var(--ontology-border); border-radius:3px; }
+.ontology-graph-set-records:empty { display:none; }
+.ontology-graph-set-records li { padding:8px 10px; border-bottom:1px solid var(--ontology-border); overflow-wrap:anywhere; line-height:1.5; }
+.ontology-graph-set-records li:last-child { border-bottom:0; }
+.ontology-graph-set-records li:nth-child(even) { background:var(--ontology-hover); }

@@ -474,7 +474,8 @@ function ObjectSets({ object, returnTo, onOpenExplorer }: ObjectSetProps) {
       </div>
       {active && !result && <p role="status">Loading object set…</p>}
       {data && (
-        <div aria-label="Object set results">
+        <div className="ontology-graph-set-results" aria-label="Object set results">
+          <header className="ontology-graph-set-summary">
           <p>
             Matching records: {data.count}
             {data.sum != null ? ' · Sum: ' + data.sum : ''}
@@ -486,7 +487,8 @@ function ObjectSets({ object, returnTo, onOpenExplorer }: ObjectSetProps) {
             onOpenExplorer();
             navigate(href);
           }}>Open in Object Explorer</Button>}
-          <ul>
+          </header>
+          <ul className="ontology-graph-set-records">
             {data.items.map((row) => (
               <li key={row.id}>{display(row.title ?? row.id)}</li>
             ))}

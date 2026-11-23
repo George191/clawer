@@ -268,8 +268,8 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
           renderMutation: row => objectTools.renderMutation(original(row)),
           extraViews: [{ key: 'history', label: 'History', available: row => !!original(row)?.hasHistory, render: row => objectTools.renderHistory(original(row)) }],
           renderPublishedRelationships: objectType.definition.source.mode === 'none' ? row => <PublishedExplorerRelationships definitionId={entry.definitionId} recordId={String(row.identity.$recordId)} sourceTitle={row.title} refreshToken={objectTools.relationsVersion} /> : undefined,
-          footer: <>{result && query.groupBy && <section className="published-explorer-aggregation" aria-label="Object set aggregation"><h3>{names[query.groupBy] || query.groupBy}</h3>
-            <p>{result.count.toLocaleString()} matching objects{query.sumField ? ` · Sum: ${display(result.sum)}` : ''}</p>
+          footer: <>{result && query.groupBy && <section className="published-explorer-aggregation" aria-label="Object set aggregation"><header className="published-explorer-aggregation-heading"><h3>{names[query.groupBy] || query.groupBy}</h3>
+            <p>{result.count.toLocaleString()} matching objects{query.sumField ? ` · Sum: ${display(result.sum)}` : ''}</p></header>
             <table><thead><tr><th>Value</th><th>Count</th>{query.sumField && <th>Sum</th>}</tr></thead><tbody>{result.groups.map((group, index) => <tr key={index}><td>{display(group.value)}</td><td>{group.count}</td>{query.sumField && <td>{display(group.sum)}</td>}</tr>)}</tbody></table>
           </section>}<ExplorerResultsFooter offset={offset} rowCount={rows.length} pageSize={pageSize} loading={busy} locked={objectTools.mutationOpen} canPageFurther={!!result?.hasMore && offset + pageSize <= 100000}
             onPageSize={size => { if (canChange()) { setPageSize(size); setOffset(0); } }} onPrevious={() => { if (canChange()) setOffset(value => Math.max(0, value - pageSize)); }} onNext={() => { if (canChange()) setOffset(value => value + pageSize); }} /></>,
