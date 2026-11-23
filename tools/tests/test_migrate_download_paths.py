@@ -6,6 +6,18 @@ from unittest.mock import Mock, patch
 from tools import migrate_download_paths as migration
 
 
+def test_missing_asset_metadata_is_not_a_resource_path():
+    marker={'url':'','description':'Source file returned HTTP 404; the file no longer exists.','status_code':404}
+    assets={'attachments':{'0':{**marker,'url':dict(marker)}}}
+    assert all(not value for _,value in migration.strings(assets))
+
+
+def test_asset_url_is_not_lost_when_missing_metadata_is_stale():
+    key='news/source/'+'a'*32+'/file.pdf'
+    assets={'attachments':{'0':{'url':key,'description':'missing','status_code':404}}}
+    assert list(migration.strings(assets))==[('attachments.0.url',key)]
+
+
 def test_verification_requires_the_correct_resource_column():
     key = 'tweet/twitter/record/thumbnail.jpg'
     assert not migration.resource_references_match(

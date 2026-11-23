@@ -58,7 +58,9 @@ def storage(read_timeout=120):
 
 def strings(value, path=()):
     if isinstance(value, dict):
-        if value.get('status_code') == 404 and value.get('url') == '':return
+        if value.get('status_code') == 404:
+            yield from strings(value.get('url'), (*path, 'url'))
+            return
         for key, item in value.items():
             yield from strings(item, (*path, str(key)))
     elif isinstance(value, list):
@@ -426,8 +428,9 @@ def worker(path, shard, mode, db_gate):
                             db.commit()
                     except Exception as error:
                         db.rollback()
-                        db.execute('UPDATE objects SET error=? WHERE prefix=? AND record_id=? AND phase NOT IN ("verified","canonical","unreferenced")',(str(error)[:1000],prefix,record_id));db.commit()
-                        print(json.dumps({'shard':shard,'prefix':prefix,'record_id':record_id,'error':str(error)[:500]}),flush=True)
+                        detail=f'{type(error).__name__}: {error}'
+                        db.execute('UPDATE objects SET error=? WHERE prefix=? AND record_id=? AND phase NOT IN ("verified","canonical","unreferenced")',(detail[:1000],prefix,record_id));db.commit()
+                        print(json.dumps({'shard':shard,'prefix':prefix,'record_id':record_id,'error':detail[:500]}),flush=True)
                 last=groups[-1]
                 print(json.dumps({'shard':shard,'mode':mode,'checkpoint':last}),flush=True)
         finally:
