@@ -49,11 +49,11 @@
 .api-code-example { overflow:hidden; border:1px solid var(--ontology-border); border-radius:3px; background:var(--ontology-bg); }
 .api-code-example header { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:5px 8px; border-bottom:1px solid var(--ontology-border); }
 .api-code-example header > div { display:flex; gap:4px; }.api-code-example header > div button { padding:3px 8px; border:0; border-radius:2px; background:transparent; color:var(--ontology-muted); font:inherit; font-size:11px; cursor:pointer; }.api-code-example header > div button[aria-pressed=true] { background:var(--ontology-hover); color:var(--ontology-text); }
-.api-code-example pre,.api-published-definition pre { max-height:300px; margin:0; overflow:auto; padding:12px; color:var(--ontology-text); font-size:11px; line-height:1.8; tab-size:2; }
+.api-code-example pre { max-height:300px; margin:0; overflow:auto; padding:12px; color:var(--ontology-text); font-size:11px; line-height:1.8; tab-size:2; }
 .published-api-workbench .api-parameter-table { width:100%; border-collapse:collapse; font-size:11px; text-align:left; }.published-api-workbench .api-parameter-table :is(th,td) { padding:8px 9px 8px 0; border-bottom:1px solid var(--ontology-border); vertical-align:top; font-weight:400; }.published-api-workbench .api-parameter-table thead th { color:var(--ontology-muted); }
 .api-scope-facts { display:grid; gap:8px; margin:0 0 14px; }.api-scope-facts > div { display:grid; grid-template-columns:80px minmax(0,1fr); gap:8px; }.api-scope-facts dt { color:var(--ontology-muted); font-size:11px; }.api-scope-facts dd { margin:0; overflow-wrap:anywhere; }
 .published-api-workbench .api-range-predicate { padding:10px; border:1px solid var(--ontology-border); border-radius:3px; background:var(--ontology-bg); color:var(--ontology-text); font-family:var(--font-mono,monospace); font-size:11px; white-space:pre-wrap; }
-.api-published-definition { margin-top:20px; border-top:1px solid var(--ontology-border); padding-top:10px; color:var(--ontology-muted); font-size:11px; }.api-published-definition summary { cursor:pointer; }.api-published-definition pre { margin-top:8px; background:var(--ontology-bg); }
+.api-published-definition { margin-top:20px; border-top:1px solid var(--ontology-border); padding-top:10px; color:var(--ontology-muted); font-size:11px; }.api-published-definition summary { cursor:pointer; }
 .published-api-workbench .api-range-note { margin-top:15px; color:var(--ontology-muted); font-size:11px; }
 .api-document-footer { display:flex; flex:none; align-items:center; justify-content:space-between; gap:8px; padding:10px 16px; border-top:1px solid var(--ontology-border); color:var(--ontology-muted); font-size:11px; }
 .api-document-footer button { display:inline-flex; flex:none; align-items:center; gap:5px; padding:4px 7px; border:1px solid var(--ontology-control-border); border-radius:3px; background:transparent; color:var(--ontology-text); font:inherit; cursor:pointer; }.api-document-footer button:hover { color:var(--ui-error); border-color:var(--ui-error); }.api-document-footer button:disabled { opacity:.4; cursor:default; }
@@ -70,3 +70,10 @@
 
 .explorer-resource-dialog .flow-ontology-tool-content:has(> .published-api-workbench) { display:flex; flex-direction:column; overflow:hidden; }
 .explorer-resource-dialog .flow-ontology-tool-content > .published-api-workbench { flex:1; height:auto; min-height:0; }
+
+.published-api-workbench pre.api-code-snippet {
+  max-height:300px; margin:0; padding:12px; overflow:auto; white-space:pre;
+  border-radius:3px; background:#282a36; color:#f6f6f4;
+  font-family:var(--font-mono,monospace); font-size:11px; line-height:1.8; tab-size:2;
+}
+.api-code-snippet > code { color:inherit; font:inherit; }

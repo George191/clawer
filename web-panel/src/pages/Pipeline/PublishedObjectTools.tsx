@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Checkbox, Input, Modal, message, type MenuItem } from '@/components/ui';
-import { ApiOutlined, BranchesOutlined, CodeOutlined, FilterOutlined, DeleteOutlined, DownloadOutlined, HistoryOutlined, PlusOutlined, SyncOutlined } from '@/components/ui/icons';
+import { ApiOutlined, BranchesOutlined, CodeOutlined, FilterOutlined, DeleteOutlined, HistoryOutlined, PlusOutlined, SyncOutlined } from '@/components/ui/icons';
 import { getSessionState } from '../../services/session';
 import {
   ontologyError as describe, submitOntologyAction,
@@ -10,7 +10,6 @@ import type { ExplorerToolAction } from './ExplorerWorkbenchHeader';
 import OntologyGraph, { DynamicObjectSets } from './OntologyGraph';
 import OntologyFunctions from './OntologyFunctions';
 import OntologyRevisions from './OntologyRevisions';
-import OntologySdkDownload from './OntologySdkDownload';
 import OntologyApiPublications from './OntologyApiPublications';
 import type { PublishedExplorerQuery } from '../../services/publishedExplorerHandoff';
 import OntologyTransactions from './OntologyTransactions';
@@ -29,7 +28,6 @@ const title = (value: unknown) => value == null ? 'Untitled object' : typeof val
 
 export function usePublishedObjectTools({ objectType, publicationQuery, actions, record, returnTo, onChanged, busy = false }: Props) {
   const [tool, setTool] = useState('');
-  const [sdkOpen, setSdkOpen] = useState(false);
   const [operation, setOperation] = useState<Operation>();
   const [inputs, setInputs] = useState<ActionInputs>({});
   const [pending, setPending] = useState(false);
@@ -103,8 +101,6 @@ export function usePublishedObjectTools({ objectType, publicationQuery, actions,
     ] : []),
     { key: 'revisions', label: 'Model revisions', icon: <HistoryOutlined />, group: 'inspect', run: () => setTool('Model revisions') },
     { key: 'published-api', label: 'Published APIs', icon: <ApiOutlined />, group: 'inspect', run: () => setTool('Published APIs') },
-    { key: 'sdk', label: 'SDK', icon: <DownloadOutlined />, group: 'inspect', run: () => setTool('SDK') },
-    { key: 'user-sdk', label: 'User-token SDK (TypeScript)', icon: <DownloadOutlined />, group: 'inspect', run: () => setSdkOpen(true) },
   ] : [];
   const create = native ? actions.find(action => action.kind === 'create') : undefined;
   const creating = operation?.kind === 'create';
@@ -143,7 +139,7 @@ export function usePublishedObjectTools({ objectType, publicationQuery, actions,
       <Modal open={!!tool} centered width={1040} className={`flow-surface-modal flow-published-dialog explorer-resource-dialog explorer-tool-workbench-dialog${tool === 'Relationships' ? ' ontology-relationships-dialog' : ''}`} title={tool} onCancel={() => setTool('')} footer={<Button onClick={() => setTool('')}>Close</Button>}>
         <div className="explorer-resource-context"><strong>{objectType.definition.name}</strong><code>{objectType.definition.id}</code></div>
         <div className="flow-ontology-tool-content" role="region" aria-label={tool || undefined} tabIndex={0}>
-          {(tool === 'Published APIs' || tool === 'SDK') && <OntologyApiPublications key={tool + objectType.id} objectType={objectType} query={publicationQuery} initialTab={tool === 'SDK' ? 'sdk' : 'overview'} />}
+          {tool === 'Published APIs' && <OntologyApiPublications key={objectType.id} objectType={objectType} query={publicationQuery} />}
           {tool === 'Relationships' && <OntologyGraph key={objectType.id} objectType={objectType} onRelationsChanged={() => setRelationsVersion(value => value + 1)} />}
           {tool === 'Dynamic object sets' && <DynamicObjectSets key={objectType.id} object={objectType} returnTo={returnTo} onOpenExplorer={() => setTool('')} />}
           {tool === 'Transactions' && <OntologyTransactions key={objectType.id} objectType={objectType} onCommitted={onChanged} />}
@@ -152,7 +148,6 @@ export function usePublishedObjectTools({ objectType, publicationQuery, actions,
           {tool === 'Deleted objects' && <DeletedObjects key={objectType.id} objectType={objectType} onChanged={onChanged} />}
         </div>
       </Modal>
-      <OntologySdkDownload key={objectType.id} definitionId={objectType.id} open={sdkOpen} onClose={() => setSdkOpen(false)} />
       {creating && operation && <Modal open centered width={560} className="flow-surface-modal flow-published-dialog published-create-object-dialog" title="Create object" okText="Create object" onOk={applyAction} onCancel={() => { if (!locked.current) setOperation(undefined); }} confirmLoading={pending} maskClosable={!pending} closable={!pending} keyboard={!pending}>
           <div className="published-create-object-context"><strong>{objectType.definition.name}</strong><p>Enter the property values for the new object.</p></div>
           {error && <p role="alert" className="flow-create-error">{error}</p>}

@@ -1,9 +1,9 @@
 export const sdkLanguages = { typescript: 'TypeScript', python: 'Python', java: 'Java', c: 'C' } as const;
 export type SdkLanguage = keyof typeof sdkLanguages;
 export const sdkRequirements: Record<SdkLanguage, string> = {
-  typescript: 'Browser fetch or Node.js 18+. The client returns decoded JSON and rejects integers outside the safe JavaScript number range.',
-  python: 'Python 3.10+ standard library. The client returns the decoded JSON response.',
-  java: 'Java 11+ standard library. Compile PublicationClient.java; the client returns JSON text.',
+  typescript: 'Add publication-client.ts to your TypeScript project and compile it with your app. Use browser fetch or Node.js 18+. The client rejects integers outside the safe JavaScript range.',
+  python: 'Place publication_client.py beside your script and import it. It uses the Python 3.10+ standard library.',
+  java: 'Compile PublicationClient.java with javac alongside your application. It uses the Java 11+ standard library and returns JSON text.',
   c: 'C99 and libcurl. Compile as a library object: cc -std=c99 -c publication_client.c $(pkg-config --cflags libcurl). Link your program with libcurl. The caller frees the returned JSON buffer. Initialize libcurl once before using the client.',
 };
 export const sdkFilename = (language: SdkLanguage) => ({ typescript: 'publication-client.ts', python: 'publication_client.py', java: 'PublicationClient.java', c: 'publication_client.c' })[language];

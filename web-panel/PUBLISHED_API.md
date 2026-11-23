@@ -1,6 +1,6 @@
 # Published 与 Storage-backed 的外部 API
 
-两类对象都通过 `Published APIs` 查看接口地址、`X-API-Key` 鉴权、有效期、数据范围和分页示例，并在 `SDK` 页下载 TypeScript、Python、Java 或 C 客户端。SDK 只包含接口地址，密钥由调用方在运行时传入。
+两类对象都通过 `Published APIs` 查看接口地址、`X-API-Key` 鉴权、有效期、数据范围和分页示例，并在 `SDK` 页下载 TypeScript、Python、Java 或 C 客户端。下载的是为选定接口生成的源码文件，密钥由调用方在运行时传入。
 
 ## Published 发布步骤
 
@@ -25,13 +25,15 @@ Published 的读取地址为 `GET /api/ontology/v1/publications/{publication_id}
 
 ## 客户端与部署
 
-- TypeScript：浏览器 fetch 或 Node.js 18+；不安全的大整数会明确报错，避免悄悄损失精度。
-- Python：Python 3.10+ 标准库；保留 JSON 大整数。
-- Java：Java 11+ 标准库，返回 JSON 文本，由应用选择 JSON 库解析。
-- C：C99 + libcurl，返回 JSON 文本；调用方初始化 libcurl 并释放返回的缓冲区。
+调用方在面板选择语言并点击下载，再按 `Usage example` 集成到自己的项目。当前下载项是单个源码文件，没有发布到包管理器。
+
+- TypeScript：将 `publication-client.ts` 随 TypeScript 项目编译，运行时使用浏览器 fetch 或 Node.js 18+。不安全的大整数会明确报错。
+- Python：将 `publication_client.py` 放在调用脚本旁并导入。只依赖 Python 3.10+ 标准库，保留 JSON 大整数。
+- Java：用 `javac` 将 `PublicationClient.java` 与应用一同编译。需要 Java 11+，返回 JSON 文本。
+- C：将 `publication_client.c` 用 C99 编译并链接 libcurl。调用方初始化 libcurl 并释放返回的 JSON 缓冲区。
 
 SDK 对 HTTP 错误直接报错，不跟随重定向；TLS 证书校验保持开启。私有 CA 部署需配置调用环境的信任库，例如 Python 的 `SSL_CERT_FILE`、Node.js 的 `NODE_EXTRA_CA_CERTS` 或 Java 的 `javax.net.ssl.trustStore`。
 
-原有 `User-token SDK (TypeScript)` 保留，用于按登录用户权限访问对象、动作和函数。外部发布密钥仅能读取授权范围。
+通过 `Published APIs → SDK → Get user-token SDK` 下载用户令牌版 TypeScript 客户端，用于按调用账户权限访问对象、动作和函数。对象类型尚未创建 API 发布时，面板空状态直接提供此下载入口。外部发布密钥仅能读取授权范围。
 
 部署时需将 Alembic 升级到 `8e35b4e1c682`（新增 `ontology_publications` 表），并重建包含后端和前端改动的镜像。

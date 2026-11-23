@@ -1026,8 +1026,7 @@ const DataLayersWorkspace: React.FC = () => {
         dirty={apisDirty} error={apisError} onReload={() => { if (!apisDirty && !mutationLoading) setApiRevision(value => value + 1); }}
         onAdd={() => void addApi()} onUpdate={updateApi} onSave={() => void saveApis()} onDelete={removeApi}
         onDiscard={() => { if (!mutationLoading && !apisLoading) setApiRevision(value => value + 1); }}
-        dataTypes={[...new Set(dataRows.map(row => String(row.data_type || '')).filter(Boolean))]}
-        dataSources={[...new Set(dataRows.map(row => String(row.source || row.data_source || '')).filter(Boolean))]} /> : (
+        storageAsset={{schema: selectedSchema, table: table.name}} /> : (
         <section className={`flow-filter-api-section${isSchemas ? ' is-docked' : ''}`}>
             <div className="flow-filter-api-title"><strong>{isSchemas ? 'Published APIs' : 'Open APIs'}</strong><span className="flow-api-status flow-api-status--enabled">Token required · Validity window enforced</span>{!isSchemas && <button type="button" className="flow-filter-api-close" aria-label="Close APIs" onClick={() => setApiListOpen(false)}><CloseOutlined /></button>}</div>
             {apiCount === 0 ? <div className="flow-filter-api-empty"><span>{apisLoading ? 'Loading published APIs…' : 'No published APIs'}</span><button type="button" className={isSchemas ? 'explorer-resource-add' : 'flow-filter-api-add'} disabled={mutationLoading || apisLoading} onClick={addApi}><PlusOutlined /> Add API</button></div> : <>

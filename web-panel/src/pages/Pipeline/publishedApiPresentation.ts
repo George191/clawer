@@ -22,6 +22,10 @@ export function publicationPredicate(api: EtlPublishedApi): string {
   return render(explorerFilterTerms(api.filters || []));
 }
 
+export function publicationOrdering(sorts: EtlPublishedApi['sorts']): string {
+  return sorts?.map(({field, direction}) => `${field} ${direction.toUpperCase()}`).join(', ') || 'Not specified';
+}
+
 export function publicationDateInput(value: string): string {
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16) : '';

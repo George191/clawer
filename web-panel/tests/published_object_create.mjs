@@ -69,6 +69,15 @@ test('creation remains restricted to permitted native object types and respects 
   assert.equal(busy.dialog(), undefined);
 });
 
+test('Published APIs is the single entry for publication and SDK tools', () => {
+  const ui = mountTools();
+  const entries = ui.result().tools.filter(tool => /SDK|Published APIs/.test(tool.label));
+  assert.deepEqual(entries.map(tool => tool.label), ['Published APIs']);
+  entries[0].run();
+  const view = ui.render();
+  assert.ok(nodes(view.dialogs).some(node => node.type === './OntologyApiPublications' && node.props.objectType === objectType));
+});
+
 test('the create form preserves required validation, parses JSON and sends explicit nulls', async () => {
   const ui = mountTools();
   ui.result().createButton.props.onClick(); ui.render();

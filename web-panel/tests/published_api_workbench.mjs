@@ -23,12 +23,15 @@ const children = tree => [tree?.props?.children].flat(Infinity).filter(value => 
 const nodes = tree => tree && typeof tree === 'object' ? [tree, ...children(tree).flatMap(nodes)] : [];
 const copy = tree => typeof tree === 'string' || typeof tree === 'number' ? String(tree) : children(tree).map(copy).join('');
 
-function mount(props) {
+function mount(props, file = 'PublishedApiWorkbench.tsx', dependencies = {}) {
   const state = [], effects = [], refs = [];
   const notifications = [];
   let tree, cursor, dirty;
-  const jsx = (type, props) => ({ type, props });
-  const module = compile('PublishedApiWorkbench.tsx', name => {
+  const jsx = (type, props) => type === 'ApiCodeSnippet'
+    ? {type: 'pre', props: {'data-language': props.language, children: props.source}}
+    : {type, props};
+  const module = compile(file, name => {
+    if (name in dependencies) return dependencies[name];
     if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
     if (name === 'react') return {
       useState(initial) { const index = cursor++; if (!(index in state)) state[index] = initial; return [state[index], update => { const next = typeof update === 'function' ? update(state[index]) : update; if (!Object.is(next, state[index])) { state[index] = next; dirty = true; } }]; },
@@ -40,6 +43,8 @@ function mount(props) {
     if (name === '../../services/endpoints') return { apiUrl: path => 'https://api.example.test' + path };
     if (name === '../../services/publicationSdk') return sdk;
     if (name === './publishedApiPresentation') return helpers;
+    if (name === './PublishedApiRangeFilters') return { default: 'PublishedApiRangeFilters' };
+    if (name === './ApiCodeSnippet') return { default: 'ApiCodeSnippet' };
     if (name === './useExplorerErrorToast') return { default: (error, title, retry) => { if (error) notifications.push({ error, title, retry }); } };
     if (name.endsWith('.css')) return {};
     throw new Error('Unexpected component dependency ' + name);
@@ -47,7 +52,7 @@ function mount(props) {
   const pending = [];
   const render = () => { do { dirty = false; cursor = 0; pending.length = 0; tree = module.default(props); pending.splice(0).forEach(effect => effect()); } while (dirty); return tree; };
   render();
-  return { view: () => tree, notifications, click(label) { const button = nodes(tree).find(node => node.type === 'button' && (node.props['aria-label'] === label || copy(node).trim() === label)); assert.ok(button, 'Missing button: ' + label); button.props.onClick(); return render(); } };
+  return { view: () => tree, notifications, render, click(label) { const button = nodes(tree).find(node => node.type === 'button' && (node.props['aria-label'] === label || copy(node).trim() === label)); assert.ok(button, 'Missing button: ' + label); button.props.onClick(); return render(); } };
 }
 
 test('publication status distinguishes key state and the validity window', () => {
@@ -96,6 +101,70 @@ test('nonempty API catalog selects each publication and exposes its own range an
   assert.equal(nodes(ui.view()).filter(node => node.type === 'Input' || node.type === 'Select').length, 0, 'readonly source view has no mutation fields');
 });
 
+test('Data range describes the saved ordering and displays real JSON for both publication types', () => {
+  const sorts = [{field: 'company_id', direction: 'asc'}];
+  for (const scopeKind of ['storage', 'ontology']) {
+    const api = publication('company', scopeKind === 'storage' ? {sorts} : {query: {filters: [], sorts}});
+    const ui = mount({items: [api], scopeKind});
+    ui.click('Data range');
+    assert.ok(copy(ui.view()).includes('company_id ASC'));
+    const snippet = nodes(ui.view()).find(node => node.type === 'pre');
+    assert.deepEqual(JSON.parse(copy(snippet)).sorts, sorts);
+    assert.ok(copy(snippet).includes('\n    {\n      "field": "company_id"'));
+  }
+});
+
+test('storage range edits update the selected publication and use the physical asset', () => {
+  let update;
+  const storageAsset = {schema: 'ts_test', table: 'companies'};
+  const ui = mount({items: [publication('company')], storageAsset, onUpdate: (...args) => {update = args;}});
+  ui.click('Data range');
+  const filters = nodes(ui.view()).find(node => node.type === 'PublishedApiRangeFilters');
+  assert.equal(filters.props.schema, storageAsset.schema);
+  assert.equal(filters.props.table, storageAsset.table);
+  filters.props.onUpdate({filterSource: ['demo']});
+  assert.deepEqual(update, ['company', {filterSource: ['demo']}]);
+});
+
+test('range suggestions load without the data preview tab and follow the physical source column', async () => {
+  const item = publication('company', {partition: 'companies_2026', filterSource: ['saved-source']});
+  const columns = ['id', 'data_type', 'data_source', 'source'];
+  const ui = mount({schema: 'ts_test', table: 'companies', item}, 'PublishedApiRangeFilters.tsx', {
+    '../../services/api': {
+      fetchEtlTableColumns: async () => columns.map(name => ({name})),
+      queryExplorerPreview: async (schema, table, query) => {
+        assert.equal(schema, 'ts_test');
+        assert.equal(table, 'companies');
+        assert.equal(query.partition, item.partition);
+        assert.ok(query.limit <= 100);
+        return {rows: [
+          {data_type: 'company', data_source: 'demo', source: 'legacy'},
+          {data_type: 'company', data_source: 'manual'},
+        ]};
+      },
+    },
+  });
+  await new Promise(setImmediate);
+  const [types, sources] = nodes(ui.render()).filter(node => node.type === 'Select');
+  assert.deepEqual(types.props.options.map(option => option.value), ['company']);
+  assert.deepEqual(sources.props.options.map(option => option.value), ['demo', 'manual']);
+  assert.deepEqual(sources.props.value, ['saved-source']);
+});
+
+test('a table without range columns has no empty dropdowns or row sample', async () => {
+  let sampled = false;
+  const ui = mount({schema: 'ts_test', table: 'companies', item: publication('company')}, 'PublishedApiRangeFilters.tsx', {
+    '../../services/api': {
+      fetchEtlTableColumns: async () => [{name: 'company_id'}],
+      queryExplorerPreview: async () => {sampled = true; return {rows: []};},
+    },
+  });
+  await new Promise(setImmediate);
+  assert.equal(nodes(ui.render()).some(node => node.type === 'Select'), false);
+  assert.equal(sampled, false);
+  assert.ok(copy(ui.view()).includes('This table has no data type or source column.'));
+});
+
 test('save, discard and delete remain controlled by the original management callbacks and dirty state', () => {
   let saves = 0, discards = 0, deleted;
   const api = publication('managed');
@@ -138,11 +207,45 @@ test('both publication types offer four SDK languages and the proper page bounds
     const language = nodes(ui.view()).find(node => node.props?.['aria-label'] === 'SDK language');
     assert.deepEqual(nodes(language).filter(node => node.type === 'option').map(node => node.props.value), ['typescript', 'python', 'java', 'c']);
     assert.ok(copy(ui.view()).includes('Download TypeScript SDK'));
+    for (const value of ['typescript', 'python', 'java', 'c']) {
+      language.props.onChange({target: {value}});
+      const snippets = nodes(ui.render()).filter(node => node.type === 'pre');
+      assert.deepEqual(snippets.map(node => node.props['data-language']), [value, value]);
+      assert.equal(copy(snippets[0]), sdk.sdkUsage[value]);
+      assert.equal(copy(snippets[1]), sdk.generatePublicationSdk('https://api.example.test' + api.url, value,
+        scopeKind === 'ontology' ? 100 : 500, scopeKind === 'ontology' ? 100000 : 1000000));
+    }
     ui.click('Request');
     const text = copy(ui.view());
     assert.ok(text.includes(scopeKind === 'ontology' ? '1 to 100.' : '1 to 500.'));
     if (scopeKind === 'ontology') assert.ok(!text.includes('URL-encoded filter rows'));
   }
+});
+
+test('Dracula Soft highlights every SDK language and JSON while preserving the example text', async () => {
+  const { highlightApiCode } = await import('../src/pages/Pipeline/highlightApiCode.ts');
+  for (const [language, source] of Object.entries({...sdk.sdkUsage, json: '{\n  "company_id": 42\n}'})) {
+    const {bg, lines} = await highlightApiCode(source, language);
+    assert.equal(bg.toLowerCase(), '#282a36');
+    assert.equal(lines.map(line => line.map(token => token.content).join('')).join('\n'), source);
+    assert.ok(new Set(lines.flat().map(token => token.color)).size > 1, language);
+  }
+});
+
+test('the user-token SDK stays accessible with or without a published read API', () => {
+  let downloads = 0;
+  const onOpenUserTokenSdk = () => downloads++;
+  for (const items of [[], [publication('sdk')]]) {
+    const ui = mount({ items, scopeKind: 'ontology', onOpenUserTokenSdk });
+    if (items.length) {
+      assert.doesNotMatch(copy(ui.view()), /Get user-token SDK/);
+      ui.click('SDK');
+    }
+    const button = nodes(ui.view()).find(node => node.type === 'Button' && copy(node) === 'Get user-token SDK');
+    assert.ok(button);
+    button.props.onClick();
+  }
+  assert.equal(downloads, 2);
 });
 
 test('semantic model changes are visible and key management uses the explicit callback', () => {

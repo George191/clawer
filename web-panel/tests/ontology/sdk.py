@@ -50,8 +50,14 @@ def main():
 
         def download_sdk(page, directory, account):
             page.get_by_role("button", name="Open in", exact=True).click()
-            page.get_by_role("menuitem", name="TypeScript SDK", exact=True).click()
-            dialog = page.get_by_role("dialog", name="TypeScript SDK")
+            page.get_by_role("menuitem", name="Published APIs", exact=True).click()
+            workbench = page.get_by_role("dialog", name="Published APIs", exact=True)
+            expect(workbench.locator(".published-api-workbench")).to_have_attribute("aria-busy", "false")
+            sdk_tab = workbench.get_by_role("button", name="SDK", exact=True)
+            if sdk_tab.count():
+                sdk_tab.click()
+            workbench.get_by_role("button", name="Get user-token SDK", exact=True).click()
+            dialog = page.get_by_role("dialog", name="User-token SDK (TypeScript)", exact=True)
             with page.expect_download() as pending:
                 dialog.get_by_role("link", name="Download TypeScript SDK", exact=True).click()
             artifact = pending.value
@@ -65,6 +71,7 @@ def main():
                             "--lib", "ES2020,DOM", "--outDir", str(home), str(path)],
                            check=True, capture_output=True, timeout=25)
             dialog.get_by_role("button", name="Close", exact=True).click()
+            workbench.get_by_role("button", name="Close", exact=True).click()
             return code, path.with_suffix(".js").read_text(encoding="utf-8")
 
         run_sdk = """async ({code, action, record, denied, key}) => {

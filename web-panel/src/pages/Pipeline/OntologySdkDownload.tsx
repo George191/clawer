@@ -65,7 +65,7 @@ export default function OntologySdkDownload({ definitionId, open, onClose }: { d
   };
   useExplorerErrorToast(open ? error : undefined, 'Unable to prepare the TypeScript SDK', retry);
   return <>
-    <Modal open={open} centered className="flow-surface-modal flow-published-dialog explorer-resource-dialog ontology-sdk-dialog" title="TypeScript SDK" onCancel={close} footer={<>
+    <Modal open={open} centered className="flow-surface-modal flow-published-dialog explorer-resource-dialog ontology-sdk-dialog" title="User-token SDK (TypeScript)" onCancel={close} footer={<>
       <Button onClick={close}>Close</Button>
       {download ? <a className="ui-btn ui-btn-primary" href={download.url} download={download.filename}
         onClick={event => {
@@ -76,7 +76,7 @@ export default function OntologySdkDownload({ definitionId, open, onClose }: { d
           }
         }}>Download TypeScript SDK</a> : <Button type="primary" disabled>Download TypeScript SDK</Button>}
     </>}>
-      <p className="ontology-sdk-description">Use the generated client with your API URL and an access token for the account making requests.</p>
+      <p className="ontology-sdk-description">Add the downloaded TypeScript file to your project and build it with your app. Pass your API URL and the calling account’s access token to <code>createOntologyClient</code>.</p>
       <p className="ontology-sdk-metadata" role="status">{error ? 'The TypeScript SDK is unavailable.'
         : download ? <>Published revision {download.revision} · <code>{download.filename}</code></>
           : 'Preparing the TypeScript SDK…'}</p>
