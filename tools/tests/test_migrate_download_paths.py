@@ -169,11 +169,13 @@ def test_indexed_inventory_resumes_without_relisting_sources(tmp_path):
     collection.index_information.return_value = {'downloads': {'key': [
         ('_meta.download_status',1),('_meta.updated_at',1),('_id',1)]}}
     doc = {'_id':'row1','_meta':{'record_id':record_id,'updated_at':datetime(2026,1,1,tzinfo=timezone.utc)},'assets':{'image':old,'missing':{'status_code':404,'url':'','message':'Source file returned HTTP 404; the file no longer exists.'}}}
+    cursors = []
     def find(query, projection):
         assert '$lte' not in query.get('_meta.updated_at', {})  # Active source updates remain discoverable.
         if '$or' in query:assert query['_meta.updated_at']=={'$gte':doc['_meta']['updated_at']}
         cursor = MagicMock()
-        cursor.sort.return_value.hint.return_value.limit.return_value.max_time_ms.return_value = (
+        cursors.append(cursor)
+        cursor.sort.return_value.hint.return_value.batch_size.return_value.limit.return_value.max_time_ms.return_value = (
             [doc] if query['_meta.download_status']=='downloaded' and '$or' not in query else [])
         return cursor
     collection.find.side_effect = find
@@ -185,6 +187,17 @@ def test_indexed_inventory_resumes_without_relisting_sources(tmp_path):
         calls = collection.find.call_count
         migration.inventory(path)
     assert collection.find.call_count == calls
+    # Exercise the actual driver's command builder with the inventory's captured
+    # arguments: no server cursor may survive this page, even for a short batch.
+    from pymongo.message import _gen_find_command
+    from pymongo.read_concern import ReadConcern
+    page = cursors[0].sort.return_value.hint.return_value
+    size = page.batch_size.call_args.args[0]
+    limit = page.batch_size.return_value.limit.call_args.args[0]
+    command = _gen_find_command('news_source', {}, {'assets':1}, 0, limit, size, 0, ReadConcern())
+    assert command['singleBatch'] is True
+    assert command['limit'] == command['batchSize'] == migration.SOURCE_PAGE_SIZE
+    assert 0 < migration.SOURCE_PAGE_SIZE <= migration.BATCH
     db = migration.journal(path)
     assert db.execute('SELECT old,phase FROM objects').fetchall() == [(old,'planned')]
     assert db.execute('SELECT done FROM progress WHERE prefix="__inventory__"').fetchone()[0] == 1

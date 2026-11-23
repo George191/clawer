@@ -30,6 +30,7 @@ from app.storage.postgres_client import get_pg_client
 
 WORKERS = 6
 BATCH = 3000
+SOURCE_PAGE_SIZE = 100
 HEX = re.compile(r'^[0-9a-f]{64}$')
 RECORD = re.compile(r'^[0-9a-f]{32}$')
 
@@ -121,7 +122,9 @@ def inventory(path):
                 if last:
                     query['_meta.updated_at']={'$gte':last[0]}
                     query['$or'] = [{'_meta.updated_at':{'$gt':last[0]}},{'_meta.updated_at':last[0],'_id':{'$gt':last[1]}}]
-                docs = list(collection.find(query, {'assets':1,'_meta.record_id':1,'_meta.updated_at':1}).sort([('_meta.updated_at',1),('_id',1)]).hint(compound).limit(min(BATCH,500)).max_time_ms(120000))
+                # Negative limit closes the server cursor after one response. A short
+                # batch resumes from its last key instead of issuing getMore.
+                docs = list(collection.find(query, {'assets':1,'_meta.record_id':1,'_meta.updated_at':1}).sort([('_meta.updated_at',1),('_id',1)]).hint(compound).batch_size(SOURCE_PAGE_SIZE).limit(-SOURCE_PAGE_SIZE).max_time_ms(120000))
                 if not docs:
                     db.execute('INSERT OR REPLACE INTO progress VALUES(?,?,1)',(name,dumps(last) if last else ''));db.commit();break
                 pending = []
