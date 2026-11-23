@@ -16,7 +16,7 @@ from app.web.api.models import TeamUserJoin
 from app.web.api.models.ontology_publications import OntologyPublication, PublicationInput
 from app.web.api.models.ontology_registry import OntologyDefinitionRow
 from app.web.api.models.user import RoleTypes
-from app.web.api.routes.ontology_publications import router
+from app.web.api.routes.ontology_publications import public_router, router
 from app.web.services import ontology_publications as service
 from app.web.tests.test_ontology_graph import graph_db
 
@@ -154,13 +154,16 @@ async def test_public_route_needs_header_and_rejects_range_override(published_ap
     publication, key = await issue(g)
     app = FastAPI()
     app.include_router(router)
+    app.include_router(public_router)
     async def session():
         async with g.sessions() as value:
             yield value
     app.dependency_overrides[get_db] = session
     app.dependency_overrides[get_current_user] = lambda: g.owner
-    path = f"/api/ontology/v1/publications/{publication['id']}/data"
+    path = f"/ontology/v1/publications/{publication['id']}/data"
+    assert publication["url"] == path
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://fixture") as client:
+        assert (await client.get("/api" + path)).status_code == 404
         assert (await client.get(path)).status_code == 401
         for params in ({"fields": "secret"}, {"filters": "[]"}, {"search": "West"}, {"limit": 101}, {"offset": 100001}):
             assert (await client.get(path, params=params, headers={"X-API-Key": key})).status_code == 422

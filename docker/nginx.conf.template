@@ -76,6 +76,10 @@ http {
             return 404;
         }
 
+        location ^~ /ontology/v1/publications/ {
+            return 404;
+        }
+
         location / {
             proxy_pass http://spider_web;
             # React history routes resolve to the SPA entry point.
@@ -106,6 +110,10 @@ http {
         }
 
         location /v1/ {
+            proxy_pass http://spider_web;
+        }
+
+        location ~ ^/ontology/v1/publications/[^/]+/data$ {
             proxy_pass http://spider_web;
         }
 

@@ -69,10 +69,6 @@
 .explorer-tool-workbench-dialog :is(.flow-ontology-tool-content,.explorer-resource-dialog-body) {
   scrollbar-gutter:stable;
 }
-.ontology-sdk-dialog .ui-modal-body > p { margin:0; }
-.ontology-sdk-description { color:var(--ontology-muted); }
-.ontology-sdk-metadata { height:32px; overflow:auto; color:var(--ontology-muted); font-size:11px; line-height:16px; scrollbar-gutter:stable; }
-.ontology-sdk-metadata code { color:var(--ontology-text); font:400 11px/16px var(--font-mono,ui-monospace,Consolas,monospace); overflow-wrap:anywhere; }
 .explorer-resource-dialog .ui-modal-body:has(> :is(.explorer-resource-dialog-body,.flow-ontology-tool-content)) { overflow:hidden; }
 .explorer-resource-dialog .explorer-resource-context { display:flex; flex:none; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:4px 12px; margin:0; padding:0 0 10px; border-bottom:1px solid var(--ontology-border); font-size:12px; }
 .explorer-resource-dialog .explorer-resource-context strong { font-weight:500; }

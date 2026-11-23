@@ -11,6 +11,7 @@ from app.web.api.routes.health import health as health_check
 from app.web.api.routes.ontology_action_runtime import router as ontology_action_runtime_router
 from app.web.api.routes.ontology_graph import router as ontology_graph_router
 from app.web.api.routes.ontology_explorer import router as ontology_explorer_router
+from app.web.api.routes.ontology_publications import public_router as public_ontology_publications_router
 from app.web.api.routes.ontology_publications import router as ontology_publications_router
 from app.web.api.routes.ontology_registry import router as ontology_registry_router
 from app.web.api.routes.ontology_revisions import router as ontology_revisions_router
@@ -60,6 +61,7 @@ app.include_router(ontology_action_runtime_router, prefix='/api')
 app.include_router(ontology_graph_router, prefix='/api')
 app.include_router(ontology_explorer_router, prefix='/api')
 app.include_router(ontology_publications_router)
+app.include_router(public_ontology_publications_router)
 app.include_router(ontology_revisions_router)
 app.include_router(ontology_transactions_router)
 # Keep the deployment health-check contract compatible with the existing

@@ -9,7 +9,7 @@
 .api-catalog-search { display:flex; flex:none; align-items:center; gap:6px; margin:10px 10px 8px 0; padding:5px 7px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-bg); color:var(--ontology-muted); }
 .api-catalog-search:focus-within { border-color:var(--ontology-muted); }
 .api-catalog-search input { width:100%; min-width:0; padding:0; border:0; outline:0; background:transparent; color:var(--ontology-text); font:inherit; }
-.api-workbench-catalog nav { flex:1; min-height:0; overflow:auto; padding:0 8px 8px 0; }
+.api-workbench-catalog nav { flex:1; min-height:0; overflow:auto; padding:0 8px 8px 0; overscroll-behavior:none; scrollbar-gutter:stable; }
 .api-workbench-catalog nav > button { display:flex; align-items:flex-start; gap:8px; box-sizing:border-box; width:100%; padding:10px 9px; border:1px solid transparent; border-radius:3px; background:transparent; color:var(--ontology-text); font:inherit; text-align:left; cursor:pointer; }
 .api-workbench-catalog nav > button:hover { background:var(--ontology-hover); }
 .api-workbench-catalog nav > button[aria-current=true] { border-color:var(--ontology-control-border); background:var(--ontology-hover); box-shadow:inset 2px 0 var(--ui-action-bg); }
@@ -30,7 +30,7 @@
 .api-document-tabs { display:flex; flex:none; gap:20px; padding:0 16px; border-bottom:1px solid var(--ontology-border); }
 .api-document-tabs button { padding:7px 0; border:0; border-bottom:2px solid transparent; background:transparent; color:var(--ontology-muted); font:inherit; cursor:pointer; }
 .api-document-tabs button[aria-pressed=true] { border-color:var(--ui-action-bg); color:var(--ontology-text); }
-.api-document-body { flex:1; min-height:0; overflow:auto; padding:14px 16px 18px; overscroll-behavior:contain; }
+.api-document-body { flex:1; min-height:0; overflow:auto; padding:14px 16px 18px; overscroll-behavior:none; scrollbar-gutter:stable; }
 .api-endpoint { display:flex; align-items:center; gap:10px; min-width:0; padding:9px 10px; border:1px solid var(--ontology-border); border-radius:3px; background:var(--ontology-bg); }
 .api-endpoint > code { flex:1; min-width:0; font-size:11px; overflow-wrap:anywhere; }
 .published-api-workbench :is(.api-endpoint,.api-code-example header) > button { display:inline-flex; flex:none; align-items:center; justify-content:center; gap:5px; min-width:24px; height:24px; padding:2px 5px; border:0; border-radius:3px; background:transparent; color:var(--ontology-muted); font:inherit; cursor:pointer; }
@@ -49,7 +49,7 @@
 .api-code-example { overflow:hidden; border:1px solid var(--ontology-border); border-radius:3px; background:var(--ontology-bg); }
 .api-code-example header { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:5px 8px; border-bottom:1px solid var(--ontology-border); }
 .api-code-example header > div { display:flex; gap:4px; }.api-code-example header > div button { padding:3px 8px; border:0; border-radius:2px; background:transparent; color:var(--ontology-muted); font:inherit; font-size:11px; cursor:pointer; }.api-code-example header > div button[aria-pressed=true] { background:var(--ontology-hover); color:var(--ontology-text); }
-.api-code-example pre { max-height:300px; margin:0; overflow:auto; padding:12px; color:var(--ontology-text); font-size:11px; line-height:1.8; tab-size:2; }
+.api-code-example pre { margin:0; overflow-x:auto; overscroll-behavior-x:contain; padding:12px; color:var(--ontology-text); font-size:11px; line-height:1.8; tab-size:2; }
 .published-api-workbench .api-parameter-table { width:100%; border-collapse:collapse; font-size:11px; text-align:left; }.published-api-workbench .api-parameter-table :is(th,td) { padding:8px 9px 8px 0; border-bottom:1px solid var(--ontology-border); vertical-align:top; font-weight:400; }.published-api-workbench .api-parameter-table thead th { color:var(--ontology-muted); }
 .api-scope-facts { display:grid; gap:8px; margin:0 0 14px; }.api-scope-facts > div { display:grid; grid-template-columns:80px minmax(0,1fr); gap:8px; }.api-scope-facts dt { color:var(--ontology-muted); font-size:11px; }.api-scope-facts dd { margin:0; overflow-wrap:anywhere; }
 .published-api-workbench .api-range-predicate { padding:10px; border:1px solid var(--ontology-border); border-radius:3px; background:var(--ontology-bg); color:var(--ontology-text); font-family:var(--font-mono,monospace); font-size:11px; white-space:pre-wrap; }
@@ -70,7 +70,7 @@
 .explorer-resource-dialog .flow-ontology-tool-content > .published-api-workbench { flex:1; height:auto; min-height:0; }
 
 .published-api-workbench pre.api-code-snippet {
-  max-height:300px; margin:0; padding:12px; overflow:auto; white-space:pre;
+  margin:0; padding:12px; overflow-x:auto; overscroll-behavior-x:contain; white-space:pre;
   border-radius:3px; background:#282a36; color:#f6f6f4;
   font-family:var(--font-mono,monospace); font-size:11px; line-height:1.8; tab-size:2;
 }

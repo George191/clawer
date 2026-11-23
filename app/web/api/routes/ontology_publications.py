@@ -10,6 +10,7 @@ from app.web.api.models.ontology_publications import OntologyPublication, Public
 from app.web.services import ontology_publications as service
 
 router = APIRouter(prefix="/api/ontology/v1", tags=["Published APIs"])
+public_router = APIRouter(tags=["Published APIs"])
 
 
 @router.get("/object-types/{definition_id}/publications")
@@ -54,7 +55,7 @@ async def revoke_key(definition_id: UUID, publication_id: UUID, session: Session
     return await service.change_key(session, user, definition_id, publication_id, True)
 
 
-@router.get("/publications/{publication_id}/data")
+@public_router.get(service.PUBLICATION_DATA_PATH)
 async def data(publication_id: UUID, session: SessionDep, response: Response, request: Request,
                key: Annotated[str | None, Header(alias="X-API-Key", max_length=256)] = None,
                limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0, le=100_000)):

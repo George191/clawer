@@ -1,22 +1,22 @@
 import { useEffect, useState } from 'react';
-import { Button, Modal } from '@/components/ui';
+import { Button } from '@/components/ui';
 import client from '../../services/api';
+import { apiUrl } from '../../services/endpoints';
 import { fetchPublishedOntologyType, listOntologyRecords, ontologyError } from '../../services/ontology';
 import { generateOntologySdk, ontologySdkFilename, type OntologySdkFunction } from '../../services/ontology_sdk';
 import { getSessionState } from '../../services/session';
+import ApiCodeSnippet from './ApiCodeSnippet';
 import useExplorerErrorToast from './useExplorerErrorToast';
-import './explorer-resource-tools.css';
 
 type Download = { url: string; filename: string; revision: number; identity: string };
 type FunctionsPage = { revision: number; items: OntologySdkFunction[] };
 
-export default function OntologySdkDownload({ definitionId, open, onClose }: { definitionId: string; open: boolean; onClose: () => void }) {
+export default function OntologySdkDownload({ definitionId }: { definitionId: string }) {
   const [version, setVersion] = useState(0);
   const [download, setDownload] = useState<Download>();
   const [error, setError] = useState('');
 
   useEffect(() => {
-    if (!open) return;
     const controller = new AbortController();
     const identity = getSessionState().identity;
     let url: string | undefined;
@@ -46,40 +46,35 @@ export default function OntologySdkDownload({ definitionId, open, onClose }: { d
       const source = generateOntologySdk(confirmed, records.actions ?? [], functions.items);
       url = URL.createObjectURL(new Blob([source], { type: 'text/plain;charset=utf-8' }));
       setDownload({ url, filename: ontologySdkFilename(confirmed), revision: confirmed.revision, identity });
-    })().catch(failure => { if (active()) setError(ontologyError(failure, 'Unable to prepare the TypeScript SDK.')); });
+    })().catch(failure => { if (active()) setError(ontologyError(failure, 'Unable to prepare the user-token SDK.')); });
     return () => {
       controller.abort();
       if (url) URL.revokeObjectURL(url);
     };
-  }, [definitionId, open, version]);
+  }, [definitionId, version]);
 
-  const close = () => {
-    onClose();
-    setDownload(undefined);
-    setError('');
-  };
   const retry = () => {
     setDownload(undefined);
     setError('');
     setVersion(value => value + 1);
   };
-  useExplorerErrorToast(open ? error : undefined, 'Unable to prepare the TypeScript SDK', retry);
+  useExplorerErrorToast(error, 'Unable to prepare the user-token SDK', retry);
+  const example = download && `import { createOntologyClient } from "./${download.filename.replace(/\.ts$/, '.js')}";
+const api = createOntologyClient({
+  baseUrl: ${JSON.stringify(new URL(apiUrl('/')).origin)},
+  getAccessToken: () => process.env.ACCESS_TOKEN!,
+});
+console.log(await api.listRecords({ limit: 50 }));`;
   return <>
-    <Modal open={open} centered className="flow-surface-modal flow-published-dialog explorer-resource-dialog ontology-sdk-dialog" title="User-token SDK (TypeScript)" onCancel={close} footer={<>
-      <Button onClick={close}>Close</Button>
-      {download ? <a className="ui-btn ui-btn-primary" href={download.url} download={download.filename}
-        onClick={event => {
-          const session = getSessionState();
-          if (!session.authenticated || session.locked || session.identity !== download.identity) {
-            event.preventDefault();
-            close();
-          }
-        }}>Download TypeScript SDK</a> : <Button type="primary" disabled>Download TypeScript SDK</Button>}
-    </>}>
-      <p className="ontology-sdk-description">Add the downloaded TypeScript file to your project and build it with your app. Pass your API URL and the calling account’s access token to <code>createOntologyClient</code>.</p>
-      <p className="ontology-sdk-metadata" role="status">{error ? 'The TypeScript SDK is unavailable.'
-        : download ? <>Published revision {download.revision} · <code>{download.filename}</code></>
-          : 'Preparing the TypeScript SDK…'}</p>
-    </Modal>
+    {download ? <a className="ui-btn ui-btn-primary" href={download.url} download={download.filename}
+      onClick={event => {
+        const session = getSessionState();
+        if (!session.authenticated || session.locked || session.identity !== download.identity) event.preventDefault();
+      }}>Download user-token SDK</a> : <Button type="primary" disabled>Download user-token SDK</Button>}
+    <p>Build the downloaded TypeScript file with your app. The calling account’s access token controls access to objects, actions and functions.</p>
+    <p role="status">{error ? 'The user-token SDK is unavailable.'
+      : download ? <>Published revision {download.revision} · <code>{download.filename}</code></>
+        : 'Preparing the user-token SDK…'}</p>
+    {example && <><h4>Usage example</h4><ApiCodeSnippet source={example} language="typescript" /></>}
   </>;
 }

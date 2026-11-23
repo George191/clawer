@@ -18,11 +18,14 @@ from app.web.services.ontology_explorer import evaluate, validate_query
 from app.web.services.ontology_revisions import rights_for
 
 
+PUBLICATION_DATA_PATH = "/ontology/v1/publications/{publication_id}/data"
+
+
 def view(row):
     return {"id": row.id, "name": row.name, "revision": row.revision, "fields": row.fields,
             "query": row.query, "validFrom": row.valid_from, "validUntil": row.valid_until,
             "version": row.version, "keyStatus": row.key_status,
-            "url": f"/api/ontology/v1/publications/{row.id}/data"}
+            "url": PUBLICATION_DATA_PATH.format(publication_id=row.id)}
 
 
 async def management_access(session, user, definition_id):

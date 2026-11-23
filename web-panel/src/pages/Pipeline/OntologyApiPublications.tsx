@@ -20,7 +20,6 @@ export default function OntologyApiPublications({objectType, query = {filters: [
   const [keyItem, setKeyItem] = useState<OntologyPublication>();
   const [issuedKey, setIssuedKey] = useState('');
   const [deleting, setDeleting] = useState<OntologyPublication>();
-  const [sdkOpen, setSdkOpen] = useState(false);
   const identity = useRef(getSessionState().identity).current;
   const alive = useRef(true), writing = useRef<AbortController>();
   const session = getSessionState();
@@ -69,11 +68,10 @@ export default function OntologyApiPublications({objectType, query = {filters: [
   return <>
     <PublishedApiWorkbench title="Published APIs" scopeKind="ontology" items={entries} loading={loading} busy={busy} error={error}
       onReload={() => refresh(value => value + 1)} onAdd={page?.canManage ? begin : undefined}
-      onOpenUserTokenSdk={() => setSdkOpen(true)}
+      userTokenSdk={<OntologySdkDownload key={objectType.id} definitionId={objectType.id} />}
       onEdit={page?.canManage ? item => {const publication = page.items.find(value => value.id === item.id); if (publication) {const {modelChanged: _changed, revision: _revision, url: _url, keyStatus: _status, ...values} = publication; setForm({...values, modelRevision: objectType.revision});}} : undefined}
       onManageKey={page?.canManage ? item => {setKeyItem(page.items.find(value => value.id === item.id)); setIssuedKey('');} : undefined}
       onDelete={page?.canManage ? item => setDeleting(page.items.find(value => value.id === item.id)) : undefined} />
-    <OntologySdkDownload definitionId={objectType.id} open={sdkOpen} onClose={() => setSdkOpen(false)} />
     {page && !page.canManage && <p className="api-range-note">A project manager can publish and manage an external read API.</p>}
     <Modal open={!!form} title={form?.id ? 'Edit API publication' : 'Publish API'} className="flow-surface-modal explorer-resource-dialog" width={640}
       maskClosable={!busy} closable={!busy} keyboard={!busy} onCancel={() => {if (!busy) setForm(undefined);}}

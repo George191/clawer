@@ -53,13 +53,12 @@ def main():
             page.get_by_role("menuitem", name="Published APIs", exact=True).click()
             workbench = page.get_by_role("dialog", name="Published APIs", exact=True)
             expect(workbench.locator(".published-api-workbench")).to_have_attribute("aria-busy", "false")
-            sdk_tab = workbench.get_by_role("button", name="SDK", exact=True)
-            if sdk_tab.count():
-                sdk_tab.click()
-            workbench.get_by_role("button", name="Get user-token SDK", exact=True).click()
-            dialog = page.get_by_role("dialog", name="User-token SDK (TypeScript)", exact=True)
+            workbench.get_by_role("button", name="SDK", exact=True).click()
+            language = workbench.get_by_role("combobox", name="SDK language", exact=True)
+            if language.count():
+                language.select_option("user-token")
             with page.expect_download() as pending:
-                dialog.get_by_role("link", name="Download TypeScript SDK", exact=True).click()
+                workbench.get_by_role("link", name="Download user-token SDK", exact=True).click()
             artifact = pending.value
             assert artifact.suggested_filename == source["semantic_id"] + "-ontology-sdk.ts"
             home = directory / account
@@ -70,7 +69,6 @@ def main():
             subprocess.run([node, compiler, "--strict", "--target", "ES2020", "--module", "ES2020",
                             "--lib", "ES2020,DOM", "--outDir", str(home), str(path)],
                            check=True, capture_output=True, timeout=25)
-            dialog.get_by_role("button", name="Close", exact=True).click()
             workbench.get_by_role("button", name="Close", exact=True).click()
             return code, path.with_suffix(".js").read_text(encoding="utf-8")
 

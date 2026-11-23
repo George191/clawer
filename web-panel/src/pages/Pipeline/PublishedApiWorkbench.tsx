@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { Button, Input, NativeSelect, message } from '@/components/ui';
 import { ApiOutlined, CopyOutlined, DeleteOutlined, PlusOutlined, ReloadOutlined, SearchOutlined } from '@/components/ui/icons';
 import type { EtlPublishedApi } from '../../services/api';
@@ -14,7 +15,7 @@ import './published-api-workbench.css';
 export type PublishedReadApi = EtlPublishedApi & { name?: string; revision?: number; modelChanged?: boolean; fields?: string[]; query?: PublishedExplorerQuery };
 export interface PublishedApiWorkbenchProps {
   items: PublishedReadApi[]; title?: string; loading?: boolean; busy?: boolean; dirty?: boolean; error?: string;
-  scopeKind?: 'storage' | 'ontology'; onOpenUserTokenSdk?: () => void;
+  scopeKind?: 'storage' | 'ontology'; userTokenSdk?: ReactNode;
   onManageKey?: (api: PublishedReadApi) => void; onEdit?: (api: PublishedReadApi) => void;
   onReload?: () => void; onAdd?: () => void; onUpdate?: (id: string, changes: Partial<Omit<EtlPublishedApi, 'id'>>) => void;
   onSave?: () => void; onDiscard?: () => void; onDelete?: (api: EtlPublishedApi) => void; storageAsset?: {schema: string; table: string};
@@ -26,11 +27,11 @@ const parameters = [
   ['search', 'string', '—', 'Narrow the published range using a text search.'],
   ['filters', 'JSON array', '[]', 'URL-encoded filter rows. These further narrow the published range.'],
 ];
-export default function PublishedApiWorkbench({ items, title = 'Published APIs', loading, busy, dirty, error, onReload, onAdd, onUpdate, onSave, onDiscard, onDelete, storageAsset, scopeKind = 'storage', onOpenUserTokenSdk, onManageKey, onEdit }: PublishedApiWorkbenchProps) {
+export default function PublishedApiWorkbench({ items, title = 'Published APIs', loading, busy, dirty, error, onReload, onAdd, onUpdate, onSave, onDiscard, onDelete, storageAsset, scopeKind = 'storage', userTokenSdk, onManageKey, onEdit }: PublishedApiWorkbenchProps) {
   useExplorerErrorToast(error, 'Unable to load published APIs', onReload ? () => { if (!loading && !busy && !dirty) onReload(); } : undefined);
   const [selected, select] = useState(''), [search, setSearch] = useState('');
   const [tab, setTab] = useState<'overview' | 'request' | 'range' | 'sdk'>('overview');
-  const [sdkLanguage, setSdkLanguage] = useState<SdkLanguage>('typescript');
+  const [selectedSdk, setSelectedSdk] = useState<SdkLanguage | 'user-token'>('typescript');
   const [sdkDownload, setSdkDownload] = useState<{url: string; source: string; endpoint: string; language: SdkLanguage}>();
   const [language, setLanguage] = useState<'curl' | 'http'>('curl');
   const [now, setNow] = useState(Date.now());
@@ -42,6 +43,8 @@ export default function PublishedApiWorkbench({ items, title = 'Published APIs',
   }, [items, selected]);
   useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 60000); return () => window.clearInterval(timer); }, []);
   const item = items.find(item => item.id === selected);
+  const sdkChoice = item ? selectedSdk : 'user-token';
+  const sdkLanguage = sdkChoice === 'user-token' ? null : sdkChoice;
   const visible = items.filter(item => (item.id + ' ' + (item.name || '') + ' ' + item.url + ' ' + publicationState(item, now).label).toLowerCase().includes(search.trim().toLowerCase()));
   const copy = async (value: string, content: string) => {
     try { await navigator.clipboard.writeText(value); message.success({ content, className: 'explorer-toast' }); }
@@ -51,7 +54,7 @@ export default function PublishedApiWorkbench({ items, title = 'Published APIs',
   const maxLimit = scopeKind === 'ontology' ? 100 : 500, maxOffset = scopeKind === 'ontology' ? 100000 : 1000000;
   useEffect(() => {
     setSdkDownload(undefined);
-    if (!endpoint) return;
+    if (!endpoint || !sdkLanguage) return;
     const source = generatePublicationSdk(endpoint, sdkLanguage, maxLimit, maxOffset);
     const url = URL.createObjectURL(new Blob([source], {type: 'text/plain;charset=utf-8'}));
     setSdkDownload({url, source, endpoint, language: sdkLanguage});
@@ -65,9 +68,26 @@ export default function PublishedApiWorkbench({ items, title = 'Published APIs',
     filters: item.filters || [], sorts: item.sorts || [], search: item.search || '', partition: item.partition ?? null,
     filterType: item.filterType, filterSource: item.filterSource,
   }, null, 2) : undefined;
-  const userTokenSdk = onOpenUserTokenSdk && <section className="api-document-section">
-    <h4>User-token SDK</h4><p>TypeScript client for objects, actions and functions available to the calling account.</p>
-    <Button size="small" onClick={onOpenUserTokenSdk}>Get user-token SDK</Button>
+  const documentTabs = <nav className="api-document-tabs" aria-label="API documentation">
+    <button type="button" aria-pressed={tab === 'overview' || (!item && tab !== 'sdk')} onClick={() => setTab('overview')}>Overview</button>
+    {item && <><button type="button" aria-pressed={tab === 'request'} onClick={() => setTab('request')}>Request</button>
+      <button type="button" aria-pressed={tab === 'range'} onClick={() => setTab('range')}>Data range</button></>}
+    <button type="button" aria-pressed={tab === 'sdk'} onClick={() => setTab('sdk')}>SDK</button>
+  </nav>;
+  const sdkPanel = <section className="api-document-section">
+    <h4>Download SDK</h4>
+    {sdkLanguage && <p>Download the source file for this read-only API and add it to your project. Supply an issued X-API-Key at runtime.</p>}
+    {item && <div className="api-sdk-controls">
+      <label>Language<NativeSelect aria-label="SDK language" value={sdkChoice} onChange={event => setSelectedSdk(event.target.value as typeof selectedSdk)}>
+        {Object.entries(sdkLanguages).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        {userTokenSdk && <option value="user-token">User-token SDK (TypeScript)</option>}
+      </NativeSelect></label>
+      {sdkLanguage && sdkReady && sdkDownload && <a className="ui-btn ui-btn-primary" href={sdkDownload.url} download={sdkFilename(sdkLanguage)}>Download {sdkLanguages[sdkLanguage]} SDK</a>}
+    </div>}
+    {sdkLanguage ? <>
+      <p>{sdkRequirements[sdkLanguage]}</p><h4>Usage example</h4><ApiCodeSnippet source={sdkUsage[sdkLanguage]} language={sdkLanguage} /><p>Continue with nextOffset until it is null. For private certificate authorities, configure the runtime trust store before connecting; TLS verification stays enabled.</p>
+      {sdkReady && sdkDownload && <div className="api-code-example"><header><strong>{sdkFilename(sdkLanguage)}</strong><button type="button" onClick={() => void copy(sdkDownload.source, 'SDK source copied')}><CopyOutlined /> Copy</button></header><ApiCodeSnippet source={sdkDownload.source} language={sdkLanguage} /></div>}
+    </> : userTokenSdk}
   </section>;
   return <section className="published-api-workbench" aria-label={title} aria-busy={loading}>
     <header className="api-workbench-toolbar"><div><ApiOutlined /><strong>{title}</strong><span>{items.length} {items.length === 1 ? 'publication' : 'publications'}</span></div><div>
@@ -78,19 +98,19 @@ export default function PublishedApiWorkbench({ items, title = 'Published APIs',
       {onAdd && <Button size="small" icon={<PlusOutlined />} disabled={disabled || dirty} onClick={onAdd}>Publish API</Button>}
     </div></header>
     {dirty && invalid && <p className="api-workbench-error" role="alert">Each publication needs a valid start date and a later expiry date.</p>}
-    {error && !items.length ? userTokenSdk
-      : loading && !items.length ? <div className="api-workbench-empty" role="status"><ReloadOutlined spin /><strong>Loading published APIs…</strong></div> : !items.length ? <div className="api-workbench-empty" role="status">
-      <ApiOutlined /><strong>No published APIs</strong><p>{onAdd ? 'Publish the current data range to provide a read-only endpoint.' : 'This source has no published read endpoints.'}</p>
-      {onAdd && <Button type="primary" size="small" icon={<PlusOutlined />} disabled={disabled} onClick={onAdd}>Publish API</Button>}
-      {userTokenSdk}
-    </div> : <div className="api-workbench-layout">
+    {!items.length ? (loading ? <div className="api-workbench-empty" role="status"><ReloadOutlined spin /><strong>Loading published APIs…</strong></div> : <>
+      {userTokenSdk && documentTabs}
+      {userTokenSdk && tab === 'sdk' ? <div className="api-document-body">{sdkPanel}</div> : !error && <div className="api-workbench-empty">
+        <ApiOutlined /><strong>No published APIs</strong><p>{onAdd ? 'Publish the current data range to provide a read-only endpoint.' : 'This source has no published read endpoints.'}</p>
+      </div>}
+    </>) : <div className="api-workbench-layout">
       <aside className="api-workbench-catalog" aria-label="Published API catalog"><label className="api-catalog-search"><SearchOutlined /><input aria-label="Find published API" placeholder="Find an API…" value={search} onChange={event => setSearch(event.target.value)} /></label>
         <nav aria-label="Select published API">{visible.map(api => { const status = statusFor(api); return <button type="button" key={api.id} aria-label={`Select API ${api.id}`} aria-current={api.id === selected ? 'true' : undefined} onClick={() => select(api.id)}>
           <span className="api-method">GET</span><span><strong>{api.name || 'Read published rows'}</strong><code title={api.id}>{api.id.slice(0, 8)}</code><small className={'api-status is-' + status.tone}>{status.label}</small></span>
         </button>; })}{!visible.length && <p className="api-no-match" role="status">No matching APIs</p>}</nav>
       </aside>
       {item && <div className="api-workbench-detail"><header className="api-document-heading"><div><span className="api-eyebrow">READ API</span><h3>{item.name || 'Read published rows'}</h3><span className={'api-status is-' + state!.tone}>{state!.label}</span></div><code className="api-publication-id">{item.id}</code></header>
-        <nav className="api-document-tabs" aria-label="API documentation"><button type="button" aria-pressed={tab === 'overview'} onClick={() => setTab('overview')}>Overview</button><button type="button" aria-pressed={tab === 'request'} onClick={() => setTab('request')}>Request</button><button type="button" aria-pressed={tab === 'range'} onClick={() => setTab('range')}>Data range</button><button type="button" aria-pressed={tab === 'sdk'} onClick={() => setTab('sdk')}>SDK</button></nav>
+        {documentTabs}
         <div className="api-document-body">
           <div className="api-endpoint"><span className="api-method">GET</span><code>{endpoint}</code><button type="button" aria-label="Copy API endpoint" title="Copy endpoint" onClick={() => void copy(endpoint, 'API endpoint copied')}><CopyOutlined /></button></div>
           {tab === 'overview' && <>
@@ -111,15 +131,7 @@ export default function PublishedApiWorkbench({ items, title = 'Published APIs',
             <section className="api-document-section"><h4>Response</h4><pre>{JSON.stringify(scopeKind === 'ontology' ? {items: [Object.fromEntries((item.fields || []).map(field => [field, null]))], hasMore: false, nextOffset: null} : {rows: [], total: 0, nextOffset: null}, null, 2)}</pre><p>Example structure only. Field values depend on the published data. HTTP errors must be handled; they are not empty successful pages.</p></section>
             <section className="api-document-section"><h4>Pagination</h4><p>The JSON response includes <code>nextOffset</code>. Use it as the next request’s <code>offset</code> until it is null. {scopeKind === 'storage' ? 'Search and filter parameters narrow the published range.' : 'The query and returned properties are fixed by the publisher.'}</p></section>
           </>}
-          {tab === 'sdk' && <>
-            <section className="api-document-section"><h4>Publication SDK</h4><p>Download the source file for this read-only API and add it to your project. Supply an issued X-API-Key at runtime.</p>
-              <div className="api-sdk-controls"><label>Language<NativeSelect aria-label="SDK language" value={sdkLanguage} onChange={event => setSdkLanguage(event.target.value as SdkLanguage)}>{Object.entries(sdkLanguages).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</NativeSelect></label>
-              {sdkReady && sdkDownload && <a className="ui-btn ui-btn-primary" href={sdkDownload.url} download={sdkFilename(sdkLanguage)}>Download {sdkLanguages[sdkLanguage]} SDK</a>}</div>
-              <p>{sdkRequirements[sdkLanguage]}</p><h4>Usage example</h4><ApiCodeSnippet source={sdkUsage[sdkLanguage]} language={sdkLanguage} /><p>Continue with nextOffset until it is null. For private certificate authorities, configure the runtime trust store before connecting; TLS verification stays enabled.</p>
-              {sdkReady && sdkDownload && <div className="api-code-example"><header><strong>{sdkFilename(sdkLanguage)}</strong><button type="button" onClick={() => void copy(sdkDownload.source, 'SDK source copied')}><CopyOutlined /> Copy</button></header><ApiCodeSnippet source={sdkDownload.source} language={sdkLanguage} /></div>}
-            </section>
-            {userTokenSdk}
-          </>}
+          {tab === 'sdk' && sdkPanel}
           {tab === 'range' && scopeKind === 'ontology' && <>
             <section className="api-document-section"><h4>Published properties</h4><p>{item.fields?.join(', ')}</p></section>
             <section className="api-document-section"><h4>Saved object range</h4><p>The saved query is fixed for this publication. Current row and property access policies still apply. Model changes require a manager to review and save this publication again.</p>

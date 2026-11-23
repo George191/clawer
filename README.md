@@ -284,6 +284,7 @@ Compose 将后端 `API_V1_STR` 设为 `/v1`，Nginx 同路径转发，接口文�
 旧的外部 `/api/v1/...` 返回 404。开发直连仍使用 `.env` 中的前缀。
 例如 `https://api.astral.io/v1/etl/ts_ods/local_demo_media/row-links`。
 非 v1 接口（如 `/api/ontology/v1/...`）和 `/ws/...` 保持各自路径。
+Published 对象的公开读取入口为 `https://api.astral.io/ontology/v1/publications/{publication_id}/data`。
 Nginx 前端仅接受 `app.<FRONTEND_DOMAIN_SUFFIX>`，后端仅接受 `api.<BACKEND_DOMAIN_SUFFIX>`，
 其他域名均拒绝访问；HTTP 健康检查 `/nginx-health` 保留给容器探针。
 Celery Beat 独立保持单实例，Crawler Worker 可以横向扩容。

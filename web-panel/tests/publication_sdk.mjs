@@ -21,8 +21,8 @@ const cleanup = directory => {
 
 test('all SDKs retain the endpoint, scoped key header and explicit page bounds', () => {
   for (const language of ['typescript', 'python', 'java', 'c']) {
-    const source = generatePublicationSdk('https://api.example.org/api/ontology/v1/publications/test/data', language, 100, 100000);
-    assert.ok(source.includes('https://api.example.org/api/ontology/v1/publications/test/data'));
+    const source = generatePublicationSdk('https://api.example.org/ontology/v1/publications/test/data', language, 100, 100000);
+    assert.ok(source.includes('https://api.example.org/ontology/v1/publications/test/data'));
     assert.ok(source.includes('X-API-Key'));
     assert.ok(source.includes('100000'));
     assert.ok(source.includes('100'));

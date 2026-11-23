@@ -232,20 +232,29 @@ test('Dracula Soft highlights every SDK language and JSON while preserving the e
   }
 });
 
-test('the user-token SDK stays accessible with or without a published read API', () => {
-  let downloads = 0;
-  const onOpenUserTokenSdk = () => downloads++;
+test('one selector switches between publication SDKs and the user-token SDK', () => {
+  const userTokenSdk = {type: 'a', props: {download: 'object-ontology-sdk.ts', children: 'Download user-token SDK'}};
   for (const items of [[], [publication('sdk')]]) {
-    const ui = mount({ items, scopeKind: 'ontology', onOpenUserTokenSdk });
+    const ui = mount({ items, scopeKind: 'ontology', userTokenSdk });
+    assert.ok(!nodes(ui.view()).includes(userTokenSdk));
+    ui.click('SDK');
     if (items.length) {
-      assert.doesNotMatch(copy(ui.view()), /Get user-token SDK/);
-      ui.click('SDK');
+      assert.ok(copy(ui.view()).includes('Download TypeScript SDK'));
+      assert.ok(!nodes(ui.view()).includes(userTokenSdk));
+      const select = nodes(ui.view()).find(node => node.props?.['aria-label'] === 'SDK language');
+      assert.deepEqual(nodes(select).filter(node => node.type === 'option').map(node => node.props.value), ['typescript', 'python', 'java', 'c', 'user-token']);
+      select.props.onChange({target: {value: 'user-token'}});
+      assert.deepEqual(nodes(ui.render()).filter(node => node.props?.download), [userTokenSdk]);
+      select.props.onChange({target: {value: 'python'}});
+      assert.deepEqual(nodes(ui.render()).filter(node => node.props?.download).map(node => node.props.download), ['publication_client.py']);
+    } else {
+      assert.ok(!nodes(ui.view()).some(node => node.props?.['aria-label'] === 'SDK language'));
+      assert.deepEqual(nodes(ui.view()).filter(node => node.props?.download), [userTokenSdk]);
+      ui.click('Overview');
+      assert.ok(copy(ui.view()).includes('No published APIs'));
+      assert.ok(!nodes(ui.view()).includes(userTokenSdk));
     }
-    const button = nodes(ui.view()).find(node => node.type === 'Button' && copy(node) === 'Get user-token SDK');
-    assert.ok(button);
-    button.props.onClick();
   }
-  assert.equal(downloads, 2);
 });
 
 test('semantic model changes are visible and key management uses the explicit callback', () => {

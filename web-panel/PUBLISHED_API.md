@@ -9,7 +9,7 @@
 3. 在 `Overview → Manage API key` 中签发密钥。密钥只显示一次；轮换后旧密钥失效，撤销后停止新的读取请求。
 4. 在 `Request` 页复制请求示例，或在 `SDK` 页选择语言并下载，按页面示例调用。
 
-Published 的读取地址为 `GET /api/ontology/v1/publications/{publication_id}/data`，仅接受 `limit`（1–100，默认 50）和 `offset`（0–100000，默认 0）。返回：
+Published 的读取地址为 `GET /ontology/v1/publications/{publication_id}/data`，部署时使用 `api.$BACKEND_DOMAIN_SUFFIX`，仅接受 `limit`（1–100，默认 50）和 `offset`（0–100000，默认 0）。返回：
 
 ```json
 {"items": [{"name": "示例"}], "hasMore": false, "nextOffset": null}
@@ -34,6 +34,6 @@ Published 的读取地址为 `GET /api/ontology/v1/publications/{publication_id}
 
 SDK 对 HTTP 错误直接报错，不跟随重定向；TLS 证书校验保持开启。私有 CA 部署需配置调用环境的信任库，例如 Python 的 `SSL_CERT_FILE`、Node.js 的 `NODE_EXTRA_CA_CERTS` 或 Java 的 `javax.net.ssl.trustStore`。
 
-通过 `Published APIs → SDK → Get user-token SDK` 下载用户令牌版 TypeScript 客户端，用于按调用账户权限访问对象、动作和函数。对象类型尚未创建 API 发布时，面板空状态直接提供此下载入口。外部发布密钥仅能读取授权范围。
+在 `Published APIs → SDK` 的语言下拉框中选择 `User-token SDK (TypeScript)`，即可下载用户令牌版客户端，用于按调用账户权限访问对象、动作和函数。对象类型尚未创建 API 发布时，可直接在 `SDK` 标签页下载用户令牌版。外部发布密钥仅能读取授权范围。
 
 部署时需将 Alembic 升级到 `8e35b4e1c682`（新增 `ontology_publications` 表），并重建包含后端和前端改动的镜像。
