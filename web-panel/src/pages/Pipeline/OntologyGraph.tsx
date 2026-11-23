@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { Button, Modal, NativeSelect, Select } from '@/components/ui';
 import {
   fetchPublishedOntologyType,
-  listOntologyRecords,
   ontologyError,
   type PublishedOntologyType,
 } from '../../services/ontology';
@@ -11,7 +10,6 @@ import {
   graphRequest as api,
   type Page,
   type LinkType,
-  type Neighbor,
   type NamedSet,
   type SetQuery,
   type SetResult,
@@ -184,109 +182,17 @@ function NewRelationship({ object, onSaved }: { object: PublishedOntologyType; o
 }
 
 type Direction = 'incoming' | 'outgoing';
-type Anchor = { type: string; record: string; title: string };
-type TrailEntry = Anchor & { relationshipId: string; direction: Direction };
+type RelationshipProps = { objectType: PublishedOntologyType; onRelationsChanged?: () => void };
 
-function Links({ anchor, relationship, direction, move }: { anchor: Anchor; relationship: LinkType;
-    direction: Direction; move: (a: Anchor) => void }) {
-  const [off, page] = useState(0), [version, reload] = useState(0);
-  const [error, fail] = useState(''), [busy, pending] = useState(false);
-  const target = direction === 'incoming' ? relationship.sourceDefinitionId : relationship.targetDefinitionId;
-  const base = '/link-types/' + encodeURIComponent(relationship.id);
-  const relations = usePage(JSON.stringify([anchor.record, relationship.id, direction, off, version]), signal =>
-    api<Page<Neighbor>>('get', base + '/records/' + encodeURIComponent(anchor.record) + '/neighbors', {
-      params: { limit: size, offset: off, direction }, signal,
-    }));
-  const {locked, current} = useGraphOperation();
-  const [removing, setRemoving] = useState<Neighbor>();
-  async function removeLink(id: string, linkId: string) {
-    if (locked.current || !current()) return;
-    locked.current = true;
-    const pair =
-      direction === 'outgoing'
-        ? { sourceRecordId: anchor.record, targetRecordId: id }
-        : { sourceRecordId: id, targetRecordId: anchor.record };
-    pending(true);
-    fail('');
-    try {
-      await api('delete', base + '/links/' + encodeURIComponent(linkId), { params: pair });
-      if (!current()) return;
-      setRemoving(undefined);
-      page(0);
-      reload((n) => n + 1);
-    } catch (e) {
-      if (current()) fail(reason(e));
-    } finally {
-      locked.current = false;
-      if (current()) pending(false);
-    }
-  }
-  return (
-    <div aria-label="Linked records" aria-busy={!relations}>
-      {!relations && <p className="ontology-tool-note" role="status">Loading linked records…</p>}
-      <ul className="ontology-graph-neighbors">
-        {relations?.data?.items.map(({ linkId, record, canUnlink }) => (
-          <li key={linkId}>
-            <Button
-              onClick={() =>
-                move({ type: target, record: record.id, title: display(record.title ?? record.id) })
-              }
-            >
-              {display(record.title ?? record.id)}
-            </Button>
-            {canUnlink && (
-              <Button
-                disabled={busy}
-                aria-label={'Remove link to ' + display(record.title ?? record.id)}
-                onClick={() => setRemoving({linkId, record, canUnlink})}
-              >
-                Remove link
-              </Button>
-            )}
-          </li>
-        ))}
-      </ul>
-      {relations?.data && !relations.data.items.length && <p className="ontology-tool-note">No linked records.</p>}
-      <Pages offset={off} more={relations?.data?.hasMore} change={page} />
-      <Message text={error || relations?.error} />
-      <Modal open={!!removing} title="Remove relationship" okText="Remove relationship" confirmLoading={busy} closable={!busy} maskClosable={!busy} keyboard={!busy} okButtonProps={{danger: true}} onCancel={() => { if (!busy) setRemoving(undefined); }} onOk={() => removing?.canUnlink ? removeLink(removing.record.id, removing.linkId) : undefined}>
-        <p>Remove the link between <strong>{anchor.title}</strong> and <strong>{display(removing?.record.title ?? removing?.record.id)}</strong>?</p><p>The two objects and their property values will be preserved.</p>
-      </Modal>
-    </div>
-  );
-}
-
-type Props = { objectType: PublishedOntologyType; recordId?: string; recordTitle?: string; returnTo: string; onOpenExplorer: () => void; onRelationsChanged?: () => void };
-export default function OntologyGraph(props: Props) {
+export default function OntologyGraph(props: RelationshipProps) {
   return props.objectType.definition.source.mode === 'none' ? (
-    <Panel key={props.objectType.id + ':' + (props.recordId ?? '')} {...props} />
+    <RelationshipWorkbench key={props.objectType.id} {...props} />
   ) : null;
 }
-function Panel({ objectType, recordId, recordTitle, returnTo, onOpenExplorer, onRelationsChanged }: Props) {
-  const [tab, setTab] = useState<'relationships' | 'sets'>('relationships');
-  const [visit, walk] = useState<{ current?: TrailEntry; previous: TrailEntry[]; serial: number }>({ previous: [], serial: 0 });
-  return <section className="ontology-tool-workbench ontology-graph-workbench" aria-label="Object relationships and sets">
-    <header className="ontology-tool-header"><div><h3><ApartmentOutlined />Relationships and object sets</h3><p>Manage relationships between object types or define a reusable object query.</p></div></header>
-    <nav className="ontology-tool-tabs" aria-label="Graph tools"><button type="button" aria-pressed={tab === 'relationships'} onClick={() => setTab('relationships')}>Relationships</button><button type="button" aria-pressed={tab === 'sets'} onClick={() => setTab('sets')}>Dynamic object sets</button></nav>
-    {tab === 'relationships' ? <RelationshipWorkbench key={visit.serial}
-      objectType={objectType} entry={visit.current} recordId={recordId} recordTitle={recordTitle}
-      goBack={visit.previous.length ? () => walk(state => ({
-        current: state.previous[state.previous.length - 1], previous: state.previous.slice(0, -1), serial: state.serial + 1,
-      })) : undefined}
-      move={(next, from) => walk(state => ({ current: next, previous: [...state.previous, from], serial: state.serial + 1 }))} onRelationsChanged={onRelationsChanged} />
-      : <div className="ontology-graph-set-body"><ObjectSets object={objectType} returnTo={returnTo} onOpenExplorer={onOpenExplorer} /></div>}
-  </section>;
-}
 
-function RelationshipWorkbench({ objectType, entry, recordId, recordTitle, move, goBack, onRelationsChanged }: {
-    objectType: PublishedOntologyType; entry?: TrailEntry; recordId?: string; recordTitle?: string;
-    move: (entry: TrailEntry, from: TrailEntry) => void; goBack?: () => void; onRelationsChanged?: () => void;
-}) {
-  const definitionId = entry?.type ?? objectType.id;
-  const [anchor, setAnchor] = useState<Anchor | undefined>(() =>
-    entry ?? (recordId ? { type: definitionId, record: recordId, title: recordTitle ?? recordId } : undefined));
-  const [picked, select] = useState(entry?.relationshipId ?? '');
-  const [selfDirection, setSelfDirection] = useState<Direction>(entry?.direction ?? 'outgoing');
+function RelationshipWorkbench({ objectType, onRelationsChanged }: RelationshipProps) {
+  const definitionId = objectType.id;
+  const [picked, select] = useState('');
   const [offset, page] = useState(0), [version, reload] = useState(0);
   const [creating, setCreating] = useState(false), [created, setCreated] = useState<LinkType>();
   const types = usePage([definitionId, offset, version].join(':'), signal =>
@@ -298,56 +204,44 @@ function RelationshipWorkbench({ objectType, entry, recordId, recordTitle, move,
   const selected = rows.find(item => item.id === picked) ?? rows[0];
   const directionLabel = (item: LinkType) => item.sourceDefinitionId === item.targetDefinitionId
     ? 'Self relationship' : item.sourceDefinitionId === definitionId ? 'Outgoing' : 'Incoming';
-  const self = selected && selected.sourceDefinitionId === selected.targetDefinitionId;
-  const direction = self ? selfDirection : selected?.sourceDefinitionId === definitionId ? 'outgoing' : 'incoming';
-  return <div className="ontology-tool-layout">
-    <aside className="ontology-tool-catalog" aria-label="Ontology relationships">
-      <div className="ontology-graph-catalog-heading">Relationships</div>
-      <div className="ontology-tool-catalog-list">
-        {!types && <p role="status">Loading relationships…</p>}
-        {types?.error && <p>Relationships are unavailable.</p>}
-        {types?.data && !rows.length && <p>No relationships are defined for this object type.</p>}
-        {rows.map(relation => <button type="button" key={relation.id}
-          aria-pressed={!creating && relation.id === selected?.id}
-          onClick={() => { if (relation.id !== selected?.id) setSelfDirection('outgoing'); select(relation.id); setCreating(false); }}>
-          <LinkOutlined /><span><strong>{relation.name}</strong><small>{directionLabel(relation)} · {cardinalityLabel(relation.cardinality)}</small></span>
-        </button>)}
-      </div>
-      <Pages offset={offset} more={types?.data?.hasMore} change={value => { page(value); select(''); setSelfDirection('outgoing'); setCreated(undefined); }} />
-    </aside>
-    <div className="ontology-tool-detail">
-      <header className="ontology-tool-detail-header"><div>
-        <h4>{creating ? 'New relationship' : selected?.name ?? 'Relationship management'}</h4>
-        <span>{creating ? 'Choose the other object type, direction and cardinality.' : selected ? directionLabel(selected) : 'Choose a relationship to inspect its definition.'}</span>
-      </div><div className="ontology-graph-detail-actions">
-        {goBack && <Button size="small" onClick={goBack}>Back</Button>}
-        {types?.data?.canManage && definitionId === objectType.id && <Button size="small"
-          icon={creating ? undefined : <PlusOutlined />} aria-expanded={creating}
-          onClick={() => setCreating(value => !value)}>{creating ? 'Cancel creation' : 'New relationship'}</Button>}
-      </div></header>
-      <div className="ontology-tool-form">
-        {creating ? <NewRelationship object={objectType} onSaved={relationship => {
-          setCreated(relationship); select(relationship.id); setSelfDirection('outgoing');
-          setCreating(false); page(0); reload(value => value + 1); onRelationsChanged?.();
-        }} /> : selected ? <>
-          <RelationshipDefinition selected={selected} objectType={objectType} />
-          {self && <label>Relationship direction
-            <NativeSelect value={direction} onChange={event => setSelfDirection(event.target.value as Direction)}>
-              <option value="outgoing">Outgoing</option><option value="incoming">Incoming</option>
-            </NativeSelect>
-          </label>}
-          <RelationshipRecords anchor={anchor} select={setAnchor} definitionId={definitionId}
-            relationship={selected} direction={direction}
-            move={next => { if (anchor) move(
-              { ...next, relationshipId: selected.id, direction: direction === 'incoming' ? 'outgoing' : 'incoming' },
-              { ...anchor, relationshipId: selected.id, direction },
-            ); }} />
-        </> : <div className="ontology-tool-empty"><LinkOutlined /><h4>{types?.error ? 'Unable to load relationships' : 'Select a relationship'}</h4>
-          <p>{types?.error ? 'Try reopening this tool.' : 'The definition and connected objects appear here.'}</p></div>}
-        <Message text={types?.error} />
+  return <section className="ontology-tool-workbench ontology-graph-workbench" aria-label="Relationship management">
+    <header className="ontology-tool-header"><div><h3><ApartmentOutlined />Relationship definitions</h3>
+      <p>Define how object types are connected. To manage links between individual objects, open an object’s Links panel.</p></div></header>
+    <div className="ontology-tool-layout">
+      <aside className="ontology-tool-catalog" aria-label="Ontology relationships">
+        <div className="ontology-graph-catalog-heading">Relationships</div>
+        <div className="ontology-tool-catalog-list">
+          {!types && <p role="status">Loading relationships…</p>}
+          {types?.error && <p>Relationships are unavailable.</p>}
+          {types?.data && !rows.length && <p>No relationships are defined for this object type.</p>}
+          {rows.map(relation => <button type="button" key={relation.id}
+            aria-pressed={!creating && relation.id === selected?.id}
+            onClick={() => { select(relation.id); setCreating(false); }}>
+            <LinkOutlined /><span><strong>{relation.name}</strong><small>{directionLabel(relation)} · {cardinalityLabel(relation.cardinality)}</small></span>
+          </button>)}
+        </div>
+        <Pages offset={offset} more={types?.data?.hasMore} change={value => { page(value); select(''); setCreated(undefined); }} />
+      </aside>
+      <div className="ontology-tool-detail">
+        <header className="ontology-tool-detail-header"><div>
+          <h4>{creating ? 'New relationship' : selected?.name ?? 'Relationship management'}</h4>
+          <span>{creating ? 'Choose the other object type, direction and cardinality.' : selected ? directionLabel(selected) : 'Choose a relationship to inspect its definition.'}</span>
+        </div><div className="ontology-graph-detail-actions">
+          {types?.data?.canManage && <Button size="small"
+            icon={creating ? undefined : <PlusOutlined />} aria-expanded={creating}
+            onClick={() => setCreating(value => !value)}>{creating ? 'Cancel creation' : 'New relationship'}</Button>}
+        </div></header>
+        <div className="ontology-tool-form">
+          {creating ? <NewRelationship object={objectType} onSaved={relationship => {
+            setCreated(relationship); select(relationship.id);
+            setCreating(false); page(0); reload(value => value + 1); onRelationsChanged?.();
+          }} /> : selected ? <RelationshipDefinition selected={selected} objectType={objectType} /> : <div className="ontology-tool-empty"><LinkOutlined /><h4>{types?.error ? 'Unable to load relationships' : 'Select a relationship'}</h4>
+            <p>{types?.error ? 'Try reopening this tool.' : 'The source and target object types, direction, and cardinality appear here.'}</p></div>}
+          <Message text={types?.error} />
+        </div>
       </div>
     </div>
-  </div>;
+  </section>;
 }
 
 function RelationshipDefinition({ selected, objectType }: { selected: LinkType; objectType: PublishedOntologyType }) {
@@ -368,41 +262,16 @@ function RelationshipDefinition({ selected, objectType }: { selected: LinkType; 
   </section>;
 }
 
-function RelationshipRecords({ anchor, select, definitionId, relationship, direction, move }: {
-    anchor?: Anchor; select: (anchor: Anchor) => void; definitionId: string; relationship: LinkType;
-    direction: Direction; move: (anchor: Anchor) => void;
-}) {
-  const [picker, open] = useState(!anchor);
-  const [offset, page] = useState(0);
-  const records = usePage(picker ? definitionId + ':' + offset : null, signal =>
-    listOntologyRecords(definitionId, size, offset, false, signal));
-  const eligible = records?.data?.items.filter(record => record.id) ?? [];
-  return <section aria-label="Connected objects">
-    <div className="ontology-tool-section-heading">
-      <h4>Connected objects</h4>
-      {anchor && <Button size="small" aria-expanded={picker} onClick={() => open(value => !value)}>{picker ? 'Close picker' : 'Change starting object'}</Button>}
+type ObjectSetProps = { object: PublishedOntologyType; returnTo: string; onOpenExplorer: () => void };
+export function DynamicObjectSets(props: ObjectSetProps) {
+  return props.object.definition.source.mode === 'none' ? (
+    <div className="ontology-tool-workbench ontology-graph-workbench">
+      <div className="ontology-graph-set-body"><ObjectSets key={props.object.id} {...props} /></div>
     </div>
-    {picker ? <>
-      <label>Starting object
-        <NativeSelect value={anchor?.record ?? ''} disabled={!records?.data} onChange={event => {
-          const record = eligible.find(item => item.id === event.target.value);
-          if (record?.id) { select({ type: definitionId, record: record.id, title: display(record.title ?? record.id) }); open(false); }
-        }}>
-          <option value="" disabled>{!records ? 'Loading objects…' : 'Select an object'}</option>
-          {anchor && !eligible.some(record => record.id === anchor.record) && <option value={anchor.record}>{anchor.title}</option>}
-          {eligible.map(record => <option key={record.id} value={record.id!}>{display(record.title ?? record.id)}</option>)}
-        </NativeSelect>
-      </label>
-      <Pages offset={offset} more={records?.data?.hasMore} change={page} />
-      {records?.data && !eligible.length && <p className="ontology-tool-note">No visible objects on this page.</p>}
-      <Message text={records?.error} />
-    </> : anchor && <p className="ontology-tool-note ontology-graph-anchor">Starting object: <strong>{anchor.title}</strong></p>}
-    {anchor && <Links key={JSON.stringify([anchor.record, relationship.id, direction])}
-      anchor={anchor} relationship={relationship} direction={direction} move={move} />}
-  </section>;
+  ) : null;
 }
 
-function ObjectSets({ object, returnTo, onOpenExplorer }: { object: PublishedOntologyType; returnTo: string; onOpenExplorer: () => void }) {
+function ObjectSets({ object, returnTo, onOpenExplorer }: ObjectSetProps) {
   const navigate = useNavigate();
   const props = object.definition.properties;
   const [field, setField] = useState(''),
@@ -491,7 +360,7 @@ function ObjectSets({ object, returnTo, onOpenExplorer }: { object: PublishedOnt
   }
   const data = result?.data;
   return (
-    <section className="flow-tool-section" aria-label="Dynamic object sets">
+    <section className="flow-tool-section" aria-label="Dynamic object set workbench">
       <header className="flow-tool-heading"><div><h3>Dynamic object sets</h3><p>Save a query that is re-evaluated against current objects. Preview the results, then continue in Explorer.</p></div></header>
       <div className="flow-tool-fields">
         <label>

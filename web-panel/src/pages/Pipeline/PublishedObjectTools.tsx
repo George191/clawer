@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Checkbox, Input, Modal, message, type MenuItem } from '@/components/ui';
-import { BranchesOutlined, CodeOutlined, DeleteOutlined, DownloadOutlined, HistoryOutlined, PlusOutlined, SyncOutlined } from '@/components/ui/icons';
+import { BranchesOutlined, CodeOutlined, FilterOutlined, DeleteOutlined, DownloadOutlined, HistoryOutlined, PlusOutlined, SyncOutlined } from '@/components/ui/icons';
 import { getSessionState } from '../../services/session';
 import {
   ontologyError as describe, submitOntologyAction,
   type OntologyRecord, type OntologyRecordPage, type PublishedOntologyType, type SemanticAction,
 } from '../../services/ontology';
 import type { ExplorerToolAction } from './ExplorerWorkbenchHeader';
-import OntologyGraph from './OntologyGraph';
+import OntologyGraph, { DynamicObjectSets } from './OntologyGraph';
 import OntologyFunctions from './OntologyFunctions';
 import OntologyRevisions from './OntologyRevisions';
 import OntologySdkDownload from './OntologySdkDownload';
@@ -93,7 +93,8 @@ export function usePublishedObjectTools({ objectType, actions, record, returnTo,
   };
   const tools: ExplorerToolAction[] = objectType ? [
     ...(native ? [
-      { key: 'relationships', label: 'Relationships and sets', icon: <BranchesOutlined />, group: 'analyze' as const, run: () => setTool('Relationships and sets') },
+      { key: 'relationships', label: 'Relationships', icon: <BranchesOutlined />, group: 'analyze' as const, run: () => setTool('Relationships') },
+      { key: 'dynamic-object-sets', label: 'Dynamic object sets', icon: <FilterOutlined />, group: 'analyze' as const, run: () => setTool('Dynamic object sets') },
       { key: 'transactions', label: 'Transactions', icon: <SyncOutlined />, group: 'analyze' as const, run: () => setTool('Transactions') },
       { key: 'functions', label: 'Functions', icon: <CodeOutlined />, group: 'analyze' as const, run: () => setTool('Functions') },
       { key: 'deleted', label: 'Deleted objects', icon: <DeleteOutlined />, group: 'inspect' as const, run: () => setTool('Deleted objects') },
@@ -138,7 +139,8 @@ export function usePublishedObjectTools({ objectType, actions, record, returnTo,
       <Modal open={!!tool} centered width={1040} className="flow-surface-modal flow-published-dialog explorer-resource-dialog explorer-tool-workbench-dialog" title={tool} onCancel={() => setTool('')} footer={<Button onClick={() => setTool('')}>Close</Button>}>
         <div className="explorer-resource-context"><strong>{objectType.definition.name}</strong><code>{objectType.definition.id}</code></div>
         <div className="flow-ontology-tool-content" role="region" aria-label={tool || undefined} tabIndex={0}>
-          {tool === 'Relationships and sets' && <OntologyGraph key={objectType.id} objectType={objectType} recordId={record?.id || undefined} recordTitle={record?.title == null ? undefined : String(record.title)} returnTo={returnTo} onOpenExplorer={() => setTool('')} onRelationsChanged={() => setRelationsVersion(value => value + 1)} />}
+          {tool === 'Relationships' && <OntologyGraph key={objectType.id} objectType={objectType} onRelationsChanged={() => setRelationsVersion(value => value + 1)} />}
+          {tool === 'Dynamic object sets' && <DynamicObjectSets key={objectType.id} object={objectType} returnTo={returnTo} onOpenExplorer={() => setTool('')} />}
           {tool === 'Transactions' && <OntologyTransactions key={objectType.id} objectType={objectType} onCommitted={onChanged} />}
           {tool === 'Functions' && <OntologyFunctions key={objectType.id} id={objectType.id} record={record} onCommitted={name => { message.success('Committed: ' + name); onChanged(); }} />}
           {tool === 'Model revisions' && <OntologyRevisions key={objectType.id} showTitle={false} definitionId={objectType.id} onMerged={onChanged} />}

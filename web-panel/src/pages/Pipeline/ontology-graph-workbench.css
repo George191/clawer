@@ -1,4 +1,3 @@
-.ontology-graph-workbench > .ontology-tool-tabs { padding:0; margin-bottom:10px; }
 .ontology-graph-catalog-heading { padding:9px 12px; border-bottom:1px solid var(--ontology-border); color:var(--ontology-muted); font-size:11px; }
 .ontology-graph-workbench .ontology-graph-pages { display:flex; flex:none; justify-content:space-between; gap:6px; padding:8px; }
 .ontology-graph-workbench .ontology-tool-form > :is(form,div) { min-width:0; }
@@ -9,11 +8,6 @@
 .ontology-graph-workbench .flow-tool-fields > :is(label,.ui-btn) { width:100%; min-width:0; max-width:none; }
 .ontology-graph-target-option { display:flex; align-items:baseline; justify-content:space-between; gap:12px; min-width:0; width:100%; }
 .ontology-graph-current { flex:none; color:var(--ontology-muted, #8b90a0); font-size:10px; line-height:1; opacity:.85; }
-.ontology-graph-workbench .ontology-tool-form > div > label { margin-bottom:10px; }
-.ontology-graph-workbench .ontology-graph-neighbors { display:grid; gap:0; margin:12px 0; padding:0; list-style:none; }
-.ontology-graph-neighbors > li { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 0; border-bottom:1px solid var(--ontology-border); }
-.ontology-graph-neighbors > li > .ui-btn:first-child { justify-content:flex-start; min-width:0; max-width:100%; overflow:hidden; background:transparent; border-color:transparent; text-align:left; }
-.ontology-graph-neighbors > li > .ui-btn:last-child:not(:first-child) { flex:none; color:var(--ui-error); font-size:11px; }
 .ontology-graph-set-body { flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; }
 .ontology-graph-workbench .flow-tool-section { border:0; padding:0; background:transparent; }
 .ontology-graph-workbench .flow-tool-heading p { margin-top:4px; font-size:11px; }
@@ -30,6 +24,4 @@
 .ontology-graph-definition dl > div { display:flex; gap:6px; min-width:0; }
 .ontology-graph-definition dt { flex:none; color:var(--ontology-muted); }
 .ontology-graph-definition dd { min-width:0; margin:0; overflow-wrap:anywhere; }
-.ontology-graph-anchor { margin:6px 0 0; overflow-wrap:anywhere; }
-.ontology-graph-anchor > strong { color:var(--ontology-text); font-weight:500; }
 @media(max-width:420px) { .ontology-graph-detail-actions { flex-direction:column; align-items:flex-end; } }

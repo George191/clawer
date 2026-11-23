@@ -50,71 +50,6 @@ function mount(file, name, props, api) {
 }
 
 const relation = { id: 'synthetic-link-type', key: 'synthetic_relation', cardinality: 'many_to_many', name: 'Synthetic relation', sourceDefinitionId: 'source-type', targetDefinitionId: 'target-type' };
-const neighbor = { linkId: 'synthetic-edge', canUnlink: true, record: { id: 'target-record', title: 'Synthetic neighbor', revision: 3, properties: {} } };
-function graphLinks(mutate = async () => {}, canUnlink = true, direction = 'outgoing', canManage = false) {
-  const writes = [], recordReads = [], moves = [];
-  const ui = mount('OntologyGraph', 'Links', { anchor: { type: direction === 'outgoing' ? 'source-type' : 'target-type', record: 'anchor-record', title: 'Anchor' }, relationship: relation, direction, move: item => moves.push(item) }, {
-    listOntologyRecords: async (...args) => { recordReads.push(args); return { items: [], hasMore: false }; },
-    graphRequest: async (...args) => {
-      if (args[0] !== 'get') { writes.push(args); return mutate(...args); }
-      return args[1].endsWith('/link-types') ? { items: [relation], hasMore: false, canManage } : { items: [{ ...neighbor, canUnlink }], hasMore: false };
-    },
-  });
-  return { ...ui, writes, recordReads, moves, select: () => ui.flush(), confirmation: () => nodes(ui.tree()).find(node => node.type === 'Modal') };
-}
-
-test('graph Links has no independent object picker or Add link action for managers', async () => {
-  const ui = graphLinks(undefined, true, 'outgoing', true); await ui.select();
-  assert.equal(button(ui.tree(), 'Add link'), undefined);
-  assert.ok(!text(ui.tree()).includes('Record to link'));
-  assert.equal(nodes(ui.tree()).filter(node => node.type === 'NativeSelect').length, 0);
-  assert.deepEqual(ui.recordReads, []);
-  button(ui.tree(), 'Synthetic neighbor').props.onClick();
-  assert.deepEqual(ui.moves, [{ type: 'target-type', record: 'target-record', title: 'Synthetic neighbor' }]);
-  assert.ok(button(ui.tree(), 'Remove link'));
-  assert.equal(ui.writes.length, 0);
-});
-
-test('graph unlink honors per-edge capability and requires application confirmation', async () => {
-  const denied = graphLinks(undefined, false); await denied.select();
-  assert.equal(button(denied.tree(), 'Remove link'), undefined);
-  const ui = graphLinks(); await ui.select();
-  button(ui.tree(), 'Remove link').props.onClick(); ui.render();
-  assert.equal(ui.confirmation().props.open, true); assert.equal(ui.writes.length, 0);
-  ui.confirmation().props.onCancel(); ui.render();
-  assert.equal(ui.confirmation().props.open, false); assert.equal(ui.writes.length, 0);
-});
-
-test('confirmed graph unlink preserves outgoing and incoming identities and blocks duplicate requests', async () => {
-  for (const direction of ['outgoing', 'incoming']) {
-    let finish;
-    const ui = graphLinks(() => new Promise(resolve => { finish = resolve; }), true, direction); await ui.select();
-    button(ui.tree(), 'Remove link').props.onClick(); ui.render();
-    const confirm = ui.confirmation().props.onOk;
-    const first = confirm(), duplicate = confirm();
-    assert.deepEqual(ui.writes, [['delete', '/link-types/synthetic-link-type/links/synthetic-edge', { params: direction === 'outgoing'
-      ? { sourceRecordId: 'anchor-record', targetRecordId: 'target-record' }
-      : { sourceRecordId: 'target-record', targetRecordId: 'anchor-record' } }]]);
-    ui.render(); assert.equal(ui.confirmation().props.confirmLoading, true);
-    finish(); await Promise.all([first, duplicate]); await ui.flush();
-    assert.equal(ui.confirmation().props.open, false);
-  }
-});
-
-test('graph failures retain confirmation while locked sessions and late unmounted results are ignored', async () => {
-  const failed = graphLinks(async () => { throw new Error('Synthetic edge changed'); }); await failed.select();
-  button(failed.tree(), 'Remove link').props.onClick(); failed.render();
-  await failed.confirmation().props.onOk(); await failed.flush();
-  assert.equal(failed.confirmation().props.open, true);
-  assert.ok(nodes(failed.tree()).some(node => typeof node.type === 'function' && node.type.name === 'Message' && node.props.text === 'Synthetic edge changed'));
-  failed.session.locked = true; await failed.confirmation().props.onOk(); assert.equal(failed.writes.length, 1);
-  let finish;
-  const late = graphLinks(() => new Promise(resolve => { finish = resolve; })); await late.select();
-  button(late.tree(), 'Remove link').props.onClick(); late.render();
-  const pending = late.confirmation().props.onOk(); late.unmount(); finish(); await pending;
-  assert.equal(late.notices.length, 0); assert.equal(late.writes.length, 1);
-});
-
 const objectType = { id: 'source-type', definition: { projectId: 'synthetic-project', name: 'Synthetic type', source: { mode: 'none' },
   properties: [{ id: 'id', name: 'ID', type: 'string', required: true }, { id: 'amount', name: 'Amount', type: 'number', required: false }] } };
 
@@ -161,10 +96,10 @@ test('incoming relationship creation reverses endpoints without changing cardina
   assert.deepEqual(saved, [relation]);
 });
 
-test('graph lists relationship definitions first and removes them when the session locks', async () => {
+test('relationship management reads definitions only and removes them when the session locks', async () => {
   const reads = [];
   let pageResult;
-  const ui = mount('OntologyGraph', 'RelationshipWorkbench', { objectType, recordId: 'anchor-record', recordTitle: 'Selected object', move() {} }, {
+  const ui = mount('OntologyGraph', 'RelationshipWorkbench', { objectType }, {
     graphRequest: async (...args) => {
       reads.push(args);
       if (pageResult) return pageResult();
@@ -174,9 +109,14 @@ test('graph lists relationship definitions first and removes them when the sessi
   await ui.flush();
   const catalog = input(ui.tree(), 'Ontology relationships');
   assert.ok(text(catalog).includes('Synthetic relation'));
-  assert.ok(!text(catalog).includes('Selected object'));
+  assert.ok(!text(ui.tree()).includes('Starting object'));
+  assert.ok(!text(ui.tree()).includes('Connected objects'));
+  assert.equal(button(ui.tree(), 'Remove link'), undefined);
+  assert.equal(button(ui.tree(), 'Dynamic object sets'), undefined);
+  assert.ok(nodes(ui.tree()).some(node => typeof node.type === 'function' && node.type.name === 'RelationshipDefinition'));
   assert.ok(button(ui.tree(), 'New relationship'));
   assert.equal(reads.length, 1);
+  assert.equal(reads[0][1], '/object-types/source-type/link-types');
   assert.deepEqual(reads[0][2].params, { limit: 20, offset: 0 });
   ui.session.locked = true;
   ui.render();
@@ -190,6 +130,19 @@ test('graph lists relationship definitions first and removes them when the sessi
   await ui.flush();
   assert.ok(text(input(ui.tree(), 'Ontology relationships')).includes('No relationships'));
   assert.equal(button(ui.tree(), 'New relationship'), undefined);
+});
+
+test('named object sets mount separately and remain scoped to ontology-native object types', () => {
+  for (const mode of ['none', 'existing']) {
+    const object = { ...objectType, definition: { ...objectType.definition, source: { mode } } };
+    const props = { object, returnTo: '/synthetic', onOpenExplorer() {} };
+    const ui = mount('OntologyGraph', 'DynamicObjectSets', props, {});
+    const sets = nodes(ui.tree()).find(node => typeof node.type === 'function' && node.type.name === 'ObjectSets');
+    if (mode === 'none') {
+      assert.ok(sets);
+      assert.equal(sets.props.returnTo, props.returnTo);
+    } else assert.equal(ui.tree(), null);
+  }
 });
 
 test('saved set deletion uses explicit confirmation and its guard blocks duplicate or stale-session writes', async () => {

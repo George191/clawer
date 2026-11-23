@@ -1,11 +1,13 @@
 """Run inside the isolated acceptance Web container with a seeded fixture and Chromium."""
 
+from ipaddress import ip_address
 import json
 import os
 import re
 import shutil
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from playwright.sync_api import expect, sync_playwright
@@ -27,7 +29,7 @@ def launch_context(browser, fixture, actor):
     return context, page, login.value.json()["access_token"]
 
 
-def open_graph(page, base, typ, record):
+def select_record(page, base, typ, record):
     page.goto(
         base.rstrip("/") + "/ontology/explorer?objectType=" + typ["id"],
         wait_until="domcontentloaded",
@@ -35,11 +37,25 @@ def open_graph(page, base, typ, record):
     page.get_by_role("region", name="Object results").get_by_role(
         "checkbox", name="Select " + record["title"], exact=True
     ).check()
+
+
+def open_tool(page, title, workbench):
     page.get_by_role("button", name="Open in", exact=True).click()
-    page.get_by_role("menuitem", name="Relationships and sets", exact=True).click()
-    graph = page.get_by_role("region", name="Object relationships and sets")
-    expect(graph).to_be_visible()
-    return graph
+    page.get_by_role("menuitem", name=title, exact=True).click()
+    panel = page.get_by_role("dialog", name=title, exact=True).get_by_role("region", name=workbench, exact=True)
+    expect(panel).to_be_visible()
+    return panel
+
+
+def close_tool(page, title):
+    page.get_by_role("dialog", name=title, exact=True).get_by_role("button", name="Close", exact=True).click()
+
+
+def open_links(page, relation, direction):
+    page.get_by_role("navigation", name="Selected object view").get_by_role("button", name="Links", exact=True).click()
+    panel = page.get_by_role("region", name="Related records", exact=True)
+    panel.get_by_role("combobox", name="Relationship", exact=True).select_option(relation + ":" + direction)
+    return panel
 
 
 def main():
@@ -47,6 +63,10 @@ def main():
         Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/ontology-fixture.json").read_text()
     )
     base, source, target = fixture["base"], fixture["source"], fixture["target"]
+    origin = urlsplit(base)
+    if (origin.scheme != "http" or not origin.hostname or not ip_address(origin.hostname).is_loopback
+            or origin.username or origin.password or origin.path or origin.query or origin.fragment):
+        raise RuntimeError("Expected an isolated loopback fixture")
     left, right = source["records"][0], target["records"][0]
     label = "QA graph " + uuid4().hex[:8]
     key = "graph-" + uuid4().hex[:10]
@@ -66,7 +86,8 @@ def main():
                 lambda r: r.request.method == "POST"
                 and r.url.split("?")[0].endswith("/object-types/" + source["id"] + "/explorer/query")
             ) as loaded:
-                view = open_graph(owner, base, source, left)
+                select_record(owner, base, source, left)
+                view = open_tool(owner, "Relationships", "Relationship management")
             source_page = loaded.value.json()
             source_page = source_page.get("data", source_page)
             assert not source_page["hasMore"], (
@@ -99,19 +120,17 @@ def main():
                 data={"sourceRecordId": left["id"], "targetRecordId": right["id"]},
             )
             assert edge.status == 201
-            view = open_graph(owner, base, source, left)
             catalog = view.get_by_role("complementary", name="Ontology relationships")
             outgoing = catalog.get_by_role("button", name=re.compile(re.escape(label) + r".*Outgoing"))
-            outgoing.click()
-            neighbor = view.get_by_role("button", name=right["title"], exact=True)
-            expect(neighbor).to_be_visible()
-            neighbor.click()
-            expect(catalog.get_by_role("button", name=re.compile(re.escape(label) + r".*Incoming"))).to_have_attribute("aria-pressed", "true")
-            expect(view.get_by_role("button", name=left["title"], exact=True)).to_be_visible()
-            view.get_by_role("button", name="Back", exact=True).click()
             expect(outgoing).to_have_attribute("aria-pressed", "true")
-            checks.append("create edge, outbound and inbound traversal, return")
-            view.get_by_role("button", name="Dynamic object sets", exact=True).click()
+            expect(view.get_by_role("region", name="Relationship definition", exact=True)).to_be_visible()
+            expect(view.get_by_role("region", name="Connected objects", exact=True)).to_have_count(0)
+            expect(view.get_by_role("button", name="Dynamic object sets", exact=True)).to_have_count(0)
+            close_tool(owner, "Relationships")
+            related = open_links(owner, rel, "outgoing")
+            expect(related.get_by_role("link", name=right["title"], exact=True)).to_be_visible()
+            checks.append("definition-only workbench and separate outgoing object Links")
+            view = open_tool(owner, "Dynamic object sets", "Dynamic object set workbench")
             # Apply a filter that matches the selected fixture record and verify both metrics.
             field = source["filterField"]
             group = source["groupField"]
@@ -160,24 +179,24 @@ def main():
             ).to_be_visible()
             checks.append("add/remove filter, group, count, sum, save and evaluate set")
             member_context, member, _ = launch_context(browser, fixture, fixture["reader"])
-            member_view = open_graph(member, base, target, right)
+            select_record(member, base, target, right)
+            member_view = open_tool(member, "Relationships", "Relationship management")
             member_view.get_by_role("complementary", name="Ontology relationships").get_by_role(
                 "button", name=re.compile(re.escape(label) + r".*Incoming")
             ).click()
-            expect(
-                member_view.get_by_role("button", name=left["title"], exact=True)
-            ).to_be_visible()
             expect(member_view.get_by_role("button", name="New relationship")).to_have_count(0)
-            expect(member_view.get_by_role("button", name="Add link")).to_have_count(0)
-            expect(
-                member_view.get_by_role("button", name="Remove link to " + left["title"])
-            ).to_have_count(0)
-            member_view = open_graph(member, base, source, left)
+            expect(member_view.get_by_role("region", name="Connected objects", exact=True)).to_have_count(0)
+            close_tool(member, "Relationships")
+            member_related = open_links(member, rel, "incoming")
+            expect(member_related.get_by_role("link", name=left["title"], exact=True)).to_be_visible()
+            expect(member_related.get_by_role("button", name="Add link")).to_have_count(0)
+            expect(member_related.get_by_role("button", name="Remove relationship to " + left["title"])).to_have_count(0)
+            select_record(member, base, source, left)
             with member.expect_response(
                 lambda response: response.request.method == "GET"
                 and ("/object-types/" + source["id"] + "/sets?") in response.url
             ) as personal:
-                member_view.get_by_role("button", name="Dynamic object sets", exact=True).click()
+                member_view = open_tool(member, "Dynamic object sets", "Dynamic object set workbench")
             private_page = personal.value.json()
             assert personal.value.status == 200 and saved not in {
                 item["id"] for item in private_page.get("data", private_page)["items"]
@@ -201,13 +220,13 @@ def main():
                     'option[value="' + saved + '"]'
                 )
             ).to_have_count(0)
-            view.get_by_role("button", name="Relationships", exact=True).click()
-            outgoing.click()
-            view.get_by_role("button", name="Remove link to " + right["title"]).click()
-            owner.get_by_role("dialog", name="Remove relationship").get_by_role(
+            close_tool(owner, "Dynamic object sets")
+            related = open_links(owner, rel, "outgoing")
+            related.get_by_role("button", name="Remove relationship to " + right["title"]).click()
+            owner.get_by_role("dialog", name="Remove relationship?").get_by_role(
                 "button", name="Remove relationship", exact=True
             ).click()
-            expect(view.get_by_text("No linked records.", exact=True)).to_be_visible()
+            expect(related.get_by_text("No linked objects", exact=True)).to_be_visible()
             checks.append("delete saved set and remove original link")
             owner_context.close()
         finally:
