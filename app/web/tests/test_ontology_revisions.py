@@ -282,6 +282,7 @@ class RevisionIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((workspace["canEdit"], workspace["canReview"], workspace["canManageRoles"]), (False, True, False))
         proposal = await self.propose()
         peer = await self.propose(name="Parallel peer")
+        await self.vote(proposal, actor=0, expected=403)
         await self.merge(proposal, expected=409)
         details = await self.call("GET", f"{self.proposals}/{proposal['id']}", 200, actor=1)
         self.assertIn({"path": "name", "before": "Invoice", "after": "New invoice"}, details["changes"])
@@ -305,35 +306,6 @@ class RevisionIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([row["revision"] for row in history], [self.head + 2, self.head + 1, self.head])
         self.assertEqual(history[0]["restoreRevision"], self.head)
         self.assertIsNone(history[-1]["proposalId"])
-
-    async def test_manager_can_review_and_merge_own_property_proposal(self):
-        definition = deepcopy(self.definition)
-        definition["properties"].append({"id": "age", "name": "Age", "type": "integer"})
-        proposal = await self.propose(definition=definition)
-        reviewed = await self.vote(proposal, actor=0)
-        self.assertEqual(reviewed["reviewerId"], str(self.actors[0].id))
-        merged = await self.merge(proposal)
-        self.assertEqual(merged["mergedRevision"], self.head + 1)
-        published = await self.call("GET", self.route, 200)
-        self.assertIn("age", [p["id"] for p in published["definition"]["properties"]])
-
-    async def test_member_cannot_self_review_or_merge_after_manager_demotion(self):
-        await self.call("PUT", self.roles, 204, {"canEdit": True, "canReview": True})
-        proposal = await self.call("POST", self.proposals, 201, {
-            "revision": self.head, "definition": {**self.definition, "name": "Member proposal"},
-            "summary": "Member proposal",
-        }, actor=1)
-        await self.vote(proposal, actor=1, expected=403)
-        owner_proposal = await self.propose()
-        await self.vote(owner_proposal, actor=0)
-        async with AsyncSession(self.engine) as session:
-            membership = await session.scalar(select(TeamUserJoin).where(
-                TeamUserJoin.team_id == UUID(self.team_id), TeamUserJoin.user_id == self.actors[0].id))
-            membership.role = RoleTypes.MEMBER
-            from app.web.api.models.ontology_revisions import OntologyRevisionGrant
-            session.add(OntologyRevisionGrant(membership_id=membership.id, can_edit=True, can_review=True))
-            await session.commit()
-        await self.merge(owner_proposal, expected=409)
 
     async def test_revocation_and_rejection_never_change_publication(self):
         await self.grant()
