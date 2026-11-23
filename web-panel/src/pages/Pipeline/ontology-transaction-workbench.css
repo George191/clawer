@@ -8,6 +8,8 @@
 .ontology-transaction-editor > header { margin-bottom:16px; }
 .ontology-transaction-workbench .ontology-tx-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
 .ontology-transaction-workbench .ontology-tx-fields > :is(label,div) { width:auto; min-width:0; flex:none; }
+.ontology-tx-property { display:grid; gap:4px; align-content:start; }
+.ontology-tx-property > span { color:var(--ontology-muted); font-weight:500; }
 .ontology-transaction-editor fieldset > .ui-btn { justify-self:start; }
 .ontology-transaction-queue { display:flex; flex-direction:column; min-width:0; min-height:0; border-left:1px solid var(--ontology-border); background:var(--ontology-bg); }
 .ontology-transaction-queue > header { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:14px; }

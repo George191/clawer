@@ -40,6 +40,17 @@ def run():
         ctx, page = login(fixture["owner"])
         dialog = page.get_by_role("dialog", name="Properties & column mapping", exact=True)
         expect(dialog.get_by_role("table", name="Registered properties")).to_be_visible()
+        for width, height in [(1580, 1024), (390, 670)]:
+            page.set_viewport_size({"width": width, "height": height})
+            shell = dialog.locator(".ui-modal-content").bounding_box()
+            assert shell and .9 * width <= shell["width"] <= width and .85 * height <= shell["height"] <= height, shell
+            close = dialog.get_by_role("button", name="Close", exact=True)
+            expect(close).to_be_in_viewport()
+            sample = dialog.get_by_role("table", name="Data preview").get_by_text("Sample A", exact=True)
+            sample.scroll_into_view_if_needed()
+            expect(sample).to_be_in_viewport()
+            expect(close).to_be_in_viewport()
+        page.set_viewport_size({"width": 1580, "height": 1024})
         dialog.get_by_role("button", name="Close", exact=True).click()
         expect(page).to_have_url(url.removesuffix("&view=schema"))
         expect(page.get_by_role("region", name="Object results")).to_be_visible()

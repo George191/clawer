@@ -3,8 +3,8 @@ import { NativeSelect } from '@/components/ui';
 import { explorerPropertyType } from '../../services/explorerProperties';
 import './explorer-field-editor.css';
 
-export default function ExplorerFieldEditor({ name, type = 'text', value, onChange, disabled, onKeyDown, nullControl }: {
-  name: string; type?: string; value: string | null; onChange: (value: string | null) => void;
+export default function ExplorerFieldEditor({ name, inputLabel = 'Edit ' + name, type = 'text', value, onChange, disabled, onKeyDown, nullControl }: {
+  name: string; inputLabel?: string; type?: string; value: string | null; onChange: (value: string | null) => void;
   disabled?: boolean; onKeyDown?: KeyboardEventHandler<HTMLDivElement>;
   nullControl?: { checked: boolean; onChange: (checked: boolean) => void };
 }) {
@@ -13,7 +13,7 @@ export default function ExplorerFieldEditor({ name, type = 'text', value, onChan
   const number = kind === 'integer' || kind === 'number';
   const fieldDisabled = disabled || nullControl?.checked;
   const change = (next: string) => { if (!fieldDisabled) onChange(next); };
-  const props = { 'aria-label': 'Edit ' + name, disabled: fieldDisabled, value: nullControl?.checked ? '' : value ?? '', onChange: (event: { target: { value: string } }) => change(event.target.value) };
+  const props = { 'aria-label': inputLabel, disabled: fieldDisabled, value: nullControl?.checked ? '' : value ?? '', onChange: (event: { target: { value: string } }) => change(event.target.value) };
   return <div className="explorer-field-editor" onKeyDown={onKeyDown}>
     <div className={`explorer-field-editor__control${nullControl ? ' has-null-control' : ''}${kind === 'boolean' || kind === 'date' ? ' has-trailing-icon' : ''}`}>
       {kind === 'boolean' ? <NativeSelect {...props} onChange={event => { if (!fieldDisabled) onChange(event.target.value); }}>

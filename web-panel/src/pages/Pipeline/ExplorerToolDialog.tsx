@@ -11,7 +11,7 @@ type Props = {
 };
 
 export default function ExplorerToolDialog({ title, context, onClose, bodyClassName, children }: Props) {
-  return <Modal open centered width={1040} title={title} onCancel={onClose}
+  return <Modal open centered width="var(--explorer-tool-width, 1040px)" title={title} onCancel={onClose}
     className="flow-surface-modal flow-published-dialog explorer-resource-dialog explorer-tool-workbench-dialog"
     footer={<Button onClick={onClose}>Close</Button>}>
     {context && <div className="explorer-resource-context">{context}</div>}

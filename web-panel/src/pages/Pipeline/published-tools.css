@@ -66,7 +66,7 @@
 }
 .flow-tool-section label:has(> input[type="checkbox"]) { display: flex; align-items: center; gap: 5px; }
 .flow-tool-section input[type="checkbox"] { accent-color: var(--ontology-muted); }
-.flow-tool-section :is(.ui-native-select, input:not([type="checkbox"]):not(.ui-select-selection-search-input)) {
+.flow-tool-section :is(.ui-native-select, input:not([type="checkbox"]):not(.ui-select-selection-search-input)):not(:where(.explorer-field-editor *)) {
   box-sizing: border-box; width: 100%; max-width: 100%; min-width: 0; height: 30px; padding: 3px 8px;
   border: 1px solid var(--ontology-control-border); border-radius: 3px;
   background: var(--ontology-bg); color: var(--ontology-text); font: inherit; font-weight: 400;

@@ -6,6 +6,7 @@ import { applyTransaction, listOntologyRecords, listPublishedOntologyTypes, list
 import { parsePropertyValue } from './ontologyPropertyValue';
 import { newOntologyRequestId } from '../../services/ontology';
 import OntologyWriteback from './OntologyWriteback';
+import ExplorerFieldEditor from './ExplorerFieldEditor';
 import useExplorerErrorToast from './useExplorerErrorToast';
 import { BranchesOutlined, DeleteOutlined, HistoryOutlined, PlusOutlined } from '@/components/ui/icons';
 import { getSessionState } from '../../services/session';
@@ -67,7 +68,7 @@ export default function OntologyTransactions({objectType, onCommitted}: {objectT
   const [source, setSource] = useState('');
   const [target, setTarget] = useState('');
   const [record, setRecord] = useState({id: '', revision: 0, title: ''});
-  const [values, setValues] = useState<Record<string, string | null>>({});
+  const [values, setValues] = useState<Record<string, { text?: string; isNull: boolean }>>({});
   const [history, setHistory] = useState<TransactionReceipt[]>([]);
   const [deliveryId, selectDelivery] = useState('');
   const [offset, setOffset] = useState(0);
@@ -144,7 +145,9 @@ export default function OntologyTransactions({objectType, onCommitted}: {objectT
         if (!action || !selectedType) throw new Error('This action is unavailable for this object type.');
         const fields: Record<string, unknown> = {};
         for (const prop of selectedType.definition.properties.filter(p => action.fields.includes(p.id))) {
-          if (Object.prototype.hasOwnProperty.call(values,prop.id)) fields[prop.id] = values[prop.id] === null ? null : parsePropertyValue(values[prop.id]!,prop.type);
+          const value = values[prop.id];
+          if (value?.isNull) fields[prop.id] = null;
+          else if (value?.text !== undefined) fields[prop.id] = parsePropertyValue(value.text, prop.type);
           else if (kind === 'create' && prop.required) throw new Error(prop.name + ' is required.');
         }
         if (kind === 'create') {
@@ -199,12 +202,14 @@ export default function OntologyTransactions({objectType, onCommitted}: {objectT
               label="Target record" aliases={aliasesFor(link.targetDefinitionId)} value={target} change={setTarget} /></div>}</>
           : <>{kind !== 'create' && <RecordPicker key={typeId} type={typeId} label="Step record" value={record.id} version={version}
             change={(id,revision,title) => setRecord({id,revision:revision || 0,title:title || ''})} />}
-            <div className="ontology-tx-fields">{selectedType?.definition.properties.filter(p => action?.fields.includes(p.id)).map(p => <div key={p.id}>
-              <label>{p.name}<input aria-label={'Step value '+p.id} disabled={values[p.id] === null}
-                value={values[p.id] ?? ''} onChange={e => setValues({...values,[p.id]:e.target.value})} /></label>
-              {!p.required && <label><input type="checkbox" checked={values[p.id] === null} onChange={e => setValues(prev => {
-                const updated = {...prev}; if (e.target.checked) updated[p.id] = null; else delete updated[p.id];return updated;
-              })} />Set {p.name} to null</label>}</div>)}</div></>}
+            <div className="ontology-tx-fields">{selectedType?.definition.properties.filter(p => action?.fields.includes(p.id)).map(p =>
+              <div className="ontology-tx-property" key={p.id}>
+                <span>{p.name}</span>
+                <ExplorerFieldEditor name={p.name} inputLabel={'Step value ' + p.id} type={p.type} disabled={pending} value={values[p.id]?.text ?? ''}
+                  onChange={text => setValues(previous => ({ ...previous, [p.id]: { text: text ?? '', isNull: false } }))}
+                  nullControl={p.required ? undefined : { checked: !!values[p.id]?.isNull,
+                    onChange: isNull => setValues(previous => ({ ...previous, [p.id]: { ...previous[p.id], isNull } })) }} />
+              </div>)}</div></>}
         <Button disabled={entries.length >= 24 || (edge ? !link || !source || !target : !action || (kind !== 'create' && !record.id))} onClick={add} icon={<PlusOutlined />}>Add step</Button>
       </fieldset></section>
       <aside className="ontology-transaction-queue" aria-label="Staged changes">

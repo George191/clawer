@@ -171,6 +171,8 @@ test('saved set deletion uses explicit confirmation and its guard blocks duplica
   ui.unmount();
 });
 
+const stepField = (tree, id) => nodes(tree).find(node => node.type === './ExplorerFieldEditor' && node.props.inputLabel === 'Step value ' + id);
+
 function transactions(apply = async () => ({ id: 'synthetic-transaction', name: 'Synthetic transaction' }), actions = [{ kind: 'create', fields: ['id', 'amount'] }]) {
   const writes = [], undos = [], committed = [];
   const ui = mount('OntologyTransactions', '', { objectType, onCommitted: () => committed.push(true) }, {
@@ -182,8 +184,8 @@ function transactions(apply = async () => ({ id: 'synthetic-transaction', name: 
   });
   return { ...ui, writes, undos, committed, async stage() {
     await ui.flush();
-    input(ui.tree(), 'Step value id').props.onChange({ target: { value: 'synthetic-id' } }); ui.render();
-    input(ui.tree(), 'Step value amount').props.onChange({ target: { value: '2.5' } }); ui.render();
+    stepField(ui.tree(), 'id').props.onChange('synthetic-id'); ui.render();
+    stepField(ui.tree(), 'amount').props.onChange('2.5'); ui.render();
     button(ui.tree(), 'Add step').props.onClick(); ui.render();
     input(ui.tree(), 'Transaction name').props.onChange({ target: { value: 'Synthetic transaction' } }); ui.render();
   } };
@@ -192,7 +194,7 @@ function transactions(apply = async () => ({ id: 'synthetic-transaction', name: 
 test('transaction staging validates permitted fields and commits nothing before explicit commit', async () => {
   const denied = transactions(undefined, []); await denied.flush();
   assert.equal(button(denied.tree(), 'Add step').props.disabled, true);
-  assert.equal(input(denied.tree(), 'Step value id'), undefined);
+  assert.equal(stepField(denied.tree(), 'id'), undefined);
   const ui = transactions(); await ui.flush();
   button(ui.tree(), 'Add step').props.onClick(); ui.render();
   assert.match(text(ui.tree()), /No staged changes/); assert.equal(ui.writes.length, 0);
@@ -207,6 +209,27 @@ test('transaction staging validates permitted fields and commits nothing before 
     { kind: 'create', definitionId: 'source-type', alias: '@item1', values: { id: 'synthetic-id', amount: 2.5 } },
   ]]]);
   assert.equal(ui.committed.length, 1);
+});
+
+test('optional transaction fields distinguish NULL, untouched and restored values on commit', async () => {
+  const ui = transactions(); await ui.flush();
+  const field = id => stepField(ui.tree(), id).props;
+  assert.equal(field('id').nullControl, undefined);
+  assert.equal(nodes(ui.tree()).some(node => node.type === 'input' && node.props.type === 'checkbox'), false);
+  for (const scenario of ['untouched', 'restored', 'null']) {
+    field('id').onChange(scenario); ui.render();
+    if (scenario !== 'untouched') { field('amount').onChange('7.5'); ui.render(); }
+    field('amount').nullControl.onChange(true); ui.render();
+    assert.equal(field('amount').nullControl.checked, true);
+    if (scenario !== 'null') { field('amount').nullControl.onChange(false); ui.render(); }
+    button(ui.tree(), 'Add step').props.onClick(); ui.render();
+    assert.equal(field('amount').nullControl.checked, false);
+  }
+  input(ui.tree(), 'Transaction name').props.onChange({ target: { value: 'Nullable fields' } }); ui.render();
+  await button(ui.tree(), 'Commit transaction').props.onClick();
+  assert.deepEqual(ui.writes[0][3].map(step => step.values), [
+    { id: 'untouched' }, { id: 'restored', amount: 7.5 }, { id: 'null', amount: null },
+  ]);
 });
 
 test('failed transaction commits retain staged changes and reuse the idempotency key on retry', async () => {
