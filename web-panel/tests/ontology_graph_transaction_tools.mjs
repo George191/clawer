@@ -51,7 +51,8 @@ function mount(file, name, props, api) {
 
 const relation = { id: 'synthetic-link-type', key: 'synthetic_relation', cardinality: 'many_to_many', name: 'Synthetic relation', sourceDefinitionId: 'source-type', targetDefinitionId: 'target-type' };
 const objectType = { id: 'source-type', definition: { projectId: 'synthetic-project', name: 'Synthetic type', source: { mode: 'none' },
-  properties: [{ id: 'id', name: 'ID', type: 'string', required: true }, { id: 'amount', name: 'Amount', type: 'number', required: false }] } };
+  properties: [{ id: 'id', name: 'ID', type: 'string', required: true }, { id: 'amount', name: 'Amount', type: 'number', required: false },
+    { id: 'note', name: 'Note', type: 'string', required: false }] } };
 
 test('new relationship type submission is single-flight and cannot notify after unmount', async () => {
   const writes = []; let finish, saved = 0;
@@ -229,6 +230,25 @@ test('optional transaction fields distinguish NULL, untouched and restored value
   await button(ui.tree(), 'Commit transaction').props.onClick();
   assert.deepEqual(ui.writes[0][3].map(step => step.values), [
     { id: 'untouched' }, { id: 'restored', amount: 7.5 }, { id: 'null', amount: null },
+  ]);
+});
+
+test('clearing transaction text submits an empty string unless Set NULL is active', async () => {
+  const ui = transactions(undefined, [{ kind: 'create', fields: ['id', 'note'] }]);
+  await ui.flush();
+  const note = () => stepField(ui.tree(), 'note').props;
+  for (const id of ['cleared', 'restored', 'null']) {
+    stepField(ui.tree(), 'id').props.onChange(id); ui.render();
+    note().onChange('Draft'); ui.render();
+    note().onChange(''); ui.render();
+    if (id !== 'cleared') { note().nullControl.onChange(true); ui.render(); }
+    if (id === 'restored') { note().nullControl.onChange(false); ui.render(); }
+    button(ui.tree(), 'Add step').props.onClick(); ui.render();
+  }
+  input(ui.tree(), 'Transaction name').props.onChange({ target: { value: 'Clear text' } }); ui.render();
+  await button(ui.tree(), 'Commit transaction').props.onClick();
+  assert.deepEqual(ui.writes[0][3].map(step => step.values), [
+    { id: 'cleared', note: '' }, { id: 'restored', note: '' }, { id: 'null', note: null },
   ]);
 });
 
