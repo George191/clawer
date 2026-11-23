@@ -118,13 +118,19 @@ def inventory(path):
             if checkpoint and checkpoint[1]:continue
             last = loads(checkpoint[0]) if checkpoint and checkpoint[0] else None
             while True:
-                query = {'_meta.download_status':status}
+                queries = [{'_meta.download_status':status}]
                 if last:
-                    query['_meta.updated_at']={'$gte':last[0]}
-                    query['$or'] = [{'_meta.updated_at':{'$gt':last[0]}},{'_meta.updated_at':last[0],'_id':{'$gt':last[1]}}]
+                    # Seek the complete compound key; an OR leaves _id unbounded
+                    # and rescans the whole timestamp group on every page.
+                    queries = [
+                        {'_meta.download_status':status,'_meta.updated_at':last[0],'_id':{'$gt':last[1]}},
+                        {'_meta.download_status':status,'_meta.updated_at':{'$gt':last[0]}},
+                    ]
                 # Negative limit closes the server cursor after one response. A short
                 # batch resumes from its last key instead of issuing getMore.
-                docs = list(collection.find(query, {'assets':1,'_meta.record_id':1,'_meta.updated_at':1}).sort([('_meta.updated_at',1),('_id',1)]).hint(compound).batch_size(SOURCE_PAGE_SIZE).limit(-SOURCE_PAGE_SIZE).max_time_ms(120000))
+                for query in queries:
+                    docs = list(collection.find(query, {'assets':1,'_meta.record_id':1,'_meta.updated_at':1}).sort([('_meta.updated_at',1),('_id',1)]).hint(compound).batch_size(SOURCE_PAGE_SIZE).limit(-SOURCE_PAGE_SIZE).max_time_ms(120000))
+                    if docs:break
                 if not docs:
                     db.execute('INSERT OR REPLACE INTO progress VALUES(?,?,1)',(name,dumps(last) if last else ''));db.commit();break
                 pending = []

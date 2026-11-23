@@ -171,12 +171,16 @@ def test_indexed_inventory_resumes_without_relisting_sources(tmp_path):
     doc = {'_id':'row1','_meta':{'record_id':record_id,'updated_at':datetime(2026,1,1,tzinfo=timezone.utc)},'assets':{'image':old,'missing':{'status_code':404,'url':'','message':'Source file returned HTTP 404; the file no longer exists.'}}}
     cursors = []
     def find(query, projection):
-        assert '$lte' not in query.get('_meta.updated_at', {})  # Active source updates remain discoverable.
-        if '$or' in query:assert query['_meta.updated_at']=={'$gte':doc['_meta']['updated_at']}
+        boundary = query.get('_meta.updated_at')
+        assert '$or' not in query
+        if isinstance(boundary,dict):assert boundary=={'$gt':doc['_meta']['updated_at']}
+        elif boundary is not None:
+            assert boundary==doc['_meta']['updated_at']
+            assert query['_id']=={'$gt':doc['_id']}
         cursor = MagicMock()
         cursors.append(cursor)
         cursor.sort.return_value.hint.return_value.batch_size.return_value.limit.return_value.max_time_ms.return_value = (
-            [doc] if query['_meta.download_status']=='downloaded' and '$or' not in query else [])
+            [doc] if query['_meta.download_status']=='downloaded' and boundary is None else [])
         return cursor
     collection.find.side_effect = find
     async def routes():
