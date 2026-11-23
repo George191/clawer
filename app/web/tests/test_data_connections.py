@@ -40,10 +40,29 @@ def payload(engine="postgresql", **changes):
 
 class DataConnectionContracts(unittest.TestCase):
     def test_engine_contracts_and_safe_ipv6_host(self):
-        for engine in ("postgresql", "mysql", "oracle", "dameng", "elasticsearch", "milvus", "s3", "redis", "clickhouse"):
+        for engine in ("postgresql", "mysql", "oracle", "dameng", "elasticsearch", "milvus", "s3", "redis", "clickhouse", "mongodb"):
             with self.subTest(engine=engine):
                 self.assertEqual(payload(engine).engine, engine)
         self.assertEqual(payload(host="2001:db8::1").config.host, "2001:db8::1")
+
+    def test_mongodb_scope_and_authentication_database(self):
+        self.assertEqual(payload("mongodb").config.model_dump()["authDatabase"], "admin")
+        self.assertEqual(payload("mongodb", authDatabase="readers").config.authDatabase, "readers")
+        self.assertNotIn("authDatabase", payload("mysql").config.model_dump())
+        with self.assertRaises(ValidationError):
+            payload("mysql", authDatabase="admin")
+        for changes in ({"database": ""}, {"database": "bad/name"}, {"database": "文" * 22},
+                        {"authDatabase": "bad.name"}, {"auth": "token", "username": ""}):
+            with self.subTest(changes=changes), self.assertRaises(ValidationError):
+                payload("mongodb", **changes)
+
+    def test_mongodb_is_a_document_connector_without_catalog_or_sync(self):
+        with patch.object(sources, "_driver") as driver:
+            item = next(item for item in sources.connector_types() if item["engine"] == "mongodb")
+        self.assertEqual((item["category"], item["port"]), ("non_relational", 27017))
+        self.assertTrue(item["driverAvailable"])
+        self.assertFalse(item["catalogAvailable"])
+        driver.assert_any_call("mongodb")
 
     def test_cloud_provider_and_engine_specific_fields(self):
         self.assertNotIn("provider", payload(provider="self_hosted").config.model_dump())
@@ -98,6 +117,39 @@ class DataConnectionContracts(unittest.TestCase):
 
 
 class DataConnectionProbes(unittest.IsolatedAsyncioTestCase):
+    async def test_mongodb_tests_only_the_selected_database_metadata(self):
+        client = MagicMock()
+        session = client.__enter__.return_value
+        driver = SimpleNamespace(MongoClient=MagicMock(return_value=client))
+        with patch.object(sources, "_driver", return_value=driver):
+            await sources._probe(
+                payload("mongodb", host="2001:db8::1", port=27017, authDatabase="readers"),
+                {"password": "reserved@chars:/?"},
+            )
+        driver.MongoClient.assert_called_once_with(
+            host="[2001:db8::1]", port=27017, username="reader", password="reserved@chars:/?",
+            authSource="readers", tls=True, directConnection=True, timeoutMS=5000,
+            retryReads=False, retryWrites=False, connect=False,
+        )
+        session.__getitem__.assert_called_once_with("analytics")
+        session["analytics"].command.assert_called_once_with({
+            "listCollections": 1, "nameOnly": True, "filter": {"name": {"$in": []}},
+        })
+        client.__exit__.assert_called_once()
+
+    async def test_mongodb_denied_probe_does_not_echo_the_password(self):
+        from pymongo.errors import OperationFailure
+
+        client = MagicMock()
+        database = client.__enter__.return_value["analytics"]
+        database.command.side_effect = OperationFailure("private secret in driver error", code=13)
+        with patch.object(sources, "_driver", return_value=SimpleNamespace(MongoClient=MagicMock(return_value=client))):
+            service = object.__new__(sources.DataConnections)
+            result = await service.test(payload("mongodb"))
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["message"], "Authentication or read access was rejected.")
+        client.__exit__.assert_called_once()
+
     async def test_s3_signed_read_only_bucket_probe(self):
         from botocore.awsrequest import AWSResponse
         from botocore.httpsession import URLLib3Session

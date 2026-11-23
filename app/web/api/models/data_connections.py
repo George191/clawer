@@ -9,7 +9,7 @@ from typing import Literal
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 
-Engine = Literal["postgresql", "mysql", "oracle", "dameng", "elasticsearch", "milvus", "s3", "redis", "clickhouse"]
+Engine = Literal["postgresql", "mysql", "oracle", "dameng", "elasticsearch", "milvus", "s3", "redis", "clickhouse", "mongodb"]
 Provider = Literal["self_hosted", "aws", "azure", "gcp", "aliyun", "tencent", "huawei", "oracle_cloud", "other"]
 
 
@@ -18,6 +18,7 @@ class SourceConfig(BaseModel):
     host: str = Field(min_length=1, max_length=253)
     port: int = Field(ge=1, le=65535, strict=True)
     database: str = Field(default="", max_length=128)
+    authDatabase: str | None = Field(default=None, max_length=128, exclude_if=lambda value: value is None)
     username: str = Field(default="", max_length=200)
     auth: Literal["password", "api_key", "token", "access_key"] = "password"
     tls: bool = Field(default=True, strict=True)
@@ -37,10 +38,10 @@ class SourceConfig(BaseModel):
                 raise ValueError("Enter a hostname or IP address without a URL, path or credentials")
         return value
 
-    @field_validator("database", "username")
+    @field_validator("database", "username", "authDatabase")
     @classmethod
-    def no_control_characters(cls, value: str) -> str:
-        if any(ord(character) < 32 for character in value):
+    def no_control_characters(cls, value: str | None) -> str | None:
+        if value is not None and any(ord(character) < 32 for character in value):
             raise ValueError("Control characters are not allowed")
         return value
 
@@ -72,8 +73,15 @@ class DataConnectionPayload(BaseModel):
             raise ValueError("Username is required for password authentication")
         if config.auth in {"api_key", "token"} and config.username:
             raise ValueError("Username must be empty for token or API key authentication")
-        if self.engine in {"postgresql", "mysql", "oracle", "milvus", "clickhouse"} and not config.database:
+        if self.engine in {"postgresql", "mysql", "oracle", "milvus", "clickhouse", "mongodb"} and not config.database:
             raise ValueError("Database or service name is required")
+        if self.engine == "mongodb":
+            config.authDatabase = config.authDatabase or "admin"
+            for name in (config.database, config.authDatabase):
+                if len(name.encode("utf-8")) >= 64 or any(character in '/\\. "$*<>:|?' for character in name):
+                    raise ValueError("MongoDB database names must be under 64 bytes and contain no reserved characters")
+        elif config.authDatabase is not None:
+            raise ValueError("Authentication database is supported only for MongoDB")
         if self.engine in {"elasticsearch", "dameng", "s3"} and config.database:
             raise ValueError("This connector does not accept a database scope")
         if self.engine == "s3":

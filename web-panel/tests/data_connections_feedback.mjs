@@ -10,10 +10,11 @@ const text = value => Array.isArray(value) ? value.map(text).join('') : value?.p
 const types = [
   ['mysql', 'MySQL', 3306, 'relational'], ['postgresql', 'PostgreSQL', 5432, 'relational'],
   ['s3', 'S3-compatible storage', 443, 'object_storage'], ['redis', 'Redis', 6379, 'non_relational'],
-  ['clickhouse', 'ClickHouse', 8443, 'relational'],
+  ['clickhouse', 'ClickHouse', 8443, 'relational'], ['mongodb', 'MongoDB', 27017, 'non_relational'],
 ].map(([engine, name, port, category]) => ({ engine, name, port, category, driverAvailable: true, catalogAvailable: false }));
 const source = (engine = 'mysql', patch = {}) => ({ id: 'source-a', name: 'Synthetic source', engine,
-  config: { host: 'db.synthetic.test', port: engine === 'mysql' ? 3306 : 5432, database: 'analytics', username: 'reader', auth: 'password', tls: true },
+  config: { host: 'db.synthetic.test', port: types.find(type => type.engine === engine).port, database: 'analytics', username: 'reader', auth: 'password', tls: true,
+    ...(engine === 'mongodb' ? { authDatabase: 'admin' } : {}) },
   credentialsConfigured: true, catalogAvailable: false, updatedAt: '2026-01-01T00:00:00Z', testedAt: null, ...patch });
 let instance = 0;
 
@@ -245,4 +246,63 @@ test('editing an existing database shows self-hosted and changing providers requ
   ui.select('Hosting provider', 'self_hosted'); ui.fill('Connection name', 'Renamed'); ui.click('Save source'); await ui.settle();
   const payload = ui.calls('updateDataSource')[0].args[1];
   assert.equal(payload.config.provider, undefined); assert.deepEqual(payload.credentials, {}); ui.unmount();
+});
+
+test('MongoDB requires a target database and tests and saves its own authentication database', async () => {
+  const ui = await mount(); ui.choose('mongodb', 'non_relational');
+  assert.equal(ui.field('Port').props.value, '27017');
+  assert.equal(ui.field('Authentication database').props.value, 'admin');
+  ui.valid(); ui.fill('Database', '');
+  ui.click('Test connection');
+  assert.equal(ui.calls('testDataSource').length, 0);
+  assert.match(ui.feedback().at(-1).value.content, /database or service name/);
+
+  ui.fill('Database', 'documents');
+  ui.fill('Authentication database', '');
+  ui.click('Test connection'); await ui.settle();
+  const tested = ui.calls('testDataSource')[0].args[0];
+  assert.equal(tested.engine, 'mongodb');
+  assert.equal(tested.config.database, 'documents');
+  assert.equal(tested.config.authDatabase, 'admin');
+  assert.equal(tested.config.port, 27017);
+  assert.equal(tested.config.tls, true);
+
+  ui.fill('Authentication database', ' accounts ');
+  ui.click('Save source'); await ui.settle();
+  assert.equal(ui.calls('createDataSource')[0].args[0].config.authDatabase, 'accounts');
+  ui.unmount();
+});
+
+test('changing the MongoDB authentication database requires re-entering credentials', async () => {
+  const saved = source('mongodb');
+  const ui = await mount({ sources: [saved], selected: saved.id });
+  ui.click('Edit connection');
+  assert.equal(ui.field('Authentication database').props.value, 'admin');
+  ui.fill('Authentication database', 'accounts');
+  ui.click('Test connection');
+  assert.equal(ui.calls('testDataSource').length, 0);
+  assert.match(ui.feedback().at(-1).value.content, /Enter credentials again/);
+  ui.fill('Authentication database', '');
+  ui.click('Test connection'); await ui.settle();
+  assert.equal(ui.calls('testDataSource')[0].args[0].config.authDatabase, 'admin');
+  assert.deepEqual(ui.calls('testDataSource')[0].args[0].credentials, {});
+  ui.unmount();
+});
+
+test('MySQL and MongoDB use distinct vector marks rather than database initials', () => {
+  const code = ts.transpileModule(readFileSync(new URL('../src/pages/Pipeline/ConnectorMark.tsx', import.meta.url), 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
+  }).outputText;
+  const exports = {};
+  vm.runInThisContext('(function(require,exports){' + code + '\n})')(name =>
+    name === 'react/jsx-runtime' ? { jsx, jsxs: jsx } : { default: 'PostgreSQL' }, exports);
+  const marks = ['mysql', 'mongodb'].map(engine => {
+    const mark = exports.default({ engine });
+    assert.equal(mark.props['aria-hidden'], 'true');
+    assert.match(mark.props.className, new RegExp('is-' + engine));
+    const glyph = mark.props.children.type();
+    assert.equal(glyph.type, 'svg');
+    return nodes(glyph).find(node => node.type === 'path').props.d;
+  });
+  assert.notEqual(...marks);
 });

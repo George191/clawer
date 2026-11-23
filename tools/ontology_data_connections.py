@@ -13,7 +13,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sqlalchemy import text
 
 from app.etl.schema.data_connections import (
-    DATA_CONNECTIONS_DDL, DATA_CONNECTIONS_ENGINE_DDL, DATA_CONNECTIONS_PAUSE_DDL, ENGINE_CHECK_INSTALLED,
+    DATA_CONNECTIONS_DDL, DATA_CONNECTIONS_ENGINE_DDL, DATA_CONNECTIONS_MONGODB_DDL,
+    DATA_CONNECTIONS_MONGODB_ENABLED, DATA_CONNECTIONS_PAUSE_DDL, ENGINE_CHECK_INSTALLED,
 )
 from app.storage.postgres_client import get_pg_client
 
@@ -47,6 +48,8 @@ async def required_changes(session):
     changes = ["enable_postgresql_source_pause"] if legacy else []
     if not await session.scalar(text(ENGINE_CHECK_INSTALLED)):
         changes.append("expand_source_engines")
+    if not await session.scalar(text(DATA_CONNECTIONS_MONGODB_ENABLED)):
+        changes.append("enable_mongodb_source")
     return changes
 
 
@@ -62,7 +65,8 @@ async def migrate(pg, *, apply=False):
         if apply:
             statements = {"create_external_source_registry": DATA_CONNECTIONS_DDL,
                           "enable_postgresql_source_pause": DATA_CONNECTIONS_PAUSE_DDL,
-                          "expand_source_engines": DATA_CONNECTIONS_ENGINE_DDL}
+                          "expand_source_engines": DATA_CONNECTIONS_ENGINE_DDL,
+                          "enable_mongodb_source": DATA_CONNECTIONS_MONGODB_DDL}
             for change in changes:
                 await session.execute(text(statements[change]))
         ready = not (await required_changes(session) if apply else changes)

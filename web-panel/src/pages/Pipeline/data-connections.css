@@ -219,7 +219,9 @@
 }
 .ontology-connectors__mark svg { width: 20px; height: 20px; }
 .ontology-connectors__mark.is-milvus { color: #50bbce; }
-.ontology-connectors__mark.is-mysql { color: #e4a84c; }
+.ontology-connectors__mark:is(.is-mysql, .is-mongodb) { color: #fff; border-color: transparent; }
+.ontology-connectors__mark.is-mysql { background: #40d649; }
+.ontology-connectors__mark.is-mongodb { background: #ba5001; }
 .ontology-connectors__mark.is-dameng { color: #e85d5d; }
 .ontology-connectors__mark.is-redis { color: #e85d5d; }
 .ontology-connectors__mark.is-clickhouse { color: #e4a84c; }

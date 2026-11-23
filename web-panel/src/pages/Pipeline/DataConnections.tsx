@@ -44,12 +44,14 @@ const errorText = (error: unknown) => {
   const detail = response?.errors ?? response?.detail ?? response?.message;
   return typeof detail === 'string' ? detail : detail ? JSON.stringify(detail) : (error as Error)?.message || 'Request failed';
 };
+const mongoAuthDatabase = (value?: string) => value?.trim() || 'admin';
 const initialDraft = ({ engine, port }: DataConnectorType): Draft => ({
   name: '', engine, secret: '',
   config: {
     host: '', port: String(port), database: engine === 'redis' ? '0' : ['milvus', 'clickhouse'].includes(engine) ? 'default' : '',
     username: engine === 'redis' ? 'default' : '', auth: engine === 's3' ? 'access_key' : 'password', tls: engine !== 'dameng',
     ...(engine === 's3' ? { bucket: '', region: '' } : {}),
+    ...(engine === 'mongodb' ? { authDatabase: 'admin' } : {}),
   },
 });
 
@@ -249,8 +251,9 @@ export default function DataConnections({ onChanged }: Props = {}) {
   const proofKey = viewedSource ? `${sessionIdentity}:${viewedSource.id}:${viewedSource.updatedAt}` : '';
   const activeProof = sourceProof?.key === proofKey ? sourceProof.value : undefined;
   const viewedType = connectors.find((item) => item.engine === viewedSource?.engine);
-  const sameDestination = !!draft && !!selected && Object.entries(draft.config).every(([key, value]) => {
+  const sameDestination = !!draft && !!selected && draft.engine === selected.engine && Object.entries(draft.config).every(([key, value]) => {
     const saved = selected.config[key as keyof DataSourceConfig];
+    if (key === 'authDatabase') return mongoAuthDatabase(String(value ?? '')) === mongoAuthDatabase(selected.config.authDatabase);
     if (key === 'provider') return (value ?? 'self_hosted') === (saved ?? 'self_hosted');
     if (key === 'addressingStyle') return (value ?? 'path') === (saved ?? 'path');
     return typeof value === 'string' ? value.trim() === String(saved) : value === saved;
@@ -331,7 +334,7 @@ export default function DataConnections({ onChanged }: Props = {}) {
     const name = draft.name.trim(), config = draft.config;
     if (!name || !config.host.trim() || !/^\d+$/.test(config.port) || Number(config.port) < 1 || Number(config.port) > 65535) { notify('error', 'Enter a connection name, host and port between 1 and 65535.'); return null; }
     if (config.auth === 'password' && !config.username.trim()) { notify('error', 'Enter the database username.'); return null; }
-    if (['postgresql', 'mysql', 'oracle', 'milvus', 'clickhouse'].includes(draft.engine) && !config.database.trim()) { notify('error', 'Enter the database or service name.'); return null; }
+    if (['postgresql', 'mysql', 'oracle', 'mongodb', 'milvus', 'clickhouse'].includes(draft.engine) && !config.database.trim()) { notify('error', 'Enter the database or service name.'); return null; }
     if (draft.engine === 'redis' && !/^(0|[1-9]\d*)$/.test(config.database.trim())) { notify('error', 'Enter a non-negative Redis database index without leading zeros.'); return null; }
     if (draft.engine === 's3' && (!config.bucket?.trim() || !config.region?.trim() || !config.username.trim())) { notify('error', 'Enter a bucket, signing region and access key ID.'); return null; }
     if (!draft.secret && !canReuseSecret) {
@@ -340,7 +343,9 @@ export default function DataConnections({ onChanged }: Props = {}) {
     }
     return { name, engine: draft.engine, ...(postgresEdit && editingRevision ? { expectedUpdatedAt: editingRevision.updatedAt } : {}),
       config: { ...config, host: config.host.trim(), port: Number(config.port), username: config.username.trim(), database: config.database.trim(),
-        ...(draft.engine === 's3' ? { bucket: config.bucket?.trim(), region: config.region?.trim() } : {}) },
+        ...(draft.engine === 's3' ? { bucket: config.bucket?.trim(), region: config.region?.trim() } : {}),
+        ...(draft.engine === 'mongodb' ? { authDatabase: mongoAuthDatabase(config.authDatabase) } : {}),
+      },
       credentials: draft.secret ? { [authFields[config.auth].key]: draft.secret } : {} };
   };
   const mutate = async (kind: 'test' | 'save' | 'delete' | 'pause', action: () => Promise<void>, draftEdit = false) => {
@@ -511,6 +516,9 @@ export default function DataConnections({ onChanged }: Props = {}) {
           </>}
           {viewedSource.config.database && <div><dt>{databaseLabel(viewedSource.engine)}</dt><dd>{viewedSource.config.database}</dd></div>}
           <div><dt>Authentication</dt><dd>{authFields[viewedSource.config.auth].method}</dd></div>
+          {viewedSource.engine === 'mongodb' && <div>
+            <dt>Authentication database</dt><dd>{mongoAuthDatabase(viewedSource.config.authDatabase)}</dd>
+          </div>}
           <div><dt>Transport</dt><dd>{viewedSource.engine === 'dameng' ? 'Vendor client default' : viewedSource.config.tls ? 'TLS verification enabled' : 'TLS disabled'}</dd></div>
           <div><dt>Credentials</dt><dd>{viewedSource.credentialsConfigured ? 'Configured' : 'Not configured'}</dd></div>
           <div><dt>Last connectivity test</dt><dd>{formatDate(viewedSource.testedAt)}</dd></div>
@@ -602,7 +610,7 @@ export default function DataConnections({ onChanged }: Props = {}) {
                   </NativeSelect></label>
                 </>}
                 {draft.engine === 'clickhouse' && <p className="ontology-connectors__help">Enter your ClickHouse HTTP or HTTPS endpoint.</p>}
-                {!['elasticsearch', 'dameng', 's3'].includes(draft.engine) && <label>{databaseLabel(draft.engine)}<Input aria-label={databaseLabel(draft.engine)} value={draft.config.database} maxLength={128} inputMode={draft.engine === 'redis' ? 'numeric' : undefined} autoComplete="off" onChange={(event) => changeConfig({ database: event.target.value })} /></label>}
+                {!['elasticsearch', 'dameng', 's3'].includes(draft.engine) && <label>{databaseLabel(draft.engine)}<Input aria-label={databaseLabel(draft.engine)} value={draft.config.database} maxLength={draft.engine === 'mongodb' ? 63 : 128} inputMode={draft.engine === 'redis' ? 'numeric' : undefined} autoComplete="off" onChange={(event) => changeConfig({ database: event.target.value })} /></label>}
                 {draft.engine !== 'dameng' ? <><Checkbox aria-label="Use TLS" checked={draft.config.tls} onChange={(event) => changeConfig({ tls: event.target.checked })}>Use TLS</Checkbox><p className="ontology-connectors__help">{draft.config.tls ? 'Verify the server certificate and hostname using the API image’s trusted certificate authorities.' : 'TLS is disabled. Connection traffic is not protected by this application.'}</p></> : <p className="ontology-connectors__help">Uses the DPI client’s default transport. Vendor certificate configuration is not managed by this form.</p>}
               </section>
               <section className="ontology-connectors__section"><h3>Authentication</h3>
@@ -611,6 +619,11 @@ export default function DataConnections({ onChanged }: Props = {}) {
                   {(draft.config.auth === 'password' || draft.config.auth === 'access_key') && <label>{usernameLabel}<Input aria-label={usernameLabel} value={draft.config.username} maxLength={200} autoComplete="off" onChange={(event) => changeConfig({ username: event.target.value })} /></label>}
                   <label>{secretLabel}<Input aria-label={secretLabel} type="password" value={draft.secret} maxLength={8192} autoComplete="new-password" placeholder={canReuseSecret ? `Leave blank to keep the stored ${secretLabel.toLowerCase()}` : `Enter ${secretLabel.toLowerCase()}`} onChange={(event) => change({ secret: event.target.value })} /></label>
                 </div>
+                {draft.engine === 'mongodb' && <label>Authentication database
+                  <Input aria-label="Authentication database" value={draft.config.authDatabase ?? ''} maxLength={63}
+                    autoComplete="off" placeholder="admin" onChange={(event) => changeConfig({ authDatabase: event.target.value })} />
+                  <span className="ontology-connectors__help">Where the MongoDB user was created. Defaults to admin.</span>
+                </label>}
                 {postgresEdit && <p className="ontology-connectors__help">Replacing the saved password does not revoke the old password on the PostgreSQL server. Saving changes requires a new review of existing sync plans and schedules before they can use the new revision.</p>}
                 <p className="ontology-connectors__help">Credentials are encrypted at rest and are never returned by the API. Use a dedicated account with read access.</p>
               </section>

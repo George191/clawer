@@ -37,6 +37,7 @@ langchain-text-splitters>=0.3
 
 # Infrastructure clients used by routes, health checks, and AI Collect.
 motor>=3.0
+pymongo>=4.2,<5
 minio>=7.0
 aiokafka>=0.10
 redis>=5.0

@@ -42,6 +42,7 @@ CONNECTORS = (
     {"engine": "mysql", "name": "MySQL", "category": "relational", "port": 3306, "driver": "pymysql", "description": "Connect a MySQL database."},
     {"engine": "oracle", "name": "Oracle", "category": "relational", "port": 1521, "driver": "oracledb", "description": "Oracle Database 12.1 or later, using Thin mode."},
     {"engine": "dameng", "name": "Dameng", "category": "relational", "port": 5236, "driver": "dmPython", "description": "Requires the vendor dmPython driver and matching DPI libraries."},
+    {"engine": "mongodb", "name": "MongoDB", "category": "non_relational", "port": 27017, "driver": "pymongo", "description": "Connect a MongoDB document database."},
     {"engine": "elasticsearch", "name": "Elasticsearch", "category": "non_relational", "port": 9200, "driver": "httpx", "description": "Connect a search cluster using its REST API."},
     {"engine": "milvus", "name": "Milvus", "category": "vector", "port": 19530, "driver": "pymilvus", "description": "Connect a Milvus vector database."},
     {"engine": "s3", "name": "S3-compatible storage", "category": "object_storage", "port": 443, "driver": "boto3", "description": "Connect a bucket through an S3-compatible service endpoint."},
@@ -312,6 +313,17 @@ async def _probe(payload: DataConnectionPayload, credentials: dict[str, str]) ->
                         cursor.close()
                 finally:
                     connection.close()
+            elif payload.engine == "mongodb":
+                host = f"[{config.host}]" if ":" in config.host else config.host
+                with driver.MongoClient(host=host, port=config.port,
+                                        username=config.username, password=credentials["password"],
+                                        authSource=config.authDatabase, tls=config.tls, directConnection=True,
+                                        timeoutMS=_TIMEOUT * 1000, retryReads=False, retryWrites=False,
+                                        connect=False) as client:
+                    # Verify the selected database's catalog permission, not just that a server answers ping.
+                    client[config.database].command({
+                        "listCollections": 1, "nameOnly": True, "filter": {"name": {"$in": []}},
+                    })
             else:
                 options = {"token": credentials["token"]} if config.auth == "token" else {"user": config.username, "password": credentials["password"]}
                 client = driver.MilvusClient(uri=_http_endpoint(config),
@@ -324,14 +336,16 @@ async def _probe(payload: DataConnectionPayload, credentials: dict[str, str]) ->
 
 
 def _failure_message(error: Exception) -> str:
-    if isinstance(error, (TimeoutError, httpx.TimeoutException)):
+    if isinstance(error, (TimeoutError, httpx.TimeoutException)) or getattr(error, "timeout", False) is True:
         return "Connection timed out. Check the host, port and network access."
     if isinstance(error, ssl.SSLError):
         return "TLS verification failed. Check the server certificate, hostname and transport settings."
     if isinstance(error, httpx.HTTPStatusError):
         return ("Authentication or read access was rejected." if error.response.status_code in {401, 403}
                 else "The server rejected the connection probe. Verify the endpoint and account permissions.")
-    if (getattr(error, "sqlstate", "") or "").startswith("28") or error.__class__.__name__ in {"AuthenticationError", "PermissionDenied"}:
+    if ((getattr(error, "sqlstate", "") or "").startswith("28")
+            or error.__class__.__name__ in {"AuthenticationError", "PermissionDenied"}
+            or (error.__class__.__module__ == "pymongo.errors" and getattr(error, "code", None) in {13, 18})):
         return "Authentication or read access was rejected."
     return "Connection failed. Verify the address, credentials, database scope, TLS and account read permissions."
 

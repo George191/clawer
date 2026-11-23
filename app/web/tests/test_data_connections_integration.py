@@ -75,6 +75,46 @@ class DataConnectionsIntegration(unittest.IsolatedAsyncioTestCase):
     async def stored(self, identifier):
         return await self.pg.fetch_one("SELECT * FROM public.ontology_data_connections WHERE id=CAST(:id AS uuid)", {"id": identifier})
 
+    async def test_mongodb_install_and_upgrade_preserve_saved_sources(self):
+        maintenance = import_module("app.web.alembic.versions.ab69e2f48a0d_ontology_mongodb_source")
+
+        def apply(session, action):
+            with Operations.context(MigrationContext.configure(session.connection())):
+                action()
+
+        existing = await self.service.save(payload(), "admin")
+        old = await self.stored(existing["id"])
+        redis = await self.service.save(payload(
+            engine="redis", config={**PAYLOAD["config"], "port": 6379, "database": "0"},
+        ), "admin")
+        old_redis = await self.stored(redis["id"])
+        async with self.pg.session() as session:
+            await session.run_sync(apply, maintenance.downgrade)
+        self.assertEqual((await migrate(self.pg))["changes"], ["enable_mongodb_source"])
+        self.assertFalse((await migrate(self.pg))["ready"])
+        async with self.pg.session() as session:
+            await session.run_sync(apply, maintenance.upgrade)
+            await session.run_sync(apply, maintenance.upgrade)
+        self.assertTrue((await migrate(self.pg))["ready"])
+        self.assertEqual(old, await self.stored(existing["id"]))
+        mongo = payload(engine="mongodb", config={**PAYLOAD["config"], "port": 27017})
+        saved = await self.service.save(mongo, "admin")
+        stored = await self.stored(saved["id"])
+        self.assertEqual(saved["engine"], "mongodb")
+        self.assertEqual(saved["config"]["authDatabase"], "admin")
+        self.assertFalse(saved["catalogAvailable"])
+        self.assertNotIn(PAYLOAD["credentials"]["password"], json.dumps(dict(stored), default=str))
+        self.assertTrue((await self.service.test_saved(saved["id"]))["ok"])
+        async with self.pg.session() as session:
+            with self.assertRaisesRegex(RuntimeError, "while MongoDB sources are saved"):
+                await session.run_sync(apply, maintenance.downgrade)
+        await self.service.delete(saved["id"])
+        async with self.pg.session() as session:
+            await session.run_sync(apply, maintenance.downgrade)
+        self.assertTrue((await migrate(self.pg, apply=True))["ready"])
+        self.assertEqual(old, await self.stored(existing["id"]))
+        self.assertEqual(old_redis, await self.stored(redis["id"]))
+
     async def test_migration_check_apply_and_repeat_preserve_other_schema_definitions(self):
         async with self.pg.session() as session:
             await session.execute(text("DROP TABLE public.ontology_data_connections"))
@@ -102,7 +142,7 @@ class DataConnectionsIntegration(unittest.IsolatedAsyncioTestCase):
 
         async with self.pg.session() as session:
             await session.run_sync(apply, migration.downgrade)
-        self.assertEqual((await migrate(self.pg))["changes"], ["expand_source_engines"])
+        self.assertEqual((await migrate(self.pg))["changes"], ["expand_source_engines", "enable_mongodb_source"])
         self.assertTrue((await migrate(self.pg, apply=True))["ready"])
         async with self.pg.session() as session:
             await session.run_sync(apply, migration.upgrade)
