@@ -210,15 +210,22 @@ class VisibilityReadTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all("<> 'hidden'" not in sql for sql, _ in session.calls))
         self.assertIn("ORDER BY CASE WHEN COALESCE(o.visibility, 'normal') = 'prominent' THEN 0 ELSE 1 END", session.calls[-1][0])
 
-    async def test_preview_filters_hidden_fk_and_logical_neighbors_but_admin_can_see_them(self):
+    async def test_preview_shows_hidden_logical_neighbor_only_when_requested(self):
         from app.web.tests.test_etl_object_relations import logical, SEEDS
         logical_hidden = {**logical(SEEDS[2]), "source_table": "objects", "target_visibility": "hidden"}
         hidden = foreign(target_schema="ts_custom", target_table="secret", target_visibility="hidden")
         for include_hidden in (False, True):
             instance, _ = service(Result([summary(properties_count=0)]), Result([hidden]), Result(scalar=True), Result([logical_hidden]))
             preview = await instance.preview("ods", "objects", include_hidden=include_hidden)
-            self.assertEqual(len(preview["linkedObjectTypes"]), 2 if include_hidden else 0)
-            self.assertTrue(all(row["visibility"] == "hidden" for row in preview["linkedObjectTypes"]))
+            linked = preview["linkedObjectTypes"]
+            if include_hidden:
+                peer_id = f"{logical_hidden['target_schema']}.{logical_hidden['target_table']}"
+                self.assertEqual([(peer["id"], peer["visibility"]) for peer in linked], [(peer_id, "hidden")])
+                self.assertEqual(linked[0]["constraints"], [])
+                self.assertEqual([(rel["name"], rel["sourceKind"]) for rel in linked[0]["relationships"]],
+                                 [(logical_hidden["name"], "logical")])
+            else:
+                self.assertEqual(linked, [])
         instance, session = service(Result([]))
         with self.assertRaises(HTTPException) as raised:
             await instance.preview("ods", "hidden")
@@ -253,7 +260,9 @@ class VisibilityRouteTests(unittest.TestCase):
         layers = SimpleNamespace(object_types=AsyncMock(return_value={"items": []}), preview=AsyncMock(return_value={"visibility": "hidden"}))
         with patch.object(etl, "get_etl_layers", return_value=layers):
             self.assertEqual(self.client.get("/api/v1/etl/object-types?includeHidden=true").status_code, 200)
-            layers.object_types.assert_awaited_once_with(None, "", "", 100, 0, None, include_hidden=True)
+            layers.object_types.assert_awaited_once_with(None, "", "", 100, 0, None, include_hidden=True, favorite_user_id=None)
+            self.assertEqual(self.client.get("/api/v1/etl/object-types?favoritesOnly=true").status_code, 200)
+            layers.object_types.assert_awaited_with(None, "", "", 100, 0, None, include_hidden=False, favorite_user_id=self.user.id)
             self.assertEqual(self.client.get("/api/v1/etl/custom/items/preview?includeHidden=true").status_code, 200)
             layers.preview.assert_awaited_once_with("custom", "items", include_hidden=True)
             self.user.is_superuser = False

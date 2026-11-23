@@ -413,7 +413,7 @@ class EtlLayers:
 
     async def object_types(self, schema: str | None = None, search: str = "", group: str = "",
                            limit: int = 100, offset: int = 0, ids: str | None = None, *,
-                           include_hidden: bool = False) -> dict[str, Any]:
+                           include_hidden: bool = False, favorite_user_id: str | None = None) -> dict[str, Any]:
         if not 1 <= limit <= 500 or not 0 <= offset <= 1_000_000:
             raise HTTPException(400, "Pagination is outside supported bounds")
         if group and group not in _OBJECT_GROUPS:
@@ -427,6 +427,14 @@ class EtlLayers:
             where += " AND COALESCE(o.visibility, 'normal') <> 'hidden'"
         if schema:
             params["schema"] = _object_schema(schema)
+        if favorite_user_id is not None:
+            params["favorite_user_id"] = favorite_user_id
+            where += """ AND EXISTS (
+                SELECT 1 FROM public.ontology_object_favorites f
+                JOIN public.ontology_objects favorite ON favorite.id = f.object_id
+                WHERE f.user_id = CAST(:favorite_user_id AS uuid)
+                  AND favorite.schema_name = n.nspname AND favorite.table_name = c.relname
+            )"""
         if ids:
             identifiers = list(dict.fromkeys(ids.split(",")))
             if len(identifiers) > 200:

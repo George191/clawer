@@ -14,9 +14,10 @@ from app.web.api.dependencies.common import get_current_user
 from app.web.api.dependencies.session import get_db
 from app.web.api.models import TeamUserJoin
 from app.web.api.models.ontology_publications import OntologyPublication, PublicationInput
-from app.web.api.models.ontology_registry import OntologyDefinitionRow
+from app.web.api.models.ontology_registry import CatalogChange, OntologyDefinitionRow
 from app.web.api.models.user import RoleTypes
 from app.web.api.routes.ontology_publications import public_router, router
+from app.web.api.routes.ontology_registry import change_catalog_state
 from app.web.services import ontology_publications as service
 from app.web.tests.test_ontology_graph import graph_db
 
@@ -58,11 +59,40 @@ async def test_fixed_range_fields_pagination_and_hash_only_storage(published_api
         row = await session.get(OntologyPublication, publication["id"])
         assert key not in str(service.view(row)) and row.key_digest != key
         first = await service.read(session, row.id, key, 1, 0)
-        assert first["hasMore"] and first["nextOffset"] == 1
+        assert first["hasMore"] and first["nextOffset"] == 1 and not first["truncated"]
         assert set(first["items"][0]) == {"key", "amount"}
         second = await service.read(session, row.id, key, 1, first["nextOffset"])
-        assert second["nextOffset"] is None and not second["hasMore"]
+        assert second["nextOffset"] is None and not second["hasMore"] and not second["truncated"]
         assert {first["items"][0]["key"], second["items"][0]["key"]} == {"First", "Second"}
+
+
+@pytest.mark.asyncio
+async def test_boundary_page_reports_truncation(published_api, monkeypatch):
+    g = published_api
+    publication, key = await issue(g)
+    monkeypatch.setattr(service, "MAX_PUBLICATION_OFFSET", 0)
+    async with g.sessions() as session:
+        bounded = await service.read(session, publication["id"], key, 1, 0)
+        assert len(bounded["items"]) == 1 and bounded["truncated"]
+        assert bounded["nextOffset"] is None and not bounded["hasMore"]
+
+
+@pytest.mark.asyncio
+async def test_hide_and_unhide_preserve_only_current_publications(published_api):
+    g = published_api
+    stale, stale_key = await issue(g)
+    async with g.sessions() as session:
+        model = await session.get(OntologyDefinitionRow, g.d[0])
+        model.revision += 1
+        await session.commit()
+    current, key = await issue(g, modelRevision=2)
+    async with g.sessions() as session:
+        for revision, operation in enumerate(("hide", "unhide"), 2):
+            await change_catalog_state(g.d[0], CatalogChange(revision=revision, operation=operation), session, g.owner)
+            assert (await service.read(session, current["id"], key, 10, 0))["items"]
+            with pytest.raises(HTTPException) as conflict:
+                await service.read(session, stale["id"], stale_key, 10, 0)
+            assert conflict.value.status_code == 409
 
 
 @pytest.mark.asyncio

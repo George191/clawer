@@ -37,10 +37,17 @@ function mount(file, props, api, exported = 'default') {
       ontologyError: (error, fallback) => error.message || fallback };
     if (name === '../../services/ontology_graph' || name === '../../services/ontology_revisions') return api;
     if (name === './ontologyPropertyValue') return values;
+    if (name === './semanticWizardProperties') {
+      const helpers = {};
+      const content = readFileSync(new URL('../src/pages/Pipeline/semanticWizardProperties.ts', import.meta.url), 'utf8');
+      const compiled = ts.transpileModule(content, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+      vm.runInThisContext('(function(require,exports){' + compiled + '\n})')(require, helpers);
+      return helpers;
+    }
     if (name === './useExplorerErrorToast') return { default: (...args) => errors.push(args) };
     return { default: name };
   };
-  vm.runInThisContext('(function(require,exports,window){' + source + '\n})')(require, module, { setTimeout, clearTimeout });
+  vm.runInThisContext('(function(require,exports,window){' + source + '\n})')(require, module, { setTimeout, clearTimeout, addEventListener() {}, removeEventListener() {} });
   const render = () => {
     cursor = 0; scheduled.length = 0; tree = module[exported](props);
     for (const [i, effect, deps] of scheduled) { effects[i]?.cleanup?.(); effects[i] = { deps, cleanup: effect() }; }
@@ -53,6 +60,72 @@ function mount(file, props, api, exported = 'default') {
 }
 
 const record = { id: 'qa-record', title: 'Synthetic target', revision: 4, properties: {} };
+
+test('resuming a searched draft preserves its policies through project reselection and property edits', async () => {
+  const readers = [{kind: 'user', id: 'qa-account'}];
+  const definition = {
+    id: 'employees', name: 'Employee', pluralName: 'Employees', source: {mode: 'none'}, groups: [], projectId: 'qa-project',
+    properties: ['id', 'owner'].map(id => ({ id, name: id, type: 'string', required: true })), primaryKey: ['id'], titleKey: 'id',
+    actions: [{kind: 'create', fields: ['id', 'owner'], submitters: readers}],
+    security: { mode: 'explicit', objectReaders: readers, fieldReaders: { owner: readers }, markings: ['qa-mark'],
+      recordRules: [{kind: 'property', field: 'owner', match: 'currentUser', readers}, {kind: 'related', linkType: 'reports_to', readers}] },
+  };
+  const draft = {id: 'qa-draft', revision: 2, definition};
+  const calls = [];
+  const ui = mount('SemanticObjectWizard', {allowedSource: false, schemas: []}, {
+    listOntologyProjects: async () => [{id: 'qa-project', name: 'QA'}],
+    listOntologyDrafts: async (q, offset) => {
+      calls.push([q, offset]);
+      return q === 'employees' ? {items: [draft], hasMore: false}
+        : {items: [{...draft, id: 'other-' + offset}], hasMore: offset === 0};
+    },
+    fetchOntologyDraft: async id => { assert.equal(id, draft.id); return draft; },
+    listOntologyPrincipals: async () => readers,
+  });
+  const picker = () => input(ui.tree(), 'Resume saved draft').props;
+  const waitPage = async (ms = 0) => { await new Promise(resolve => setTimeout(resolve, ms)); await ui.flush(); };
+  const next = () => {button(ui.tree().props.footer, 'Next').props.onClick(); ui.render();};
+  await waitPage();
+  picker().onPopupScroll({ currentTarget: {scrollHeight: 100, scrollTop: 80, clientHeight: 20} });
+  ui.render(); await waitPage();
+  assert.equal(picker().options.length, 2);
+  picker().onSearch('employees'); ui.render(); await waitPage(210);
+  assert.deepEqual(calls, [['', 0], ['', 1], ['employees', 0]]);
+  assert.deepEqual(picker().options.map(option => option.value), [draft.id]);
+  picker().onChange(draft.id); await ui.flush();
+  next(); next();
+  const properties = () => nodes(ui.tree()).find(node => node.type === './SemanticPropertiesWorkbench').props;
+  properties().onChange(1, {id: 'assigned_to'}); ui.render();
+  const edited = properties().definition;
+  assert.deepEqual(edited.security.recordRules, [{...definition.security.recordRules[0], field: 'assigned_to'}, definition.security.recordRules[1]]);
+  assert.deepEqual(edited.security.fieldReaders, {assigned_to: readers});
+  assert.deepEqual(edited.actions[0].fields, ['id', 'assigned_to']);
+  properties().onRemove(1); ui.render();
+  assert.equal(properties().definition.properties.length, 2);
+  next(); next();
+  assert.ok(input(ui.tree(), 'Destination project'), text(ui.tree()));
+  input(ui.tree(), 'Destination project').props.onChange('qa-project'); ui.render();
+  input(ui.tree(), 'Return to Properties').props.onClick(); ui.render();
+  assert.deepEqual(properties().definition, edited);
+  ui.unmount();
+});
+
+test('published type preview groups relationship names by the opposite endpoint across pages', async () => {
+  const object = id => ({ id, revision: 1, definition: { id, name: id, source: { mode: 'none' }, properties: [], primaryKey: [] } });
+  const ui = mount('PublishedTypePreview', {id: 'Employee'}, {
+    fetchPublishedOntologyType: async id => object(id),
+    graphRequest: async (_method, _path, {params}) => params.offset ? {
+      items: [{name: 'managed_by', sourceDefinitionId: 'Team', targetDefinitionId: 'Employee'}], hasMore: false,
+    } : {items: [{name: 'reports_to', sourceDefinitionId: 'Employee', targetDefinitionId: 'Employee'},
+      {name: 'belongs_to', sourceDefinitionId: 'Employee', targetDefinitionId: 'Team'}], hasMore: true},
+  });
+  await ui.flush();
+  await new Promise(resolve => setImmediate(resolve)); await ui.flush();
+  assert.deepEqual(ui.tree().props.linkedTypes.items.map(({id, tooltip}) => [id, tooltip]), [
+    ['Employee', 'reports_to'], ['Team', 'belongs_to · managed_by'],
+  ]);
+  ui.unmount();
+});
 const catalog = { revision: 9, items: [{ key: 'update', name: 'Update synthetic target', parameters: [
   { key: 'amount', type: 'number', nullable: false }, { key: 'payload', type: 'json', nullable: false },
   { key: 'flag', type: 'boolean', nullable: true },

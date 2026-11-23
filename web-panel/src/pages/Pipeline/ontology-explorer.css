@@ -160,6 +160,7 @@
 .flow-ontology__notice button { flex: none; padding: 3px 8px; border: 1px solid var(--ontology-border); border-radius: 3px; background: var(--ontology-surface); color: var(--ontology-link); }
 .flow-ontology__catalog-footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 16px; margin-top: auto; padding-top: 24px; color: var(--ontology-muted); font-size: 11px; }
 .flow-ontology__catalog-footer > span:first-child { font-size: 10px; letter-spacing: .04em; }
+.flow-ontology__catalog-footer nav { display: flex; align-items: center; gap: 8px; }
 .flow-ontology__button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 30px; padding: 5px 11px; border: 1px solid var(--ontology-border); border-radius: 3px; background: var(--ontology-surface); color: var(--ontology-text) !important; font-size: 12px; font-weight: 400; line-height: 18px; white-space: nowrap; }
 .flow-ontology .flow-ontology__button { font-size: 12px; font-weight: 400; line-height: 18px; }
 .flow-ontology__button:hover { border-color: var(--ontology-border-hover); background: var(--ontology-elevated); }

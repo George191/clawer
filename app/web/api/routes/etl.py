@@ -827,12 +827,14 @@ async def object_types(schema: str | None = None, search: str = Query("", max_le
                        group: str = "", limit: int = Query(100, ge=1, le=500),
                        offset: int = Query(0, ge=0, le=1_000_000),
                        ids: str | None = Query(None, max_length=26_000),
-                       includeHidden: bool = False, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+                       includeHidden: bool = False, current_user: Any = Depends(get_current_user),
+                       favoritesOnly: bool = False) -> dict[str, Any]:
     if includeHidden and not getattr(current_user, "is_superuser", False):
         raise HTTPException(403, "Only administrators can include hidden object types")
-    if includeHidden:
-        return await get_etl_layers().object_types(schema, search, group, limit, offset, ids, include_hidden=True)
-    return await get_etl_layers().object_types(schema, search, group, limit, offset, ids)
+    return await get_etl_layers().object_types(
+        schema, search, group, limit, offset, ids, include_hidden=includeHidden,
+        favorite_user_id=str(current_user.id) if favoritesOnly else None,
+    )
 
 
 @read.get("/object-types/favorites")

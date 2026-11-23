@@ -61,7 +61,8 @@ export const listOntologyPrincipals = (projectId: string, search = '', signal?: 
   userIds.forEach(id => params.append('user_id', id));
   return client.get<{items: OntologyPrincipal[]}>('/projects/' + encodeURIComponent(projectId) + '/principals', { ...config, params, signal }).then(r => data(r.data).items);
 };
-export const listOntologyDrafts = () => client.get<{items: OntologyDraft[]}>('/drafts', config).then(r => data(r.data).items);
+export const listOntologyDrafts = (q: string, offset: number, limit: number, signal: AbortSignal) =>
+  client.get<{items: OntologyDraft[]; hasMore: boolean}>('/drafts', { ...config, params: { q, offset, limit }, signal }).then(r => data(r.data));
 export const fetchOntologyDraft = (id: string) => client.get<OntologyDraft>(draftPath(id), config).then(r => data(r.data));
 export const createOntologyDraft = (definition: SemanticDefinition) => client.post<OntologyDraft>('/drafts', definition, config).then(r => data(r.data));
 export const updateOntologyDraft = (id: string, revision: number, definition: SemanticDefinition) => client.put<OntologyDraft>(draftPath(id), { revision, definition }, config).then(r => data(r.data));

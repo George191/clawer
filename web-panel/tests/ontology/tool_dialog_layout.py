@@ -1,4 +1,4 @@
-"""Verify Explorer workbench dialog sizing with a seeded isolated browser session."""
+"""Verify Explorer workbench dialog sizing and dismissal in an isolated browser."""
 
 import asyncio
 from ipaddress import ip_address
@@ -10,6 +10,28 @@ from urllib.parse import urlencode, urlsplit
 from uuid import UUID
 
 from playwright.async_api import async_playwright, expect
+
+
+async def close_functions_dialog(page, dialog):
+    # Capture the first closing render, even if the entire fade fits between two Playwright calls.
+    state = await dialog.evaluate_handle("""dialog => {
+        const root = dialog.closest('.ui-modal-root');
+        const state = {root};
+        const observer = new MutationObserver(() => {
+            observer.disconnect();
+            state.fading = root.getAnimations().some(animation => animation.transitionProperty === 'opacity');
+            state.inert = root.inert;
+            state.title = dialog.querySelector('.ui-modal-title')?.textContent;
+            state.contentVisible = !!dialog.querySelector('[aria-label="Business function runner"]')?.getClientRects().length;
+        });
+        observer.observe(root, {attributes: true, attributeFilter: ['aria-hidden']});
+        return state;
+    }""")
+    await dialog.get_by_role("button", name="Close", exact=True).click()
+    await page.wait_for_function("s => !s.root.getClientRects().length", arg=state)
+    snapshot = await state.evaluate("({root, ...snapshot}) => snapshot")
+    assert snapshot == {"fading": True, "inert": True, "title": "Functions", "contentVisible": True}, snapshot
+    await expect(page.get_by_role("button", name="Open in", exact=True)).to_be_focused()
 
 
 async def main():
@@ -31,7 +53,7 @@ async def main():
             args=["--no-proxy-server", "--disable-dev-shm-usage"],
         )
         for viewport in [{"width": 1440, "height": 900}, {"width": 390, "height": 670}]:
-            context = await browser.new_context(viewport=viewport, service_workers="block")
+            context = await browser.new_context(viewport=viewport, service_workers="block", reduced_motion="no-preference")
             page = await context.new_page()
             await page.goto(page_url)
             await page.get_by_placeholder("name@company.com").fill(owner["email"])
@@ -94,12 +116,11 @@ async def main():
             await refresh.click()
             await expect(page.locator(".explorer-toast").filter(has_text="Synthetic function catalog error")).to_be_visible()
             await check_position()
-            await close.click()
-            await expect(dialog).to_have_count(0)
+            await close_functions_dialog(page, dialog)
             await expect(chart).to_be_visible()
             await context.close()
         await browser.close()
-    print("Functions dialog holds size through empty, delayed refresh, long content, and failure on desktop and mobile.")
+    print("Functions dialog keeps its size and content through dismissal and restores focus on desktop and mobile.")
 
 
 if __name__ == "__main__":

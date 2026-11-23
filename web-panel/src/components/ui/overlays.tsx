@@ -58,30 +58,50 @@ function NativeButton({ children, loading, danger, type, className, icon, ...pro
   return <button {...props} type="button" disabled={props.disabled || loading} aria-busy={loading || undefined} className={cx('ui-btn', type === 'primary' && 'ui-btn-primary', danger && 'ui-btn-danger', className)}>{loading ? <span className="ui-overlay-spinner" aria-hidden="true" /> : icon}{children}</button>;
 }
 export interface ModalProps extends AnyProps {
-  open?: boolean; title?: React.ReactNode; children?: React.ReactNode; onOk?: (e?: any) => unknown; onCancel?: (e?: any) => unknown;
+  open?: boolean; motion?: boolean; title?: React.ReactNode; children?: React.ReactNode; onOk?: (e?: any) => unknown; onCancel?: (e?: any) => unknown;
 }
 function ModalView(props: ModalProps) {
-  const { open = false, title, children, onCancel, onOk, width = 520, footer, confirmLoading, okText = 'OK', cancelText = 'Cancel', okButtonProps = {}, cancelButtonProps = {}, closable = true, closeIcon = '×', keyboard = true, maskClosable = true, mask = true, centered, className, rootClassName, style, styles = {}, getContainer, zIndex = 1000, forceRender, destroyOnClose, destroyOnHidden, afterClose, afterOpenChange } = props;
+  const { open = false, motion = false, title, children, onCancel, onOk, width = 520, footer, confirmLoading, okText = 'OK', cancelText = 'Cancel', okButtonProps = {}, cancelButtonProps = {}, closable = true, closeIcon = '×', keyboard = true, maskClosable = true, mask = true, centered, className, rootClassName, style, styles = {}, getContainer, zIndex = 1000, forceRender, destroyOnClose, destroyOnHidden, afterClose, afterOpenChange } = props;
   const ref = useRef<HTMLDivElement>(null); const titleId = useId(); const [visited, setVisited] = useState(open); const [pending, setPending] = useState(false); const active = useRef(true); const previous = useRef(open);
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   useEffect(() => { if (open) setVisited(true); if (previous.current !== open) { afterOpenChange?.(open); if (!open) afterClose?.(); } previous.current = open; }, [open, afterClose, afterOpenChange]);
+  const root = useRef<HTMLDivElement>(null);
+  const previousContent = useRef<Pick<ModalProps, 'title' | 'children'>>();
+  const [motionVisible, setMotionVisible] = useState(motion && open);
+  useLayoutEffect(() => {
+    if (motion && open) previousContent.current = { title, children };
+  }, [motion, open, title, children]);
+  useLayoutEffect(() => {
+    if (!motion) return;
+    if (open) { setMotionVisible(true); return; }
+    if (!motionVisible) return;
+    let closing = true;
+    const finish = () => {
+      if (closing) { previousContent.current = undefined; setMotionVisible(false); }
+    };
+    const transitions = root.current?.getAnimations() ?? [];
+    if (transitions.length) void Promise.allSettled(transitions.map(animation => animation.finished)).then(finish);
+    else finish();
+    return () => { closing = false; };
+  }, [motion, open, motionVisible]);
+  const content = (!open && motionVisible && previousContent.current) || { title, children };
   const cancel = (event?: any) => { if (!pending && !confirmLoading) onCancel?.(event); };
   useDialog(open, ref, cancel, keyboard);
-  if (!open && (!visited && !forceRender || destroyOnClose || destroyOnHidden)) return null;
+  if (!open && !motionVisible && (!visited && !forceRender || destroyOnClose || destroyOnHidden)) return null;
   const confirm = async (event: React.MouseEvent) => {
     if (pending || confirmLoading) return;
     try { const result = onOk?.(event); if (result && typeof (result as Promise<unknown>).then === 'function') { setPending(true); await result; } }
     catch { /* The caller owns the error message; keep the dialog and its input intact. */ }
     finally { if (active.current) setPending(false); }
   };
-  return <Portal container={getContainer}><div className={cx('ui-modal-root', rootClassName)} style={{ zIndex, display: open ? undefined : 'none' }} aria-hidden={!open || undefined}>
+  return <Portal container={getContainer}><div ref={root} className={cx('ui-modal-root', motion && 'ui-modal-motion', rootClassName)} style={{ zIndex, display: open ? undefined : 'none' }} aria-hidden={!open || undefined} {...(!open ? { inert: '' } : {})}>
     {mask && <div className="ui-modal-mask" style={styles.mask} />}
     <div className={cx('ui-modal-wrap', centered && 'ui-modal-centered')} style={styles.wrapper} onMouseDown={event => { if (event.target === event.currentTarget && maskClosable && mask) cancel(event); }}>
-      <div ref={ref} role="dialog" aria-modal="true" aria-labelledby={title ? titleId : undefined} aria-label={title ? undefined : props['aria-label'] || 'Dialog'} tabIndex={-1} className={cx('ui-modal', className)} style={{ width, ...style }}>
+      <div ref={ref} role="dialog" aria-modal="true" aria-labelledby={content.title ? titleId : undefined} aria-label={content.title ? undefined : props['aria-label'] || 'Dialog'} tabIndex={-1} className={cx('ui-modal', className)} style={{ width, ...style }}>
         <div className="ui-modal-content" style={styles.content}>
           {closable && <button type="button" className="ui-modal-close" aria-label="Close dialog" onClick={cancel} disabled={pending || confirmLoading}>{closeIcon}</button>}
-          {title != null && <div className="ui-modal-header" style={styles.header}><div className="ui-modal-title" id={titleId}>{title}</div></div>}
-          <div className="ui-modal-body" style={styles.body}>{children}</div>
+          {content.title != null && <div className="ui-modal-header" style={styles.header}><div className="ui-modal-title" id={titleId}>{content.title}</div></div>}
+          <div className="ui-modal-body" style={styles.body}>{content.children}</div>
           {footer !== null && <div className="ui-modal-footer" style={styles.footer}>{footer === undefined ? <><NativeButton {...cancelButtonProps} onClick={cancel} disabled={cancelButtonProps.disabled || pending || confirmLoading}>{cancelText}</NativeButton><NativeButton type="primary" {...okButtonProps} onClick={confirm} loading={pending || confirmLoading}>{okText}</NativeButton></> : typeof footer === 'function' ? footer(null, { OkBtn: () => <NativeButton type="primary" onClick={confirm}>{okText}</NativeButton>, CancelBtn: () => <NativeButton onClick={cancel}>{cancelText}</NativeButton> }) : footer}</div>}
         </div>
       </div>

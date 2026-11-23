@@ -379,6 +379,50 @@ async def test_mapped_source_semantic_keys_server_query_policy_and_source_identi
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("visible,restricted", [(50, 1), (51, 1), (200, 0)])
+async def test_wide_warehouse_projection_preserves_exact_visible_fields(graph_db, monkeypatch, visible, restricted):
+    g = graph_db
+    table_name = "wide_" + uuid4().hex
+    keys = [f"field-{i}" for i in range(visible + restricted)]
+    columns = [f"col_{i}" for i in range(len(keys))]
+    @asynccontextmanager
+    async def warehouse():
+        async with g.sessions() as session:
+            yield session
+    monkeypatch.setattr(explorer, "get_etl_layers", lambda: SimpleNamespace(session=warehouse))
+    async with g.sessions() as session:
+        await session.execute(text("CREATE SCHEMA IF NOT EXISTS ts_ods"))
+        ddl = ", ".join(f"{name} integer DEFAULT {index}" for index, name in enumerate(columns))
+        await session.execute(text(f"CREATE TABLE ts_ods.{table_name} ({ddl}, PRIMARY KEY(col_0))"))
+        await session.execute(text(f"INSERT INTO ts_ods.{table_name} DEFAULT VALUES"))
+        actor = await session.get(User, g.owner.id)
+        actor.is_superuser = True
+        definition = Definition.model_validate({
+            "id": "wide", "name": "Wide", "projectId": g.p,
+            "source": {"mode": "existing", "schema": "ts_ods", "table": table_name},
+            "properties": [{"id": key, "name": key, "type": "integer", "sourceColumn": column, "required": key == keys[0]}
+                           for key, column in zip(keys, columns)],
+            "primaryKey": keys[:1], "titleKey": keys[0],
+            "security": {"mode": "inherit", "fieldReaders": {key: [{"kind": "user", "id": g.reader.id}] for key in keys[visible:]}},
+        })
+        catalog = await registry._warehouse_table(session, definition.source)
+        doc = definition.model_dump(mode="json", by_alias=True)
+        item = OntologyDefinitionRow(project_id=g.p, owner_id=g.owner.id, semantic_id="wide",
+            draft_definition=doc, published_definition=doc, published_at=datetime.now(timezone.utc),
+            source_oid=catalog.oid, source_signature=registry.source_signature(definition, catalog))
+        session.add(item)
+        await session.commit()
+    try:
+        async with g.sessions() as session:
+            result = await explorer.evaluate(session, actor, item.id, ExplorerQuery(), 1, 0)
+        assert result["items"][0]["properties"] == {key: i for i, key in enumerate(keys[:visible])}
+    finally:
+        async with g.sessions() as session:
+            await session.execute(text(f"DROP TABLE ts_ods.{table_name}"))
+            await session.commit()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("revoked_field", ["amount", "region"])
 async def test_sharing_rechecks_query_and_chart_but_can_revoke_invalid_saved_work(published, revoked_field):
     g, client, reader, _ = published

@@ -110,6 +110,7 @@ async def test_published_catalog_pages_visible_matches_and_projects_fields(db):
             "CREATE TYPE pg_temp.roletypes AS ENUM ('MEMBER','MODERATOR','ADMIN','OWNER')",
             "CREATE TEMP TABLE team_user_join (team_id uuid, user_id uuid, status statustypes, role roletypes DEFAULT 'MEMBER')",
             "CREATE TEMP TABLE ontology_markings (id uuid PRIMARY KEY, project_id uuid, readers jsonb)",
+            "CREATE TEMP TABLE ontology_publications (id uuid PRIMARY KEY, definition_id uuid, revision integer)",
             "CREATE TEMP TABLE ontology_registry_definitions (id uuid PRIMARY KEY, project_id uuid,"
             " revision integer, published_at timestamptz, published_definition jsonb, hidden boolean DEFAULT false,"
             " deleted boolean DEFAULT false, updated_at timestamptz)",

@@ -1,6 +1,13 @@
 .ui-modal-root,.ui-drawer{position:fixed;inset:0;color:var(--ui-text,#e9edf3);font-size:13px;line-height:1.5}
 .ui-modal-mask,.ui-drawer-mask{position:absolute;inset:0;background:rgba(5,9,15,.6);backdrop-filter:blur(2px)}
 .ui-modal-wrap{position:absolute;inset:0;overflow:auto;display:flex;align-items:flex-start;justify-content:center;padding:80px 20px 24px;overscroll-behavior:contain}
+@media (prefers-reduced-motion:no-preference) {
+  .ui-modal-motion { transition:opacity 140ms ease, display 140ms allow-discrete; }
+  .ui-modal-motion[aria-hidden=true] { opacity:0; pointer-events:none; }
+  @starting-style {
+    .ui-modal-motion:not([aria-hidden]) { opacity:0; }
+  }
+}
 .ui-modal-centered{align-items:center;padding-top:24px}
 .ui-modal{position:relative;max-width:calc(100vw - 32px);margin:0 auto;flex:none;outline:none}
 .ui-modal-content{position:relative;background:var(--ui-panel,#252a31);border:1px solid var(--ui-border,#404854);border-radius:12px;box-shadow:0 16px 64px #0005;overflow:hidden}

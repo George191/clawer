@@ -115,7 +115,7 @@ class OntologyVisibilityIntegration(unittest.IsolatedAsyncioTestCase):
             await ontology.sync_object_metadata(session, SCHEMA, "visibility_new")
         self.assertEqual((await self.pg.fetch_one("SELECT visibility FROM public.ontology_objects WHERE table_name='visibility_new'"))["visibility"], "normal")
 
-    async def test_hidden_ids_facets_pagination_sort_preview_and_both_link_kinds(self):
+    async def test_hidden_ids_facets_pagination_sort_and_logical_link_preview(self):
         await self.migration.migrate(self.pg, apply=True)
         await self.workspace.set_object_visibility("visibility", "visibility_hidden", "hidden", "admin:42")
         await self.workspace.set_object_visibility("visibility", "visibility_prominent", "prominent", "admin:42")
@@ -145,7 +145,9 @@ class OntologyVisibilityIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(preview["linkedObjectTypes"]), 1)
         linked = preview["linkedObjectTypes"][0]
         self.assertEqual((linked["id"], linked["visibility"]), (hidden_id, "hidden"))
-        self.assertEqual((len(linked["constraints"]), len(linked["relationships"])), (1, 2))
+        self.assertEqual(linked["constraints"], [])
+        self.assertEqual([(rel["name"], rel["sourceKind"]) for rel in linked["relationships"]],
+                         [(RELATION["name"], "logical")])
         async with self.pg.session() as session:
             await session.execute(text(f"CREATE TABLE {SCHEMA}.partitioned (id BIGINT) PARTITION BY HASH(id)"))
             await session.execute(text(f"CREATE TABLE {SCHEMA}.partition_child PARTITION OF {SCHEMA}.partitioned FOR VALUES WITH (MODULUS 1, REMAINDER 0)"))
@@ -167,6 +169,11 @@ class OntologyVisibilityIntegration(unittest.IsolatedAsyncioTestCase):
         imported = await self.workspace.import_object_favorites(identifiers, USER_A)
         self.assertEqual((imported["imported"], imported["skipped"]), (2, 1))
         self.assertEqual(len(imported["ids"]), 3)
+        second = await self.layers.object_types(schema=SCHEMA, favorite_user_id=USER_A, limit=1, offset=1)
+        self.assertEqual(second["total"], 2)
+        self.assertEqual([row["table"] for row in second["items"]], ["visibility_prominent"])
+        other = await self.layers.object_types(schema=SCHEMA, favorite_user_id=USER_B, include_hidden=True)
+        self.assertEqual([row["table"] for row in other["items"]], ["visibility_normal"])
         self.assertEqual((await self.workspace.import_object_favorites(identifiers, USER_A))["imported"], 0)
         another_pg = PostgresClient(URL)
         try:

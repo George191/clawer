@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type Ref } from 'react';
 import { fetchPublishedOntologyType, ontologyError, type PublishedCatalogItem, type PublishedOntologyType } from '../../services/ontology';
 import { graphRequest, type LinkType, type Page } from '../../services/ontology_graph';
 import { getSessionState } from '../../services/session';
@@ -6,26 +6,33 @@ import SemanticTypeGlyph from './SemanticTypeGlyph';
 import ObjectTypePreview from './ObjectTypePreview';
 
 type Props = {
-  id: string; initial?: PublishedCatalogItem; allProperties: boolean;
+  id: string; initial?: PublishedCatalogItem; allProperties: boolean; closing: boolean; asideRef: Ref<HTMLElement>;
   onPropertiesToggle: () => void; onClose: () => void; onExplore: () => void; onSelect: (id: string) => void;
 };
 type LinkedType = { object: PublishedOntologyType; relationships: string[] };
 
 async function readLinkedTypes(object: PublishedOntologyType, signal: AbortSignal): Promise<LinkedType[]> {
-  const links: LinkType[] = [];
+  const relationships = new Map<string, string[]>();
+  let offset = 0;
   let hasMore = true;
   while (hasMore) {
-    const page = await graphRequest<Page<LinkType>>('get', '/object-types/' + encodeURIComponent(object.id) + '/link-types', { params: { limit: 100, offset: links.length }, signal });
-    links.push(...page.items); hasMore = page.hasMore;
+    const page = await graphRequest<Page<LinkType>>('get', '/object-types/' + encodeURIComponent(object.id) + '/link-types', { params: { limit: 100, offset }, signal });
+    for (const link of page.items) {
+      const other = link.sourceDefinitionId === object.id ? link.targetDefinitionId : link.sourceDefinitionId;
+      const names = relationships.get(other);
+      if (names) names.push(link.name);
+      else relationships.set(other, [link.name]);
+    }
+    offset += page.items.length;
+    hasMore = page.hasMore;
   }
-  const targets = [...new Set(links.map(link => link.sourceDefinitionId === object.id ? link.targetDefinitionId : link.sourceDefinitionId))];
-  return Promise.all(targets.map(async id => ({
+  return Promise.all(Array.from(relationships, async ([id, names]) => ({
     object: id === object.id ? object : await fetchPublishedOntologyType(id, signal),
-    relationships: links.filter(link => link.sourceDefinitionId === id || link.targetDefinitionId === id).map(link => link.name),
+    relationships: names,
   })));
 }
 
-export default function PublishedTypePreview({ id, initial, allProperties, onPropertiesToggle, onClose, onExplore, onSelect }: Props) {
+export default function PublishedTypePreview({ id, initial, allProperties, closing, asideRef, onPropertiesToggle, onClose, onExplore, onSelect }: Props) {
   const [version, reload] = useState(0);
   const [linkedVersion, reloadLinks] = useState(0);
   const [read, setRead] = useState<{ key: string; object?: PublishedOntologyType; error?: string }>();
@@ -57,7 +64,7 @@ export default function PublishedTypePreview({ id, initial, allProperties, onPro
   }, [current?.object, linkedKey, identity]);
   const definition = object?.definition;
   const properties = definition?.properties ?? [];
-  return <ObjectTypePreview open id={id} name={definition?.name || 'Object type preview'}
+  return <ObjectTypePreview open closing={closing} asideRef={asideRef} id={id} name={definition?.name || 'Object type preview'}
     icon={definition && <SemanticTypeGlyph definition={definition} />} testId="published-type-inspector"
     loading={!definition && !current?.error} busy={!current} error={current?.error} onRetry={() => reload(value => value + 1)}
     onClose={onClose} onExplore={onExplore} exploreDisabled={!verified} description={definition?.description}

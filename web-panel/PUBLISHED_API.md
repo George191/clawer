@@ -12,10 +12,10 @@
 Published 的读取地址为 `GET /ontology/v1/publications/{publication_id}/data`，部署时使用 `api.$BACKEND_DOMAIN_SUFFIX`，仅接受 `limit`（1–100，默认 50）和 `offset`（0–100000，默认 0）。返回：
 
 ```json
-{"items": [{"name": "示例"}], "hasMore": false, "nextOffset": null}
+{"items": [{"name": "示例"}], "hasMore": false, "nextOffset": null, "truncated": false}
 ```
 
-属性名取决于发布时选择的属性 ID。继续请求响应中的 `nextOffset`，直到其为 `null`。过滤条件与属性集合由发布者保存；调用方不能传入其他条件扩大范围。保存的是查询条件，匹配的数据会随对象变化更新；不是数据快照。
+属性名取决于发布时选择的属性 ID。继续请求响应中的 `nextOffset`，直到其为 `null`。若 `truncated=true`，表示仍有匹配记录，下一页超过允许的偏移量；发布者可缩小查询范围后继续读取。过滤条件与属性集合由发布者保存；调用方不能传入其他条件扩大范围。保存的是查询条件，匹配的数据会随对象变化更新；不是数据快照。
 
 外部读取同时遵守发布者当前的对象、行和属性访问权限。发布者停用或失去项目管理权限后，接口不可用。模型版本变化时返回 409，管理员需刷新 Explorer，重新检查并保存发布。不存在、密钥无效、过期或已撤销的发布返回 404；缺少密钥返回 401；不支持的参数返回 422。
 

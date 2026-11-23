@@ -56,11 +56,10 @@ export default function PublishedSourceTools({ objectType, resource, onClose, ca
   objectType: PublishedOntologyType; resource: ResourceView; onClose: () => void; canManage: boolean;
 }) {
   const definition = objectType.definition, source = definition.source;
-  if (resource === 'preview') return null;
-  const allowed = explorerResourceCapabilities(source, canManage).includes(resource);
-  return <ExplorerToolDialog title={titles[resource]} onClose={onClose} bodyClassName="published-source-tools"
+  const allowed = resource !== 'preview' && explorerResourceCapabilities(source, canManage).includes(resource);
+  return <ExplorerToolDialog key={objectType.id} title={titles[resource]} onClose={onClose} bodyClassName="published-source-tools"
     context={allowed && <><strong>{definition.name}</strong><span>Physical source <code>{source.schema}.{source.table}</code></span></>}>
-    {!allowed ? <p role="alert">This object type does not provide the requested source tool.</p> : <>
+    {resource === 'preview' ? null : !allowed ? <p role="alert">This object type does not provide the requested source tool.</p> : <>
       {resource === 'stream' && <SourceStream key={objectType.id} schema={source.schema!} table={source.table!} />}
       {resource === 'evidence' && <ExplorerTableEvidence key={objectType.id} schema={source.schema!} table={source.table!} canManage={canManage} />}
       {resource === 'schema' && <section className="flow-schema-details" aria-label="Source column mapping"><header><div><h3>Source column mapping</h3><p>Published property mappings. Edit the object type through Model revisions to change this definition.</p></div></header>

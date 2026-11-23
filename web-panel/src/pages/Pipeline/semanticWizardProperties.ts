@@ -27,6 +27,14 @@ export function sourceProperties(preview: EtlObjectPreview): PropertySettings {
 
 type PropertyIssue = { index?: number; field?: keyof SemanticProperty; message: string };
 
+export function propertyRemovalReason(definition: SemanticDefinition, property: SemanticProperty, preview?: EtlObjectPreview) {
+  if (property.sourceColumn && preview?.primaryKey.includes(property.sourceColumn)) return 'The source primary key must stay mapped.';
+  if (property.id && definition.primaryKey.includes(property.id)) return 'Assign a replacement primary key before removing this property.';
+  if (property.id && definition.titleKey === property.id) return 'Choose another title property before removing this property.';
+  if (definition.security.recordRules?.some(rule => rule.kind === 'property' && rule.field === property.id)) return 'Update record access rules before removing this property.';
+  return '';
+}
+
 export function propertyIssue(definition: SemanticDefinition, preview?: EtlObjectPreview): PropertyIssue | undefined {
   const {properties, primaryKey, titleKey} = definition;
   if (!properties.length) return { message: 'Create a property for the primary key and select a title property.' };

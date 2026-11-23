@@ -6,7 +6,7 @@ import { queryExplorerPreview } from '../../services/api';
 import { getSessionState } from '../../services/session';
 import type { SemanticDefinition, SemanticProperty } from '../../services/ontology';
 import type { EtlObjectPreview, ExplorerPreviewResult } from '../../services/types';
-import { propertyIssue } from './semanticWizardProperties';
+import { propertyIssue, propertyRemovalReason } from './semanticWizardProperties';
 import './semantic-properties-workbench.css';
 
 const semanticPropertyTypes = ['string', 'integer', 'number', 'boolean', 'date', 'datetime', 'json'];
@@ -53,9 +53,7 @@ export default function SemanticPropertiesWorkbench({ definition, preview, busy,
   const physicalKey = !!column && !!preview?.primaryKey.includes(column.name);
   const usesPhysicalKey = !!preview?.primaryKey.length && preview.primaryKey.length === primaryKey.length
     && preview.primaryKey.every(name => properties.some(p => p.sourceColumn === name && primaryKey.includes(p.id)));
-  const removalHint = physicalKey ? 'The source primary key must stay mapped.'
-    : primary ? 'Assign a replacement primary key before removing this property.'
-    : isTitle ? 'Choose another title property before removing this property.' : '';
+  const removalHint = property ? propertyRemovalReason(definition, property, preview) : '';
   const issue = showIssues ? propertyIssue(definition, preview) : undefined;
   const issueIndex = issue?.index, issueField = issue?.field;
   const inspector = useRef<HTMLElement>(null);

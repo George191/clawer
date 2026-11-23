@@ -12,6 +12,8 @@ export function ontologyCatalogHref(search: string, kind: CatalogKind) {
   } else {
     const keyword = source.get('q');
     if (keyword?.trim()) params.set('q', keyword);
+    const offset = Number(source.get('backedOffset'));
+    if (Number.isInteger(offset) && offset > 0 && offset <= 1_000_000) params.set('backedOffset', String(offset));
     const group = source.get('group');
     if (group && ['favorites', 'ingestion', 'processing', 'serving', 'other'].includes(group)) params.set('group', group);
     const schema = source.get('source') || (!source.get('table') ? source.get('schema') : '');

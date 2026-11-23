@@ -4,7 +4,7 @@
 }
 .flow-explorer-selection {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0%);
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -13,9 +13,15 @@
   overflow: hidden;
   background: var(--ontology-panel);
 }
-.flow-explorer-selection.is-open { grid-template-columns: minmax(0, 55fr) minmax(280px, 45fr); }
+.flow-explorer-selection.is-open { grid-template-columns: minmax(0, 1fr) minmax(0, max(280px, 45%)); }
 .flow-explorer-selection__results,
 .flow-explorer-selection__panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.flow-explorer-selection__panel[hidden] { display:none; opacity:0; }
+@media (prefers-reduced-motion:no-preference) {
+  .flow-explorer-selection { transition:grid-template-columns 160ms ease-out; }
+  .flow-explorer-selection__panel { transition:opacity 160ms ease-out, display 160ms allow-discrete; overflow:hidden; }
+  @starting-style { .flow-explorer-selection__panel:not([hidden]) { opacity:0; } }
+}
 .flow-explorer-selection__results { position:relative; overflow:hidden; }
 .flow-explorer-selection__source { display:flex; flex:1; flex-direction:column; min-width:0; min-height:0; }
 .flow-explorer-selection__results-header,
@@ -240,11 +246,16 @@
 .flow-explorer-overview__information dt { min-width: 0; color: var(--ontology-muted); overflow-wrap: anywhere; }
 .flow-explorer-overview__information dd { min-width: 0; margin: 0; }
 @media (max-width: 900px) {
-  .flow-explorer-selection.is-open { grid-template-columns: minmax(0, 1fr) minmax(280px, 44%); }
+  .flow-explorer-selection.is-open { grid-template-columns: minmax(0, 1fr) minmax(0, max(280px, 44%)); }
 }
 @media (max-width: 740px) {
-  .flow-explorer-selection.is-open { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto; }
+  .flow-explorer-selection, .flow-explorer-selection.is-open { grid-template-columns: minmax(0, 1fr); }
+  .flow-explorer-selection.is-open { grid-template-rows: auto auto; }
   .flow-explorer-selection__panel { border-inline-start: 0; border-top: 1px solid var(--ontology-control-border); }
+  .flow-explorer-selection .flow-data-table { max-height:100dvh; }
+  @media (prefers-reduced-motion:no-preference) {
+    .flow-explorer-selection .flow-data-table { transition:max-height 160ms ease-out; }
+  }
   .flow-explorer-selection.is-open .flow-data-table { max-height: min(24vh, 190px); }
   .flow-explorer-selection__panel-header { position: sticky; top: 0; z-index: 3; }
   .flow-explorer-selection__content { --explorer-detail-inset:8px; }

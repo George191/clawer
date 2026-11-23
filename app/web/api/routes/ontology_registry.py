@@ -6,13 +6,14 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Response
-from sqlalchemy import String, func, update
+from sqlalchemy import String, func, or_, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
 from app.web.api.dependencies import CurrentUser, SessionDep
 from app.web.api.models import Team, TeamUserJoin
+from app.web.api.models.ontology_publications import OntologyPublication
 from app.web.api.models.ontology_runtime import OntologyRuntimeRecord
 from app.web.api.models.ontology_registry import (
     Definition,
@@ -115,18 +116,21 @@ async def owned_draft(session, user, draft_id: UUID, *, locked=False) -> Ontolog
 
 
 @router.get("/drafts")
-async def list_drafts(session: SessionDep, user: CurrentUser, limit: int = Query(100, ge=1, le=200)):
+async def list_drafts(session: SessionDep, user: CurrentUser, limit: int = Query(100, ge=1, le=200),
+                      offset: int = Query(0, ge=0), q: str = Query("", max_length=200)):
     accessible = projects_statement(user, manage=True).with_only_columns(Team.id)
-    result = await session.scalars(select(OntologyDefinitionRow).where(
-        covers(OntologyDefinitionRow.draft_definition["security"]["markings"], allowed_for(user.id, OntologyDefinitionRow.project_id)),
-        OntologyDefinitionRow.owner_id == user.id,
-        OntologyDefinitionRow.project_id.in_(accessible),
-        OntologyDefinitionRow.published_at.is_(None),
-    ).order_by(OntologyDefinitionRow.updated_at.desc(), OntologyDefinitionRow.id).limit(limit))
-    return {"items": [
-        draft_view(row) for row in result
-        if user.is_superuser or row.draft_definition["source"]["mode"] == "none"
-    ]}
+    row = OntologyDefinitionRow
+    statement = select(row).where(
+        covers(row.draft_definition["security"]["markings"], allowed_for(user.id, row.project_id)),
+        row.owner_id == user.id, row.project_id.in_(accessible), row.published_at.is_(None),
+    )
+    if not user.is_superuser:
+        statement = statement.where(row.draft_definition["source"]["mode"].astext == "none")
+    if query := q.strip():
+        statement = statement.where(or_(row.draft_definition["name"].astext.icontains(query, autoescape=True),
+                                        row.semantic_id.icontains(query, autoescape=True)))
+    items = (await session.scalars(statement.order_by(row.updated_at.desc(), row.id).offset(offset).limit(limit + 1))).all()
+    return {"items": [draft_view(item) for item in items[:limit]], "hasMore": len(items) > limit}
 
 
 @router.post("/drafts", status_code=201)
@@ -291,6 +295,10 @@ async def change_catalog_state(definition_id: UUID, payload: CatalogChange, sess
         raise HTTPException(409, "This operation does not apply to the current object type state.")
     if payload.operation in ("hide", "unhide"):
         row.hidden = payload.operation == "hide"
+        # This catalog-only revision leaves previously reviewed API grants current.
+        await session.execute(update(OntologyPublication).where(
+            OntologyPublication.definition_id == row.id, OntologyPublication.revision == row.revision,
+        ).values(revision=row.revision + 1))
     else:
         row.deleted = payload.operation == "delete"
         await session.execute(update(OntologyRuntimeRecord).where(

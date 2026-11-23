@@ -233,6 +233,16 @@ def run():
         # Navigate with the newly refreshed snapshot and keep the mobile panel in the page.
         page.set_viewport_size({"width": 400, "height": 850})
         visit(page)
+        row(page, 9).get_by_text(str(START + 8), exact=True).click()
+        expect(row(page, 9)).to_be_focused()
+        page.wait_for_function("""() => {
+            const row = document.querySelector('[data-preview-index="8"][aria-selected="true"]');
+            const viewport = row?.closest('.ui-table-content');
+            if (!viewport || viewport.clientHeight > 190) return false;
+            const bounds = viewport.getBoundingClientRect(), selected = row.getBoundingClientRect();
+            return selected.top >= bounds.top - 1 && selected.bottom <= bounds.bottom + 1;
+        }""")
+        panel.get_by_role("button", name="Clear selection").click()
         row(page, 2).press("Enter")
         expect(panel.get_by_role("heading", name="Preview row 02")).to_be_visible()
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")

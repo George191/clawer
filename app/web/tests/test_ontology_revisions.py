@@ -72,7 +72,7 @@ class RevisionIntegration(unittest.IsolatedAsyncioTestCase):
                 Team.metadata.create_all(sync, tables=[tables[name] for name in (
                     "dictionaries", "tenant", "user", "team", "invite_codes", "team_user_join",
                     "ontology_registry_definitions", "ontology_runtime_records", "ontology_saved_sets",
-                    "ontology_link_types", "ontology_links", "ontology_markings",
+                    "ontology_link_types", "ontology_links", "ontology_markings", "ontology_publications",
                 )])
                 with Operations.context(MigrationContext.configure(sync)):
                     migration.upgrade()
@@ -143,6 +143,28 @@ class RevisionIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def grant(self, review=True):
         await self.call("PUT", self.roles, 204, {"canEdit": False, "canReview": review})
+
+    async def test_resume_drafts_searches_all_visible_pages(self):
+        async with AsyncSession(self.engine) as session:
+            for i in range(102):
+                name = "rare_%name" if i == 0 else f"Draft {i}"
+                doc = {**self.definition, "id": f"draft-{i}", "name": name}
+                if i == 101:
+                    doc["source"] = {"mode": "existing"}
+                session.add(OntologyDefinitionRow(
+                    project_id=UUID(self.team_id), owner_id=self.actors[0].id, semantic_id=doc["id"],
+                    draft_definition=doc, updated_at=datetime(2026, 1, 1, 0, i // 60, i % 60, tzinfo=timezone.utc),
+                ))
+            await session.commit()
+        path = BASE + "/drafts"
+        first = await self.call("GET", path, 200)
+        self.assertEqual(len(first["items"]), 100)
+        self.assertTrue(first["hasMore"])
+        last = await self.call("GET", path + "?offset=100", 200)
+        self.assertEqual([item["definition"]["id"] for item in last["items"]], ["draft-0"])
+        self.assertFalse(last["hasMore"])
+        for search in ("rare_%25name", "DRAFT-0"):
+            self.assertEqual(await self.call("GET", path + "?q=" + search, 200), last)
 
     async def test_catalog_state_revisions_preserve_definition_and_acting_manager(self):
         async with AsyncSession(self.engine) as session:

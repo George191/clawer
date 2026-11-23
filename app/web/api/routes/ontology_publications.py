@@ -58,7 +58,7 @@ async def revoke_key(definition_id: UUID, publication_id: UUID, session: Session
 @public_router.get(service.PUBLICATION_DATA_PATH)
 async def data(publication_id: UUID, session: SessionDep, response: Response, request: Request,
                key: Annotated[str | None, Header(alias="X-API-Key", max_length=256)] = None,
-               limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0, le=100_000)):
+               limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0, le=service.MAX_PUBLICATION_OFFSET)):
     if key is None:
         raise HTTPException(401, "X-API-Key is required")
     if set(request.query_params) - {"limit", "offset"}:

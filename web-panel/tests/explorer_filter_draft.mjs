@@ -90,6 +90,19 @@ const renderSortEditor = (sorts, onSortsChange = () => {}, onApply = () => {}, c
   rules: [], setRules() {}, sorts, onSortsChange, fields: ['id', 'name', 'city'], rows: [], formatValue: String, onApply, columnMode,
 });
 
+test('both filter join controls support native keyboard activation without submitting a form', () => {
+  let rules = ['a', 'group-open-g', 'group-filter-g', 'group-close-g', 'b'].map(id => rule(id));
+  const tree = editor.default({ rules, setRules: update => { rules = update(rules); }, fields: ['name'], rows: [], sorts: [], formatValue: String });
+  const buttons = descendants(tree).filter(node => node.props?.className?.startsWith?.('flow-filter-join'));
+  for (const [selector, index] of [['flow-filter-join', 0], ['flow-filter-join flow-filter-close-join', 3]]) {
+    const control = buttons.find(node => node.props.className === selector);
+    assert.equal(control.type, 'button');
+    assert.equal(control.props.type, 'button');
+    control.props.onClick();
+    assert.equal(rules[index].join, 'or');
+  }
+});
+
 test('sort field and direction edits stay drafts until Apply filters is chosen', () => {
   const sorts = [{ field: 'id', direction: 'asc' }, { field: 'name', direction: 'desc' }];
   const calls = [];

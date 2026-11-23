@@ -10,6 +10,64 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 from playwright.async_api import expect, async_playwright
 
 
+async def verify_directory(page, base):
+    offsets = []
+    fail_next = True
+
+    async def catalog(route):
+        nonlocal fail_next
+        params = parse_qs(urlsplit(route.request.url).query)
+        limit = int(params["limit"][0])
+        offset = int(params.get("offset", [0])[0])
+        total = 0 if "favoritesOnly" in params else 1001
+        if total:
+            offsets.append(offset)
+        if total and offset and fail_next:
+            fail_next = False
+            await route.fulfill(status=503, json={"detail": "Directory unavailable"})
+            return
+        rows = [{"id": f"ts_ods.asset_{i}", "schema": "ts_ods", "table": f"asset_{i}", "displayName": f"Asset {i}",
+                 "name": f"asset_{i}", "dataType": "table", "description": "", "propertiesCount": 1, "status": "available",
+                 "titleProperty": None, "visibility": "normal", "resourceGroup": "ingestion", "objectCount": 0,
+                 "objectCountEstimated": False}
+                for i in range(offset, min(offset + limit, total))]
+        await route.fulfill(json={"total": total, "offset": offset, "limit": limit, "items": rows,
+                                 "schemaCounts": {"ts_ods": total}, "groupCounts": {"ingestion": total},
+                                 "groupSchemaCounts": {"ingestion": {"ts_ods": total}}})
+
+    await page.route("**/etl/object-types?**", catalog)
+    await page.goto(base + "/ontology")
+    cards = page.get_by_test_id("ontology-object-card")
+    await expect(cards.first).to_be_visible()
+    size = await cards.count()
+    assert size < 1001 and offsets == [0]
+    await page.get_by_role("button", name="Next page", exact=True).click()
+    await expect(page.get_by_text("Unable to load object types. Retry to update the catalog.")).to_be_visible()
+    assert await cards.count() == size
+    assert await cards.first.evaluate("el => !!el.closest('[inert]')")
+    await page.get_by_role("button", name="Retry", exact=True).click()
+    await expect(cards.first).to_have_attribute("data-object-id", f"ts_ods.asset_{size}")
+    assert offsets == [0, size, size]
+
+    await page.get_by_role("button", name="Published", exact=True).click()
+    entry = page.locator("[data-published-type-link]:enabled").first
+    await expect(entry).to_be_visible()
+    await entry.click()
+    await expect(page.get_by_test_id("published-type-inspector")).to_be_visible()
+    await page.evaluate("""() => { window.drawerExits = 0; document.addEventListener('animationstart', e => {
+      if (e.animationName === 'flow-ontology-drawer-exit') window.drawerExits++;
+    }); }""")
+    await page.get_by_role("button", name="Close asset preview").click()
+    await expect(page.get_by_test_id("published-type-inspector")).to_have_count(0)
+    await expect(entry).to_be_focused()
+    assert await page.evaluate("window.drawerExits") == 1
+    await page.route("**/ontology/v1/object-types?**",
+                     lambda route: route.fulfill(status=503, json={"detail": "Search unavailable"}))
+    await page.get_by_role("textbox", name="Search published types").fill("unavailable")
+    await expect(page.get_by_text("Search unavailable", exact=False)).to_be_visible()
+    await expect(page.locator("[data-published-type-link]")).to_have_count(0)
+
+
 async def main():
     fixture = json.loads(Path(os.environ["ONTOLOGY_QA_FIXTURE"]).read_text(encoding="utf-8"))
     base = fixture["base"].rstrip("/")
@@ -171,6 +229,7 @@ async def main():
         await expect(catalog_search).to_be_focused()
         await toggle.locator(".ui-icon-search").click()
         await expect(catalog).to_be_hidden()
+        await verify_directory(page, base)
         await browser.close()
     print(json.dumps({"ok": True, "stableEntry": True, "catalogOutsideOrEscapeCloses": True,
                       "propertyOptionSelects": True, "independentExplorationTabs": True, "historyAndRefresh": True,

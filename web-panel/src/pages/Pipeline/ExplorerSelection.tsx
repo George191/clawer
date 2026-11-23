@@ -253,12 +253,12 @@ export default function ExplorerSelection({
   const collapse = () => {
     if (!active || disabled) return;
     setSelection({ rows, picked, active: activeIndex ?? -1, anchor: current?.anchor ?? activeIndex ?? -1, collapsed: true });
-    requestAnimationFrame(() => restore.current?.focus());
+    requestAnimationFrame(() => restore.current?.focus({ preventScroll: true }));
   };
   const show = () => {
     if (!current) return;
     setSelection({ ...current, collapsed: false });
-    requestAnimationFrame(() => heading.current?.focus());
+    requestAnimationFrame(() => heading.current?.focus({ preventScroll: true }));
   };
   const clear = () => {
     if (disabled) return;
@@ -346,6 +346,19 @@ export default function ExplorerSelection({
   tableColumns.unshift({ title: 'TITLE', key: 'explorer-result-title', className: 'flow-explorer-selection__title-column',
     width: 232, fixed: 'left', onHeaderCell: () => ({ scope: 'col' }), render: titleCell });
   const panelOpen = Boolean(active && !current?.collapsed);
+  useEffect(() => {
+    const host = results.current;
+    if (!panelOpen || activeIndex == null || !host?.ownerDocument?.defaultView?.matchMedia('(max-width: 740px)').matches) return;
+    const row = findRow(activeIndex);
+    const viewport = row?.closest<HTMLElement>('.ui-table-content');
+    if (!row || !viewport) return;
+    const observer = new ResizeObserver(() => {
+      const clipped = row.getBoundingClientRect().bottom - viewport.getBoundingClientRect().bottom;
+      if (clipped > 0) viewport.scrollTop += Math.ceil(clipped);
+    });
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, [panelOpen, activeIndex, rows]);
   const links = useExplorerLinkAvailability(source?.kind === 'published' ? '' : schema, table, panelOpen && renderRelationships ? active?.identity : undefined, active?.version);
   const hasLinks = Boolean(links.page) || Boolean(renderPublishedRelationships && source?.kind === 'published');
   const groups = presentation?.groups ?? [];
@@ -377,7 +390,7 @@ export default function ExplorerSelection({
       {footer}
       </div>
     </div>
-    {panelOpen && active && <ExplorerValueProvider schema={schema} table={table} source={source}><aside className="flow-explorer-selection__panel" id={panelId} aria-labelledby={panelId + '-heading'} {...(overlay?.active ? { inert: '' } : {})}
+    {active && <ExplorerValueProvider schema={schema} table={table} source={source}><aside className="flow-explorer-selection__panel" id={panelId} hidden={!panelOpen} aria-labelledby={panelId + '-heading'} {...(!panelOpen || overlay?.active ? { inert: '' } : {})}
       onKeyDown={event => { if (event.key === 'Escape' && !event.defaultPrevented && !disabled) { event.preventDefault(); collapse(); } }}>
       <header className="flow-explorer-selection__panel-header">
         <button className="flow-explorer-selection__control" type="button" aria-label="Collapse selection preview" aria-controls={panelId}

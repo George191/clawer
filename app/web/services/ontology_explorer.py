@@ -133,7 +133,10 @@ async def object_source(session, grant, query):
                 if aware:
                     value = value + literal("+00:00")
             return value
-        values = func.jsonb_build_object(*(part for prop in props for part in (prop.id, projected_value(prop)))) if props else literal({}, JSONB)
+        values = literal({}, JSONB)
+        if props:
+            projected = select(*(projected_value(prop).label(prop.id) for prop in props)).correlate(bound).subquery("_mapped_properties")
+            values = select(func.to_jsonb(projected.table_valued())).scalar_subquery()
         identity = literal(None, JSONB)
         if set(definition.primaryKey).issubset(fields):
             identity = func.jsonb_build_object(*(part for key in definition.primaryKey for part in (key, cast(bound.c[mappings[key]], String))))

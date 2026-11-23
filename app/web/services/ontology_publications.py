@@ -17,6 +17,8 @@ from app.web.services.ontology_action_runtime import _definition_access
 from app.web.services.ontology_explorer import evaluate, validate_query
 from app.web.services.ontology_revisions import rights_for
 
+MAX_PUBLICATION_OFFSET = 100_000
+
 
 PUBLICATION_DATA_PATH = "/ontology/v1/publications/{publication_id}/data"
 
@@ -118,5 +120,7 @@ async def read(session, publication_id, key, limit, offset):
     result = await evaluate(session, owner, row.definition_id, ExplorerQuery.model_validate(row.query), limit, offset)
     if datetime.now(timezone.utc) >= row.valid_until:
         raise HTTPException(404, "Publication expired during the read")
+    truncated = result["hasMore"] and offset + limit > MAX_PUBLICATION_OFFSET
+    has_more = result["hasMore"] and not truncated
     return {"items": [{field: record["properties"].get(field) for field in row.fields} for record in result["items"]],
-            "hasMore": result["hasMore"], "nextOffset": offset + limit if result["hasMore"] else None}
+            "hasMore": has_more, "nextOffset": offset + limit if has_more else None, "truncated": truncated}

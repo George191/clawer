@@ -33,6 +33,12 @@ test('Published return state includes its search, page and visibility without ph
   assert.equal(ontologyCatalogHref('catalog=published&publishedOffset=0&publishedHidden=false&publishedDeleted=false&view=grid', 'published'), '/ontology?catalog=published');
 });
 
+test('returning from a storage-backed record preserves the catalog page', () => {
+  const href = backedExplorerHref('ts_ods', 'media', '/ontology?group=ingestion&backedOffset=100');
+  assert.equal(params(href).get('returnTo'), '/ontology?backedOffset=100&group=ingestion');
+  assert.equal(ontologyCatalogHref('?backedOffset=-1', 'backed'), '/ontology');
+});
+
 test('existing long links compact once while keeping Saved, source view and return behavior', () => {
   const search = '?schema=ts_ods&table=media&saved=selection&view=evidence&returnTo=' + encodeURIComponent('/ontology?schema=ts_ods&table=media&tab=properties&source=ts_ods&q=media&view=list');
   const compact = compactExplorerSearch(search, 'backed');

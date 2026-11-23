@@ -14,7 +14,7 @@ import SemanticPropertiesWorkbench from './SemanticPropertiesWorkbench';
 import OntologyIconPicker from './OntologyIconPicker';
 import OntologySourceConnection, { warehouseConnection } from './OntologySourceConnection';
 import SemanticTypeAppearance from './SemanticTypeAppearance';
-import { initialProperties, propertyIssue, sourceProperties } from './semanticWizardProperties';
+import { initialProperties, propertyIssue, propertyRemovalReason, sourceProperties } from './semanticWizardProperties';
 import OntologyMarkingsEditor from './OntologyMarkingsEditor';
 import OntologyRecordPolicyEditor from './OntologyRecordPolicyEditor';
 import './ontology-create.css';
@@ -24,6 +24,7 @@ import './ontology-security.css';
 const allSteps = ['Datasource', 'Metadata', 'Properties', 'Actions', 'Save location', 'Security'] as const;
 const idPattern = /^[a-z][a-z0-9_-]{0,62}$/;
 const selectStyle = { className: 'flow-ontology__select', popupClassName: 'flow-ontology__select-popup' };
+const draftsPageSize = 100;
 const actionTypes: SemanticAction['kind'][] = ['create', 'modify', 'delete'];
 const principalKey = (p: Principal) => p.kind + ':' + p.id;
 const principalLabel = (p: OntologyPrincipal) => p.email && p.email !== p.name ? p.name + ' · ' + p.email : p.name;
@@ -80,7 +81,10 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
   const [projects, setProjects] = useState<Load<OntologyProject[]>>({ loading: true });
   const [projectName, setProjectName] = useState('');
   const [principals, setPrincipals] = useState<Load<OntologyPrincipal[]>>({});
-  const [drafts, setDrafts] = useState<Load<OntologyDraft[]>>({ loading: true });
+  const [drafts, setDrafts] = useState<Load<OntologyDraft[]> & { nextOffset?: number }>({ loading: true });
+  const [draftSearch, setDraftSearch] = useState('');
+  const [draftOffset, setDraftOffset] = useState(0);
+  const [draftVersion, setDraftVersion] = useState(0);
   const [retry, setRetry] = useState(0);
   const [tables, setTables] = useState<Load<LayerTable[]> & { key?: string }>({});
   const [sourcePreview, setSourcePreview] = useState<Load<EtlObjectPreview> & { key?: string }>({});
@@ -104,7 +108,7 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
     setValidation(undefined); setCheckedRevision(undefined);
   };
   useEffect(() => { active.current = true; return () => { active.current = false; discard.current?.destroy(); }; }, []);
-  useEffect(() => { if (stageContent.current) stageContent.current.inert = busy; }, [busy]);
+  useEffect(() => { if (stageContent.current) stageContent.current.inert = busy; }, [busy, step, stage]);
   useEffect(() => {
     if (first.current) { first.current = false; return; }
     if (panel.current) { panel.current.scrollTop = 0; panel.current.querySelector('h3')?.focus({ preventScroll: true }); }
@@ -116,11 +120,26 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
   }, [dirty, busy]);
   useEffect(() => {
     let alive = true;
-    setProjects({ loading: true }); setDrafts({ loading: true });
+    setProjects({ loading: true });
     listOntologyProjects().then(data => { if (alive && current()) setProjects({ data }); }, failure => { if (alive && current()) setProjects({ error: problem(failure, 'Unable to load projects.') }); });
-    listOntologyDrafts().then(data => { if (alive && current()) setDrafts({ data }); }, failure => { if (alive && current()) setDrafts({ error: problem(failure, 'Unable to load saved drafts.') }); });
     return () => { alive = false; };
   }, [identity, retry]);
+  useEffect(() => {
+    const controller = new AbortController();
+    setDrafts(previous => ({ data: draftOffset ? previous.data : [], loading: true }));
+    const timer = window.setTimeout(async () => {
+      try {
+        const page = await listOntologyDrafts(draftSearch, draftOffset, draftsPageSize, controller.signal);
+        if (!controller.signal.aborted && current()) setDrafts(previous => ({
+          data: draftOffset ? [...new Map([...(previous.data || []), ...page.items].map(draft => [draft.id, draft])).values()] : page.items,
+          nextOffset: page.hasMore ? draftOffset + page.items.length : undefined,
+        }));
+      } catch (failure) {
+        if (!controller.signal.aborted && current()) setDrafts(previous => ({ data: previous.data, error: problem(failure, 'Unable to load saved drafts.') }));
+      }
+    }, draftSearch && !draftOffset ? 200 : 0);
+    return () => { controller.abort(); window.clearTimeout(timer); };
+  }, [draftSearch, draftOffset, draftVersion, identity]);
   useEffect(() => {
     if (!definition.projectId) { setPrincipals({}); return; }
     const controller = new AbortController();
@@ -197,6 +216,7 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
   }));
   const sourceChange = (source: SemanticSource) => set({ source, ...initialProperties(source.mode === 'existing'), actions: [], security: { mode: source.mode === 'existing' ? 'inherit' : 'explicit', objectReaders: [], fieldReaders: {} } });
   const projectChange = (projectId: string) => {
+    if (projectId === definition.projectId) return;
     setTestPrincipal('');
     setProjectName('');
     set({ projectId, actions: definition.actions.map(action => ({ ...action, submitters: [] })), security: { mode: definition.security.mode, objectReaders: [], fieldReaders: {} } });
@@ -225,6 +245,7 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
     const isUnique = !!previous.id && !definition.properties.some((p, i) => i !== position && p.id === previous.id);
     const referenced = definition.primaryKey.includes(previous.id) || definition.titleKey === previous.id
       || definition.actions.some(action => action.fields.includes(previous.id))
+      || definition.security.recordRules?.some(rule => rule.kind === 'property' && rule.field === previous.id)
       || Object.prototype.hasOwnProperty.call(definition.security.fieldReaders, previous.id);
     if (isUnique && referenced && (!nextId || definition.properties.some((p, i) => i !== position && p.id === nextId))) {
       setError('Property ' + (position + 1) + ' (' + previous.name + ') · Replace its API name with a nonempty, unique identifier.');
@@ -235,12 +256,17 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
       properties,
       primaryKey: definition.primaryKey.map(remap), titleKey: remap(definition.titleKey),
       actions: definition.actions.map(action => ({ ...action, fields: action.fields.map(remap).filter(Boolean) })),
-      security: { ...definition.security, fieldReaders: Object.fromEntries(Object.entries(definition.security.fieldReaders).map(([id, readers]) => [remap(id), readers]).filter(([id]) => id)) },
+      security: {
+        ...definition.security,
+        fieldReaders: Object.fromEntries(Object.entries(definition.security.fieldReaders).map(([id, readers]) => [remap(id), readers]).filter(([id]) => id)),
+        recordRules: definition.security.recordRules?.map(rule => rule.kind === 'property' ? { ...rule, field: remap(rule.field) } : rule),
+      },
     });
   };
   const removeProperty = (position: number) => {
-    const {id, sourceColumn} = definition.properties[position];
-    if ((id && (definition.primaryKey.includes(id) || definition.titleKey === id)) || (sourceColumn && preview?.primaryKey.includes(sourceColumn))) return;
+    const property = definition.properties[position];
+    if (propertyRemovalReason(definition, property, preview || undefined)) return;
+    const {id} = property;
     set({ properties: definition.properties.filter((_, index) => index !== position),
       actions: definition.actions.map(action => ({ ...action, fields: action.fields.filter(field => field !== id) })),
       security: { ...definition.security, fieldReaders: Object.fromEntries(Object.entries(definition.security.fieldReaders).filter(([field]) => field !== id)) },
@@ -274,7 +300,7 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
     const item = saved ? await updateOntologyDraft(saved.id, saved.revision, definition) : await createOntologyDraft(definition);
     if (current()) {
       setSaved(item); setDefinition(item.definition);
-      setDrafts(state => ({ ...state, data: [item, ...(state.data || []).filter(old => old.id !== item.id)] }));
+      setDraftOffset(0); setDraftVersion(value => value + 1);
       setValidation(undefined); setCheckedRevision(undefined);
     }
     return item;
@@ -367,7 +393,7 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
         {error && <div className="flow-create-error" role="alert">{error}</div>}
         {status && <p className="flow-semantic-status" role="status">{status}</p>}
         <p className="flow-create-kicker">{stage === 'review' ? 'Publish review' : 'Step ' + (step + 1) + ' of ' + steps.length}</p>
-        <div ref={stageContent}>
+        <div key={stage === 'review' ? stage : currentStep} className="flow-semantic-step-content" ref={stageContent}>
         {stage === 'wizard' && currentStep === 'Datasource' && <section className="flow-create-section">
           <Heading title="Choose a datasource" detail="An object type describes one kind of business record, such as an airport. Define its properties and access rules here, then publish the definition to a project so its readers can find it in Published." />
           <fieldset className="flow-create-source"><legend>Datasource</legend>
@@ -389,17 +415,25 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
                 upstreamConnectionId: id === warehouseConnection ? undefined : id });
             }}>
             <div className="flow-create-grid">
-              <label className="flow-create-field"><span>{definition.source.upstreamConnectionId ? 'Destination schema' : 'Schema'}</span><Select {...selectStyle} aria-label="Object type schema" value={definition.source.schema || undefined} options={schemaOptions} disabled={busy} placeholder="Select a schema" onChange={(schema: string) => sourceChange({ ...definition.source, schema, table: '' })} /></label>
-              <label className="flow-create-field"><span>{definition.source.upstreamConnectionId ? 'Synced table' : 'Source table'}</span><Select {...selectStyle} aria-label="Source table" showSearch value={definition.source.table || undefined} disabled={busy || tables.loading || !definition.source.schema || tables.key !== definition.source.schema} options={opt((tables.key === definition.source.schema ? tables.data : [])?.map(item => item.name) || [])} placeholder="Select a table" onChange={(table: string) => sourceChange({ ...definition.source, table })} /></label>
+              <label className="flow-create-field"><span>{definition.source.upstreamConnectionId ? 'Destination schema' : 'Schema'}</span><Select {...selectStyle} aria-label="Object type schema" value={definition.source.schema || undefined} options={schemaOptions} disabled={busy} placeholder="Select a schema" onChange={(schema: string) => { if (schema !== definition.source.schema) sourceChange({ ...definition.source, schema, table: '' }); }} /></label>
+              <label className="flow-create-field"><span>{definition.source.upstreamConnectionId ? 'Synced table' : 'Source table'}</span><Select {...selectStyle} aria-label="Source table" showSearch value={definition.source.table || undefined} disabled={busy || tables.loading || !definition.source.schema || tables.key !== definition.source.schema} options={opt((tables.key === definition.source.schema ? tables.data : [])?.map(item => item.name) || [])} placeholder="Select a table" onChange={(table: string) => { if (table !== definition.source.table) sourceChange({ ...definition.source, table }); }} /></label>
             </div>
           </OntologySourceConnection>}
           {(tables.error || sourcePreview.error) && <p className="flow-create-error" role="alert">{tables.error || sourcePreview.error}<Button size="small" icon={<ReloadOutlined />} onClick={retries}>Retry</Button></p>}
           {(tables.loading || sourcePreview.loading) && <p role="status" className="flow-create-help">Reading source metadata…</p>}
           {preview && <p className="flow-create-notice">{preview.properties.length} source columns available. Primary key: {preview.primaryKey.join(', ') || 'None declared'}.</p>}
-          {(!!drafts.data?.length || drafts.error || drafts.loading) && <section className="flow-semantic-saved">
+          {(!!drafts.data?.length || draftSearch || drafts.error || drafts.loading) && <section className="flow-semantic-saved">
             <h4>Resume a draft</h4>
-            {drafts.error ? <p className="flow-create-error" role="alert">{drafts.error}<Button size="small" onClick={retries}>Retry</Button></p> :
-              <Select {...selectStyle} aria-label="Resume saved draft" showSearch loading={drafts.loading} disabled={busy} placeholder="Choose a saved draft" options={(drafts.data || []).map(item => ({ value: item.id, label: (item.definition.name || item.definition.id) + ' · revision ' + item.revision }))} onChange={loadDraft} />}
+            <Select {...selectStyle} aria-label="Resume saved draft" showSearch filterOption={false} value={undefined} loading={drafts.loading} disabled={busy}
+              placeholder="Choose a saved draft" notFoundContent={drafts.loading ? 'Loading drafts…' : 'No matching drafts'}
+              onSearch={value => { setDraftSearch(value.trim()); setDraftOffset(0); }}
+              onPopupScroll={event => {
+                const { scrollHeight, scrollTop, clientHeight } = event.currentTarget;
+                if (drafts.nextOffset !== undefined && scrollHeight - scrollTop - clientHeight < 32) setDraftOffset(drafts.nextOffset);
+              }}
+              options={(drafts.data || []).map(item => ({ value: item.id, label: (item.definition.name || item.definition.id) + ' · revision ' + item.revision }))}
+              onChange={loadDraft} />
+            {drafts.error && <p className="flow-create-error" role="alert">{drafts.error}<Button size="small" onClick={() => setDraftVersion(value => value + 1)}>Retry</Button></p>}
           </section>}
         </section>}
         {stage === 'wizard' && currentStep === 'Metadata' && <section className="flow-create-section">

@@ -6,6 +6,7 @@
 .flow-console--ontology .explorer-filter-editor :is(.flow-filter-rules,.flow-sort-conditions-viewport)::-webkit-scrollbar-thumb { border-radius:3px; background:var(--ontology-control-border); }
 .flow-console--ontology .explorer-filter-editor .flow-filter-rule { min-height:28px; min-width:max-content; gap:4px; margin:0; }
 .explorer-filter-editor .flow-filter-row-content { display:inline-flex; align-items:center; gap:3px; }
+.flow-filter-rules button.flow-filter-join { font:inherit; padding:0; border:0; background:transparent; }
 .explorer-filter-editor .flow-filter-row-check { display:inline-flex; align-items:center; height:26px; }
 .explorer-filter-editor .explorer-filter-rule-actions { gap:1px; height:24px; }
 .flow-console--ontology .explorer-filter-editor .explorer-filter-rule-actions .explorer-filter-mini { width:20px; min-width:20px; height:24px; }

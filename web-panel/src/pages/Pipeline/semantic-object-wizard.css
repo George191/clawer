@@ -43,6 +43,10 @@
 .flow-semantic-wizard .flow-create-steps > li:has(button:focus-visible) { outline: 2px solid var(--ui-focus-ring); outline-offset: -2px; }
 .flow-semantic-wizard .flow-create-kicker { margin: 14px var(--wizard-inset) 0; font: 500 11px/16px var(--ontology-font); letter-spacing: .035em; }
 .flow-semantic-wizard .flow-create-section { padding-inline: var(--wizard-inset); }
+@media (prefers-reduced-motion: no-preference) {
+  .flow-semantic-step-content { animation: semantic-step-enter 150ms ease-out; }
+  @keyframes semantic-step-enter { from { opacity: 0; } to { opacity: 1; } }
+}
 .flow-semantic-wizard .flow-create-heading h3 { font-size: 13px; line-height: 20px; }
 .flow-semantic-wizard .flow-create-heading p { max-width: 78ch; }
 .flow-semantic-wizard :is(.flow-create-help, .flow-create-heading p, .flow-create-source-option small, .flow-create-field > small) { font: 400 12px/17px var(--ontology-font); }

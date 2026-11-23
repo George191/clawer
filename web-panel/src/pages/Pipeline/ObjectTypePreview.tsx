@@ -35,10 +35,10 @@ export default function ObjectTypePreview({
   const generatedPropertiesId = useId();
   const propertyListId = propertiesId || generatedPropertiesId;
   const visibleProperties = allProperties ? properties : properties.slice(0, 6);
-  return <Drawer open={open} onClose={onClose} width="100%" title={`${id} Object type preview`} closable={false} destroyOnHidden
+  return <Drawer open={open} onClose={closing ? undefined : onClose} width="100%" title={`${id} Object type preview`} closable={false} destroyOnHidden
     rootClassName={`flow-ontology flow-ontology__drawer${closing ? ' is-closing' : ''}`}
     styles={{ header: { display: 'none' }, body: { display: 'flex', padding: 0, overflow: 'hidden' } }}>
-    <aside ref={asideRef} className="flow-ontology__inspector" data-testid={testId} data-object-id={id} style={style}>
+    <aside ref={asideRef} className="flow-ontology__inspector" data-testid={testId} data-object-id={id} style={style} {...(closing ? { inert: '' } : {})}>
       <header className="flow-ontology__inspector-toolbar">
         <span className="flow-ontology__asset-icon">{icon}</span>
         <div className="flow-ontology__preview-identity"><h2 title={id}>{name}</h2><span>Object Type</span></div>

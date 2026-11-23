@@ -17,15 +17,14 @@ const compiled = ts.transpileModule('exports.selectTable = ' + selection, {
 }).outputText;
 
 function setup(overrides = {}) {
-  const state = { catalogOpen: true, navigation: [], warnings: [], closedTables: new Set(['next']) };
+  const state = { catalogOpen: true, navigation: [], warnings: [] };
   const context = {
-    exports: {}, isSchemas: true, scriptDirty: false, apisDirty: false, mappingDirty: false,
+    exports: {}, scriptDirty: false, apisDirty: false, mappingDirty: false,
     mutationPending: { current: false }, editingRowKey: undefined, table: { name: 'current' },
     requestedSchema: 'ts_ods', selectedSchema: 'ts_ods', requestedTable: 'current',
     search: '?schema=ts_ods&table=current&saved=old&returnTo=%2Fontology', workspacePath: '/ontology/explorer',
     URLSearchParams, message: { warning: text => state.warnings.push(text) },
     setCatalogOpen: open => { state.catalogOpen = open; }, setTable: table => { state.table = table; },
-    setClosedTables: update => { state.closedTables = update(state.closedTables); },
     navigate: url => state.navigation.push(url), ...overrides,
   };
   vm.runInNewContext(compiled, context);
@@ -38,7 +37,7 @@ test('selecting another table dismisses the catalog and opens that table', () =>
   select(table);
   assert.equal(state.catalogOpen, false);
   assert.equal(state.table, table);
-  assert.equal(state.closedTables.has('next'), false);
+  assert.equal(state.table, table);
   assert.equal(state.navigation.length, 1);
   const params = new URL(state.navigation[0], 'http://localhost').searchParams;
   assert.equal(params.get('table'), 'next');

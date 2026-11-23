@@ -254,7 +254,7 @@ export const getDashboardWsUrl = () => wsUrl('/ws');
 export const fetchLayers = (signal?: AbortSignal): Promise<LayerNode[]> =>
   client.get('/etl/layers', { signal, ...(signal ? { timeout: 0 } : {}) }).then((r) => unwrap<LayerNode[]>(r.data));
 
-export const fetchEtlObjectTypes = (params: { schema?: string; search?: string; group?: string; ids?: string; limit?: number; offset?: number; includeHidden?: boolean } = {}, signal?: AbortSignal): Promise<EtlObjectCatalog> =>
+export const fetchEtlObjectTypes = (params: { schema?: string; search?: string; group?: string; ids?: string; limit?: number; offset?: number; includeHidden?: boolean; favoritesOnly?: boolean } = {}, signal?: AbortSignal): Promise<EtlObjectCatalog> =>
   client.get('/etl/object-types', { params, signal }).then((r) => unwrap<EtlObjectCatalog>(r.data));
 
 export const fetchEtlObjectPreview = (schema: string, table: string, includeHidden = false): Promise<EtlObjectPreview> =>
