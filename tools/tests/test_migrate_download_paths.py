@@ -288,6 +288,8 @@ def test_source_record_lookup_uses_owner_index(tmp_path):
     plan=db.execute('EXPLAIN QUERY PLAN SELECT old,new,phase FROM objects WHERE prefix=? AND record_id=?',('news/source','a'*32)).fetchall()
     assert any('SEARCH objects USING INDEX objects_owner' in row[3] for row in plan)
     assert not any('SCAN objects' in row[3] for row in plan)
+    plan=db.execute('EXPLAIN QUERY PLAN SELECT old,error FROM objects WHERE shard=? AND phase=? AND error IS NOT NULL',(0,'planned')).fetchall()
+    assert any('USING INDEX objects_errors' in row[3] for row in plan)
     db.close()
 
 

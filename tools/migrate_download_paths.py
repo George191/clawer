@@ -66,6 +66,7 @@ def journal(path):
         db.rollback();db.close();raise
     db.execute('CREATE INDEX IF NOT EXISTS objects_work ON objects(shard,phase,prefix,record_id)')
     db.execute('CREATE INDEX IF NOT EXISTS objects_owner ON objects(prefix,record_id)')
+    db.execute('CREATE INDEX IF NOT EXISTS objects_errors ON objects(shard,phase) WHERE error IS NOT NULL')
     db.execute('CREATE TABLE IF NOT EXISTS progress (prefix TEXT PRIMARY KEY,last_key TEXT NOT NULL,done INTEGER NOT NULL DEFAULT 0)')
     db.commit()
     return db
@@ -415,8 +416,8 @@ def worker(path, shard, mode, db_gate):
     phase='planned' if mode=='apply' else 'source_updated' if mode=='verify' else 'verified'
     phases_to_retry=(phase,'source_updated') if mode=='apply' else (phase,)
     db.execute('INSERT INTO error_history(old,prefix,record_id,error) SELECT old,prefix,record_id,error FROM objects WHERE shard=? AND error IS NOT NULL AND phase IN ('+','.join('?' for _ in phases_to_retry)+')',(shard,*phases_to_retry))
-    db.execute('UPDATE objects SET error=NULL WHERE shard=? AND phase=?',(shard,phase))
-    if mode=='apply':db.execute('UPDATE objects SET error=NULL WHERE shard=? AND phase="source_updated"',(shard,))
+    db.execute('UPDATE objects SET error=NULL WHERE shard=? AND phase=? AND error IS NOT NULL',(shard,phase))
+    if mode=='apply':db.execute('UPDATE objects SET error=NULL WHERE shard=? AND phase="source_updated" AND error IS NOT NULL',(shard,))
     db.commit()
     async def run():
         pg=get_pg_client()
