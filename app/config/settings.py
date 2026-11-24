@@ -109,7 +109,7 @@ class AppSettings(BaseSettings):
     minio_access_key: str = Field(default="", description="MinIO Access Key")
     minio_secret_key: str = Field(default="", description="MinIO Secret Key")
     minio_bucket: str = Field(default="", description="MinIO存储桶名称")
-    business_metadata_minio_bucket: str = Field(default="business-metadata", description="业务元数据与制品存储桶")
+    business_metadata_minio_bucket: str = Field(description="业务元数据与制品存储桶")
     minio_secure: bool = Field(default=False, description="MinIO是否使用HTTPS")
     minio_max_workers: int = Field(
         default=32,
