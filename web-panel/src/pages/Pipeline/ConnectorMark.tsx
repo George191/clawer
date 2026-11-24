@@ -1,13 +1,10 @@
 import type { DataConnectorEngine } from '../../services/api';
 import PostgresGlyph from './PostgresGlyph';
+import amazonS3Mark from './amazon-s3.svg';
 
+// Original Amazon S3 service icon from the AWS Architecture Icons 2026-07-31 package.
 function StorageGlyph() {
-  return <svg viewBox="0 0 24 24">
-    <path fill="#8c2419" d="m3 5 5-2 4 2 4-2 5 2v14l-5 2-4-2-4 2-5-2Z" />
-    <path fill="#e94f35" d="m3 5 5 2v14l-5-2Zm13 2 5-2v14l-5 2ZM9 2l3-1 3 1v5l-3 1-3-1Zm0 15 3-1 3 1v5l-3 1-3-1Z" />
-    <path fill="#b83222" d="M8 7h8v10H8Z" />
-    <path fill="#f26b4f" d="m12 1 3 1v5l-3 1Zm0 15 3 1v5l-3 1Z" />
-  </svg>;
+  return <img src={amazonS3Mark} width="17" height="17" alt="" />;
 }
 
 function RedisGlyph() {
