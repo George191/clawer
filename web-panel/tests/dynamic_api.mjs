@@ -84,6 +84,18 @@ test('already imported HTTP clients resolve the current project for every new re
   assert.equal(f.requests.at(-1), signed);
 });
 
+test('the Published catalog sends the saved connection alongside search and pagination', async () => {
+  const fixtureState = fixture(), ontology = fixtureState.load('services/ontology');
+  const id = '2e7a9733-daa3-4f04-a788-4fd9f2e2b818';
+  await ontology.listPublishedOntologyTypes(25, 50, 'Airport', undefined, undefined, true, false, id);
+  const request = new URL(fixtureState.requests[0]);
+  assert.equal(request.pathname, '/api/ontology/v1/object-types');
+  assert.equal(request.searchParams.get('source'), id);
+  assert.equal(request.searchParams.get('q'), 'Airport');
+  assert.equal(request.searchParams.get('offset'), '50');
+  assert.equal(request.searchParams.get('includeHidden'), 'true');
+});
+
 test('a delayed 401 refreshes and retries its original project after a project switch', async () => {
   const f = fixture(), api = f.load('services/api');
   let attempts = 0;

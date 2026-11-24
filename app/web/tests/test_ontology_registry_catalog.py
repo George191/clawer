@@ -201,7 +201,32 @@ async def test_published_catalog_pages_visible_matches_and_projects_fields(db):
         assert (await session.execute(records, {"id": row_ids["two"]})).all() == [(False, 1)]
         assert not (await change("unhide", 4))["hidden"]
         assert (await published_types(session, actor, 2, 999, "miXed%_")) == {"items": [], "hasMore": False, "total": 3}
+
+        connection_id, other_connection = uuid4(), uuid4()
+        for name, upstream, readers in (
+            ("workspace", None, []),
+            ("connection", connection_id, []),
+            ("other-connection", other_connection, []),
+            ("restricted-connection", connection_id, [{"kind": "user", "id": str(outsider)}]),
+        ):
+            definition = {
+                "id": name, "name": name, "projectId": str(project),
+                "source": {"mode": "existing", "schema": "ts_ods", "table": "example",
+                           "upstreamConnectionId": str(upstream) if upstream else None},
+                "security": {"mode": "explicit" if readers else "inherit", "objectReaders": readers},
+            }
+            await session.execute(text("INSERT INTO ontology_registry_definitions VALUES "
+                "(:id,:p,1,now(),CAST(:data AS jsonb))"),
+                {"id": uuid4(), "p": project, "data": json.dumps(definition)})
+        assert (await published_types(session, actor, 2, 0, "", source=connection_id))["total"] == 0
         # Administrative access still requires an enabled project membership.
         actor.is_superuser = True
+        for source_filter, expected in ((connection_id, "connection"), (other_connection, "other-connection"), ("warehouse", "workspace")):
+            scoped = await published_types(session, actor, 2, 0, "example", projectId=project, source=source_filter)
+            assert scoped["total"] == 1
+            assert [item["definition"]["id"] for item in scoped["items"]] == [expected]
+        assert (await published_types(session, actor, 2, 0, "", source="object-managed"))["total"] == 4
+        assert await published_types(session, actor, 2, 999, "", source=connection_id) == {"items": [], "hasMore": False, "total": 1}
         await session.execute(text("UPDATE team_user_join SET status='DISABLE'"))
-        assert await published_types(session, actor, 2, 0, "") == {"items": [], "hasMore": False, "total": 0}
+        for source_filter in (None, connection_id):
+            assert await published_types(session, actor, 2, 0, "", source=source_filter) == {"items": [], "hasMore": False, "total": 0}

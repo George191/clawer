@@ -1,9 +1,21 @@
 type CatalogKind = 'backed' | 'published';
+const connectionId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function publishedSourceFilter(value: string | null) {
+  if (value === 'warehouse' || value === 'object-managed') return value;
+  return value && connectionId.test(value) ? value.toLowerCase() : undefined;
+}
+
+export function dataConnectionHref(id: string) {
+  return '/ontology/connections?' + new URLSearchParams({ sourceId: id });
+}
 
 export function ontologyCatalogHref(search: string, kind: CatalogKind) {
   const source = new URLSearchParams(search), params = new URLSearchParams();
   if (kind === 'published') {
     params.set('catalog', 'published');
+    const filter = publishedSourceFilter(source.get('publishedSource'));
+    if (filter) params.set('publishedSource', filter);
     const keyword = source.get('publishedQ')?.trim();
     if (keyword) params.set('publishedQ', keyword);
     const offset = Number(source.get('publishedOffset'));

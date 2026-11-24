@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Response
@@ -265,8 +266,11 @@ async def published_types(
     limit: int = Query(100, ge=1, le=200), offset: int = Query(0, ge=0, le=100_000),
     q: str = Query("", max_length=200),
     projectId: UUID | None = None, includeHidden: bool = False, includeDeleted: bool = False,
+    source: Literal["warehouse", "object-managed"] | UUID | None = None,
 ):
-    statement = published_catalog_statement(user, q.strip(), include_hidden=includeHidden, include_deleted=includeDeleted)
+    statement = published_catalog_statement(
+        user, q.strip(), include_hidden=includeHidden, include_deleted=includeDeleted, source_filter=source,
+    )
     if projectId is not None:
         statement = statement.where(OntologyDefinitionRow.project_id == projectId)
     result = await session.execute(statement.add_columns(func.count().over()).limit(limit).offset(offset))

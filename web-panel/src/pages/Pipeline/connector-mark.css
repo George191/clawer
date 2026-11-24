@@ -1,0 +1,17 @@
+.ontology-connectors__mark {
+  display: inline-flex; box-sizing: border-box; flex: 0 0 29px; align-items: center; justify-content: center; width: 29px; height: 29px;
+  white-space: nowrap; overflow-wrap: normal; line-height: 1;
+  border: 1px solid #e5e7eb; border-radius: 4px; background: #fff; color: #336791;
+}
+.ontology-connectors__mark :is(svg, img) { width: 17px; height: 17px; }
+.ontology-connectors__mark.is-milvus { color: #50bbce; }
+.ontology-connectors__mark.is-mysql { color: #29a83c; }
+.ontology-connectors__mark.is-mongodb { color: #47a248; }
+.ontology-connectors__mark.is-dameng { color: #e85d5d; }
+.ontology-connectors__mark.is-redis { color: #ff787b; }
+.ontology-connectors__mark.is-clickhouse { color: #161616; }
+.ontology-connectors__mark.is-oracle { color: #f80032; }
+.ontology-connectors__oracle { width: 16px; height: 9px; border: 2px solid currentColor; border-radius: 12px; }
+.ontology-connectors__mark.is-small { flex-basis: 20px; width: 20px; height: 20px; }
+.ontology-connectors__mark.is-small :is(svg, img) { width: 13px; height: 13px; }
+.ontology-connectors__mark.is-small .ontology-connectors__oracle { width: 12px; height: 7px; }

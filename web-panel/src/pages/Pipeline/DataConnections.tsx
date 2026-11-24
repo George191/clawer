@@ -1,9 +1,10 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Button, Checkbox, Input, message, Modal, Select, NativeSelect } from '@/components/ui';
-import { ArrowLeftOutlined, DatabaseOutlined, DeleteOutlined, EyeOutlined, FolderOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, TableOutlined } from '@/components/ui/icons';
+import { ArrowLeftOutlined, ArrowRightOutlined, DatabaseOutlined, DeleteOutlined, EyeOutlined, FolderOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, TableOutlined } from '@/components/ui/icons';
 import apiClient, { createDataSource, deleteDataSource, fetchCurrentUserContext, fetchDataConnectorTypes, fetchDataSourceCatalog, fetchDataSourceColumns, fetchDataSources, setDataSourcePaused, testDataSource, updateDataSource } from '../../services/api';
 import type { DataConnectorEngine, DataConnectorType, DataSource, DataSourceCatalog, DataSourceColumns, DataSourceConfig, DataSourcePayload, DataSourceProvider, DataSourceRelation, DataSourceTest, BatchSourceIdentity } from '../../services/api';
+import { ontologyCatalogHref } from '../../services/explorerNavigation';
 import { getSessionState } from '../../services/session';
 import ConnectorMark from './ConnectorMark';
 import HostingProviderIcon from './HostingProviderIcon';
@@ -219,6 +220,9 @@ export default function DataConnections({ onChanged }: Props = {}) {
   const openTableExport = params.get('tableExport') === '1';
   const [exploringSource, setExploringSource] = useState('');
   const [syncSelection, setSyncSelection] = useState<{ sourceId: string; selection: BatchSyncSource }>();
+  const [sourcePanel, setSourcePanel] = useState<'overview' | 'catalog' | 'sync' | 'capture'>('overview');
+  const [createdSource, setCreatedSource] = useState('');
+  const [captureBusy, setCaptureBusy] = useState(false);
   const exploring = !!sourceId && exploringSource === sourceId;
   const [wizard, setWizard] = useState<'choose' | 'configure' | null>(null);
   const [chosenEngine, setChosenEngine] = useState<DataConnectorEngine>();
@@ -254,6 +258,10 @@ export default function DataConnections({ onChanged }: Props = {}) {
   const proofKey = viewedSource ? `${sessionIdentity}:${viewedSource.id}:${viewedSource.updatedAt}` : '';
   const activeProof = sourceProof?.key === proofKey ? sourceProof.value : undefined;
   const viewedType = connectors.find((item) => item.engine === viewedSource?.engine);
+  const captureAvailable = !sourcePaused && Boolean(viewedType?.cdcSupported || viewedType?.captureKind === 'dmdrs' || viewedType?.captureKind === 'object_events');
+  const captureLabel = viewedType?.captureKind === 'object_events' ? 'Object events' : viewedType?.captureKind === 'dmdrs' ? 'DMDRS CDC' : 'Continuous CDC';
+  const catalogAvailable = !sourcePaused && viewedSource?.catalogAvailable && viewedType?.catalogAvailable;
+  const syncAvailable = sourcePaused || viewedSource?.catalogAvailable && viewedType?.catalogAvailable;
   const sameDestination = !!draft && !!selected && draft.engine === selected.engine && Object.entries(draft.config).every(([key, value]) => {
     const saved = selected.config[key as keyof DataSourceConfig];
     if (key === 'authDatabase') return mongoAuthDatabase(String(value ?? '')) === mongoAuthDatabase(selected.config.authDatabase);
@@ -267,7 +275,9 @@ export default function DataConnections({ onChanged }: Props = {}) {
   useEffect(() => { active.current = true; return () => { active.current = false; metadataRequest.current?.abort(); message.destroy(feedbackKey); }; }, [feedbackKey]);
   useEffect(() => {
     setExploringSource(''); setSyncSelection(undefined); setSourceProof(undefined);
+    setSourcePanel(selectedSchedule ? 'sync' : 'overview');
   }, [sourceId]);
+  useEffect(() => { if (selectedSchedule) setSourcePanel('sync'); }, [selectedSchedule]);
   useEffect(() => {
     const session = getSessionState();
     if (loading && current() && session.authenticated && !session.locked) return message.loading({ key: `${feedbackKey}-loading`, content: 'Loading data sources…', className: 'explorer-toast' });
@@ -319,7 +329,15 @@ export default function DataConnections({ onChanged }: Props = {}) {
     next.delete('tableExport');
     return next;
   });
-  const showSource = (source?: DataSource) => navigate(() => { selectSource(source?.id); resetFeedback(); });
+  const showSource = (source?: DataSource) => {
+    if (captureBusy) return;
+    navigate(() => { setCreatedSource(''); selectSource(source?.id); resetFeedback(); });
+  };
+  const openSourcePanel = (panel: typeof sourcePanel) => {
+    if (captureBusy) return;
+    setSourcePanel(panel);
+    setExploringSource(panel === 'catalog' && viewedSource ? viewedSource.id : '');
+  };
   const configure = (type: DataConnectorType) => {
     const next = initialDraft(type);
     setDraft(next); setBaseline(JSON.stringify(next)); setEditingId(''); setEditingRevision(undefined); setEditConflict(false); setWizard('configure'); resetFeedback();
@@ -418,10 +436,12 @@ export default function DataConnections({ onChanged }: Props = {}) {
     const body = payload();
     if (!body) return;
     await mutate('save', async () => {
+      const creating = !editingId;
       const source = editingId ? await updateDataSource(editingId, body) : await createDataSource(body);
       if (!current()) return;
       setSources((items) => [...items.filter((item) => item.id !== source.id), source].sort((a, b) => a.name.localeCompare(b.name)));
       closeWizard();
+      setCreatedSource(creating ? source.id : '');
       selectSource(source.id); setExploringSource(''); setSyncSelection(undefined);
       refreshCapabilities(source.id);
       notify('success', 'Source saved. Its connectivity was tested with a read-only request.'); onChanged?.();
@@ -498,18 +518,35 @@ export default function DataConnections({ onChanged }: Props = {}) {
         {canManage && <Button type="primary" icon={<PlusOutlined />} disabled={blocked} onClick={newSource}>New source</Button>}
       </header>
 
-      {canManage && !loading && !loadError && (viewedSource ? <section className="ontology-connections-detail" aria-label="Source details">
-        <Button size="small" icon={<ArrowLeftOutlined />} disabled={pending} onClick={() => showSource()}>Back to sources</Button>
+      {canManage && !loading && !loadError && <>
+      {viewedSource && !wizard && <Modal className="flow-surface-modal ontology-connectors ontology-connections-modal" title="Source details" open centered width={960}
+        onCancel={() => showSource()} closable={!pending && !captureBusy} keyboard={!pending && !captureBusy && !confirmation} maskClosable={false}
+        footer={<Button disabled={pending || captureBusy} onClick={() => showSource()}>Done</Button>}>
+      <section className="ontology-connections-detail" aria-label="Source details" aria-busy={pending || captureBusy}>
         <header>
           <div className="ontology-connections-detail__identity"><ConnectorMark engine={viewedSource.engine} /><div><span className="ontology-connectors__eyebrow">Source details · {labelFor(viewedSource.engine)}</span><h2 title={viewedSource.name}>{viewedSource.name}</h2>
             {sourcePaused && <span className="ontology-connectors__capability is-unavailable" role="status">Paused</span>}</div></div>
           <div className="ontology-connections-detail__actions">
-            {(viewedSource.catalogAvailable || sourcePaused) && viewedType?.catalogAvailable && <Button aria-expanded={exploring && !sourcePaused} disabled={blocked || sourcePaused} onClick={() => setExploringSource(exploring ? '' : viewedSource.id)}>{exploring && !sourcePaused ? 'Close source catalog' : 'Explore source'}</Button>}
-            <Button disabled={blocked || sourcePaused || !viewedType?.driverAvailable} loading={operation === 'test'} onClick={() => void testSaved()}>Test saved connection</Button>
-            <Button type="primary" disabled={blocked || sourcePaused || !viewedType} onClick={() => openSource(viewedSource)}>Edit connection</Button>
-            {pauseAvailable && <Button disabled={blocked} loading={operation === 'pause'} onClick={changePause}>{sourcePaused ? 'Resume connection' : 'Pause connection'}</Button>}
+            <Button disabled={blocked || captureBusy || sourcePaused || !viewedType?.driverAvailable} loading={operation === 'test'} onClick={() => void testSaved()}>Test saved connection</Button>
+            <Button type="primary" disabled={blocked || captureBusy || sourcePaused || !viewedType} onClick={() => openSource(viewedSource)}>Edit connection</Button>
+            {pauseAvailable && <Button disabled={blocked || captureBusy} loading={operation === 'pause'} onClick={changePause}>{sourcePaused ? 'Resume connection' : 'Pause connection'}</Button>}
           </div>
         </header>
+        {createdSource === viewedSource.id && <div className="ontology-connections-detail__next">
+          <strong>Connection verified and saved</strong><p>Choose the next step, or close this dialog and configure it later. Nothing starts automatically.</p>
+          <div>{captureAvailable && <Button disabled={blocked || captureBusy} onClick={() => openSourcePanel('capture')}>Configure {captureLabel}</Button>}
+            {catalogAvailable && <Button disabled={blocked || captureBusy} onClick={() => openSourcePanel('catalog')}>Explore source</Button>}</div>
+        </div>}
+        <nav className="ontology-connections-detail__nav" aria-label="Source sections">
+          <Button aria-pressed={sourcePanel === 'overview'} disabled={pending || captureBusy} onClick={() => openSourcePanel('overview')}>Overview</Button>
+          {catalogAvailable && <Button aria-pressed={sourcePanel === 'catalog'} disabled={pending || captureBusy} onClick={() => openSourcePanel('catalog')}>Source catalog</Button>}
+          {syncAvailable && <Button aria-pressed={sourcePanel === 'sync'} disabled={pending || captureBusy} onClick={() => openSourcePanel('sync')}>Batch syncs</Button>}
+          {captureAvailable && <Button aria-pressed={sourcePanel === 'capture'} disabled={pending || captureBusy} onClick={() => openSourcePanel('capture')}>{captureLabel}</Button>}
+          <Link className="ui-btn ui-btn-link" to={ontologyCatalogHref(new URLSearchParams({ publishedSource: viewedSource.id }).toString(), 'published')}
+            aria-disabled={pending || captureBusy || undefined} tabIndex={pending || captureBusy ? -1 : undefined}
+            onClick={event => { if (pending || captureBusy) event.preventDefault(); }}>View published object types <ArrowRightOutlined /></Link>
+        </nav>
+        {sourcePanel === 'overview' && <>
         <dl className="ontology-connections-summary">
           <div><dt>Endpoint</dt><dd><code>{endpoint(viewedSource.config)}</code></dd></div>
           <div><dt>Hosting provider</dt><dd>{providerLabel(viewedSource.config.provider)}</dd></div>
@@ -534,13 +571,17 @@ export default function DataConnections({ onChanged }: Props = {}) {
           onIdentity={value => { if (current()) setSourceProof({ key: proofKey, value }); }}
           onVerificationStarted={() => invalidateVerificationCapability(viewedSource.id)}
           onVerificationSettled={() => { metadataVerifying.current.delete(viewedSource.id); refreshCapabilities(viewedSource.id); }} disabled={blocked} />}
-        {!sourcePaused && exploring && viewedSource.catalogAvailable && viewedType?.catalogAvailable && <SourceCatalog key={JSON.stringify(["catalog", sessionIdentity, viewedSource.id])} sourceId={viewedSource.id} sourceRevision={viewedSource.updatedAt} onSetUpSync={selection => setSyncSelection({ sourceId: viewedSource.id, selection })} />}
-        {(sourcePaused || viewedSource.catalogAvailable && viewedType?.catalogAvailable) && <SourceBatchSyncs key={`sync:${proofKey}`} source={viewedSource} sourceProof={sourcePaused ? undefined : activeProof} selection={!sourcePaused && syncSelection?.sourceId === viewedSource.id ? syncSelection.selection : undefined} selectedSchedule={selectedSchedule} onComposerClosed={() => setSyncSelection(undefined)} />}
-        {!sourcePaused && viewedType?.cdcSupported && <SourceCdc key={`cdc:${proofKey}`} source={viewedSource} />}
-        {!sourcePaused && viewedType?.captureKind === 'dmdrs' && <SourceDamengCdc key={`dmdrs:${proofKey}`} source={viewedSource} />}
-        {!sourcePaused && viewedType?.captureKind === 'object_events' && <SourceObjectEvents key={`events:${proofKey}`} source={viewedSource} />}
-        <div className="ontology-connections-detail__destructive"><Button size="small" danger icon={<DeleteOutlined />} disabled={blocked} onClick={remove}>Delete source</Button></div>
-      </section> : <section className="ontology-connections-inventory" aria-label="Sources">
+        <div className="ontology-connections-detail__destructive"><Button size="small" danger icon={<DeleteOutlined />} disabled={blocked || captureBusy} onClick={remove}>Delete source</Button></div>
+        </>}
+        {sourcePanel === 'catalog' && exploring && catalogAvailable && <SourceCatalog key={JSON.stringify(["catalog", sessionIdentity, viewedSource.id])} sourceId={viewedSource.id} sourceRevision={viewedSource.updatedAt} onSetUpSync={selection => { setSyncSelection({ sourceId: viewedSource.id, selection }); openSourcePanel('sync'); }} />}
+        {sourcePanel === 'sync' && syncAvailable && <SourceBatchSyncs key={`sync:${proofKey}`} source={viewedSource} sourceProof={sourcePaused ? undefined : activeProof} selection={!sourcePaused && syncSelection?.sourceId === viewedSource.id ? syncSelection.selection : undefined} selectedSchedule={selectedSchedule} onComposerClosed={() => setSyncSelection(undefined)} />}
+        {sourcePanel === 'capture' && captureAvailable && <>
+          {viewedType?.cdcSupported && <SourceCdc key={`cdc:${proofKey}`} source={viewedSource} onBusyChange={setCaptureBusy} />}
+          {viewedType?.captureKind === 'dmdrs' && <SourceDamengCdc key={`dmdrs:${proofKey}`} source={viewedSource} onBusyChange={setCaptureBusy} />}
+          {viewedType?.captureKind === 'object_events' && <SourceObjectEvents key={`events:${proofKey}`} source={viewedSource} onBusyChange={setCaptureBusy} />}
+        </>}
+      </section></Modal>}
+      <section className="ontology-connections-inventory" aria-label="Sources">
         <header><div><h2>Sources <span>{sources.length}</span></h2><p>Open a source to review its settings or run a read-only check.</p></div><Button size="small" icon={<ReloadOutlined />} disabled={blocked} onClick={() => setReload((value) => value + 1)}>Refresh sources</Button></header>
         <div className="ontology-connections-inventory__toolbar">
           <Input aria-label="Search sources" placeholder="Search sources" prefix={<SearchOutlined />} value={sourceSearch} allowClear onChange={(event) => setSourceSearch(event.target.value)} />
@@ -560,6 +601,14 @@ export default function DataConnections({ onChanged }: Props = {}) {
         </table></div> : <div className="ontology-connections-inventory__empty" role="status">
           <DatabaseOutlined /><strong>{sources.length ? 'No sources match your filters' : 'No sources configured'}</strong>
           <p>{sources.length ? 'Try another search or connector.' : 'Add a source to save its settings and verify the connection.'}</p>
+          {!sources.length && <>
+            <ol className="ontology-connections-setup" aria-label="Source setup">
+              <li><span>1</span><div><strong>Connect a source</strong><p>Choose a connector and enter its connection settings.</p></div></li>
+              <li><span>2</span><div><strong>Verify access</strong><p>Test the connection and save encrypted credentials.</p></div></li>
+              <li><span>3</span><div><strong>Choose the next step</strong><p>Explore supported sources or configure change capture.</p></div></li>
+            </ol>
+            <Button type="primary" disabled={blocked} onClick={newSource}>Connect your first source</Button>
+          </>}
         </div>}
         <p className="ontology-connectors__scope"><DatabaseOutlined /> Creating a source saves its connection settings only. It does not import or synchronize tables.</p>
         <TableExports openFromLink={openTableExport} onLinkClose={() => setParams((current) => {
@@ -569,7 +618,7 @@ export default function DataConnections({ onChanged }: Props = {}) {
         }, { replace: true })} />
         <SandboxCdcReplay />
         <SyntheticPushInbox />
-      </section>)}
+      </section></>}
       {canManage && !sourceId && <SandboxHandoffRecipientProof authorizedIdentity={sessionIdentity} />}
     </div>
 
@@ -634,7 +683,8 @@ export default function DataConnections({ onChanged }: Props = {}) {
                 <p className="ontology-connectors__help">Credentials are encrypted at rest and are never returned by the API. Use a dedicated account with read access.</p>
               </section>
             </fieldset>
-            <p className="ontology-connectors__help">Saving runs a read-only connection test.</p>
+            <p className="ontology-connectors__help">Saving runs a read-only connection test.
+              {!editingId && (connector.cdcSupported || connector.captureKind === 'dmdrs' || connector.captureKind === 'object_events') && ' After saving, you can configure change capture in source details; it is optional and starts only when you enable it.'}</p>
             <div className="ontology-connectors__actions ontology-connectors__wizard-footer"><span /><Button disabled={pending} onClick={() => navigate(closeWizard)}>Cancel</Button><Button onClick={() => editConflict ? reloadSavedSource() : void test()} loading={operation === 'test'} disabled={blocked || !editConflict && !connector.driverAvailable}>{editConflict ? 'Reload saved source' : 'Test connection'}</Button><Button type="primary" onClick={() => void save()} loading={operation === 'save'} disabled={blocked || editConflict || !connector.driverAvailable || !!editingId && !dirty}>Save source</Button></div>
           </form>}
       </div>

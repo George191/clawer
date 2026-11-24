@@ -3,7 +3,7 @@ import { Button, Checkbox, Input } from '@/components/ui';
 import { createSourceObjectEvents, fetchSourceObjectEvents, removeSourceObjectEvents } from '../../services/api';
 import type { DataSource, SourceObjectEventPayload, SourceObjectEventStatus } from '../../services/api';
 
-export default function SourceObjectEvents({ source }: { source: DataSource }) {
+export default function SourceObjectEvents({ source, onBusyChange }: { source: DataSource; onBusyChange?: (busy: boolean) => void }) {
   const [status, setStatus] = useState<SourceObjectEventStatus>();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -12,6 +12,7 @@ export default function SourceObjectEvents({ source }: { source: DataSource }) {
   const [prefix, setPrefix] = useState('');
   const [suffix, setSuffix] = useState('');
   const [events, setEvents] = useState<SourceObjectEventPayload['events']>(['s3:ObjectCreated:*', 's3:ObjectRemoved:*']);
+  useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -25,7 +26,7 @@ export default function SourceObjectEvents({ source }: { source: DataSource }) {
   const save = async (remove: boolean) => {
     if (!status) return;
     if (remove && !window.confirm('Remove this object event subscription? Events during the disabled period cannot be replayed by this subscription. Existing Kafka messages remain.')) return;
-    setBusy(true); setError('');
+    setBusy(true); onBusyChange?.(true); setError('');
     try {
       if (remove) await removeSourceObjectEvents(source.id, source.updatedAt, status.configurationHash);
       else await createSourceObjectEvents(source.id, { expectedUpdatedAt: source.updatedAt, expectedConfigurationHash: status.configurationHash, targetArn, prefix, suffix, events });
@@ -33,7 +34,7 @@ export default function SourceObjectEvents({ source }: { source: DataSource }) {
     } catch (failure) {
       const detail = (failure as { response?: { data?: { detail?: unknown; message?: unknown } } }).response?.data;
       setError(typeof detail?.detail === 'string' ? detail.detail : typeof detail?.message === 'string' ? detail.message : 'Notification configuration failed. Refresh before retrying.');
-    } finally { setBusy(false); }
+    } finally { setBusy(false); onBusyChange?.(false); }
   };
 
   return <section className="ontology-source-cdc" aria-label="Object event notifications">

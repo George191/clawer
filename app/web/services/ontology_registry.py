@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -88,7 +88,10 @@ async def get_published(session: AsyncSession, user: User, definition_id: UUID, 
     return row
 
 
-def published_catalog_statement(user: User, search: str = "", *, include_hidden=False, include_deleted=False):
+def published_catalog_statement(
+    user: User, search: str = "", *, include_hidden=False, include_deleted=False,
+    source_filter: Literal["warehouse", "object-managed"] | UUID | None = None,
+):
     row = OntologyDefinitionRow
     definition = row.published_definition
     source = definition["source"]
@@ -113,6 +116,12 @@ def published_catalog_statement(user: User, search: str = "", *, include_hidden=
             statement = statement.where(or_(column.is_(False), TeamUserJoin.role.in_((RoleTypes.ADMIN, RoleTypes.OWNER))))
     if not user.is_superuser:
         statement = statement.where(source["mode"].astext == "none")
+    if source_filter == "object-managed":
+        statement = statement.where(source["mode"].astext == "none")
+    elif source_filter is not None:
+        upstream = source["upstreamConnectionId"].astext
+        upstream_filter = upstream.is_(None) if source_filter == "warehouse" else upstream == str(source_filter)
+        statement = statement.where(source["mode"].astext == "existing", upstream_filter)
     principals = (("user", User.id), ("group", Team.id), ("organization", Team.tenant_id))
     statement = statement.where(covers(security["markings"], allowed_ids(row.project_id, principals)))
     statement = statement.where(or_(

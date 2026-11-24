@@ -7,6 +7,9 @@
   border: 1px solid var(--ontology-control-border); border-radius: 4px 4px 0 0;
 }
 .flow-published-catalog > .flow-ontology__published-header h2 { font-size: 12px; font-weight: 400; line-height: 20px; }
+.flow-published-source-filter { width: min(240px, 100%); }
+.flow-published-source { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
+.flow-published-source > :last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .flow-published-catalog > .flow-create-section {
   display: flex; flex: 1; flex-direction: column; min-height: 0;
   border: 1px solid var(--ontology-control-border); border-top: 0; background: var(--ontology-panel);

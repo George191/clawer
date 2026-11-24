@@ -8,7 +8,7 @@ const source = readFileSync(new URL('../src/services/explorerNavigation.ts', imp
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 const exports = {};
 vm.runInThisContext('(function(exports){' + compiled + '\n})')(exports);
-const { ontologyCatalogHref, catalogReturnHref, compactExplorerSearch, backedExplorerHref } = exports;
+const { ontologyCatalogHref, catalogReturnHref, compactExplorerSearch, backedExplorerHref, dataConnectionHref } = exports;
 const params = href => new URL(href, 'https://app.example.test').searchParams;
 
 test('ordinary physical entry has only schema and table despite a redundant selected-card return URL', () => {
@@ -31,6 +31,16 @@ test('Published return state includes its search, page and visibility without ph
   assert.equal(href, '/ontology?catalog=published&publishedQ=%E5%AA%92%E4%BD%93&publishedOffset=25&publishedHidden=true&publishedDeleted=true&view=list');
   assert.equal(catalogReturnHref(href, 'published'), href);
   assert.equal(ontologyCatalogHref('catalog=published&publishedOffset=0&publishedHidden=false&publishedDeleted=false&view=grid', 'published'), '/ontology?catalog=published');
+});
+
+test('a saved connection survives the Published return URL without leaking into the warehouse catalog', () => {
+  const id = '2e7a9733-daa3-4f04-a788-4fd9f2e2b818';
+  const href = `/ontology?catalog=published&publishedSource=${id}`;
+  assert.equal(catalogReturnHref(`/ontology?publishedSource=${id.toUpperCase()}&objectType=selected`, 'published'), href);
+  assert.equal(params(compactExplorerSearch(new URLSearchParams({ returnTo: href }).toString(), 'published')).get('returnTo'), href);
+  assert.equal(catalogReturnHref(href, 'backed'), '/ontology');
+  assert.equal(ontologyCatalogHref('publishedSource=/outside', 'published'), '/ontology?catalog=published');
+  assert.equal(params(dataConnectionHref(id)).get('sourceId'), id);
 });
 
 test('returning from a storage-backed record preserves the catalog page', () => {

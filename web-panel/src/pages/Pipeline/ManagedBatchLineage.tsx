@@ -3,6 +3,7 @@ import type { FormEvent } from 'react';
 import { ArrowRightOutlined, CloseOutlined, DatabaseOutlined } from '@/components/ui/icons';
 import { fetchCommittedBatchLineage, fetchCommittedBatchLineageEntry } from '../../services/api';
 import type { CommittedBatchLineageDetail, CommittedBatchLineageEntry, CommittedBatchLineagePage, ManagedBatchLineageAsset } from '../../services/api';
+import ConnectorMark from './ConnectorMark';
 import { sandboxScopeDenied, useSandboxIdentity } from './SandboxMarkings';
 
 export const MANAGED_BATCH_ASSET = 'committed-batch';
@@ -126,7 +127,7 @@ function Workspace({ asset, selected, exactReceipt, version, onSelect, onClose }
       <span className="flow-lineage-managed__eyebrow">Managed asset · Synthetic</span>
       <div className="flow-lineage-managed__nodes">
         {selected && showEdge && <>
-          <span className="flow-lineage-managed__source"><DatabaseOutlined /> <code>{facts.sourceSchema}.{facts.sourceTable}</code></span>
+          <span className="flow-lineage-managed__source"><ConnectorMark engine="postgresql" size="small" /><code>{facts.sourceSchema}.{facts.sourceTable}</code></span>
           {(verifiedEdge || showDashedEdge) && <span className={`flow-lineage-managed__edge${verifiedEdge ? ' is-observed' : ' is-reviewed'}`}
             role="img" aria-label={verifiedEdge ? 'Solid verified transfer edge' : 'Dashed reviewed relationship'}><ArrowRightOutlined /></span>}
           {!verifiedEdge && !showDashedEdge && <span className="flow-lineage-managed__edge-label">Historical only</span>}

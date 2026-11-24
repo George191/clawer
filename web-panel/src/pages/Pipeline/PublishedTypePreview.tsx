@@ -1,12 +1,16 @@
 import { useEffect, useState, type Ref } from 'react';
-import { fetchPublishedOntologyType, ontologyError, type PublishedCatalogItem, type PublishedOntologyType } from '../../services/ontology';
+import { Link } from 'react-router-dom';
+import { dataConnectionHref } from '../../services/explorerNavigation';
+import { fetchPublishedOntologyType, ontologyError, type OntologyConnection, type PublishedCatalogItem, type PublishedOntologyType } from '../../services/ontology';
 import { graphRequest, type LinkType, type Page } from '../../services/ontology_graph';
 import { getSessionState } from '../../services/session';
+import ConnectorMark from './ConnectorMark';
 import SemanticTypeGlyph from './SemanticTypeGlyph';
 import ObjectTypePreview from './ObjectTypePreview';
 
 type Props = {
   id: string; initial?: PublishedCatalogItem; allProperties: boolean; closing: boolean; asideRef: Ref<HTMLElement>;
+  connections: OntologyConnection[]; connectionsLoading: boolean;
   onPropertiesToggle: () => void; onClose: () => void; onExplore: () => void; onSelect: (id: string) => void;
 };
 type LinkedType = { object: PublishedOntologyType; relationships: string[] };
@@ -32,7 +36,8 @@ async function readLinkedTypes(object: PublishedOntologyType, signal: AbortSigna
   })));
 }
 
-export default function PublishedTypePreview({ id, initial, allProperties, closing, asideRef, onPropertiesToggle, onClose, onExplore, onSelect }: Props) {
+export default function PublishedTypePreview({ id, initial, allProperties, closing, asideRef, connections, connectionsLoading,
+  onPropertiesToggle, onClose, onExplore, onSelect }: Props) {
   const [version, reload] = useState(0);
   const [linkedVersion, reloadLinks] = useState(0);
   const [read, setRead] = useState<{ key: string; object?: PublishedOntologyType; error?: string }>();
@@ -64,13 +69,23 @@ export default function PublishedTypePreview({ id, initial, allProperties, closi
   }, [current?.object, linkedKey, identity]);
   const definition = object?.definition;
   const properties = definition?.properties ?? [];
+  const upstreamId = definition?.source.upstreamConnectionId;
+  const upstream = connections.find(connection => connection.id === upstreamId);
+  const backingTable = definition?.source.mode === 'existing' ? `${definition.source.schema}.${definition.source.table}` : undefined;
   return <ObjectTypePreview open closing={closing} asideRef={asideRef} id={id} name={definition?.name || 'Object type preview'}
     icon={definition && <SemanticTypeGlyph definition={definition} />} testId="published-type-inspector"
     loading={!definition && !current?.error} busy={!current} error={current?.error} onRetry={() => reload(value => value + 1)}
     onClose={onClose} onExplore={onExplore} exploreDisabled={!verified} description={definition?.description}
     summary={definition && [
       { label: 'API ID', value: definition.id },
-      { label: 'Datasource', value: definition.source.mode === 'existing' ? `${definition.source.schema}.${definition.source.table}` : 'Object-managed records' },
+      { label: backingTable ? 'Backing table' : 'Datasource', value: backingTable
+        ? <span className="flow-published-source" title={backingTable}><ConnectorMark engine="postgresql" size="small" /><code>{backingTable}</code></span>
+        : 'Object-managed records' },
+      ...(upstreamId ? [{ label: 'Upstream connection', value: upstream
+        ? <Link className="flow-published-source" to={dataConnectionHref(upstream.id)} title={upstream.name}>
+          <ConnectorMark engine={upstream.engine} size="small" /><span>{upstream.name}</span>
+        </Link>
+        : connectionsLoading ? 'Loading connection…' : 'Connection details unavailable' }] : []),
       { label: 'Published revision', value: object!.revision },
     ]}
     properties={properties.map(property => ({

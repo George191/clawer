@@ -8,7 +8,7 @@ function errorMessage(error: unknown): string {
   return typeof detail?.detail === 'string' ? detail.detail : typeof detail?.message === 'string' ? detail.message : 'CDC operation failed. Refresh and try again.';
 }
 
-export default function SourceCdc({ source }: { source: DataSource }) {
+export default function SourceCdc({ source, onBusyChange }: { source: DataSource; onBusyChange?: (busy: boolean) => void }) {
   const [status, setStatus] = useState<SourceCdcStatus>();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -23,6 +23,7 @@ export default function SourceCdc({ source }: { source: DataSource }) {
   const [milvusEtcd, setMilvusEtcd] = useState('');
   const [milvusRoot, setMilvusRoot] = useState('by-dev');
   const [milvusChannels, setMilvusChannels] = useState('');
+  useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -42,7 +43,7 @@ export default function SourceCdc({ source }: { source: DataSource }) {
 
   const act = async (action: 'create' | 'pause' | 'resume' | 'restart' | 'remove') => {
     if (action === 'remove' && !window.confirm('Remove this capture task? Existing Kafka data and source replication slots remain. Creating another task starts a new capture with a new topic namespace.')) return;
-    setBusy(true); setError('');
+    setBusy(true); onBusyChange?.(true); setError('');
     try {
       if (action === 'create') {
         await createSourceCdc(source.id, {
@@ -58,7 +59,7 @@ export default function SourceCdc({ source }: { source: DataSource }) {
       } else await controlSourceCdc(source.id, action, source.updatedAt);
       setStatus(undefined); setRevision(value => value + 1);
     } catch (failure) { setError(errorMessage(failure)); }
-    finally { setBusy(false); }
+    finally { setBusy(false); onBusyChange?.(false); }
   };
 
   const configured = Boolean(status?.selection);

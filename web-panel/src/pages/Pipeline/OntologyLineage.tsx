@@ -6,6 +6,7 @@ import { fetchBatchSyncCapabilities, fetchCurrentUserContext, fetchLayers, type 
 import { getSessionState } from '../../services/session';
 import type { LayerNode } from '../../services/types';
 import { schemaColor } from './OntologyExplorer';
+import ConnectorMark from './ConnectorMark';
 import LineageTransferPlans from './LineageTransferPlans';
 import ManagedBatchLineage, { MANAGED_BATCH_ASSET } from './ManagedBatchLineage';
 import TableExportEvidence, { TABLE_EXPORT_SOURCE } from './TableExportEvidence';
@@ -291,7 +292,7 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
                       {link.from.metricsAvailable && link.from.rateOut > 0 && <circle r="2.7" fill={link.color} data-testid="ontology-flow-packet"><animateMotion dur="3.8s" repeatCount="indefinite" path={link.d} /></circle>}
                     </g>)}
                   </svg>
-                  {nodes.map(node => <button ref={element => { nodeRefs.current[node.key] = element; }} key={node.key} type="button" data-testid="ontology-lineage-node" data-schema={node.key} className={`flow-lineage-node${selected === node.key ? ' is-selected' : ''}`} style={{ left: node.x, top: node.y, '--schema-color': schemaColor(node.key) } as React.CSSProperties} title={`${node.alias || node.label} · ${node.tables ?? '—'} tables · ${node.status === 'running' ? 'Available' : 'Unavailable'}`} aria-label={`${node.key}, ${node.alias || node.label}`} onClick={() => selectNode(node.key)}><DatabaseOutlined /><strong>{node.key}</strong><ArrowRightOutlined /></button>)}
+                  {nodes.map(node => <button ref={element => { nodeRefs.current[node.key] = element; }} key={node.key} type="button" data-testid="ontology-lineage-node" data-schema={node.key} className={`flow-lineage-node${selected === node.key ? ' is-selected' : ''}`} style={{ left: node.x, top: node.y, '--schema-color': schemaColor(node.key) } as React.CSSProperties} title={`${node.alias || node.label} · ${node.tables ?? '—'} tables · ${node.status === 'running' ? 'Available' : 'Unavailable'}`} aria-label={`${node.key}, ${node.alias || node.label}`} onClick={() => selectNode(node.key)}><ConnectorMark engine="postgresql" size="small" /><strong>{node.key}</strong><ArrowRightOutlined /></button>)}
                 </div></div>
               </div>
               {legendOpen && <aside className="flow-lineage-legend" aria-label="Schema color legend"><header><strong>Schema colors</strong><button type="button" aria-label="Close schema color legend" onClick={() => setLegendOpen(false)}><CloseOutlined /></button></header><div>{schemas.map(schema => <span key={schema.key}><i style={{ background: schemaColor(schema.key) }} />{schema.key}</span>)}</div><p>Node colors identify schemas. Gray arrows show predefined contracts. Colored dots show schema-level output activity, not proof of transfers on arrows.</p></aside>}

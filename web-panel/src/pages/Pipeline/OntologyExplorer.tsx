@@ -6,7 +6,7 @@ import {
   CloseOutlined, DatabaseOutlined, InfoCircleOutlined,
   PlusOutlined, ReloadOutlined, RightOutlined, SearchOutlined, StarFilled, StarOutlined,
 } from '@/components/ui/icons';
-import { fetchCurrentUserContext, fetchEtlObjectFavorites, fetchEtlObjectPreview, fetchEtlObjectTypes, fetchLayers, importEtlObjectFavorites, updateEtlObjectFavorite, updateEtlObjectVisibility } from '../../services/api';
+import { fetchCurrentUserContext, fetchDataSources, fetchEtlObjectFavorites, fetchEtlObjectPreview, fetchEtlObjectTypes, fetchLayers, importEtlObjectFavorites, updateEtlObjectFavorite, updateEtlObjectVisibility } from '../../services/api';
 import { getSessionState } from '../../services/session';
 import type { EtlObjectCatalog, EtlObjectPreview, EtlObjectType, EtlObjectVisibility, LayerNode } from '../../services/types';
 import { accentStyle, schemaColor } from '../../theme/tokens';
@@ -16,18 +16,18 @@ import PublishedOntology, { type PublishedCatalogPage } from './PublishedOntolog
 import PublishedTypePreview from './PublishedTypePreview';
 import ObjectTypePreview from './ObjectTypePreview';
 import OntologyCatalogSkeleton from './OntologyCatalogSkeleton';
-import { listOntologyProjects } from '../../services/ontology';
+import { listOntologyProjects, type OntologyConnection } from '../../services/ontology';
 import { publishedCatalogHref, publishedExplorerHref } from '../../services/publishedExplorerHandoff';
-import { backedExplorerHref } from '../../services/explorerNavigation';
-import PostgresGlyph from './PostgresGlyph';
+import { backedExplorerHref, publishedSourceFilter } from '../../services/explorerNavigation';
+import ConnectorMark from './ConnectorMark';
 import './ontology-explorer.css';
 import './ontology-create.css';
 
 type Group = 'all' | 'favorites' | 'ingestion' | 'processing' | 'serving' | 'other';
 const groups: Array<{ key: Group; label: string }> = [
-  { key: 'all', label: 'All object types' }, { key: 'favorites', label: 'Favorites' },
+  { key: 'all', label: 'All tables' }, { key: 'favorites', label: 'Favorites' },
   { key: 'ingestion', label: 'Ingestion' }, { key: 'processing', label: 'Processing' },
-  { key: 'serving', label: 'Serving' }, { key: 'other', label: 'Other object types' },
+  { key: 'serving', label: 'Serving' }, { key: 'other', label: 'Other tables' },
 ];
 const favoriteStorageKey = 'flow-favorite-object-types';
 const favoriteImportOwnerKey = 'flow-favorite-object-types-import-owner';
@@ -142,6 +142,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const publishedCatalog = params.get('catalog') === 'published';
+  const publishedSource = publishedSourceFilter(params.get('publishedSource'));
   const publishedId = publishedCatalog ? params.get('objectType') || '' : '';
   const keyword = params.get('q') || '';
   const requestedOffset = Number(params.get('backedOffset'));
@@ -167,6 +168,8 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const inspectorAllProperties = selectedId ? allProperties : inspectedObject.allProperties;
   const [catalogState, setCatalogState] = useState<{ key: string; scope: string; userId: string; group: Group; data: EtlObjectCatalog }>({ key: '', scope: '', userId: '', group: 'all', data: emptyCatalog });
   const [publishedPage, setPublishedPage] = useState<PublishedCatalogPage>();
+  const [connectionRead, setConnectionRead] = useState<{ items?: OntologyConnection[]; failed?: boolean }>({});
+  const [connectionsVersion, setConnectionsVersion] = useState(0);
   const [menuFacetState, setMenuFacetState] = useState<{ key: string; userId: string; counts: EtlObjectCatalog['groupSchemaCounts'] }>({ key: '', userId: '', counts: {} });
   const [favoriteSchemaCounts, setFavoriteSchemaCounts] = useState<Record<string, number>>({});
   const [favoriteSchemaKey, setFavoriteSchemaKey] = useState('');
@@ -186,7 +189,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const semanticProjectAccess = managedProjects.length > 0;
   const publishedHidden = semanticProjectAccess && params.get('publishedHidden') === 'true';
   const publishedDeleted = semanticProjectAccess && params.get('publishedDeleted') === 'true';
-  const [createSchema, setCreateSchema] = useState<string>();
+  const [createSource, setCreateSource] = useState<{ schema?: string; upstreamConnectionId?: string }>({});
   const [publishedRefresh, setPublishedRefresh] = useState(0);
   const [favoriteState, setFavoriteState] = useState<{ userId: string; ids: string[] }>({ userId: '', ids: [] });
   const favorites = favoriteState.userId === currentUserId ? favoriteState.ids : [];
@@ -197,6 +200,9 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const favoritePendingRef = useRef(new Set<string>());
   const favoriteMutationRef = useRef(0);
   const sessionIdentity = useRef(getSessionState().identity).current;
+  const canManageConnections = canManage && getSessionState().identity === sessionIdentity;
+  const connections = canManageConnections ? connectionRead.items ?? [] : [];
+  const connectionsLoading = canManageConnections && !connectionRead.items && !connectionRead.failed;
   const userIdRef = useRef(currentUserId);
   userIdRef.current = currentUserId;
   const [preview, setPreview] = useState<{ id: string; data?: EtlObjectPreview; loading: boolean; error: string }>({ id: '', loading: false, error: '' });
@@ -254,6 +260,16 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     });
     return () => { active = false; };
   }, [version, refreshToken, sessionIdentity]);
+  useEffect(() => {
+    if (!publishedCatalog || !canManageConnections) return;
+    const request = new AbortController();
+    const current = () => !request.signal.aborted && getSessionState().identity === sessionIdentity;
+    setConnectionRead({});
+    fetchDataSources(request.signal).then(rows => {
+      if (current()) setConnectionRead({ items: rows.map(({ id, name, engine }) => ({ id, name, engine })) });
+    }, () => { if (current()) setConnectionRead({ failed: true }); });
+    return () => request.abort();
+  }, [publishedCatalog, canManageConnections, sessionIdentity, connectionsVersion, refreshToken]);
   useEffect(() => {
     if (!currentUserId) return;
     let alive = true;
@@ -425,12 +441,16 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     return next;
   }, { replace });
   const catalogSearch = publishedCatalog ? params.get('publishedQ') || '' : keyword;
-  const searchLabel = publishedCatalog ? 'Search published types' : 'Search object types';
+  const searchLabel = publishedCatalog ? 'Search published types' : 'Search warehouse tables';
   const changeCatalogSearch = (value: string) => updateQuery(
     publishedCatalog ? { publishedQ: value || null, publishedOffset: null } : { q: value || null, backedOffset: null }, true,
   );
   const selectPublished = (id = '') => {
     updateQuery({ catalog: 'published', objectType: id || null, schema: null, table: null, tab: null });
+  };
+  const changePublishedSource = (value: string) => {
+    if (value === (publishedSource ?? '')) return;
+    updateQuery({ publishedSource: value, publishedOffset: null, objectType: null, tab: null });
   };
   const selectObject = (object: { schema: string; table: string }) => updateQuery({ schema: object.schema, table: object.table, tab: null });
   const selectLinkedObject = async (object: { id: string; schema: string; table: string }) => {
@@ -459,8 +479,10 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     if (selectedId) navigate(backedExplorerHref(selectedSchema, selectedTable, '/ontology?' + params.toString()));
   };
   const startNewObject = () => {
-    const destination = source || selectedSchema;
-    setCreateSchema(creationSchemas.some((item) => item.key === destination) ? destination : undefined);
+    const schema = publishedCatalog ? '' : source || selectedSchema;
+    const upstreamConnectionId = publishedCatalog && canManageConnections && publishedSource !== 'warehouse'
+      && publishedSource !== 'object-managed' ? publishedSource : undefined;
+    setCreateSource({ schema, upstreamConnectionId });
     setCreateOpen(true);
   };
   useEffect(() => {
@@ -523,7 +545,8 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const identity = data || catalog.items.find((object) => object.id === inspectorId);
   const selectedColor = identity ? accentStyle(identity.dataType) : undefined;
   const matchingPublishedCount = publishedPage?.identity === sessionIdentity && publishedPage.keyword === catalogSearch.trim()
-    && publishedPage.includeHidden === publishedHidden && publishedPage.includeDeleted === publishedDeleted ? publishedPage.total : null;
+    && publishedPage.includeHidden === publishedHidden && publishedPage.includeDeleted === publishedDeleted
+    && publishedPage.source === publishedSource ? publishedPage.total : null;
   const displayedTotal = publishedCatalog ? matchingPublishedCount : confirmedTotal;
   const lineageLink = <button type="button" className="flow-ontology__sidebar-link" onClick={() => navigate('/ontology/lineage')}><ApartmentOutlined /><span>Lineage &amp; impact</span><ArrowRightOutlined /></button>;
   const groupTotal = Object.values(facetGroupCounts).reduce((sum, count) => sum + count, 0);
@@ -533,7 +556,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
       <header className="flow-ontology__hero" aria-label="Object type catalog">
         <div className="flow-ontology__catalog-bar">
           <nav className="flow-ontology__catalog-navigation" aria-label="Catalog views">
-            <button type="button" aria-pressed={!publishedCatalog} onClick={() => { if (publishedCatalog) updateQuery({ catalog: null, objectType: null }); }}><DatabaseOutlined />Storage-backed</button>
+            <button type="button" aria-pressed={!publishedCatalog} onClick={() => { if (publishedCatalog) updateQuery({ catalog: null, objectType: null }); }}><ConnectorMark engine="postgresql" size="small" />Warehouse tables</button>
             <button type="button" aria-pressed={publishedCatalog} onClick={() => { if (!publishedCatalog) selectPublished(); }}><AppstoreOutlined />Published</button>
           </nav>
           <div className="flow-ontology__topbar">
@@ -553,9 +576,9 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
             {(publishedCatalog ? semanticProjectAccess : canManage) && <Checkbox className="flow-ontology__show-hidden" checked={publishedCatalog ? publishedHidden : includeHidden} onChange={event => {
               if (publishedCatalog) updateQuery({ publishedHidden: event.target.checked ? 'true' : null, publishedOffset: null });
               else { setShowHidden(event.target.checked); updateQuery({ backedOffset: null }, true); }
-            }}>Show hidden object types</Checkbox>}
+            }}>{publishedCatalog ? 'Show hidden object types' : 'Show hidden tables'}</Checkbox>}
             {publishedCatalog && semanticProjectAccess && <Checkbox className="flow-ontology__show-hidden" checked={publishedDeleted} onChange={event => updateQuery({ publishedDeleted: event.target.checked ? 'true' : null, publishedOffset: null })}>Show deleted object types</Checkbox>}
-            <span className="flow-ontology__summary" aria-busy={publishedCatalog ? displayedTotal == null : loading}><span className="flow-ontology__summary-value">{displayedTotal == null ? '…' : number(displayedTotal)}</span><span>object types</span></span>
+            <span className="flow-ontology__summary" aria-busy={publishedCatalog ? displayedTotal == null : loading}><span className="flow-ontology__summary-value">{displayedTotal == null ? '…' : number(displayedTotal)}</span><span>{publishedCatalog ? 'object types' : 'tables'}</span></span>
             <button type="button" className="flow-ontology__button" onClick={() => navigate('/ontology/runtime')}>Runtime</button>
             <button type="button" className="flow-ontology__button" onClick={() => navigate('/ontology/connections')}>Data Connections</button>
           </div>
@@ -563,8 +586,14 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
         </div>
       </header>
       <div className="flow-ontology__body">
-        {publishedCatalog ? <PublishedOntology selection={publishedId} view={view} managedProjects={managedProjects} includeHidden={publishedHidden} includeDeleted={publishedDeleted} refreshToken={publishedRefresh} catalogPage={publishedPage?.identity === getSessionState().identity ? publishedPage : undefined} onCatalogPage={setPublishedPage} onSelect={selectPublished} onClearSearch={() => changeCatalogSearch('')} /> : <>
-        <aside className="flow-ontology__sidebar" aria-label="Object type groups"><nav aria-busy={loading}>
+        {publishedCatalog ? <PublishedOntology selection={publishedId} view={view} managedProjects={managedProjects}
+          includeHidden={publishedHidden} includeDeleted={publishedDeleted} refreshToken={publishedRefresh}
+          catalogPage={publishedPage?.identity === getSessionState().identity ? publishedPage : undefined}
+          onCatalogPage={setPublishedPage} onSelect={selectPublished} onClearSearch={() => changeCatalogSearch('')}
+          source={publishedSource} connections={connections} canManageConnections={canManageConnections}
+          connectionsLoading={connectionsLoading} connectionsFailed={canManageConnections && !!connectionRead.failed}
+          onRetryConnections={() => setConnectionsVersion(value => value + 1)} onSourceChange={changePublishedSource} /> : <>
+        <aside className="flow-ontology__sidebar" aria-label="Warehouse table groups"><nav aria-busy={loading}>
           {groups.map((item) => {
             const expanded = expandedGroup === item.key;
             const active = group === item.key && !source;
@@ -572,7 +601,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
             const facetsReady = item.key === 'favorites' ? favoriteFacetsReady : menuFacetsReady;
             if (facetsReady && group === item.key && source && !(source in counts)) counts[source] = 0;
             const schemas = Object.keys(counts).sort();
-            return <React.Fragment key={item.key}>{item.key === 'ingestion' && <div className="flow-ontology__sidebar-title">Object type groups</div>}
+            return <React.Fragment key={item.key}>{item.key === 'ingestion' && <div className="flow-ontology__sidebar-title">Table groups</div>}
               <div className="flow-ontology__group">
                 <button type="button" data-group={item.key} aria-pressed={active} aria-expanded={expanded} aria-controls={`ontology-schema-group-${item.key}`} className={active ? 'is-active' : ''} onClick={() => {
                   setExpandedGroup(expanded ? null : item.key);
@@ -581,7 +610,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
                 <div id={`ontology-schema-group-${item.key}`} className={`flow-ontology__schema-collapse${expanded ? ' is-expanded' : ''}`} aria-hidden={!expanded} ref={(element) => { if (element) element.inert = !expanded; }}>
                   <div className="flow-ontology__schema-collapse-content">
                     <div className="flow-ontology__schema-nav" role="group" aria-label={`${item.label} schemas`}>
-                      {schemas.length ? schemas.map((schema) => <button type="button" key={schema} data-schema-filter={schema} data-schema-motion-id={`${item.key}:${schema}`} aria-pressed={group === item.key && source === schema} className={group === item.key && source === schema ? 'is-active' : ''} onClick={() => updateQuery({ group: item.key === 'all' ? null : item.key, source: schema, backedOffset: null, ...(!selectedTable ? { schema: null } : {}) })}><span className="flow-ontology__schema-label"><DatabaseOutlined /><span title={schema}>{schema}</span></span><small>{number(counts[schema])}</small></button>) : <span className={`flow-ontology__schema-empty${facetsReady ? '' : ' is-pending'}`} aria-busy={!facetsReady} aria-label={facetsReady ? undefined : 'Schema groups not loaded'}>{facetsReady ? 'No schemas' : <span className="flow-ontology__schema-skeleton" aria-hidden="true" />}</span>}
+                      {schemas.length ? schemas.map((schema) => <button type="button" key={schema} data-schema-filter={schema} data-schema-motion-id={`${item.key}:${schema}`} aria-pressed={group === item.key && source === schema} className={group === item.key && source === schema ? 'is-active' : ''} onClick={() => updateQuery({ group: item.key === 'all' ? null : item.key, source: schema, backedOffset: null, ...(!selectedTable ? { schema: null } : {}) })}><span className="flow-ontology__schema-label"><ConnectorMark engine="postgresql" size="small" /><span title={schema}>{schema}</span></span><small>{number(counts[schema])}</small></button>) : <span className={`flow-ontology__schema-empty${facetsReady ? '' : ' is-pending'}`} aria-busy={!facetsReady} aria-label={facetsReady ? undefined : 'Schema groups not loaded'}>{facetsReady ? 'No schemas' : <span className="flow-ontology__schema-skeleton" aria-hidden="true" />}</span>}
                     </div>
                   </div>
                 </div>
@@ -591,12 +620,12 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
         </nav>
         {lineageLink}
       </aside>
-        <main className="flow-ontology__main" aria-label="Object types" aria-busy={loading}>
+        <main className="flow-ontology__main" aria-label="Warehouse tables" aria-busy={loading}>
           {error && <div className="flow-ontology__notice" role="alert"><span>{error}</span><button type="button" onClick={() => setVersion((value) => value + 1)}>Retry</button></div>}
           {favoriteSummaryError && <div className="flow-ontology__notice" role="alert"><span>{favoriteSummaryError}</span><button type="button" onClick={() => setVersion((value) => value + 1)}>Retry</button></div>}
           {favoriteError && <div className="flow-ontology__notice" role="alert"><span>{favoriteError}</span><button type="button" aria-label="Retry favorites" onClick={() => setVersion((value) => value + 1)}>Retry</button></div>}
-          {error && !presentedItems.length ? <div className="flow-ontology__empty"><DatabaseOutlined /><strong>Catalog unavailable</strong><span>Retry to load object types.</span></div> : loading && !hasPresentedCatalog ? <OntologyCatalogSkeleton view={view} label="Loading object types" /> : !presentedItems.length ? <div className="flow-ontology__empty"><DatabaseOutlined /><strong>{presentedGroup === 'favorites' ? 'No favorite object types' : 'No object types found'}</strong><span>{presentedGroup === 'favorites' ? 'Star an object type to keep it here.' : 'Try a different resource group, schema, or search.'}</span></div> : <div className={`flow-ontology__collections is-${view}`} data-testid="ontology-assets" ref={element => { if (element) element.inert = catalogKey !== catalogState.key; }}>
-            {sections.map((section) => <section key={section.key} className="flow-ontology__collection"><header className="flow-ontology__collection-heading"><h2>{section.label}</h2></header>{section.schemas.map(({ schema, items }) => <section key={schema} className="flow-ontology__schema-section" data-schema-group={schema}><h3 className="flow-ontology__schema-heading"><PostgresGlyph className="flow-ontology__database-glyph" /><span className="flow-ontology__schema-tag"><DatabaseOutlined /><span title={schema}>{schema}</span></span></h3><div className={`flow-ontology__assets is-${view}`}>
+          {error && !presentedItems.length ? <div className="flow-ontology__empty"><DatabaseOutlined /><strong>Catalog unavailable</strong><span>Retry to load warehouse tables.</span></div> : loading && !hasPresentedCatalog ? <OntologyCatalogSkeleton view={view} label="Loading warehouse tables" /> : !presentedItems.length ? <div className="flow-ontology__empty"><DatabaseOutlined /><strong>{presentedGroup === 'favorites' ? 'No favorite tables' : 'No warehouse tables found'}</strong><span>{presentedGroup === 'favorites' ? 'Star a table to keep it here.' : 'Try a different resource group, schema, or search.'}</span></div> : <div className={`flow-ontology__collections is-${view}`} data-testid="ontology-assets" ref={element => { if (element) element.inert = catalogKey !== catalogState.key; }}>
+            {sections.map((section) => <section key={section.key} className="flow-ontology__collection"><header className="flow-ontology__collection-heading"><h2>{section.label}</h2></header>{section.schemas.map(({ schema, items }) => <section key={schema} className="flow-ontology__schema-section" data-schema-group={schema}><h3 className="flow-ontology__schema-heading"><ConnectorMark engine="postgresql" size="small" /><span className="flow-ontology__schema-tag" title={schema}>{schema}</span></h3><div className={`flow-ontology__assets is-${view}`}>
               {items.map((object) => <article key={object.id} data-testid="ontology-object-card" data-object-id={object.id} data-schema={object.schema} className={`flow-ontology__asset${selectedId === object.id ? ' is-selected' : ''}`} style={accentStyle(object.dataType)}>
                 <button ref={(element) => { cardRefs.current[object.id] = element; }} type="button" className="flow-ontology__asset-main" aria-label={`Preview ${object.id}`} aria-pressed={selectedId === object.id} onKeyDown={(event) => moveCardFocus(event, renderedObjects.findIndex((item) => item.id === object.id))} onClick={() => selectObject(object)}>
                   <span className="flow-ontology__asset-icon"><TemplateGlyph kind={inferSiteKind(object.dataType, object.table)} source={object.table} /></span><span className="flow-ontology__asset-name"><span className="flow-ontology__asset-heading"><strong title={object.displayName}>{object.displayName}</strong>{object.visibility !== 'normal' && <small className={`flow-ontology__asset-visibility is-${object.visibility}`} title={visibilityDescriptions[object.visibility]}>{visibilityLabels[object.visibility]}</small>}<small className="flow-ontology__table-count" title={`${object.objectCountEstimated ? 'Estimated object count' : 'Object count'}: ${object.objectCountEstimated ? '~' : ''}${number(object.objectCount)}`}>{object.objectCountEstimated ? '~' : ''}{number(object.objectCount)}</small></span><span className="flow-ontology__asset-description" title={object.description?.trim() || 'No description provided.'}>{object.description?.trim() || 'No description provided.'}</span></span><span className="flow-ontology__preview-action" aria-hidden="true"><InfoCircleOutlined /></span>
@@ -605,7 +634,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
             </div></section>)}</section>)}
           </div>}
           <footer className="flow-ontology__catalog-footer"><span>{loading ? 'Updating catalog…' : error ? 'Catalog unavailable' : `${number(catalog.total)} object types`}</span>
-            {(offset > 0 || catalog.total > catalogBatchSize) && <nav aria-label="Storage-backed catalog pagination">
+            {(offset > 0 || catalog.total > catalogBatchSize) && <nav aria-label="Warehouse table pagination">
               <Button size="small" disabled={loading || !offset} onClick={() => updateQuery({ backedOffset: String(Math.max(0, offset - catalogBatchSize)) })}>Previous page</Button>
               <span>{!error && catalog.items.length > 0 && `${number(offset + 1)}–${number(offset + catalog.items.length)}`}</span>
               <Button size="small" disabled={loading || offset + catalogBatchSize >= catalog.total || offset + catalogBatchSize > maxCatalogOffset}
@@ -620,7 +649,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
       name={identity?.displayName || inspectorTable} icon={<TemplateGlyph kind={inferSiteKind(identity?.dataType || '', inspectorTable)} source={inspectorTable} />}
       asideRef={inspectorRef} style={selectedColor} loading={preview.loading || preview.id !== inspectorId} error={preview.error}
       onRetry={() => setPreviewVersion(value => value + 1)}
-      errorAction={canManage && !includeHidden ? { label: 'Show hidden object types', onClick: () => setShowHidden(true) } : undefined}
+      errorAction={canManage && !includeHidden ? { label: 'Show hidden tables', onClick: () => setShowHidden(true) } : undefined}
       onClose={closeInspector} onExplore={openWorkspace} exploreDisabled={!data || preview.loading || !!linkedLoading}
       description={data?.description} properties={data?.properties.map(property => ({
         id: property.name, name: property.displayName, type: property.type, required: !property.nullable,
@@ -642,13 +671,18 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
         onSelect: () => void selectLinkedObject(linked),
       })) }} />
     {publishedInspectorId && <PublishedTypePreview id={publishedInspectorId} closing={!publishedId} asideRef={inspectorRef} initial={publishedPage?.identity === sessionIdentity ? publishedPage.items.find(item => item.id === publishedInspectorId) : undefined}
+      connections={connections} connectionsLoading={connectionsLoading}
       allProperties={publishedId ? allProperties : inspectedObject.allProperties} onPropertiesToggle={() => updateQuery({ tab: allProperties ? null : 'properties' })}
       onClose={() => updateQuery({ objectType: null, tab: null }, true)} onSelect={selectPublished}
       onExplore={() => navigate(publishedExplorerHref(publishedId, { returnTo: publishedCatalogHref(params.toString()) }))} />}
-    {createOpen && (canManage || semanticProjectAccess) && <SemanticObjectWizard allowedSource={canManage} schemas={creationSchemas} initialSchema={createSchema} onCancel={() => setCreateOpen(false)} onPublished={(object) => {
+    {createOpen && (canManage || semanticProjectAccess) && <SemanticObjectWizard allowedSource={canManage} schemas={creationSchemas}
+      initialSchema={createSource.schema} initialUpstreamConnectionId={createSource.upstreamConnectionId} onCancel={() => setCreateOpen(false)} onPublished={(object) => {
       setCreateOpen(false); setPublishedRefresh((value) => value + 1);
       message.success({ content: 'Object type published', description: object.definition.name, className: 'explorer-toast' });
-      updateQuery({ catalog: 'published', objectType: object.id, schema: null, table: null, tab: null, publishedOffset: null, publishedQ: null });
+      const savedSource = object.definition.source;
+      const nextSource = savedSource.mode === 'none' ? 'object-managed' : savedSource.upstreamConnectionId || 'warehouse';
+      updateQuery({ catalog: 'published', objectType: object.id, schema: null, table: null, tab: null,
+        publishedSource: publishedCatalog && publishedSource ? nextSource : null, publishedOffset: null, publishedQ: null });
     }} />}
   </div>;
 }

@@ -3,13 +3,14 @@ import { Button, Input } from '@/components/ui';
 import { bindSourceDamengCdc, fetchSourceDamengCdc, removeSourceDamengCdc } from '../../services/api';
 import type { DataSource, SourceDamengCdcStatus } from '../../services/api';
 
-export default function SourceDamengCdc({ source }: { source: DataSource }) {
+export default function SourceDamengCdc({ source, onBusyChange }: { source: DataSource; onBusyChange?: (busy: boolean) => void }) {
   const [status, setStatus] = useState<SourceDamengCdcStatus>();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [reload, setReload] = useState(0);
   const [topic, setTopic] = useState('');
   const [tables, setTables] = useState('');
+  useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
   useEffect(() => {
     const controller = new AbortController();
     setStatus(undefined); setError('');
@@ -21,7 +22,7 @@ export default function SourceDamengCdc({ source }: { source: DataSource }) {
 
   const save = async (remove: boolean) => {
     if (remove && !window.confirm('Remove this DMDRS output binding? The upstream DMDRS capture and its Kafka output will continue running.')) return;
-    setBusy(true); setError('');
+    setBusy(true); onBusyChange?.(true); setError('');
     try {
       if (remove) await removeSourceDamengCdc(source.id, source.updatedAt);
       else await bindSourceDamengCdc(source.id, source.updatedAt, topic, tables.split(',').map(value => value.trim()).filter(Boolean));
@@ -29,7 +30,7 @@ export default function SourceDamengCdc({ source }: { source: DataSource }) {
     } catch (failure) {
       const detail = (failure as { response?: { data?: { detail?: unknown; message?: unknown } } }).response?.data;
       setError(typeof detail?.detail === 'string' ? detail.detail : typeof detail?.message === 'string' ? detail.message : 'DMDRS binding failed. Verify that its output topic exists on the project Kafka cluster.');
-    } finally { setBusy(false); }
+    } finally { setBusy(false); onBusyChange?.(false); }
   };
 
   return <section className="ontology-source-cdc" aria-label="Dameng log CDC">

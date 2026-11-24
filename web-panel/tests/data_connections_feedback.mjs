@@ -7,19 +7,29 @@ import ts from 'typescript';
 const jsx = (type, props) => ({ type, props });
 const nodes = tree => tree && typeof tree === 'object' ? [tree, ...[tree.props?.children].flat(Infinity).flatMap(nodes)] : [];
 const text = value => Array.isArray(value) ? value.map(text).join('') : value?.props ? text(value.props.children) : value == null || value === false ? '' : String(value);
+const navigation = {};
+const navigationCode = ts.transpileModule(readFileSync(new URL('../src/services/explorerNavigation.ts', import.meta.url), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText;
+vm.runInThisContext('(function(exports){' + navigationCode + '\n})')(navigation);
 const types = [
   ['mysql', 'MySQL', 3306, 'relational'], ['postgresql', 'PostgreSQL', 5432, 'relational'],
   ['s3', 'S3-compatible storage', 443, 'object_storage'], ['redis', 'Redis', 6379, 'key_value'],
   ['clickhouse', 'ClickHouse', 8443, 'relational'], ['mongodb', 'MongoDB', 27017, 'document'],
-].map(([engine, name, port, category]) => ({ engine, name, port, category, driverAvailable: true, catalogAvailable: false }));
+  ['dameng', 'Dameng', 5236, 'relational'], ['milvus', 'Milvus', 19530, 'vector'], ['elasticsearch', 'Elasticsearch', 9200, 'search'],
+].map(([engine, name, port, category]) => ({ engine, name, port, category, driverAvailable: true, catalogAvailable: false,
+  cdcSupported: ['postgresql', 'mysql', 'mongodb', 'milvus'].includes(engine),
+  captureKind: engine === 's3' ? 'object_events' : engine === 'dameng' ? 'dmdrs' : ['postgresql', 'mysql', 'mongodb', 'milvus'].includes(engine) ? 'cdc' : null,
+}));
 const source = (engine = 'mysql', patch = {}) => ({ id: 'source-a', name: 'Synthetic source', engine,
   config: { host: 'db.synthetic.test', port: types.find(type => type.engine === engine).port, database: 'analytics', username: 'reader', auth: 'password', tls: true,
     ...(engine === 'mongodb' ? { authDatabase: 'admin' } : {}) },
   credentialsConfigured: true, catalogAvailable: false, updatedAt: '2026-01-01T00:00:00Z', testedAt: null, ...patch });
 let instance = 0;
 
-async function mount({ sources = [], selected = '', overrides = {} } = {}) {
-  let cursor = 0, tree, params = new URLSearchParams(selected ? { sourceId: selected } : {}), mounted = true;
+async function mount({ sources = [], selected = '', query = '', overrides = {} } = {}) {
+  let cursor = 0, tree, params = new URLSearchParams(query), mounted = true;
+  if (selected) params.set('sourceId', selected);
   const state = [], refs = [], effects = [], scheduled = [], notices = [], destroyed = [], errorHooks = [], requests = [];
   const session = { identity: 'synthetic-account', authenticated: true, locked: false }, id = 'data-connections-' + ++instance;
   const store = { sources: [...sources] };
@@ -51,6 +61,7 @@ async function mount({ sources = [], selected = '', overrides = {} } = {}) {
     if (name === '@/components/ui') return { Button: 'Button', Checkbox: 'Checkbox', Input: 'Input', Modal: 'Modal', Select: 'Select', NativeSelect: 'NativeSelect', message };
     if (name === '@/components/ui/icons') return new Proxy({}, { get: (_, key) => String(key) });
     if (name === '../../services/api') return api;
+    if (name === '../../services/explorerNavigation') return navigation;
     if (name === '../../services/session') return { getSessionState: () => session };
     if (name === './useExplorerErrorToast') return { default: (...args) => errorHooks.push(args) };
     if (name.endsWith('.css')) return {};
@@ -77,6 +88,8 @@ async function mount({ sources = [], selected = '', overrides = {} } = {}) {
     field: name => nodes(tree).find(node => node.type === 'Input' && node.props['aria-label'] === name),
     confirmation: () => nodes(tree).find(node => node.type === 'Modal' && node.props.okText),
     wizard: () => nodes(tree).find(node => node.type === 'Modal' && node.props.className.includes('ontology-connectors__wizard')),
+    details: () => nodes(tree).find(node => node.type === 'Modal' && node.props.className.includes('ontology-connections-modal')),
+    params: () => new URLSearchParams(params),
     click(name) { const button = this.button(name); assert.ok(button, 'Missing button: ' + name); assert.ok(!button.props.disabled, 'Disabled button: ' + name); const result = button.props.onClick(); render(); return result; },
     fill(name, value) { const field = this.field(name); assert.ok(field, 'Missing input: ' + name); field.props.onChange({ target: { value } }); render(); },
     select(name, value) {
@@ -92,6 +105,100 @@ async function mount({ sources = [], selected = '', overrides = {} } = {}) {
   };
   render(); await ui.settle(); return ui;
 }
+
+test('the empty inventory guides setup and opens the same New source wizard', async () => {
+  const ui = await mount();
+  assert.ok(ui.nodes().find(node => node.type === 'ol' && node.props['aria-label'] === 'Source setup'));
+  ui.click('Connect your first source'); assert.ok(ui.wizard());
+  assert.equal(ui.wizard().props.title, 'New source'); ui.unmount();
+});
+
+test('saving a new source continues into its details dialog while retaining the inventory', async () => {
+  const id = '2e7a9733-daa3-4f04-a788-4fd9f2e2b818';
+  const ui = await mount();
+  ui.implementations.createDataSource = async payload => {
+    const saved = source(payload.engine, { id, name: payload.name, config: payload.config });
+    ui.store.sources.push(saved);
+    return saved;
+  };
+  ui.choose(); ui.valid(); ui.click('Save source'); await ui.settle();
+  assert.equal(ui.wizard(), undefined); assert.ok(ui.details());
+  const linkedCatalog = ui.nodes().find(node => node.type === 'Link' && text(node.props.children).includes('View published object types'));
+  assert.equal(linkedCatalog?.props.to, `/ontology?catalog=published&publishedSource=${id}`);
+  assert.ok(ui.nodes().find(node => node.type === 'section' && node.props['aria-label'] === 'Sources'));
+  assert.ok(ui.button('Configure Continuous CDC'));
+  assert.equal(ui.nodes().find(node => node.type === 'SourceCdc'), undefined);
+  ui.click('Configure Continuous CDC');
+  assert.ok(ui.nodes().find(node => node.type === 'SourceCdc'));
+  ui.details().props.onCancel(); await ui.settle();
+  assert.equal(ui.details(), undefined); assert.equal(ui.params().get('sourceId'), null);
+  assert.equal(ui.calls('createDataSource').length, 1); ui.unmount();
+});
+
+test('source capture configuration is opened on demand with the correct capture mode', async () => {
+  for (const [engine, label, component] of [['mongodb', 'Continuous CDC', 'SourceCdc'], ['s3', 'Object events', 'SourceObjectEvents'], ['dameng', 'DMDRS CDC', 'SourceDamengCdc']]) {
+    const saved = source(engine);
+    const ui = await mount({ sources: [saved], selected: saved.id });
+    assert.ok(ui.details()); assert.equal(ui.nodes().some(node => ['SourceCdc', 'SourceObjectEvents', 'SourceDamengCdc'].includes(node.type)), false);
+    ui.click(label); assert.ok(ui.nodes().find(node => node.type === component));
+    ui.click('Overview'); assert.equal(ui.nodes().find(node => node.type === component), undefined);
+    ui.unmount();
+  }
+});
+
+test('capture operations block dialog dismissal and switching sections until settled', async () => {
+  const saved = source('mongodb');
+  const ui = await mount({ sources: [saved], selected: saved.id }); ui.click('Continuous CDC');
+  const capture = ui.nodes().find(node => node.type === 'SourceCdc');
+  capture.props.onBusyChange(true); ui.render();
+  assert.equal(ui.details().props.closable, false); assert.equal(ui.details().props.keyboard, false);
+  assert.equal(ui.button('Overview').props.disabled, true);
+  const linkedCatalog = ui.nodes().find(node => node.type === 'Link' && text(node.props.children).includes('View published object types'));
+  let prevented = false;
+  linkedCatalog.props.onClick({ preventDefault() { prevented = true; } });
+  assert.ok(prevented && linkedCatalog.props['aria-disabled']);
+  ui.details().props.onCancel(); ui.render(); assert.ok(ui.details());
+  capture.props.onBusyChange(false); ui.render(); ui.details().props.onCancel(); await ui.settle();
+  assert.equal(ui.details(), undefined); ui.unmount();
+});
+
+test('editing swaps the details dialog for the existing wizard and cancellation returns to details', async () => {
+  const saved = source('mysql'); const ui = await mount({ sources: [saved], selected: saved.id });
+  ui.click('Edit connection'); assert.equal(ui.details(), undefined); assert.ok(ui.wizard());
+  ui.click('Cancel'); await ui.settle(); assert.equal(ui.wizard(), undefined); assert.ok(ui.details());
+  assert.equal(ui.calls('updateDataSource').length, 0); ui.unmount();
+});
+
+test('unsupported connectors and paused sources do not expose capture controls', async () => {
+  for (const saved of [source('elasticsearch'), source('clickhouse'), source('redis'), source('postgresql', { pausedAt: '2026-11-24T00:00:00Z' })]) {
+    const ui = await mount({ sources: [saved], selected: saved.id });
+    assert.ok(ui.details()); assert.equal(ui.button('Continuous CDC'), undefined);
+    assert.equal(ui.button('Object events'), undefined); assert.equal(ui.button('DMDRS CDC'), undefined);
+    ui.unmount();
+  }
+});
+
+test('catalog table selection opens batch sync configuration with the selected table', async () => {
+  const saved = source('postgresql', { catalogAvailable: true });
+  const ui = await mount({ sources: [saved], selected: saved.id, overrides: {
+    fetchDataConnectorTypes: async () => types.map(item => ({ ...item, catalogAvailable: item.engine === 'postgresql' })),
+  } });
+  ui.click('Source catalog');
+  const catalog = ui.nodes().find(node => typeof node.type === 'function' && node.type.name === 'SourceCatalog');
+  assert.ok(catalog);
+  const selection = { schema: 'public', table: 'events' };
+  catalog.props.onSetUpSync(selection); ui.render();
+  assert.equal(ui.nodes().find(node => node.type === 'SourceBatchSyncs').props.selection, selection);
+  assert.equal(ui.button('Batch syncs').props['aria-pressed'], true); ui.unmount();
+});
+
+test('existing schedule links select the sync section inside the details dialog', async () => {
+  const saved = source('postgresql', { pausedAt: '2026-11-24T00:00:00Z' });
+  const ui = await mount({ sources: [saved], selected: saved.id, query: 'batchSync=scheduled-plan' });
+  assert.ok(ui.details());
+  assert.equal(ui.nodes().find(node => node.type === 'SourceBatchSyncs').props.selectedSchedule, 'scheduled-plan');
+  assert.equal(ui.button('Batch syncs').props['aria-pressed'], true); ui.unmount();
+});
 
 test('repeated invalid connection submissions each show a toast without calling a probe or adding an error row', async () => {
   const ui = await mount(); ui.choose();

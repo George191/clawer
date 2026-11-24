@@ -1,5 +1,6 @@
-import client from './api';
+import client, { type DataSource } from './api';
 
+export type OntologyConnection = Pick<DataSource, 'id' | 'name' | 'engine'>;
 export type SemanticSource = { mode: 'existing' | 'none'; schema?: string; table?: string; upstreamConnectionId?: string | null };
 export type SemanticProperty = { id: string; name: string; type: string; sourceColumn?: string; required: boolean };
 export type Principal = { kind: 'user' | 'group' | 'organization'; id: string };
@@ -71,8 +72,8 @@ export const publishOntologyDraft = (id: string, revision: number) => client.pos
 export const testOntologyPolicy = (definition: SemanticDefinition, userId: string) => client.post<{ visible: boolean; visibleFields: string[] }>('/security/preview', { projectId: definition.projectId, userId, sourceMode: definition.source.mode, properties: definition.properties.map(item => item.id), security: definition.security }, config).then(r => data(r.data));
 export type PublishedCatalogItem = PublishedOntologyType & { hidden: boolean; deleted: boolean };
 export type PublishedOntologyPage = { items: PublishedCatalogItem[]; hasMore: boolean; total: number };
-export const listPublishedOntologyTypes = (limit: number, offset: number, q: string, projectId?: string, signal?: AbortSignal, includeHidden = false, includeDeleted = false) =>
-  client.get<PublishedOntologyPage>('/object-types', { ...config, params: { limit, offset, q, projectId, includeHidden, includeDeleted }, signal }).then(r => data(r.data));
+export const listPublishedOntologyTypes = (limit: number, offset: number, q: string, projectId?: string, signal?: AbortSignal, includeHidden = false, includeDeleted = false, source?: string) =>
+  client.get<PublishedOntologyPage>('/object-types', { ...config, params: { limit, offset, q, projectId, includeHidden, includeDeleted, source }, signal }).then(r => data(r.data));
 export const changePublishedCatalogState = (id: string, revision: number, operation: 'hide' | 'unhide' | 'delete' | 'restore') =>
   client.patch('/object-types/' + encodeURIComponent(id) + '/catalog-state', { revision, operation }, config);
 export const fetchPublishedOntologyType = (id: string, signal?: AbortSignal) =>

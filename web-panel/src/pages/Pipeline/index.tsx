@@ -1012,7 +1012,7 @@ const DataLayersWorkspace: React.FC = () => {
         <DatabaseOutlined />
         <h2>Choose an object type to explore</h2>
         <p>Open a Storage-backed object type to see its results in Explorer.</p>
-        <Link to="/ontology">Browse Storage-backed object types</Link>
+        <Link to="/ontology">Browse warehouse tables</Link>
     </section>;
     return <div className={`flow-layers flow-layers--tagged flow-schema-workbench explorer-object-workspace has-asset${catalogOpen ? ' is-catalog-open' : ''}${workbenchMode === 'explore' && previewVisible && !savedBlocked && queryScopeReady ? ' is-exploring' : ''}`}>
         <div  className="flow-layer-layout">

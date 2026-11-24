@@ -9,7 +9,7 @@ const nodes = tree => tree && typeof tree === 'object' ? [tree, ...[tree.props?.
 const text = value => Array.isArray(value) ? value.map(text).join('') : value?.props ? text(value.props.children) : value == null || value === false ? '' : String(value);
 const source = engine => ({ id: 'source-id', engine, updatedAt: '2026-11-24T00:00:00Z', config: { database: 'example' } });
 
-async function mount(component, saved, api) {
+async function mount(component, saved, api, extraProps = {}) {
   let cursor = 0, tree;
   const state = [], effects = [], scheduled = [], calls = [];
   const react = {
@@ -31,7 +31,7 @@ async function mount(component, saved, api) {
     require, exports, { confirm: () => true }, () => 0, () => {},
   );
   const render = () => {
-    cursor = 0; scheduled.length = 0; tree = exports.default({ source: saved });
+    cursor = 0; scheduled.length = 0; tree = exports.default({ source: saved, ...extraProps });
     for (const [i, effect, deps] of scheduled) { effects[i]?.cleanup?.(); effects[i] = { deps, cleanup: effect() }; }
   };
   const ui = {
@@ -45,6 +45,22 @@ async function mount(component, saved, api) {
   };
   render(); await ui.settle(); return ui;
 }
+
+test('capture operations report busy state to keep the enclosing dialog open', async () => {
+  for (const [component, engine, fetchName, createName, status] of [
+    ['SourceObjectEvents', 's3', 'fetchSourceObjectEvents', 'createSourceObjectEvents', { state: 'unconfigured', configurationHash: 'a'.repeat(64), notification: null }],
+    ['SourceDamengCdc', 'dameng', 'fetchSourceDamengCdc', 'bindSourceDamengCdc', { state: 'unconfigured', schemaReady: true, binding: null }],
+    ['SourceCdc', 'mongodb', 'fetchSourceCdc', 'createSourceCdc', { state: 'unconfigured', pluginAvailable: true, tasks: [], selection: null }],
+  ]) {
+    const changes = []; let resolve;
+    const ui = await mount(component, source(engine), {
+      [fetchName]: async () => status,
+      [createName]: () => new Promise(done => { resolve = done; }),
+    }, { onBusyChange: value => changes.push(value) });
+    ui.submit(); await ui.settle(); assert.deepEqual(changes, [true]);
+    resolve({}); await ui.settle(); assert.deepEqual(changes, [true, false]); ui.close();
+  }
+});
 
 test('MinIO submits notification target and filters without row snapshot options', async () => {
   const ui = await mount('SourceObjectEvents', source('s3'), {

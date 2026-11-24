@@ -35,9 +35,9 @@ const policyPrincipals = (d: SemanticDefinition): Principal[] => [
 const securityTabs = ['Object access', 'Record access', 'Property access', 'Test access'] as const;
 const opt = (values: readonly string[]) => values.map(value => ({ value, label: value }));
 const path = (schema: string, table: string) => [schema, table].filter(Boolean).join('.');
-const emptyDefinition = (schema = '', allowedSource = true): SemanticDefinition => ({
+const emptyDefinition = (schema = '', allowedSource = true, upstreamConnectionId?: string): SemanticDefinition => ({
   id: '', name: '', pluralName: '', description: '', icon: '', color: '#ffffff', iconColor: '#000000', groups: [], projectId: '',
-  source: allowedSource ? { mode: 'existing', schema, table: '' } : { mode: 'none' }, ...initialProperties(allowedSource), actions: [],
+  source: allowedSource ? { mode: 'existing', schema, table: '', upstreamConnectionId } : { mode: 'none' }, ...initialProperties(allowedSource), actions: [],
   security: { mode: allowedSource ? 'inherit' : 'explicit', objectReaders: [], fieldReaders: {} },
 });
 function problem(failure: unknown, fallback: string) {
@@ -55,14 +55,15 @@ function IssueList({ title, issues }: { title: string; issues: OntologyIssue[] }
 const Heading = ({ title, detail }: { title: string; detail: string }) => <header className="flow-create-heading"><h3 tabIndex={-1}>{title}</h3><p>{detail}</p></header>;
 
 type Props = {
-  allowedSource: boolean; schemas: LayerNode[]; initialSchema?: string; onCancel: () => void; onPublished: (definition: PublishedOntologyType) => void;
+  allowedSource: boolean; schemas: LayerNode[]; initialSchema?: string; initialUpstreamConnectionId?: string;
+  onCancel: () => void; onPublished: (definition: PublishedOntologyType) => void;
 };
-export default function SemanticObjectWizard({ allowedSource, schemas, initialSchema, onCancel, onPublished }: Props) {
+export default function SemanticObjectWizard({ allowedSource, schemas, initialSchema, initialUpstreamConnectionId, onCancel, onPublished }: Props) {
   const sourceSchemas = schemas.filter(schema => schema.ontologySource);
   const startingSchema = sourceSchemas.some(schema => (schema.schemaName || schema.key) === initialSchema) ? initialSchema : '';
-  const initial = useRef(emptyDefinition(startingSchema, allowedSource));
+  const initial = useRef(emptyDefinition(startingSchema, allowedSource, initialUpstreamConnectionId));
   const [definition, setDefinition] = useState(initial.current);
-  const [connectionChosen, setConnectionChosen] = useState(false);
+  const [connectionChosen, setConnectionChosen] = useState(!!initial.current.source.upstreamConnectionId);
   const [connectionAvailable, setConnectionAvailable] = useState(false);
   const [saved, setSaved] = useState<OntologyDraft>();
   const [stage, setStage] = useState<'wizard' | 'review'>('wizard');
@@ -403,7 +404,7 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
             </label>
             <label className="flow-create-source-option">
               <input type="radio" name="semantic-source" checked={existing} disabled={busy || !allowedSource} onChange={() => sourceChange({ mode: 'existing', schema: startingSchema, table: '' })} />
-              <TableOutlined aria-hidden="true" /><span><strong>Existing dataset</strong><small>Select a data connection and its backing dataset. Each row becomes a read-only object.</small></span><CheckOutlined aria-hidden="true" />
+              <TableOutlined aria-hidden="true" /><span><strong>Existing dataset</strong><small>Choose a backing warehouse table and identify its upstream connection. Each row becomes a read-only object.</small></span><CheckOutlined aria-hidden="true" />
             </label>
           </fieldset>
           {!allowedSource && <p className="flow-create-help">A platform administrator is required to bind a warehouse table.</p>}
@@ -415,8 +416,8 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
                 upstreamConnectionId: id === warehouseConnection ? undefined : id });
             }}>
             <div className="flow-create-grid">
-              <label className="flow-create-field"><span>{definition.source.upstreamConnectionId ? 'Destination schema' : 'Schema'}</span><Select {...selectStyle} aria-label="Object type schema" value={definition.source.schema || undefined} options={schemaOptions} disabled={busy} placeholder="Select a schema" onChange={(schema: string) => { if (schema !== definition.source.schema) sourceChange({ ...definition.source, schema, table: '' }); }} /></label>
-              <label className="flow-create-field"><span>{definition.source.upstreamConnectionId ? 'Synced table' : 'Source table'}</span><Select {...selectStyle} aria-label="Source table" showSearch value={definition.source.table || undefined} disabled={busy || tables.loading || !definition.source.schema || tables.key !== definition.source.schema} options={opt((tables.key === definition.source.schema ? tables.data : [])?.map(item => item.name) || [])} placeholder="Select a table" onChange={(table: string) => { if (table !== definition.source.table) sourceChange({ ...definition.source, table }); }} /></label>
+              <label className="flow-create-field"><span>Warehouse schema</span><Select {...selectStyle} aria-label="Warehouse schema" value={definition.source.schema || undefined} options={schemaOptions} disabled={busy} placeholder="Select a schema" onChange={(schema: string) => { if (schema !== definition.source.schema) sourceChange({ ...definition.source, schema, table: '' }); }} /></label>
+              <label className="flow-create-field"><span>Backing table</span><Select {...selectStyle} aria-label="Backing table" showSearch value={definition.source.table || undefined} disabled={busy || tables.loading || !definition.source.schema || tables.key !== definition.source.schema} options={opt((tables.key === definition.source.schema ? tables.data : [])?.map(item => item.name) || [])} placeholder="Select a table" onChange={(table: string) => { if (table !== definition.source.table) sourceChange({ ...definition.source, table }); }} /></label>
             </div>
           </OntologySourceConnection>}
           {(tables.error || sourcePreview.error) && <p className="flow-create-error" role="alert">{tables.error || sourcePreview.error}<Button size="small" icon={<ReloadOutlined />} onClick={retries}>Retry</Button></p>}
