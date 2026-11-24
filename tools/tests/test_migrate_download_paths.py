@@ -283,6 +283,14 @@ def test_existing_journal_upgrade_preserves_rows_checkpoints_and_errors(tmp_path
     db.close()
 
 
+def test_source_record_lookup_uses_owner_index(tmp_path):
+    db=migration.journal(tmp_path/'journal.sqlite')
+    plan=db.execute('EXPLAIN QUERY PLAN SELECT old,new,phase FROM objects WHERE prefix=? AND record_id=?',('news/source','a'*32)).fetchall()
+    assert any('SEARCH objects USING INDEX objects_owner' in row[3] for row in plan)
+    assert not any('SCAN objects' in row[3] for row in plan)
+    db.close()
+
+
 def test_shared_file_reference_updates_only_its_current_owner(tmp_path):
     from unittest.mock import MagicMock
     db=migration.journal(tmp_path/'journal.sqlite')

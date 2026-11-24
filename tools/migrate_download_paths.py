@@ -65,6 +65,7 @@ def journal(path):
     except Exception:
         db.rollback();db.close();raise
     db.execute('CREATE INDEX IF NOT EXISTS objects_work ON objects(shard,phase,prefix,record_id)')
+    db.execute('CREATE INDEX IF NOT EXISTS objects_owner ON objects(prefix,record_id)')
     db.execute('CREATE TABLE IF NOT EXISTS progress (prefix TEXT PRIMARY KEY,last_key TEXT NOT NULL,done INTEGER NOT NULL DEFAULT 0)')
     db.commit()
     return db
