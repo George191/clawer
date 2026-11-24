@@ -42,6 +42,21 @@ def second_generation():
 
 
 class ContinuationTests(unittest.TestCase):
+    def test_patent_continuation_preserves_coverage_and_rejects_replayed_prefix(self):
+        plan = fixture()
+        parent = plan['continuation']['parent_plan']
+        for value in (plan, parent):
+            value.update(kind='patent', collection=m.SCOPES['patent'][0].COLLECTION,
+                         data_type='patent', aliases=m.SCOPES['patent'][1])
+        parent = signed(parent)
+        plan['continuation']['parent_plan'] = parent
+        for state in plan['continuation']['checkpoints']:
+            state['plan_sha256'] = parent['plan_sha256']
+        m.validate_plan(signed(plan))
+        plan['parts'][0]['lower'] = f'{20:024x}'
+        with self.assertRaises(RuntimeError):
+            m.validate_plan(signed(plan))
+
     def test_second_generation_preserves_inherited_total_and_exact_remaining_ranges(self):
         plan = second_generation()
         m.validate_plan(plan)

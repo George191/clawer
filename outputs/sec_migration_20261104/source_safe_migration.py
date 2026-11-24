@@ -114,8 +114,8 @@ def merged_ranges(ranges):
 def validate_continuation(plan):
     lineage = plan["continuation"]
     parent, states = lineage["parent_plan"], lineage["checkpoints"]
-    require(plan["kind"] == parent["kind"] == "facts_full",
-            "continuation requires a full facts plan")
+    require(plan["kind"] == parent["kind"] and plan["kind"] in ("facts_full", "patent"),
+            "continuation requires a full migration plan")
     validate_plan(parent)
     require(all(plan[k] == parent[k] for k in ("collection", "data_type", "aliases", "mongo_uuid"))
             and len(states) == WORKERS, "continuation identity changed")

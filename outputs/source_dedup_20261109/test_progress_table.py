@@ -185,7 +185,13 @@ def add_tail(files, root, parent_plan, complete=False):
 
 class ProgressTests(unittest.TestCase):
     def test_repeated_facts_continuation_counts_each_generation_once_and_checks_ancestors(self):
-        read, files, root, plan = reader_fixture('facts')
+        self.check_repeated_continuation('facts')
+
+    def test_repeated_patent_continuation_counts_each_generation_once_and_checks_ancestors(self):
+        self.check_repeated_continuation('patent')
+
+    def check_repeated_continuation(self, kind):
+        read, files, root, plan = reader_fixture(kind)
         original = root
         for generation in (1, 2):
             states = [json.loads(files[root + f'/worker-{i}.json']) for i in range(6)]
@@ -194,7 +200,8 @@ class ProgressTests(unittest.TestCase):
                 'processed_offset': plan.get('continuation', {}).get('processed_offset', 0) + 12}
             child['plan_sha256'] = hashlib.sha256(encoded({k: v for k, v in child.items()
                                                          if k != 'plan_sha256'})).hexdigest()
-            new_root = BASE + f'/facts-migration-20261116-rebalance-test-{generation}'
+            prefix = 'facts-migration-20261116' if kind == 'facts' else 'patent-source-safe-20261116'
+            new_root = BASE + f'/{prefix}-rebalance-test-{generation}'
             for path, raw in list(files.items()):
                 if path.startswith(root + '/') and not path.endswith('/STOP'):
                     files[new_root + path[len(root):]] = raw.replace(plan['plan_sha256'].encode(),
@@ -202,7 +209,7 @@ class ProgressTests(unittest.TestCase):
             files[new_root + '/plan.json'] = encoded(child)
             files[root + '/STOP'] = b'frozen'
             owner = json.loads(files[BASE + '/source-safe-current-owners.json'])
-            owner['facts'].update(root=new_root.replace('/app/output/', '/data/clawer/output/'),
+            owner[kind].update(root=new_root.replace('/app/output/', '/data/clawer/output/'),
                                   plan_sha256=child['plan_sha256'])
             files[BASE + '/source-safe-current-owners.json'] = encoded(owner)
             root, plan = new_root, child

@@ -95,7 +95,7 @@ def read_migration(kind):
   plan_kind='facts_full' if kind=='facts' else 'patent'
   owner=json.loads((base/'source-safe-current-owners.json').read_bytes())[kind]
   root_name=Path(owner['root']).name
-  need(root_name.startswith('facts-migration-20261116') if kind=='facts' else root_name=='patent-source-safe-20261116')
+  need(root_name.startswith('facts-migration-20261116' if kind=='facts' else 'patent-source-safe-20261116'))
   root=base/root_name
   need(owner['root']=='/data/clawer/output/sec_migration_20261104/'+root.name
     and owner['workers']==6 and owner['page_size']==3000
@@ -131,10 +131,10 @@ def read_migration(kind):
   ancestor=plan;seen={str(root)}
   while ancestor.get('continuation'):
    lineage=ancestor['continuation'];parent=Path(lineage['parent_root']);parent_plan=lineage['parent_plan']
-   need(kind=='facts' and parent.parent==base and parent.name.startswith('facts-migration-20261116')
+   need(parent.parent==base and parent.name.startswith('facts-migration-20261116' if kind=='facts' else 'patent-source-safe-20261116')
      and str(parent) not in seen and (parent/'STOP').is_file()
      and json.loads((parent/'plan.json').read_bytes())==parent_plan
-     and parent_plan['kind']=='facts_full'
+     and parent_plan['kind']==plan_kind
      and all(parent_plan[k]==plan[k] for k in ('protocol','collection','data_type','aliases','mongo_uuid'))
      and hashlib.sha256(encoded({k:v for k,v in parent_plan.items() if k!='plan_sha256'})).hexdigest()==parent_plan['plan_sha256'])
    previous=[read_committed_worker(parent,parent_plan,n,p) for n,p in enumerate(parent_plan['parts'])]
