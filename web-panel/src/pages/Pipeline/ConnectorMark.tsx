@@ -1,7 +1,27 @@
 import type { DataConnectorEngine } from '../../services/api';
 import PostgresGlyph from './PostgresGlyph';
 
-const wordmarks = { dameng: 'DM', redis: 'Redis', s3: 'S3', clickhouse: 'CH' };
+function StorageGlyph() {
+  return <svg viewBox="0 0 24 24">
+    <path fill="#8c2419" d="m3 5 5-2 4 2 4-2 5 2v14l-5 2-4-2-4 2-5-2Z" />
+    <path fill="#e94f35" d="m3 5 5 2v14l-5-2Zm13 2 5-2v14l-5 2ZM9 2l3-1 3 1v5l-3 1-3-1Zm0 15 3-1 3 1v5l-3 1-3-1Z" />
+    <path fill="#b83222" d="M8 7h8v10H8Z" />
+    <path fill="#f26b4f" d="m12 1 3 1v5l-3 1Zm0 15 3 1v5l-3 1Z" />
+  </svg>;
+}
+
+function RedisGlyph() {
+  return <svg viewBox="0 0 24 24" fill="none"><path d="M4 7C9 2 21 2 20 8c-.6 4-7 5-10 3m3-5L4 19m7-8c1 9 9 9 11 1" stroke="currentColor" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" /></svg>;
+}
+
+function DamengGlyph() {
+  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M3 5h6a7 7 0 0 1 0 14H3Zm4 4h10v10M12 5h9v10" /></svg>;
+}
+
+function ClickHouseGlyph() {
+  // Official logomark: https://clickhouse.com/static/brand-assets/clickhouse-logomark.zip
+  return <svg viewBox="0 0 150 150"><path fill="#fff" d="M27 25.7c0-.6.5-1.2 1.2-1.2H37c.6 0 1.2.5 1.2 1.2v97.7c0 .6-.5 1.2-1.2 1.2h-8.8c-.6 0-1.2-.5-1.2-1.2zm22.2 0c0-.6.5-1.2 1.2-1.2h8.8c.6 0 1.2.5 1.2 1.2v97.7c0 .6-.5 1.2-1.2 1.2h-8.8c-.6 0-1.2-.5-1.2-1.2zm22.2 0c0-.6.5-1.2 1.2-1.2h8.8c.6 0 1.2.5 1.2 1.2v97.7c0 .6-.5 1.2-1.2 1.2h-8.8c-.6 0-1.2-.5-1.2-1.2zm22.2 0c0-.6.5-1.2 1.2-1.2h8.8c.6 0 1.2.5 1.2 1.2v97.7c0 .6-.5 1.2-1.2 1.2h-8.8c-.6 0-1.2-.5-1.2-1.2zm22.3 38.9c0-.6.5-1.2 1.2-1.2h8.8c.6 0 1.2.5 1.2 1.2v19.9c0 .6-.5 1.2-1.2 1.2h-8.8c-.6 0-1.2-.5-1.2-1.2z" /></svg>;
+}
 
 function MySqlGlyph() {
   return <svg viewBox="0 0 24 24" fill="currentColor">
@@ -17,5 +37,5 @@ function MongoGlyph() {
 }
 
 export default function ConnectorMark({ engine }: { engine: DataConnectorEngine }) {
-  return <span className={`ontology-connectors__mark is-${engine}`} aria-hidden="true">{engine === 'postgresql' ? <PostgresGlyph /> : engine === 'mysql' ? <MySqlGlyph /> : engine === 'mongodb' ? <MongoGlyph /> : engine === 'oracle' ? <span className="ontology-connectors__oracle" /> : engine === 'elasticsearch' ? <svg viewBox="0 0 24 24"><path fill="#FEC514" d="M3 8a9 9 0 0 1 15-3L11 9Z" /><path fill="#00BFB3" d="m12 10 9-3a9 9 0 0 1-1 11l-8-4Z" /><path fill="#F04E98" d="m3 10 7 1v4l-5 4a9 9 0 0 1-2-9Z" /><path fill="#009EBB" d="m11 16 7 4a9 9 0 0 1-11 1Z" /></svg> : engine === 'milvus' ? <svg viewBox="0 0 24 24" fill="currentColor"><path d="m3 8 5-4v12l-5 4Zm7-3 5 4v11l-5-4Zm7 4 5-4v11l-5 4Z" /></svg> : <span className="ontology-connectors__wordmark">{wordmarks[engine]}</span>}</span>;
+  return <span className={`ontology-connectors__mark is-${engine}`} aria-hidden="true">{engine === 'postgresql' ? <PostgresGlyph /> : engine === 'mysql' ? <MySqlGlyph /> : engine === 'mongodb' ? <MongoGlyph /> : engine === 's3' ? <StorageGlyph /> : engine === 'redis' ? <RedisGlyph /> : engine === 'dameng' ? <DamengGlyph /> : engine === 'clickhouse' ? <ClickHouseGlyph /> : engine === 'oracle' ? <span className="ontology-connectors__oracle" /> : engine === 'elasticsearch' ? <svg viewBox="0 0 24 24"><path fill="#FEC514" d="M3 8a9 9 0 0 1 15-3L11 9Z" /><path fill="#00BFB3" d="m12 10 9-3a9 9 0 0 1-1 11l-8-4Z" /><path fill="#F04E98" d="m3 10 7 1v4l-5 4a9 9 0 0 1-2-9Z" /><path fill="#009EBB" d="m11 16 7 4a9 9 0 0 1-11 1Z" /></svg> : engine === 'milvus' ? <svg viewBox="0 0 24 24" fill="currentColor"><path d="m3 8 5-4v12l-5 4Zm7-3 5 4v11l-5-4Zm7 4 5-4v11l-5 4Z" /></svg> : null}</span>;
 }
