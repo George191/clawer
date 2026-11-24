@@ -137,7 +137,7 @@ from app.web.services.asset_weekly_job_quality import (
     acknowledge_weekly_job, read_weekly_job_evidence, read_weekly_job_quality, review_weekly_job_quality,
     weekly_evidence_unavailable,
 )
-from app.web.services.data_connections import connector_types, get_data_connections
+from app.web.services.data_connections import WAREHOUSE_CONNECTION_ID, connector_types, get_data_connections
 from app.web.api.models.source_cdc import (
     DamengCdcBind, DamengCdcRemove, ObjectEventsCreate, ObjectEventsRemove, SourceCdcAction, SourceCdcCreate,
 )
@@ -827,19 +827,25 @@ async def published_data(
 
 @read.get("/layers")
 async def layers() -> list[dict[str, Any]]:
-    return await get_etl_layers().layers()
+    return await get_data_connections().warehouse(WAREHOUSE_CONNECTION_ID).layers()
+
+
+@read.get("/data-connections/warehouse")
+async def warehouse_connection() -> dict[str, str]:
+    return await get_data_connections().describe_warehouse()
 
 
 @read.get("/object-types")
+@read.get("/data-connections/{connection_id}/object-types", name="connection_object_types")
 async def object_types(schema: str | None = None, search: str = Query("", max_length=1000),
                        group: str = "", limit: int = Query(100, ge=1, le=500),
                        offset: int = Query(0, ge=0, le=1_000_000),
                        ids: str | None = Query(None, max_length=26_000),
                        includeHidden: bool = False, current_user: Any = Depends(get_current_user),
-                       favoritesOnly: bool = False) -> dict[str, Any]:
+                       favoritesOnly: bool = False, connection_id: str = WAREHOUSE_CONNECTION_ID) -> dict[str, Any]:
     if includeHidden and not getattr(current_user, "is_superuser", False):
         raise HTTPException(403, "Only administrators can include hidden object types")
-    return await get_etl_layers().object_types(
+    return await get_data_connections().warehouse(connection_id).object_types(
         schema, search, group, limit, offset, ids, include_hidden=includeHidden,
         favorite_user_id=str(current_user.id) if favoritesOnly else None,
     )
@@ -1653,8 +1659,9 @@ async def delete_schema(schema: str) -> dict[str, Any]:
 
 
 @read.get("/{layer}/tables")
-async def tables(layer: str, tableRole: str = "current") -> list[dict[str, Any]]:
-    return await get_etl_layers().tables(layer, tableRole)
+@read.get("/data-connections/{connection_id}/layers/{layer}/tables", name="connection_layer_tables")
+async def tables(layer: str, tableRole: str = "current", connection_id: str = WAREHOUSE_CONNECTION_ID) -> list[dict[str, Any]]:
+    return await get_data_connections().warehouse(connection_id).tables(layer, tableRole)
 
 
 @write.post("/{layer}/tables")
@@ -1684,13 +1691,12 @@ async def table_data(layer: str, table: str, limit: int = Query(50, ge=1, le=500
 
 
 @read.get("/{layer}/{table}/preview")
+@read.get("/data-connections/{connection_id}/object-types/{layer}/{table}/preview", name="connection_object_preview")
 async def object_preview(layer: str, table: str, includeHidden: bool = False,
-                         current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+                         current_user: Any = Depends(get_current_user), connection_id: str = WAREHOUSE_CONNECTION_ID) -> dict[str, Any]:
     if includeHidden and not getattr(current_user, "is_superuser", False):
         raise HTTPException(403, "Only administrators can include hidden object types")
-    if includeHidden:
-        return await get_etl_layers().preview(layer, table, include_hidden=True)
-    return await get_etl_layers().preview(layer, table)
+    return await get_data_connections().warehouse(connection_id).preview(layer, table, include_hidden=includeHidden)
 
 
 @write.get("/{schema}/{table}/indexed-compound-id-sample")

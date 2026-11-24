@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Button, Checkbox, Input, Modal, Select, Table } from '@/components/ui';
 import { AppstoreOutlined, CheckOutlined, ReloadOutlined, TableOutlined } from '@/components/ui/icons';
-import { fetchEtlObjectPreview, fetchLayerTables } from '../../services/api';
+import { fetchEtlObjectPreview, fetchLayerTables, type WarehouseConnection } from '../../services/api';
 import { getSessionState } from '../../services/session';
 import type { EtlObjectPreview, LayerNode, LayerTable } from '../../services/types';
 import {
@@ -12,7 +12,7 @@ import {
 } from '../../services/ontology';
 import SemanticPropertiesWorkbench from './SemanticPropertiesWorkbench';
 import OntologyIconPicker from './OntologyIconPicker';
-import OntologySourceConnection, { warehouseConnection } from './OntologySourceConnection';
+import OntologySourceConnection from './OntologySourceConnection';
 import SemanticTypeAppearance from './SemanticTypeAppearance';
 import { initialProperties, propertyIssue, propertyRemovalReason, sourceProperties } from './semanticWizardProperties';
 import OntologyMarkingsEditor from './OntologyMarkingsEditor';
@@ -56,10 +56,12 @@ const Heading = ({ title, detail }: { title: string; detail: string }) => <heade
 
 type Props = {
   allowedSource: boolean; schemas: LayerNode[]; initialSchema?: string; initialUpstreamConnectionId?: string;
+  warehouse?: WarehouseConnection; warehouseFailed: boolean; onRetryWarehouse: () => void;
   onCancel: () => void; onPublished: (definition: PublishedOntologyType) => void;
 };
-export default function SemanticObjectWizard({ allowedSource, schemas, initialSchema, initialUpstreamConnectionId, onCancel, onPublished }: Props) {
+export default function SemanticObjectWizard({ allowedSource, schemas, initialSchema, initialUpstreamConnectionId, warehouse, warehouseFailed, onRetryWarehouse, onCancel, onPublished }: Props) {
   const sourceSchemas = schemas.filter(schema => schema.ontologySource);
+  const warehouseId = warehouse?.id;
   const startingSchema = sourceSchemas.some(schema => (schema.schemaName || schema.key) === initialSchema) ? initialSchema : '';
   const initial = useRef(emptyDefinition(startingSchema, allowedSource, initialUpstreamConnectionId));
   const [definition, setDefinition] = useState(initial.current);
@@ -180,19 +182,19 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
   useEffect(() => {
     let alive = true;
     const key = connectionChosen ? definition.source.schema || '' : '';
-    setTables({ key, loading: existing && !!key });
-    if (existing && key) fetchLayerTables(key).then(data => { if (alive && current()) setTables({ key, data: data.filter(table => table.ontologySource) }); }, failure => { if (alive && current()) setTables({ key, error: problem(failure, 'Unable to load tables.') }); });
+    setTables({ key, loading: existing && !!key && !!warehouseId });
+    if (existing && key && warehouseId) fetchLayerTables(key, 'current', undefined, warehouseId).then(data => { if (alive && current()) setTables({ key, data: data.filter(table => table.ontologySource) }); }, failure => { if (alive && current()) setTables({ key, error: problem(failure, 'Unable to load tables.') }); });
     return () => { alive = false; };
-  }, [connectionChosen, definition.source.schema, existing, identity, retry]);
+  }, [connectionChosen, definition.source.schema, existing, identity, retry, warehouseId]);
   useEffect(() => {
     let alive = true;
-    setSourcePreview({ key: sourceKey, loading: !!sourceKey });
-    if (sourceKey && definition.source.schema && definition.source.table) fetchEtlObjectPreview(definition.source.schema, definition.source.table, true).then(
+    setSourcePreview({ key: sourceKey, loading: !!sourceKey && !!warehouseId });
+    if (sourceKey && warehouseId && definition.source.schema && definition.source.table) fetchEtlObjectPreview(definition.source.schema, definition.source.table, true, warehouseId).then(
       data => { if (alive && current()) setSourcePreview({ key: sourceKey, data }); },
       () => { if (alive && current()) setSourcePreview({ key: sourceKey, error: 'Unable to load source columns.' }); },
     );
     return () => { alive = false; };
-  }, [sourceKey, identity, retry]);
+  }, [sourceKey, identity, retry, warehouseId]);
 
   const guards = (action: () => void) => {
     if (outstanding.current || discard.current) return;
@@ -408,12 +410,15 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
             </label>
           </fieldset>
           {!allowedSource && <p className="flow-create-help">A platform administrator is required to bind a warehouse table.</p>}
-          {existing && allowedSource && <OntologySourceConnection disabled={busy} onAvailabilityChange={setConnectionAvailable} warehouseName={sourceSchemas.find(schema => schema.database)?.database}
-            value={connectionChosen ? definition.source.upstreamConnectionId || warehouseConnection : undefined} onChange={id => {
-              if (connectionChosen && id === (definition.source.upstreamConnectionId || warehouseConnection)) return;
+          {existing && allowedSource && !warehouse && (warehouseFailed
+            ? <p className="flow-create-error" role="alert">Unable to read the warehouse connection.<Button size="small" onClick={onRetryWarehouse}>Retry</Button></p>
+            : <p className="flow-create-help" role="status">Loading warehouse connection…</p>)}
+          {existing && allowedSource && warehouse && <OntologySourceConnection disabled={busy} onAvailabilityChange={setConnectionAvailable} warehouse={warehouse}
+            value={connectionChosen ? definition.source.upstreamConnectionId || warehouse.id : undefined} onChange={id => {
+              if (connectionChosen && id === (definition.source.upstreamConnectionId || warehouse.id)) return;
               setConnectionChosen(true);
-              sourceChange({ mode: 'existing', schema: id === warehouseConnection ? startingSchema : '', table: '',
-                upstreamConnectionId: id === warehouseConnection ? undefined : id });
+              sourceChange({ mode: 'existing', schema: id === warehouse.id ? startingSchema : '', table: '',
+                upstreamConnectionId: id === warehouse.id ? undefined : id });
             }}>
             <div className="flow-create-grid">
               <label className="flow-create-field"><span>Warehouse schema</span><Select {...selectStyle} aria-label="Warehouse schema" value={definition.source.schema || undefined} options={schemaOptions} disabled={busy} placeholder="Select a schema" onChange={(schema: string) => { if (schema !== definition.source.schema) sourceChange({ ...definition.source, schema, table: '' }); }} /></label>

@@ -258,12 +258,12 @@ class VisibilityRouteTests(unittest.TestCase):
 
     def test_include_hidden_is_camel_case_and_admin_only_for_both_read_routes(self):
         layers = SimpleNamespace(object_types=AsyncMock(return_value={"items": []}), preview=AsyncMock(return_value={"visibility": "hidden"}))
-        with patch.object(etl, "get_etl_layers", return_value=layers):
+        with patch.object(etl, "get_data_connections", return_value=SimpleNamespace(warehouse=lambda _: layers)):
             self.assertEqual(self.client.get("/api/v1/etl/object-types?includeHidden=true").status_code, 200)
             layers.object_types.assert_awaited_once_with(None, "", "", 100, 0, None, include_hidden=True, favorite_user_id=None)
             self.assertEqual(self.client.get("/api/v1/etl/object-types?favoritesOnly=true").status_code, 200)
             layers.object_types.assert_awaited_with(None, "", "", 100, 0, None, include_hidden=False, favorite_user_id=self.user.id)
-            self.assertEqual(self.client.get("/api/v1/etl/custom/items/preview?includeHidden=true").status_code, 200)
+            self.assertEqual(self.client.get("/api/v1/etl/data-connections/warehouse/object-types/custom/items/preview?includeHidden=true").status_code, 200)
             layers.preview.assert_awaited_once_with("custom", "items", include_hidden=True)
             self.user.is_superuser = False
             for path in ("/api/v1/etl/object-types", "/api/v1/etl/custom/items/preview"):

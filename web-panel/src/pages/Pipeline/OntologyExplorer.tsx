@@ -6,7 +6,7 @@ import {
   CloseOutlined, DatabaseOutlined, InfoCircleOutlined,
   PlusOutlined, ReloadOutlined, RightOutlined, SearchOutlined, StarFilled, StarOutlined,
 } from '@/components/ui/icons';
-import { fetchCurrentUserContext, fetchDataSources, fetchEtlObjectFavorites, fetchEtlObjectPreview, fetchEtlObjectTypes, fetchLayers, importEtlObjectFavorites, updateEtlObjectFavorite, updateEtlObjectVisibility } from '../../services/api';
+import { fetchCurrentUserContext, fetchDataSources, fetchEtlObjectFavorites, fetchEtlObjectPreview, fetchEtlObjectTypes, fetchLayers, fetchWarehouseConnection, importEtlObjectFavorites, updateEtlObjectFavorite, updateEtlObjectVisibility, type WarehouseConnection } from '../../services/api';
 import { getSessionState } from '../../services/session';
 import type { EtlObjectCatalog, EtlObjectPreview, EtlObjectType, EtlObjectVisibility, LayerNode } from '../../services/types';
 import { accentStyle, schemaColor } from '../../theme/tokens';
@@ -18,8 +18,9 @@ import ObjectTypePreview from './ObjectTypePreview';
 import OntologyCatalogSkeleton from './OntologyCatalogSkeleton';
 import { listOntologyProjects, type OntologyConnection } from '../../services/ontology';
 import { publishedCatalogHref, publishedExplorerHref } from '../../services/publishedExplorerHandoff';
-import { backedExplorerHref, publishedSourceFilter } from '../../services/explorerNavigation';
+import { backedExplorerHref, closeDataConnectionsHref, dataConnectionHref, publishedSourceFilter } from '../../services/explorerNavigation';
 import ConnectorMark from './ConnectorMark';
+import DataConnections from './DataConnections';
 import './ontology-explorer.css';
 import './ontology-create.css';
 
@@ -138,7 +139,7 @@ function useCatalogMotion(root: React.RefObject<HTMLDivElement>, scope: string, 
 
 export { schemaColor };
 
-export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: number }) {
+export default function OntologyExplorer({ refreshToken = 0, connectionsOpen = false }: { refreshToken?: number; connectionsOpen?: boolean }) {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const publishedCatalog = params.get('catalog') === 'published';
@@ -156,16 +157,23 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const source = params.get('source') || (!selectedTable ? selectedSchema : '');
   const rootRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const connectionsButton = useRef<HTMLButtonElement>(null);
   const inspectorRef = useRef<HTMLElement>(null);
   const cardRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const [inspectedObject, setInspectedObject] = useState({ schema: selectedSchema, table: selectedTable, publishedId, allProperties });
   const inspectorSchema = selectedId ? selectedSchema : inspectedObject.schema;
   const inspectorTable = selectedId ? selectedTable : inspectedObject.table;
   const inspectorId = inspectorSchema && inspectorTable ? `${inspectorSchema}.${inspectorTable}` : '';
-  const publishedInspectorId = publishedCatalog ? publishedId || inspectedObject.publishedId : '';
-  const inspectorOpen = !publishedCatalog && !!inspectorId;
+  const publishedInspectorId = publishedCatalog && !connectionsOpen ? publishedId || inspectedObject.publishedId : '';
+  const inspectorOpen = !connectionsOpen && !publishedCatalog && !!inspectorId;
+  const overlayOpen = connectionsOpen || inspectorOpen || !!publishedInspectorId;
   const inspectorClosing = inspectorOpen && !selectedId;
   const inspectorAllProperties = selectedId ? allProperties : inspectedObject.allProperties;
+  const [warehouse, setWarehouse] = useState<{ connection?: WarehouseConnection; failed?: boolean }>({});
+  const [warehouseVersion, setWarehouseVersion] = useState(0);
+  const warehouseId = warehouse.connection?.id;
+  const warehouseError = warehouse.failed ? 'Unable to read the warehouse connection.' : '';
+  const retryWarehouse = () => setWarehouseVersion(value => value + 1);
   const [catalogState, setCatalogState] = useState<{ key: string; scope: string; userId: string; group: Group; data: EtlObjectCatalog }>({ key: '', scope: '', userId: '', group: 'all', data: emptyCatalog });
   const [publishedPage, setPublishedPage] = useState<PublishedCatalogPage>();
   const [connectionRead, setConnectionRead] = useState<{ items?: OntologyConnection[]; failed?: boolean }>({});
@@ -226,11 +234,11 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const favoriteSummaryKey = JSON.stringify([currentUserId, favoriteIds, includeHidden]);
   const favoriteSummaryReady = favoriteReady && !!favoriteSchemaKey && JSON.parse(favoriteSchemaKey)[0] === currentUserId;
   const catalogFavoritesReady = group !== 'favorites' || favoriteReady;
-  const catalogScope = JSON.stringify([currentUserId, keyword]);
-  const catalogKey = JSON.stringify([source, keyword, group, favoriteQuery, catalogFavoritesReady, includeHidden, currentUserId, offset]);
+  const catalogScope = JSON.stringify([warehouseId, currentUserId, keyword]);
+  const catalogKey = JSON.stringify([warehouseId, source, keyword, group, favoriteQuery, catalogFavoritesReady, includeHidden, currentUserId, offset]);
   const catalog = catalogState.key === catalogKey ? catalogState.data : emptyCatalog;
-  const error = catalogError.key === catalogKey ? catalogError.message : '';
-  const loading = catalogLoading || (catalogState.key !== catalogKey && !error);
+  const error = warehouseError || (catalogError.key === catalogKey ? catalogError.message : '');
+  const loading = !warehouse.failed && (catalogLoading || (catalogState.key !== catalogKey && !error));
   const confirmedTotal = catalogState.key === catalogKey ? catalogState.data.total : null;
   const hasPresentedCatalog = catalogState.scope === catalogScope;
   const presentedGroup = hasPresentedCatalog ? catalogState.group : group;
@@ -245,6 +253,15 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   useCatalogMotion(rootRef, `${catalogScope}:${view}`, presentedItems);
 
   useEffect(() => { activeRef.current = true; return () => { activeRef.current = false; }; }, []);
+  useEffect(() => {
+    const request = new AbortController();
+    const current = () => !request.signal.aborted && getSessionState().identity === sessionIdentity;
+    setWarehouse({});
+    fetchWarehouseConnection(request.signal).then(connection => {
+      if (current()) setWarehouse({ connection });
+    }, () => { if (current()) setWarehouse({ failed: true }); });
+    return () => request.abort();
+  }, [warehouseVersion, sessionIdentity, refreshToken]);
 
   useEffect(() => {
     rootRef.current?.querySelector<HTMLElement>('.flow-ontology__body')?.scrollTo({ top: 0 });
@@ -261,7 +278,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     return () => { active = false; };
   }, [version, refreshToken, sessionIdentity]);
   useEffect(() => {
-    if (!publishedCatalog || !canManageConnections) return;
+    if (connectionsOpen || !publishedCatalog || !canManageConnections) return;
     const request = new AbortController();
     const current = () => !request.signal.aborted && getSessionState().identity === sessionIdentity;
     setConnectionRead({});
@@ -269,7 +286,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
       if (current()) setConnectionRead({ items: rows.map(({ id, name, engine }) => ({ id, name, engine })) });
     }, () => { if (current()) setConnectionRead({ failed: true }); });
     return () => request.abort();
-  }, [publishedCatalog, canManageConnections, sessionIdentity, connectionsVersion, refreshToken]);
+  }, [publishedCatalog, canManageConnections, connectionsOpen, sessionIdentity, connectionsVersion, refreshToken]);
   useEffect(() => {
     if (!currentUserId) return;
     let alive = true;
@@ -323,9 +340,9 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   }, [currentUserId, sessionIdentity, version, refreshToken, publishedCatalog]);
   useEffect(() => {
     setFavoriteSummaryError('');
-    if (publishedCatalog || !favoriteReady) return;
+    if (publishedCatalog || !favoriteReady || !warehouseId) return;
     const request = new AbortController();
-    const result = favoriteIds ? fetchEtlObjectTypes({ favoritesOnly: true, limit: 1, includeHidden }, request.signal) : Promise.resolve(emptyCatalog);
+    const result = favoriteIds ? fetchEtlObjectTypes({ favoritesOnly: true, limit: 1, includeHidden }, request.signal, warehouseId) : Promise.resolve(emptyCatalog);
     result.then(part => {
       if (request.signal.aborted) return;
       setFavoriteVisibleCount(part.total); setFavoriteSchemaCounts(part.schemaCounts); setFavoriteSchemaKey(favoriteSummaryKey);
@@ -333,10 +350,10 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
       if (!request.signal.aborted) setFavoriteSummaryError('Unable to load favorite object types. Retry to update the count.');
     });
     return () => request.abort();
-  }, [favoriteIds, favoriteReady, includeHidden, version, refreshToken, favoriteSummaryKey, publishedCatalog]);
+  }, [favoriteIds, favoriteReady, includeHidden, version, refreshToken, favoriteSummaryKey, publishedCatalog, warehouseId]);
   useEffect(() => {
     if (publishedCatalog) return;
-    if (!currentUserId || !catalogFavoritesReady) { setCatalogLoading(true); return; }
+    if (!warehouseId || !currentUserId || !catalogFavoritesReady) { setCatalogLoading(true); return; }
     const request = new AbortController();
     setCatalogLoading(true); setCatalogError({ key: catalogKey, message: '' });
     const timer = window.setTimeout(async () => {
@@ -344,18 +361,18 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
         const search = keyword.trim() || undefined;
         const [page, directory] = await Promise.all([
           fetchEtlObjectTypes({ schema: source || undefined, search, includeHidden, offset, limit: catalogBatchSize,
-            group: group === 'all' || group === 'favorites' ? undefined : group, favoritesOnly: group === 'favorites' || undefined }, request.signal),
-          group === 'favorites' ? fetchEtlObjectTypes({ search, includeHidden, limit: 1 }, request.signal) : undefined,
+            group: group === 'all' || group === 'favorites' ? undefined : group, favoritesOnly: group === 'favorites' || undefined }, request.signal, warehouseId),
+          group === 'favorites' ? fetchEtlObjectTypes({ search, includeHidden, limit: 1 }, request.signal, warehouseId) : undefined,
         ]);
         if (request.signal.aborted) return;
         setCatalogState({ key: catalogKey, scope: catalogScope, userId: currentUserId, group, data: page });
         setMenuFacetState({ key: menuFacetKey, userId: currentUserId, counts: (directory || page).groupSchemaCounts });
       } catch {
-        if (!request.signal.aborted) setCatalogError({ key: catalogKey, message: 'Unable to load object types. Retry to update the catalog.' });
+        if (!request.signal.aborted) setCatalogError({ key: catalogKey, message: 'Unable to load warehouse tables. Retry to update the catalog.' });
       } finally { if (!request.signal.aborted) setCatalogLoading(false); }
     }, keyword ? 200 : 0);
     return () => { request.abort(); window.clearTimeout(timer); };
-  }, [source, keyword, group, offset, catalogFavoritesReady, includeHidden, version, refreshToken, catalogKey, catalogScope, menuFacetKey, publishedCatalog]);
+  }, [source, keyword, group, offset, catalogFavoritesReady, includeHidden, version, refreshToken, catalogKey, catalogScope, menuFacetKey, publishedCatalog, warehouseId]);
   useEffect(() => {
     if (publishedId || (!publishedCatalog && selectedId)) {
       setInspectedObject({ schema: selectedSchema, table: selectedTable, publishedId, allProperties });
@@ -375,7 +392,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     setLinkedLoading(''); setLinkedError('');
     const prepared = linkedPreview.current;
     linkedPreview.current = undefined;
-    if (publishedCatalog) return;
+    if (publishedCatalog || connectionsOpen || !warehouseId) return;
     if (!inspectorId) { setPreview({ id: '', loading: false, error: '' }); return; }
     if (inspectorClosing) return;
     if (prepared?.id === inspectorId) {
@@ -383,11 +400,11 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     }
     let active = true;
     setPreview({ id: inspectorId, loading: true, error: '' });
-    fetchEtlObjectPreview(inspectorSchema, inspectorTable, includeHidden).then((data) => {
+    fetchEtlObjectPreview(inspectorSchema, inspectorTable, includeHidden, warehouseId).then((data) => {
       if (active) setPreview({ id: inspectorId, data, loading: false, error: '' });
     }).catch(() => { if (active) setPreview({ id: inspectorId, loading: false, error: 'Unable to load this object type. Try again.' }); });
     return () => { active = false; };
-  }, [inspectorId, inspectorSchema, inspectorTable, inspectorClosing, includeHidden, previewVersion, version, refreshToken, publishedCatalog]);
+  }, [inspectorId, inspectorSchema, inspectorTable, inspectorClosing, includeHidden, previewVersion, version, refreshToken, publishedCatalog, connectionsOpen, warehouseId]);
   useEffect(() => {
     setVisibilityError(''); setVisibilityNotice('');
   }, [inspectorId]);
@@ -454,14 +471,14 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   };
   const selectObject = (object: { schema: string; table: string }) => updateQuery({ schema: object.schema, table: object.table, tab: null });
   const selectLinkedObject = async (object: { id: string; schema: string; table: string }) => {
-    if (preview.loading || visibilitySaving || preview.id !== inspectorId || inspectorClosing || object.id === inspectorId) return;
+    if (!warehouseId || preview.loading || visibilitySaving || preview.id !== inspectorId || inspectorClosing || object.id === inspectorId) return;
     const operation = ++previewEpoch.current;
     const origin = inspectorId;
     const current = () => activeRef.current && previewEpoch.current === operation && selectionRef.current === origin
       && getSessionState().identity === sessionIdentity;
     setLinkedLoading(object.id); setLinkedError('');
     try {
-      const data = await fetchEtlObjectPreview(object.schema, object.table, includeHidden);
+      const data = await fetchEtlObjectPreview(object.schema, object.table, includeHidden, warehouseId);
       if (!current()) return;
       linkedPreview.current = { id: object.id, data };
       setPreview({ id: object.id, data, loading: false, error: '' });
@@ -489,19 +506,19 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     if (inspectorId) inspectorRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
   }, [inspectorId]);
   useEffect(() => {
-    if (!inspectorOpen && !publishedInspectorId) return;
+    if (!overlayOpen) return;
     const background = document.getElementById('root');
     const before = background?.inert;
     if (background) background.inert = true;
     return () => {
       if (background) background.inert = !!before;
       requestAnimationFrame(() => {
-        const target = publishedId ? rootRef.current?.querySelector<HTMLButtonElement>(`[data-published-type-link="${CSS.escape(publishedId)}"]`) || searchRef.current
+        const target = connectionsOpen ? connectionsButton.current : publishedId ? rootRef.current?.querySelector<HTMLButtonElement>(`[data-published-type-link="${CSS.escape(publishedId)}"]`) || searchRef.current
           : cardRefs.current[inspectorId] || searchRef.current;
         if (target?.isConnected) target.focus();
       });
     };
-  }, [inspectorOpen, !!publishedInspectorId]);
+  }, [overlayOpen]);
 
   const sections = useMemo(() => {
     const resourceGroups = presentedGroup === 'all' ? groups.filter((item) => item.key !== 'all' && item.key !== 'favorites') : groups.filter((item) => item.key === presentedGroup);
@@ -580,7 +597,8 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
             {publishedCatalog && semanticProjectAccess && <Checkbox className="flow-ontology__show-hidden" checked={publishedDeleted} onChange={event => updateQuery({ publishedDeleted: event.target.checked ? 'true' : null, publishedOffset: null })}>Show deleted object types</Checkbox>}
             <span className="flow-ontology__summary" aria-busy={publishedCatalog ? displayedTotal == null : loading}><span className="flow-ontology__summary-value">{displayedTotal == null ? '…' : number(displayedTotal)}</span><span>{publishedCatalog ? 'object types' : 'tables'}</span></span>
             <button type="button" className="flow-ontology__button" onClick={() => navigate('/ontology/runtime')}>Runtime</button>
-            <button type="button" className="flow-ontology__button" onClick={() => navigate('/ontology/connections')}>Data Connections</button>
+            <button ref={connectionsButton} type="button" className="flow-ontology__button" aria-haspopup="dialog" aria-expanded={connectionsOpen}
+              onClick={() => navigate(dataConnectionHref(undefined, params.toString()))}>Data Connections</button>
           </div>
           {(canManage || semanticProjectAccess) && <button type="button" className="flow-ontology__button flow-ontology__button--primary flow-ontology__create-action" onClick={startNewObject}><PlusOutlined />New object type</button>}
         </div>
@@ -621,7 +639,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
         {lineageLink}
       </aside>
         <main className="flow-ontology__main" aria-label="Warehouse tables" aria-busy={loading}>
-          {error && <div className="flow-ontology__notice" role="alert"><span>{error}</span><button type="button" onClick={() => setVersion((value) => value + 1)}>Retry</button></div>}
+          {error && <div className="flow-ontology__notice" role="alert"><span>{error}</span><button type="button" onClick={warehouse.failed ? retryWarehouse : () => setVersion(value => value + 1)}>Retry</button></div>}
           {favoriteSummaryError && <div className="flow-ontology__notice" role="alert"><span>{favoriteSummaryError}</span><button type="button" onClick={() => setVersion((value) => value + 1)}>Retry</button></div>}
           {favoriteError && <div className="flow-ontology__notice" role="alert"><span>{favoriteError}</span><button type="button" aria-label="Retry favorites" onClick={() => setVersion((value) => value + 1)}>Retry</button></div>}
           {error && !presentedItems.length ? <div className="flow-ontology__empty"><DatabaseOutlined /><strong>Catalog unavailable</strong><span>Retry to load warehouse tables.</span></div> : loading && !hasPresentedCatalog ? <OntologyCatalogSkeleton view={view} label="Loading warehouse tables" /> : !presentedItems.length ? <div className="flow-ontology__empty"><DatabaseOutlined /><strong>{presentedGroup === 'favorites' ? 'No favorite tables' : 'No warehouse tables found'}</strong><span>{presentedGroup === 'favorites' ? 'Star a table to keep it here.' : 'Try a different resource group, schema, or search.'}</span></div> : <div className={`flow-ontology__collections is-${view}`} data-testid="ontology-assets" ref={element => { if (element) element.inert = catalogKey !== catalogState.key; }}>
@@ -633,7 +651,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
               </article>)}
             </div></section>)}</section>)}
           </div>}
-          <footer className="flow-ontology__catalog-footer"><span>{loading ? 'Updating catalog…' : error ? 'Catalog unavailable' : `${number(catalog.total)} object types`}</span>
+          <footer className="flow-ontology__catalog-footer"><span>{loading ? 'Updating catalog…' : error ? 'Catalog unavailable' : `${number(catalog.total)} tables`}</span>
             {(offset > 0 || catalog.total > catalogBatchSize) && <nav aria-label="Warehouse table pagination">
               <Button size="small" disabled={loading || !offset} onClick={() => updateQuery({ backedOffset: String(Math.max(0, offset - catalogBatchSize)) })}>Previous page</Button>
               <span>{!error && catalog.items.length > 0 && `${number(offset + 1)}–${number(offset + catalog.items.length)}`}</span>
@@ -647,9 +665,9 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     </div>
     <ObjectTypePreview open={inspectorOpen} closing={inspectorClosing} id={inspectorId}
       name={identity?.displayName || inspectorTable} icon={<TemplateGlyph kind={inferSiteKind(identity?.dataType || '', inspectorTable)} source={inspectorTable} />}
-      asideRef={inspectorRef} style={selectedColor} loading={preview.loading || preview.id !== inspectorId} error={preview.error}
-      onRetry={() => setPreviewVersion(value => value + 1)}
-      errorAction={canManage && !includeHidden ? { label: 'Show hidden tables', onClick: () => setShowHidden(true) } : undefined}
+      asideRef={inspectorRef} style={selectedColor} loading={!warehouse.failed && (preview.loading || preview.id !== inspectorId)} error={warehouseError || preview.error}
+      onRetry={warehouse.failed ? retryWarehouse : () => setPreviewVersion(value => value + 1)}
+      errorAction={canManage && !includeHidden && !warehouse.failed ? { label: 'Show hidden tables', onClick: () => setShowHidden(true) } : undefined}
       onClose={closeInspector} onExplore={openWorkspace} exploreDisabled={!data || preview.loading || !!linkedLoading}
       description={data?.description} properties={data?.properties.map(property => ({
         id: property.name, name: property.displayName, type: property.type, required: !property.nullable,
@@ -675,7 +693,8 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
       allProperties={publishedId ? allProperties : inspectedObject.allProperties} onPropertiesToggle={() => updateQuery({ tab: allProperties ? null : 'properties' })}
       onClose={() => updateQuery({ objectType: null, tab: null }, true)} onSelect={selectPublished}
       onExplore={() => navigate(publishedExplorerHref(publishedId, { returnTo: publishedCatalogHref(params.toString()) }))} />}
-    {createOpen && (canManage || semanticProjectAccess) && <SemanticObjectWizard allowedSource={canManage} schemas={creationSchemas}
+    {createOpen && !connectionsOpen && (canManage || semanticProjectAccess) && <SemanticObjectWizard allowedSource={canManage} schemas={creationSchemas}
+      warehouse={warehouse.connection} warehouseFailed={!!warehouse.failed} onRetryWarehouse={retryWarehouse}
       initialSchema={createSource.schema} initialUpstreamConnectionId={createSource.upstreamConnectionId} onCancel={() => setCreateOpen(false)} onPublished={(object) => {
       setCreateOpen(false); setPublishedRefresh((value) => value + 1);
       message.success({ content: 'Object type published', description: object.definition.name, className: 'explorer-toast' });
@@ -684,5 +703,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
       updateQuery({ catalog: 'published', objectType: object.id, schema: null, table: null, tab: null,
         publishedSource: publishedCatalog && publishedSource ? nextSource : null, publishedOffset: null, publishedQ: null });
     }} />}
+    {connectionsOpen && <DataConnections warehouse={warehouse.connection} warehouseFailed={!!warehouse.failed} onRetryWarehouse={retryWarehouse}
+      onCancel={() => navigate(closeDataConnectionsHref(params.toString()), { replace: true })} />}
   </div>;
 }

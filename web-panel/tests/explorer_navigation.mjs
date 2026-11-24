@@ -8,7 +8,7 @@ const source = readFileSync(new URL('../src/services/explorerNavigation.ts', imp
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 const exports = {};
 vm.runInThisContext('(function(exports){' + compiled + '\n})')(exports);
-const { ontologyCatalogHref, catalogReturnHref, compactExplorerSearch, backedExplorerHref, dataConnectionHref } = exports;
+const { ontologyCatalogHref, catalogReturnHref, compactExplorerSearch, backedExplorerHref, dataConnectionHref, closeDataConnectionsHref } = exports;
 const params = href => new URL(href, 'https://app.example.test').searchParams;
 
 test('ordinary physical entry has only schema and table despite a redundant selected-card return URL', () => {
@@ -41,6 +41,16 @@ test('a saved connection survives the Published return URL without leaking into 
   assert.equal(catalogReturnHref(href, 'backed'), '/ontology');
   assert.equal(ontologyCatalogHref('publishedSource=/outside', 'published'), '/ontology?catalog=published');
   assert.equal(params(dataConnectionHref(id)).get('sourceId'), id);
+});
+
+test('opening and dismissing Data Connections retains the underlying catalog selection and filters', () => {
+  const id = '2e7a9733-daa3-4f04-a788-4fd9f2e2b818';
+  const search = 'catalog=published&publishedQ=Airport&objectType=selected&tab=properties&view=list';
+  const path = dataConnectionHref(id, search);
+  assert.equal(path, `/ontology/connections?${search}&sourceId=${id}`);
+  assert.equal(closeDataConnectionsHref(params(path).toString() + '&batchSync=active&tableExport=1'), `/ontology?${search}`);
+  assert.equal(dataConnectionHref(undefined, 'source=ts_ods&q=news'), '/ontology/connections?source=ts_ods&q=news');
+  assert.equal(closeDataConnectionsHref('sourceId=' + id), '/ontology');
 });
 
 test('returning from a storage-backed record preserves the catalog page', () => {

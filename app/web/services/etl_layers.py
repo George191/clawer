@@ -23,7 +23,7 @@ from app.etl.schema.object_relations import (
     ObjectRelationsNotInitialized,
     read_object_relations,
 )
-from app.storage.postgres_client import get_pg_client
+from app.storage.postgres_client import PostgresClient, get_pg_client
 from app.web.api.models.batch_syncs import INCREMENTAL_TARGET, TARGET_SCHEMA as BATCH_TARGET_SCHEMA
 from app.web.api.models.etl import PREVIEW_ROWS_MAX_LIMIT, PREVIEW_ROWS_MAX_OFFSET, RowPreviewPolicy
 from app.web.core.config import settings
@@ -285,8 +285,8 @@ def _object_summary(row: dict[str, Any]) -> dict[str, Any]:
 
 
 class EtlLayers:
-    def __init__(self) -> None:
-        self._pg = get_pg_client()
+    def __init__(self, pg: PostgresClient | None = None) -> None:
+        self._pg = pg if pg is not None else get_pg_client()
 
     @asynccontextmanager
     async def session(self, *, repeatable_read: bool = False, query_timeout: bool = True):
@@ -308,6 +308,10 @@ class EtlLayers:
                 raise HTTPException(503, "Ontology metadata is not initialized") from exc
             status = 503 if code == "57014" else 400
             raise HTTPException(status, "PostgreSQL could not complete this query") from exc
+
+    async def database_name(self) -> str:
+        async with self.session() as session:
+            return (await session.execute(text("SELECT current_database()"))).scalar_one()
 
     async def layers(self) -> list[dict[str, Any]]:
         async with self.session() as session:

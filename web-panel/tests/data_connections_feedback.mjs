@@ -27,12 +27,16 @@ const source = (engine = 'mysql', patch = {}) => ({ id: 'source-a', name: 'Synth
   credentialsConfigured: true, catalogAvailable: false, updatedAt: '2026-01-01T00:00:00Z', testedAt: null, ...patch });
 let instance = 0;
 
-async function mount({ sources = [], selected = '', query = '', overrides = {} } = {}) {
+async function mount({ sources = [], selected = '', query = '', overrides = {}, warehouseFailed = false } = {}) {
   let cursor = 0, tree, params = new URLSearchParams(query), mounted = true;
   if (selected) params.set('sourceId', selected);
   const state = [], refs = [], effects = [], scheduled = [], notices = [], destroyed = [], errorHooks = [], requests = [];
   const session = { identity: 'synthetic-account', authenticated: true, locked: false }, id = 'data-connections-' + ++instance;
-  const store = { sources: [...sources] };
+  const store = { sources: [...sources], closed: false, warehouseRetries: 0 };
+  const props = {
+    warehouse: warehouseFailed ? undefined : { id: 'warehouse', engine: 'postgresql', database: 'warehouse_fixture' }, warehouseFailed,
+    onRetryWarehouse: () => store.warehouseRetries++, onCancel: () => { store.closed = true; },
+  };
   const defaults = {
     fetchCurrentUserContext: async () => ({ user: { is_superuser: true } }),
     fetchDataConnectorTypes: async () => types,
@@ -75,7 +79,7 @@ async function mount({ sources = [], selected = '', query = '', overrides = {} }
   vm.runInThisContext('(function(require,exports,window){' + code + '\n})')(require, exports, { addEventListener() {}, removeEventListener() {} });
   const render = () => {
     if (!mounted) return tree;
-    cursor = 0; scheduled.length = 0; errorHooks.length = 0; tree = exports.default();
+    cursor = 0; scheduled.length = 0; errorHooks.length = 0; tree = exports.default(props);
     for (const [i, effect, deps] of scheduled) { effects[i]?.cleanup?.(); effects[i] = { deps, cleanup: effect() }; }
     return tree;
   };
@@ -87,6 +91,7 @@ async function mount({ sources = [], selected = '', query = '', overrides = {} }
     button: name => nodes(tree).find(node => node.type === 'Button' && text(node.props.children) === name),
     field: name => nodes(tree).find(node => node.type === 'Input' && node.props['aria-label'] === name),
     confirmation: () => nodes(tree).find(node => node.type === 'Modal' && node.props.okText),
+    inventory: () => nodes(tree).find(node => node.type === 'Modal' && node.props.title === 'Data Connections'),
     wizard: () => nodes(tree).find(node => node.type === 'Modal' && node.props.className.includes('ontology-connectors__wizard')),
     details: () => nodes(tree).find(node => node.type === 'Modal' && node.props.className.includes('ontology-connections-modal')),
     params: () => new URLSearchParams(params),
@@ -106,11 +111,37 @@ async function mount({ sources = [], selected = '', query = '', overrides = {} }
   render(); await ui.settle(); return ui;
 }
 
-test('the empty inventory guides setup and opens the same New source wizard', async () => {
-  const ui = await mount();
-  assert.ok(ui.nodes().find(node => node.type === 'ol' && node.props['aria-label'] === 'Source setup'));
-  ui.click('Connect your first source'); assert.ok(ui.wizard());
-  assert.equal(ui.wizard().props.title, 'New source'); ui.unmount();
+test('the inventory dialog shows the real warehouse even with no saved external sources', async () => {
+  const ui = await mount({ query: 'source=ts_ods&view=list' });
+  assert.equal(ui.inventory().props.open, true);
+  const warehouse = ui.nodes().find(node => node.props['aria-label'] === 'Workspace warehouse');
+  assert.match(text(warehouse), /PostgreSQL · warehouse_fixture · System-managed/);
+  assert.equal(nodes(warehouse).find(node => node.type === 'ConnectorMark').props.engine, 'postgresql');
+  assert.equal(nodes(warehouse).find(node => node.type === 'Link').props.to, '/ontology?source=ts_ods&view=list');
+  assert.ok(ui.nodes().find(node => node.type === 'strong' && text(node) === 'No external sources configured'));
+  ui.click('New source');
+  assert.equal(ui.inventory().props.open, false);
+  assert.equal(ui.wizard().props.title, 'New source');
+  ui.click('Cancel');
+  assert.equal(ui.inventory().props.open, true);
+  assert.equal(ui.params().get('view'), 'list');
+  ui.inventory().props.onCancel(); assert.equal(ui.store.closed, true); ui.unmount();
+});
+
+test('warehouse visibility is independent of external source access and errors', async () => {
+  const viewer = await mount({ overrides: { fetchCurrentUserContext: async () => ({ user: { is_superuser: false } }) } });
+  assert.ok(viewer.nodes().find(node => node.type === 'code' && text(node) === 'warehouse_fixture'));
+  assert.equal(viewer.calls('fetchDataSources').length, 0);
+  assert.equal(viewer.button('New source'), undefined);
+  viewer.unmount();
+
+  const failing = await mount({ warehouseFailed: true });
+  assert.ok(failing.nodes().find(node => node.props.role === 'alert' && /warehouse connection/.test(text(node))));
+  assert.equal(failing.nodes().some(node => node.type === 'Link' && /Browse warehouse tables/.test(text(node))), false);
+  failing.click('Retry warehouse');
+  assert.equal(failing.store.warehouseRetries, 1);
+  assert.ok(failing.button('New source'));
+  failing.unmount();
 });
 
 test('saving a new source continues into its details dialog while retaining the inventory', async () => {
@@ -125,13 +156,15 @@ test('saving a new source continues into its details dialog while retaining the 
   assert.equal(ui.wizard(), undefined); assert.ok(ui.details());
   const linkedCatalog = ui.nodes().find(node => node.type === 'Link' && text(node.props.children).includes('View published object types'));
   assert.equal(linkedCatalog?.props.to, `/ontology?catalog=published&publishedSource=${id}`);
-  assert.ok(ui.nodes().find(node => node.type === 'section' && node.props['aria-label'] === 'Sources'));
+  assert.equal(ui.inventory().props.open, false);
+  assert.ok(ui.nodes().find(node => node.type === 'section' && node.props['aria-label'] === 'External sources'));
   assert.ok(ui.button('Configure Continuous CDC'));
   assert.equal(ui.nodes().find(node => node.type === 'SourceCdc'), undefined);
   ui.click('Configure Continuous CDC');
   assert.ok(ui.nodes().find(node => node.type === 'SourceCdc'));
   ui.details().props.onCancel(); await ui.settle();
   assert.equal(ui.details(), undefined); assert.equal(ui.params().get('sourceId'), null);
+  assert.equal(ui.inventory().props.open, true);
   assert.equal(ui.calls('createDataSource').length, 1); ui.unmount();
 });
 

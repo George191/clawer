@@ -3,6 +3,7 @@
 import unittest
 from contextlib import asynccontextmanager
 from copy import deepcopy
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from fastapi import FastAPI, HTTPException
@@ -10,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from app.web.api.dependencies.common import get_current_user
 from app.web.api.routes import etl
+from app.web.services import data_connections
 from app.web.services.etl_layers import EtlLayers
 
 
@@ -446,20 +448,34 @@ class ObjectRouteTests(unittest.TestCase):
         self.app.dependency_overrides[get_current_user] = lambda: {"id": "ordinary-user"}
         self.client = TestClient(self.app)
 
-    def test_catalog_and_preview_routes_reuse_signed_in_policy_and_exact_service_contract(self):
-        instance, _ = service(Result([]), Result([summary(properties_count=0)]), Result([]), Result(scalar=True), Result([]))
-        with patch.object(etl, "get_etl_layers", return_value=instance):
-            response = self.client.get("/api/v1/etl/object-types?limit=100&offset=0")
+    def test_warehouse_descriptor_catalog_and_preview_use_the_same_registered_connection(self):
+        instance, _ = service(Result(scalar="warehouse_fixture"), Result([]),
+                              Result([summary(properties_count=0)]), Result([]), Result(scalar=True), Result([]))
+        pg = object()
+        with patch.object(data_connections, "get_pg_client", return_value=pg):
+            registry = data_connections.DataConnections()
+        with (patch.object(etl, "get_data_connections", return_value=registry),
+              patch.object(data_connections, "EtlLayers", return_value=instance) as layers):
+            warehouse = "/api/v1/etl/data-connections/warehouse"
+            response = self.client.get(warehouse)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), {"id": "warehouse", "engine": "postgresql", "database": "warehouse_fixture"})
+            response = self.client.get(warehouse + "/object-types?limit=100&offset=0")
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json()["total"], 0)
-            response = self.client.get("/api/v1/etl/ts_ods/objects/preview")
+            response = self.client.get(warehouse + "/object-types/ts_ods/objects/preview")
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json()["id"], "ts_ods.objects")
             self.assertEqual(response.json()["visibility"], "normal")
+            unrelated = "/api/v1/etl/data-connections/2e7a9733-daa3-4f04-a788-4fd9f2e2b818"
+            self.assertEqual(self.client.get(unrelated + "/object-types").status_code, 404)
+            self.assertEqual(self.client.get(unrelated + "/layers/ts_ods/tables").status_code, 404)
+            self.assertEqual(layers.call_count, 3)
+            self.assertTrue(all(call.kwargs == {"pg": pg} for call in layers.call_args_list))
 
     def test_missing_ontology_is_explicit_503_on_both_get_routes(self):
         instance, session = service(Result([]), ontology_installed=False)
-        with patch.object(etl, "get_etl_layers", return_value=instance):
+        with patch.object(etl, "get_data_connections", return_value=SimpleNamespace(warehouse=lambda _: instance)):
             for path in ("/api/v1/etl/object-types", "/api/v1/etl/ts_ods/objects/preview"):
                 with self.subTest(path=path):
                     response = self.client.get(path)
@@ -494,9 +510,9 @@ class ObjectRouteTests(unittest.TestCase):
         self.assertEqual(len(session.calls), 1)
 
     def test_fastapi_bounds_validate_before_any_service_or_database_call(self):
-        with patch.object(etl, "get_etl_layers") as factory:
+        with patch.object(etl, "get_data_connections") as factory:
             for query in ("limit=0", "limit=501", "offset=-1", "offset=1000001", "search=" + "x" * 1001):
-                self.assertEqual(self.client.get("/api/v1/etl/object-types?" + query).status_code, 422)
+                self.assertEqual(self.client.get("/api/v1/etl/data-connections/warehouse/object-types?" + query).status_code, 422)
             factory.assert_not_called()
 
     def test_preview_rows_route_applies_its_own_pagination_budget_only(self):
@@ -671,8 +687,9 @@ class ObjectRouteTests(unittest.TestCase):
         def reject():
             raise HTTPException(401, "Authentication required")
         self.app.dependency_overrides[get_current_user] = reject
-        with patch.object(etl, "get_etl_layers") as factory:
-            for path in ("/api/v1/etl/object-types", "/api/v1/etl/ts_ods/objects/preview",
+        with patch.object(etl, "get_etl_layers") as factory, patch.object(etl, "get_data_connections") as connections:
+            for path in ("/api/v1/etl/object-types", "/api/v1/etl/data-connections/warehouse",
+                         "/api/v1/etl/data-connections/warehouse/object-types", "/api/v1/etl/ts_ods/objects/preview",
                          "/api/v1/etl/ts_ods/objects/columns",
                          "/api/v1/etl/ts_ods/objects/lineage-path-targets",
                          "/api/v1/etl/ts_ods/objects/lineage-path?targetSchema=ts_ods&targetTable=other"):
@@ -680,10 +697,11 @@ class ObjectRouteTests(unittest.TestCase):
             self.assertEqual(self.client.post("/api/v1/etl/ts_ods/objects/preview-rows",
                                               json={}).status_code, 401)
             factory.assert_not_called()
+            connections.assert_not_called()
 
     def test_preview_identifier_and_hidden_metadata_schema_are_rejected_before_session(self):
         instance, session = service()
-        with patch.object(etl, "get_etl_layers", return_value=instance):
+        with patch.object(etl, "get_data_connections", return_value=SimpleNamespace(warehouse=lambda _: instance)):
             self.assertEqual(self.client.get("/api/v1/etl/ts_meta/objects/preview").status_code, 404)
             self.assertEqual(self.client.get("/api/v1/etl/ts_ods/bad%3Bquery/preview").status_code, 400)
         self.assertEqual(session.calls, [])

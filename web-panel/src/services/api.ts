@@ -254,11 +254,16 @@ export const getDashboardWsUrl = () => wsUrl('/ws');
 export const fetchLayers = (signal?: AbortSignal): Promise<LayerNode[]> =>
   client.get('/etl/layers', { signal, ...(signal ? { timeout: 0 } : {}) }).then((r) => unwrap<LayerNode[]>(r.data));
 
-export const fetchEtlObjectTypes = (params: { schema?: string; search?: string; group?: string; ids?: string; limit?: number; offset?: number; includeHidden?: boolean; favoritesOnly?: boolean } = {}, signal?: AbortSignal): Promise<EtlObjectCatalog> =>
-  client.get('/etl/object-types', { params, signal }).then((r) => unwrap<EtlObjectCatalog>(r.data));
+export type WarehouseConnection = { id: 'warehouse'; engine: 'postgresql'; database: string };
+const warehouseConnectionPath = (id: WarehouseConnection['id'] = 'warehouse') => `/etl/data-connections/${encodeURIComponent(id)}`;
+export const fetchWarehouseConnection = (signal?: AbortSignal): Promise<WarehouseConnection> =>
+  client.get(warehouseConnectionPath(), { signal }).then((r) => unwrap<WarehouseConnection>(r.data));
 
-export const fetchEtlObjectPreview = (schema: string, table: string, includeHidden = false): Promise<EtlObjectPreview> =>
-  client.get(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/preview`, { params: { includeHidden } }).then((r) => unwrap<EtlObjectPreview>(r.data));
+export const fetchEtlObjectTypes = (params: { schema?: string; search?: string; group?: string; ids?: string; limit?: number; offset?: number; includeHidden?: boolean; favoritesOnly?: boolean } = {}, signal?: AbortSignal, connectionId?: WarehouseConnection['id']): Promise<EtlObjectCatalog> =>
+  client.get(`${warehouseConnectionPath(connectionId)}/object-types`, { params, signal }).then((r) => unwrap<EtlObjectCatalog>(r.data));
+
+export const fetchEtlObjectPreview = (schema: string, table: string, includeHidden = false, connectionId?: WarehouseConnection['id']): Promise<EtlObjectPreview> =>
+  client.get(`${warehouseConnectionPath(connectionId)}/object-types/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/preview`, { params: { includeHidden } }).then((r) => unwrap<EtlObjectPreview>(r.data));
 
 export const updateEtlObjectVisibility = (schema: string, table: string, visibility: EtlObjectVisibility): Promise<{ schema: string; table: string; visibility: EtlObjectVisibility }> =>
   client.put(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/visibility`, { visibility }).then((r) => unwrap<{ schema: string; table: string; visibility: EtlObjectVisibility }>(r.data));
@@ -277,8 +282,8 @@ export const updateEtlObjectFavorite = (schema: string, table: string, favorite:
 export const fetchCdcStatus = (signal?: AbortSignal): Promise<CdcStatus> =>
   client.get('/cdc/status', { signal, timeout: 22000 }).then((r) => unwrap<CdcStatus>(r.data));
 
-export const fetchLayerTables = (layer: string, tableRole = 'current', signal?: AbortSignal): Promise<LayerTable[]> =>
-  client.get(`/etl/${layer}/tables`, { params: { tableRole }, signal, ...(signal ? { timeout: 0 } : {}) }).then((r) => unwrap<LayerTable[]>(r.data));
+export const fetchLayerTables = (layer: string, tableRole = 'current', signal?: AbortSignal, connectionId?: WarehouseConnection['id']): Promise<LayerTable[]> =>
+  client.get(`${warehouseConnectionPath(connectionId)}/layers/${encodeURIComponent(layer)}/tables`, { params: { tableRole }, signal, ...(signal ? { timeout: 0 } : {}) }).then((r) => unwrap<LayerTable[]>(r.data));
 
 export const fetchEtlTableColumns = (layer: string, table: string, signal?: AbortSignal): Promise<EtlTableColumn[]> =>
   client.get(`/etl/${encodeURIComponent(layer)}/${encodeURIComponent(table)}/columns`, { signal }).then((r) => unwrap<EtlTableColumn[]>(r.data));

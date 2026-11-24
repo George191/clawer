@@ -96,6 +96,21 @@ test('the Published catalog sends the saved connection alongside search and pagi
   assert.equal(request.searchParams.get('includeHidden'), 'true');
 });
 
+test('physical catalog reads use the warehouse Data Connections routes', async () => {
+  const fixtureState = fixture(), api = fixtureState.load('services/api');
+  await api.fetchWarehouseConnection();
+  await api.fetchEtlObjectTypes({ schema: 'ts_ods', limit: 25 }, undefined, 'warehouse');
+  await api.fetchLayerTables('ts_ods');
+  await api.fetchEtlObjectPreview('ts_ods', 'airports');
+  assert.deepEqual(fixtureState.requests.map(url => new URL(url).pathname), [
+    '/v1/etl/data-connections/warehouse',
+    '/v1/etl/data-connections/warehouse/object-types',
+    '/v1/etl/data-connections/warehouse/layers/ts_ods/tables',
+    '/v1/etl/data-connections/warehouse/object-types/ts_ods/airports/preview',
+  ]);
+  assert.equal(new URL(fixtureState.requests[1]).searchParams.get('schema'), 'ts_ods');
+});
+
 test('a delayed 401 refreshes and retries its original project after a project switch', async () => {
   const f = fixture(), api = f.load('services/api');
   let attempts = 0;

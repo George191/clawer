@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { Button, Checkbox, Input, message, Modal, Select, NativeSelect } from '@/components/ui';
 import { ArrowLeftOutlined, ArrowRightOutlined, DatabaseOutlined, DeleteOutlined, EyeOutlined, FolderOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, TableOutlined } from '@/components/ui/icons';
 import apiClient, { createDataSource, deleteDataSource, fetchCurrentUserContext, fetchDataConnectorTypes, fetchDataSourceCatalog, fetchDataSourceColumns, fetchDataSources, setDataSourcePaused, testDataSource, updateDataSource } from '../../services/api';
-import type { DataConnectorEngine, DataConnectorType, DataSource, DataSourceCatalog, DataSourceColumns, DataSourceConfig, DataSourcePayload, DataSourceProvider, DataSourceRelation, DataSourceTest, BatchSourceIdentity } from '../../services/api';
+import type { DataConnectorEngine, DataConnectorType, DataSource, DataSourceCatalog, DataSourceColumns, DataSourceConfig, DataSourcePayload, DataSourceProvider, DataSourceRelation, DataSourceTest, BatchSourceIdentity, WarehouseConnection } from '../../services/api';
 import { ontologyCatalogHref } from '../../services/explorerNavigation';
 import { getSessionState } from '../../services/session';
 import ConnectorMark from './ConnectorMark';
@@ -24,7 +24,10 @@ import SandboxHandoffRecipientProof from './SandboxHandoffRecipientProof';
 import useExplorerErrorToast from './useExplorerErrorToast';
 import './data-connections.css';
 
-type Props = { onCancel?: () => void; onChanged?: () => void };
+type Props = {
+  warehouse?: WarehouseConnection; warehouseFailed: boolean; onRetryWarehouse: () => void;
+  onCancel: () => void; onChanged?: () => void;
+};
 type Draft = { name: string; engine: DataConnectorEngine; config: Omit<DataSourceConfig, 'port'> & { port: string }; secret: string };
 type Confirmation = { title: string; detail: string; label: string; action: () => Promise<boolean> };
 const categories = [{ key: 'all', label: 'All connectors' }, { key: 'relational', label: 'Relational databases' }, { key: 'document', label: 'Document databases' }, { key: 'key_value', label: 'Key-value databases' }, { key: 'search', label: 'Search engines' }, { key: 'vector', label: 'Vector databases' }, { key: 'object_storage', label: 'Object storage' }];
@@ -202,7 +205,7 @@ function SourceCatalog({ sourceId, sourceRevision, onSetUpSync }: { sourceId: st
   </section>;
 }
 
-export default function DataConnections({ onChanged }: Props = {}) {
+export default function DataConnections({ warehouse, warehouseFailed, onRetryWarehouse, onCancel, onChanged }: Props) {
   const feedbackKey = useId();
   const [connectors, setConnectors] = useState<DataConnectorType[]>([]);
   const [sources, setSources] = useState<DataSource[]>([]);
@@ -252,6 +255,7 @@ export default function DataConnections({ onChanged }: Props = {}) {
   const connector = connectors.find((item) => item.engine === draft?.engine);
   const selected = sources.find((item) => item.id === editingId);
   const viewedSource = sources.find((item) => item.id === sourceId);
+  const detailsOpen = !!viewedSource && canManage && !loading && !loadError && !wizard;
   const sourcePaused = isConnectionPaused(viewedSource);
   const pauseAvailable = viewedSource?.engine === 'postgresql' && viewedSource.pauseAvailable === true;
   const chosen = connectors.find((item) => item.engine === chosenEngine);
@@ -506,20 +510,13 @@ export default function DataConnections({ onChanged }: Props = {}) {
   const filteredSources = sources.filter((source) => (sourceEngine === 'all' || source.engine === sourceEngine)
     && `${source.name} ${source.config.host} ${source.config.bucket || source.config.database} ${labelFor(source.engine)}`.toLowerCase().includes(sourceSearch.trim().toLowerCase()));
   useExplorerErrorToast(loadError, 'Unable to load data sources', () => { if (!pendingRef.current) setReload(value => value + 1); });
-  useExplorerErrorToast(!loading && !loadError && !canManage ? 'Only administrators can manage data sources.' : undefined, 'Access unavailable');
+  useExplorerErrorToast(!loading && !loadError && !canManage && (sourceId || openTableExport) ? 'Only administrators can manage external sources.' : undefined, 'Access unavailable');
   useExplorerErrorToast(!loading && !loadError && canManage && sourceId && !viewedSource ? 'The linked data source is not available.' : undefined, 'Source unavailable');
   const visibleConnector = wizard === 'choose' ? chosen : wizard === 'configure' ? connector : viewedType;
   useExplorerErrorToast(visibleConnector && !visibleConnector.driverAvailable ? visibleConnector.prerequisite : undefined, 'Connector unavailable');
 
   return <>
-    <div className="ontology-connectors ontology-connections-workspace" aria-busy={loading || pending}>
-      <header className="ontology-connections-workspace__header">
-        <div><Link to="/ontology" className="ontology-connectors__eyebrow">Object types</Link><h1>Data connections</h1><p>Manage saved sources and verify access to databases and object storage.</p></div>
-        {canManage && <Button type="primary" icon={<PlusOutlined />} disabled={blocked} onClick={newSource}>New source</Button>}
-      </header>
-
-      {canManage && !loading && !loadError && <>
-      {viewedSource && !wizard && <Modal className="flow-surface-modal ontology-connectors ontology-connections-modal" title="Source details" open centered width={960}
+    {detailsOpen && viewedSource && <Modal className="flow-surface-modal ontology-connectors ontology-connections-modal" title="Source details" open centered width={960}
         onCancel={() => showSource()} closable={!pending && !captureBusy} keyboard={!pending && !captureBusy && !confirmation} maskClosable={false}
         footer={<Button disabled={pending || captureBusy} onClick={() => showSource()}>Done</Button>}>
       <section className="ontology-connections-detail" aria-label="Source details" aria-busy={pending || captureBusy}>
@@ -581,16 +578,40 @@ export default function DataConnections({ onChanged }: Props = {}) {
           {viewedType?.captureKind === 'object_events' && <SourceObjectEvents key={`events:${proofKey}`} source={viewedSource} onBusyChange={setCaptureBusy} />}
         </>}
       </section></Modal>}
-      <section className="ontology-connections-inventory" aria-label="Sources">
-        <header><div><h2>Sources <span>{sources.length}</span></h2><p>Open a source to review its settings or run a read-only check.</p></div><Button size="small" icon={<ReloadOutlined />} disabled={blocked} onClick={() => setReload((value) => value + 1)}>Refresh sources</Button></header>
-        <div className="ontology-connections-inventory__toolbar">
+
+    <Modal className="flow-surface-modal ontology-connectors ontology-connections-inventory-modal" title="Data Connections" centered width={960}
+      open={!detailsOpen && !(wizard && canManage)} onCancel={onCancel} closable={!pending && !captureBusy}
+      keyboard={!pending && !captureBusy} maskClosable={false} footer={<Button disabled={pending || captureBusy} onClick={onCancel}>Done</Button>}>
+      <div className="ontology-connections-workspace">
+        <section className="ontology-connections-warehouse" aria-label="Workspace warehouse" aria-busy={!warehouse && !warehouseFailed}>
+          <div className="ontology-connections-warehouse__identity">
+            {warehouse && <ConnectorMark engine={warehouse.engine} />}
+            <div><h2>Workspace warehouse</h2>
+              {warehouse ? <p>PostgreSQL · <code>{warehouse.database}</code> · System-managed</p>
+                : warehouseFailed ? <p role="alert">Unable to read the warehouse connection.</p>
+                  : <p role="status">Loading warehouse connection…</p>}
+            </div>
+          </div>
+          {warehouse && <Link className="ui-btn ui-btn-default" to={ontologyCatalogHref(params.toString(), 'backed')}>Browse warehouse tables <ArrowRightOutlined /></Link>}
+          {warehouseFailed && <Button size="small" icon={<ReloadOutlined />} onClick={onRetryWarehouse}>Retry warehouse</Button>}
+        </section>
+
+        {canManage && <section className="ontology-connections-inventory" aria-label="External sources" aria-busy={loading || pending}>
+        <header><h2>External sources {!loading && !loadError && <span>{sources.length}</span>}</h2>
+          <div className="ontology-connectors__actions">
+            <Button size="small" icon={<ReloadOutlined />} disabled={pending || loading} onClick={() => setReload(value => value + 1)}>Refresh sources</Button>
+            <Button type="primary" icon={<PlusOutlined />} disabled={blocked} onClick={newSource}>New source</Button>
+          </div>
+        </header>
+        {!loading && !loadError && <>
+        {!!sources.length && <div className="ontology-connections-inventory__toolbar">
           <Input aria-label="Search sources" placeholder="Search sources" prefix={<SearchOutlined />} value={sourceSearch} allowClear onChange={(event) => setSourceSearch(event.target.value)} />
           <label className="ontology-connections-inventory__filter">Connector <NativeSelect aria-label="Filter sources by connector" popupWidth={224} value={sourceEngine} onChange={(event) => setSourceEngine(event.target.value)}>
             <option value="all">All connectors</option>{connectors.map((type) => <option key={type.engine} value={type.engine}>{type.name}</option>)}
           </NativeSelect></label>
           <span className="ontology-connections-inventory__count" role="status">{filteredSources.length} of {sources.length} sources</span>
-        </div>
-        {filteredSources.length ? <div className="ontology-connections-inventory__table" role="region" aria-label="Saved sources" tabIndex={0}><table>
+        </div>}
+        {filteredSources.length ? <div className="ontology-connections-inventory__table" role="region" aria-label="Saved external sources" tabIndex={0}><table>
           <colgroup><col className="ontology-connections-inventory__source-column" /><col className="ontology-connections-inventory__connector-column" /><col className="ontology-connections-inventory__endpoint-column" /><col className="ontology-connections-inventory__tested-column" /></colgroup>
           <thead><tr><th scope="col">Source</th><th scope="col">Connector</th><th scope="col">Endpoint</th><th scope="col">Last connectivity test</th></tr></thead>
           <tbody>{filteredSources.map((source) => <tr key={source.id}>
@@ -599,18 +620,12 @@ export default function DataConnections({ onChanged }: Props = {}) {
             <td>{labelFor(source.engine)}</td><td><code title={endpoint(source.config)}>{endpoint(source.config)}</code></td><td><time dateTime={source.testedAt || undefined}>{formatDate(source.testedAt)}</time></td>
           </tr>)}</tbody>
         </table></div> : <div className="ontology-connections-inventory__empty" role="status">
-          <DatabaseOutlined /><strong>{sources.length ? 'No sources match your filters' : 'No sources configured'}</strong>
-          <p>{sources.length ? 'Try another search or connector.' : 'Add a source to save its settings and verify the connection.'}</p>
-          {!sources.length && <>
-            <ol className="ontology-connections-setup" aria-label="Source setup">
-              <li><span>1</span><div><strong>Connect a source</strong><p>Choose a connector and enter its connection settings.</p></div></li>
-              <li><span>2</span><div><strong>Verify access</strong><p>Test the connection and save encrypted credentials.</p></div></li>
-              <li><span>3</span><div><strong>Choose the next step</strong><p>Explore supported sources or configure change capture.</p></div></li>
-            </ol>
-            <Button type="primary" disabled={blocked} onClick={newSource}>Connect your first source</Button>
-          </>}
+          <DatabaseOutlined /><strong>{sources.length ? 'No sources match your filters' : 'No external sources configured'}</strong>
+          <p>{sources.length ? 'Try another search or connector.' : 'Add a source to configure ingestion from a database or object store.'}</p>
         </div>}
-        <p className="ontology-connectors__scope"><DatabaseOutlined /> Creating a source saves its connection settings only. It does not import or synchronize tables.</p>
+        </>}
+        </section>}
+        {canManage && !loading && !loadError && <>
         <TableExports openFromLink={openTableExport} onLinkClose={() => setParams((current) => {
           const next = new URLSearchParams(current);
           next.delete('tableExport');
@@ -618,9 +633,10 @@ export default function DataConnections({ onChanged }: Props = {}) {
         }, { replace: true })} />
         <SandboxCdcReplay />
         <SyntheticPushInbox />
-      </section></>}
-      {canManage && !sourceId && <SandboxHandoffRecipientProof authorizedIdentity={sessionIdentity} />}
-    </div>
+        </>}
+        {canManage && !sourceId && <SandboxHandoffRecipientProof authorizedIdentity={sessionIdentity} />}
+      </div>
+    </Modal>
 
     {!!wizard && canManage && <Modal className="flow-surface-modal ontology-connectors ontology-connectors__wizard" title={editingId ? 'Edit connection' : 'New source'} open centered
       onCancel={() => navigate(closeWizard)} closable={!pending} keyboard={!pending && !confirmation} maskClosable={false} footer={null} width={780}>

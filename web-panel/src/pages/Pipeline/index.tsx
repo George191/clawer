@@ -8,7 +8,6 @@ import  {  AlertOutlined,  BranchesOutlined,  CodeOutlined,  DatabaseOutlined,  
 import  '../ProductWorkspace/workspace.css';
 import CdcStatusPanel from './CdcStatusPanel';
 import OntologyExplorer from './OntologyExplorer';
-import DataConnections from './DataConnections';
 import OntologyLineage from './OntologyLineage';
 import './ontology-frame.css';
 import './foundry-workbench-tokens.css';
@@ -59,6 +58,7 @@ const  EditIcon:  React.FC<{  className?:  string  }>  =  ({  className  })  => 
 const  DeleteIcon:  React.FC<{  className?:  string  }>  =  ({  className  })  =>  <svg  className={className}  viewBox="0  0  24  24"  role="img"  aria-label="Delete"  fill="none"><path  d="M6.5  7.5h11M9.5  7.5V5.8h5v1.7m-6.7  0  .7  11h5l.7-11"  stroke="currentColor"  strokeWidth="1.6"  strokeLinecap="round"  strokeLinejoin="round"/></svg>;
 const Pipeline: React.FC = () => {
     const { pathname, search, hash } = useLocation();
+    const connectionsOpen = !!matchPath('/ontology/connections', pathname);
     const explorerParams = new URLSearchParams(search);
     const publishedExplorer = !!matchPath('/ontology/explorer', pathname)
         && (['objectType', 'objectSet', 'savedSet'].some(key => explorerParams.has(key)) || new URLSearchParams(hash.replace(/^#/, '')).has('objectSet'));
@@ -66,8 +66,7 @@ const Pipeline: React.FC = () => {
     if (compactSearch !== search) return <Navigate replace to={{ pathname, search: compactSearch, hash }} />;
     return <ConfigProvider locale={enUS}><main className="flow-console flow-console--ontology">
         <section className="flow-core">
-            {matchPath('/ontology', pathname) ? <OntologyExplorer refreshToken={0} />
-                : matchPath('/ontology/connections', pathname) ? <DataConnections />
+            {connectionsOpen || matchPath('/ontology', pathname) ? <OntologyExplorer connectionsOpen={connectionsOpen} />
                 : matchPath('/ontology/lineage', pathname) ? <OntologyLineage refreshToken={0} />
                     : matchPath('/ontology/runtime', pathname) ? <FlowRuntime /> : <div className="flow-exploration-workspace">{publishedExplorer ? <PublishedExplorer /> : <DataLayersWorkspace />}</div>}
         </section>

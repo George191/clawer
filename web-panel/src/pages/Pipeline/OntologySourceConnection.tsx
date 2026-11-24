@@ -1,16 +1,14 @@
 import { useEffect, useId, useState, type ReactNode } from 'react';
 import { Button, Select } from '@/components/ui';
 import { ReloadOutlined } from '@/components/ui/icons';
-import { fetchDataSources } from '../../services/api';
+import { fetchDataSources, type WarehouseConnection } from '../../services/api';
 import { dataConnectionHref } from '../../services/explorerNavigation';
 import type { OntologyConnection } from '../../services/ontology';
 import { projectHref } from '../../services/projectDomains';
 import ConnectorMark from './ConnectorMark';
 
-export const warehouseConnection = 'warehouse';
-
-export default function OntologySourceConnection({ value, warehouseName, disabled, onChange, onAvailabilityChange, children }: {
-  value?: string; warehouseName?: string; disabled: boolean; onChange: (id: string) => void;
+export default function OntologySourceConnection({ value, warehouse, disabled, onChange, onAvailabilityChange, children }: {
+  value?: string; warehouse: WarehouseConnection; disabled: boolean; onChange: (id: string) => void;
   onAvailabilityChange: (available: boolean) => void; children: ReactNode;
 }) {
   const connectionId = useId();
@@ -29,12 +27,12 @@ export default function OntologySourceConnection({ value, warehouseName, disable
     return () => controller.abort();
   }, [revision]);
   const options: OntologyConnection[] = [
-    { id: warehouseConnection, name: warehouseName ? 'Workspace warehouse · ' + warehouseName : 'Workspace warehouse', engine: 'postgresql' },
+    { id: warehouse.id, name: 'Workspace warehouse · ' + warehouse.database, engine: warehouse.engine },
     ...connections,
   ];
   const selected = options.find(option => option.id === value);
-  const external = selected && selected.id !== warehouseConnection;
-  const available = value === warehouseConnection || (status === 'ready' && Boolean(selected));
+  const external = selected && selected.id !== warehouse.id;
+  const available = value === warehouse.id || (status === 'ready' && Boolean(selected));
   useEffect(() => { onAvailabilityChange(available); }, [available, onAvailabilityChange]);
   return <div className="flow-source-dataset">
     <div className="flow-source-connection-row">

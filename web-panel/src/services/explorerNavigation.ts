@@ -6,8 +6,21 @@ export function publishedSourceFilter(value: string | null) {
   return value && connectionId.test(value) ? value.toLowerCase() : undefined;
 }
 
-export function dataConnectionHref(id: string) {
-  return '/ontology/connections?' + new URLSearchParams({ sourceId: id });
+function searchWithoutConnection(search: string) {
+  const params = new URLSearchParams(search);
+  for (const key of ['sourceId', 'batchSync', 'tableExport']) params.delete(key);
+  return params;
+}
+
+export function dataConnectionHref(id?: string, search = '') {
+  const params = searchWithoutConnection(search);
+  if (id) params.set('sourceId', id);
+  return '/ontology/connections' + (params.size ? '?' + params : '');
+}
+
+export function closeDataConnectionsHref(search: string) {
+  const params = searchWithoutConnection(search);
+  return '/ontology' + (params.size ? '?' + params : '');
 }
 
 export function ontologyCatalogHref(search: string, kind: CatalogKind) {

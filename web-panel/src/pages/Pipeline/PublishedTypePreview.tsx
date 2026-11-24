@@ -1,5 +1,5 @@
 import { useEffect, useState, type Ref } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { dataConnectionHref } from '../../services/explorerNavigation';
 import { fetchPublishedOntologyType, ontologyError, type OntologyConnection, type PublishedCatalogItem, type PublishedOntologyType } from '../../services/ontology';
 import { graphRequest, type LinkType, type Page } from '../../services/ontology_graph';
@@ -38,6 +38,7 @@ async function readLinkedTypes(object: PublishedOntologyType, signal: AbortSigna
 
 export default function PublishedTypePreview({ id, initial, allProperties, closing, asideRef, connections, connectionsLoading,
   onPropertiesToggle, onClose, onExplore, onSelect }: Props) {
+  const { search } = useLocation();
   const [version, reload] = useState(0);
   const [linkedVersion, reloadLinks] = useState(0);
   const [read, setRead] = useState<{ key: string; object?: PublishedOntologyType; error?: string }>();
@@ -82,7 +83,7 @@ export default function PublishedTypePreview({ id, initial, allProperties, closi
         ? <span className="flow-published-source" title={backingTable}><ConnectorMark engine="postgresql" size="small" /><code>{backingTable}</code></span>
         : 'Object-managed records' },
       ...(upstreamId ? [{ label: 'Upstream connection', value: upstream
-        ? <Link className="flow-published-source" to={dataConnectionHref(upstream.id)} title={upstream.name}>
+        ? <Link className="flow-published-source" to={dataConnectionHref(upstream.id, search)} title={upstream.name}>
           <ConnectorMark engine={upstream.engine} size="small" /><span>{upstream.name}</span>
         </Link>
         : connectionsLoading ? 'Loading connection…' : 'Connection details unavailable' }] : []),

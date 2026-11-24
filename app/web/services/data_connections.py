@@ -1,4 +1,4 @@
-"""Real, read-only external source probes and encrypted source persistence."""
+"""Workspace warehouse access, external source probes and encrypted source persistence."""
 
 from __future__ import annotations
 
@@ -33,10 +33,13 @@ from app.web.api.models.data_connections import (
 )
 from app.web.api.models.push_inbox_apply import PUSH_APPLY_SCHEMA
 from app.web.services.batch_snapshot_range_scope import BATCH_RANGE_SOURCE_SCHEMA, BATCH_RANGE_TARGET
+from app.web.services.etl_layers import EtlLayers
 from app.web.services.pipeline_handoff_scope import HANDOFF_PRIVATE_SCHEMA
 from app.web.services.snapshot_intent_scope import SNAPSHOT_INTENT_PRIVATE_SCHEMA
 from app.web.core.config import settings
 
+
+WAREHOUSE_CONNECTION_ID = "warehouse"
 
 CONNECTORS = (
     {"engine": "postgresql", "name": "PostgreSQL", "category": "relational", "port": 5432, "driver": "asyncpg", "description": "Connect a PostgreSQL database."},
@@ -358,6 +361,15 @@ def _failure_message(error: Exception) -> str:
 class DataConnections:
     def __init__(self):
         self._pg = get_pg_client()
+
+    def warehouse(self, connection_id: str) -> EtlLayers:
+        if connection_id != WAREHOUSE_CONNECTION_ID:
+            raise HTTPException(404, "Warehouse connection not found")
+        return EtlLayers(pg=self._pg)
+
+    async def describe_warehouse(self) -> dict[str, str]:
+        database = await self.warehouse(WAREHOUSE_CONNECTION_ID).database_name()
+        return {"id": WAREHOUSE_CONNECTION_ID, "engine": "postgresql", "database": database}
 
     @asynccontextmanager
     async def _session(self):
