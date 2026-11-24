@@ -129,7 +129,7 @@ def paused_at_sql(alias: str) -> str:
 
 
 _PAUSE_INSTALLED = text("""SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_attribute
-    WHERE attrelid = pg_catalog.to_regclass('public.ontology_data_connections')
+    WHERE attrelid = pg_catalog.to_regclass('ontology_data_connections')
       AND attname = 'paused_at' AND attnum > 0 AND NOT attisdropped)""")
 
 
@@ -395,7 +395,7 @@ class DataConnections:
     async def exists(self, connection_id: uuid.UUID) -> bool:
         async with self._session() as session:
             return bool(await session.scalar(text(
-                "SELECT EXISTS (SELECT 1 FROM public.ontology_data_connections WHERE id = :id)"
+                "SELECT EXISTS (SELECT 1 FROM ontology_data_connections WHERE id = :id)"
             ), {"id": connection_id}))
 
     async def list(self):
@@ -410,9 +410,9 @@ class DataConnections:
         async with self._session() as session:
             can_pause = source_pause_enabled() and await session.scalar(_PAUSE_INSTALLED)
             identity_registry = bool(batch_enabled and await session.scalar(text("""
-                SELECT pg_catalog.to_regclass('public.ontology_batch_source_identities') IS NOT NULL
+                SELECT pg_catalog.to_regclass('ontology_batch_source_identities') IS NOT NULL
             """)))
-            join = "LEFT JOIN public.ontology_batch_source_identities proof ON proof.connection_id=registry.id" if identity_registry else ""
+            join = "LEFT JOIN ontology_batch_source_identities proof ON proof.connection_id=registry.id" if identity_registry else ""
             proof_columns = (
                 """proof.connection_id IS NOT NULL AS has_proof, COALESCE(
                     proof.is_current AND proof.source_updated_at=registry.updated_at
@@ -423,7 +423,7 @@ class DataConnections:
             rows = (await session.execute(text(f"""
                 SELECT {columns}, {paused_at_sql('registry')} AS paused_at,
                     registry.config->>'host' AS source_host, {proof_columns}
-                FROM public.ontology_data_connections registry {join}
+                FROM ontology_data_connections registry {join}
                 ORDER BY lower(registry.name), registry.id
             """), {"fingerprint": fingerprint} if identity_registry else {})).mappings()
 
@@ -454,7 +454,7 @@ class DataConnections:
         row = (await session.execute(text(f"""
             SELECT {_PUBLIC_COLUMNS}, {state} AS paused_at,
                 CASE WHEN {state} IS NULL THEN credentials_ciphertext END AS credentials_ciphertext
-            FROM public.ontology_data_connections registry WHERE id=:id
+            FROM ontology_data_connections registry WHERE id=:id
             """ + lock), {"id": uuid.UUID(connection_id)})).mappings().first()
         if row is None:
             raise HTTPException(404, "Data source not found")
@@ -470,7 +470,7 @@ class DataConnections:
                 raise HTTPException(503, "Install the external source registry lifecycle migration first")
             params = {"id": uuid.UUID(connection_id)}
             row = (await session.execute(text(f"""
-                SELECT {_PUBLIC_COLUMNS}, paused_at FROM public.ontology_data_connections
+                SELECT {_PUBLIC_COLUMNS}, paused_at FROM ontology_data_connections
                 WHERE id=:id FOR UPDATE
             """), params)).mappings().first()
             if row is None:
@@ -484,7 +484,7 @@ class DataConnections:
                 return _public(row, pause_available=True)
             await require_unconfigured(connection_id, row["engine"], registry=self, row=row, session=session)
             updated = (await session.execute(text(f"""
-                UPDATE public.ontology_data_connections
+                UPDATE ontology_data_connections
                 SET paused_at=CASE WHEN :paused THEN clock_timestamp() ELSE NULL END, tested_at=NULL,
                     updated_at=greatest(clock_timestamp(), updated_at + interval '1 microsecond')
                 WHERE id=:id AND updated_at=:revision RETURNING {_PUBLIC_COLUMNS}, paused_at
@@ -550,7 +550,7 @@ class DataConnections:
             credentials = await self._credentials(payload, row)
             result = await self._probe_result(payload, credentials)
             if result["ok"]:
-                await session.execute(text("UPDATE public.ontology_data_connections SET tested_at=:tested WHERE id=:id"),
+                await session.execute(text("UPDATE ontology_data_connections SET tested_at=:tested WHERE id=:id"),
                                       {"id": uuid.UUID(connection_id), "tested": datetime.fromisoformat(result["testedAt"])})
             return result
 
@@ -742,12 +742,12 @@ class DataConnections:
 
     async def _save_verified(self, session, params):
         if "version" in params:
-            sql = f"""UPDATE public.ontology_data_connections SET name=:name, engine=:engine,
+            sql = f"""UPDATE ontology_data_connections SET name=:name, engine=:engine,
                 config=CAST(:config AS jsonb), credentials_ciphertext=:credentials,
                 updated_at=greatest(clock_timestamp(), updated_at + interval '1 microsecond'),
                 tested_at=:tested WHERE id=:id AND updated_at=:version RETURNING {_PUBLIC_COLUMNS}"""
         else:
-            sql = f"""INSERT INTO public.ontology_data_connections
+            sql = f"""INSERT INTO ontology_data_connections
                 (id,name,engine,config,credentials_ciphertext,created_by,tested_at)
                 VALUES (:id,:name,:engine,CAST(:config AS jsonb),:credentials,:user,:tested)
                 RETURNING {_PUBLIC_COLUMNS}"""
@@ -759,12 +759,12 @@ class DataConnections:
 
     async def delete(self, connection_id):
         async with self._session() as session:
-            stored = (await session.execute(text("SELECT engine FROM public.ontology_data_connections WHERE id=:id FOR UPDATE"),
+            stored = (await session.execute(text("SELECT engine FROM ontology_data_connections WHERE id=:id FOR UPDATE"),
                                             {"id": uuid.UUID(connection_id)})).mappings().first()
             if stored is None:
                 raise HTTPException(404, "Data source not found")
             await require_unconfigured(connection_id, stored["engine"], registry=self, session=session)
-            row = (await session.execute(text("DELETE FROM public.ontology_data_connections WHERE id=:id RETURNING id"), {"id": uuid.UUID(connection_id)})).first()
+            row = (await session.execute(text("DELETE FROM ontology_data_connections WHERE id=:id RETURNING id"), {"id": uuid.UUID(connection_id)})).first()
             if row is None:
                 raise HTTPException(404, "Data source not found")
         return {"deleted": True}

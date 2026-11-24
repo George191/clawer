@@ -241,7 +241,7 @@ class OntologyMigrationIntegration(unittest.IsolatedAsyncioTestCase):
             await self.layers.preview("ts_custom", "people")
         self.assertEqual(error.exception.status_code, 409)
         async with self.pg.session() as session:
-            await sync_object_metadata(session, "ts_custom", "people")
+            await sync_object_metadata(session, "ts_custom", "people", catalog_session=session)
         preview = await self.layers.preview("ts_custom", "people")
         self.assertEqual(next(row["type"] for row in preview["properties"] if row["name"] == "name"), "text")
 

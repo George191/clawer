@@ -156,7 +156,9 @@ async def migrate(pg, *, apply: bool = False) -> dict:
         for statement in OBJECT_RELATIONS_DDL_STATEMENTS:
             await session.execute(text(statement))
         for table in before["tables"]:
-            await sync_object_metadata(session, table["schema"], table["name"], provenance="pg_catalog")
+            await sync_object_metadata(
+                session, table["schema"], table["name"], catalog_session=session, provenance="pg_catalog",
+            )
         after = await snapshot(session)
         by_id = {row["id"]: row for row in after["registered"]}
         if any(by_id.get(row["id"]) != row for row in before["registered"]):

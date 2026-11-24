@@ -129,9 +129,9 @@ def _constant_type(expression: str | None) -> str:
 
 
 async def _replace_properties(session, object_id: int, properties: list[dict[str, Any]], provenance: str) -> None:
-    await session.execute(text("DELETE FROM public.ontology_object_properties WHERE object_id = :object_id"), {"object_id": object_id})
+    await session.execute(text("DELETE FROM ontology_object_properties WHERE object_id = :object_id"), {"object_id": object_id})
     if properties:
-        await session.execute(text("""INSERT INTO public.ontology_object_properties (
+        await session.execute(text("""INSERT INTO ontology_object_properties (
             object_id, name, sql_type, ordinal_position, default_expression, is_nullable,
             is_primary_key, primary_key_position, identity_kind, generated_kind,
             generation_expression, comment, provenance)
@@ -161,15 +161,15 @@ async def sync_declared_object_properties(session, object_id: int, layer: str,
     return True
 
 
-async def sync_object_metadata(session, schema: str, table: str, *,
+async def sync_object_metadata(session, schema: str, table: str, *, catalog_session,
         data_type: str | None = None, data_type_source: str | None = None,
         description: str | None = None, description_source: str | None = None,
         provenance: str = "pg_catalog", ddl_sql: str | None = None,
         allow_missing: bool = False) -> dict[str, Any] | None:
-    """Synchronize after DDL using the caller's transaction; never bootstrap or scan records."""
+    """Inspect the warehouse catalog and synchronize metadata within the caller's transactions."""
     layer, role = _identity(schema, table)
     identity = {"schema": schema, "table": table}
-    result = await session.execute(text("""
+    result = await catalog_session.execute(text("""
         SELECT c.oid, obj_description(c.oid, 'pg_class') AS comment, p.partstrat::text AS partstrat,
                ARRAY(SELECT a.attname FROM unnest(p.partattrs) WITH ORDINALITY k(num, pos)
                      JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.num ORDER BY k.pos) AS partition_fields,
@@ -184,7 +184,7 @@ async def sync_object_metadata(session, schema: str, table: str, *,
         if allow_missing:
             return None
         raise ValueError("The physical Ontology object does not exist or is a partition child")
-    result = await session.execute(text("""
+    result = await catalog_session.execute(text("""
         SELECT a.attname AS name, format_type(a.atttypid, a.atttypmod) AS sql_type,
                a.attnum AS ordinal_position, NOT a.attnotnull AS is_nullable,
                CASE WHEN a.attgenerated = '' THEN pg_get_expr(d.adbin, d.adrelid) END AS default_expression,
@@ -200,7 +200,7 @@ async def sync_object_metadata(session, schema: str, table: str, *,
     """), {"oid": physical["oid"]})
     properties = [{**dict(row), "identity_kind": _catalog_text(row["identity_kind"]),
                    "generated_kind": _catalog_text(row["generated_kind"])} for row in result.mappings()]
-    current = (await session.execute(text("SELECT * FROM public.ontology_objects WHERE schema_name = :schema AND table_name = :table FOR UPDATE"), identity)).mappings().first()
+    current = (await session.execute(text("SELECT * FROM ontology_objects WHERE schema_name = :schema AND table_name = :table FOR UPDATE"), identity)).mappings().first()
     current = dict(current) if current else {}
     if data_type is not None:
         semantic_type, type_source = data_type, data_type_source or ("registration" if data_type else "not_configured")
@@ -251,7 +251,7 @@ async def sync_object_metadata(session, schema: str, table: str, *,
               "description": actual_description, "description_source": desc_source,
               "provenance": provenance, "resource_group": resource_group(layer)}
     result = await session.execute(text("""
-        INSERT INTO public.ontology_objects (layer, table_role, schema_name, table_name,
+        INSERT INTO ontology_objects (layer, table_role, schema_name, table_name,
             ddl_sql, version, checksum, partition_type, partition_column, partition_granularity,
             partition_count, data_type, data_type_source, description, description_source, provenance, resource_group)
         VALUES (:layer, :role, :schema, :table, :ddl_sql, :version, :checksum, :partition_type,

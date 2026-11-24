@@ -140,7 +140,9 @@ async def save_registered_ddl(
                     "updated_by": updated_by, "resource_group": resource_group(layer),
                 })
         object_id = int(result.scalar_one())
-        physical = await sync_object_metadata(session, schema_name, table_name, allow_missing=True)
+        physical = await sync_object_metadata(
+            session, schema_name, table_name, catalog_session=session, allow_missing=True,
+        )
         if physical is None:
             logical = logical_table_name(layer, table_name)
             declared = await sync_declared_object_properties(session, object_id, layer, logical, role)

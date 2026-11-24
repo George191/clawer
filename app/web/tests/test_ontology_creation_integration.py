@@ -916,7 +916,9 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
         await self.workspace.create_table(SCHEMA, deepcopy(PAYLOAD))
         before = await self.metadata()
         async with self.pg.session() as session:
-            await ontology.sync_object_metadata(session, SCHEMA, "firms", provenance="isolated:resync")
+            await ontology.sync_object_metadata(
+                session, SCHEMA, "firms", catalog_session=session, provenance="isolated:resync",
+            )
         after = await self.metadata()
         self.assertEqual((after["id"], after["data_type"], after["data_type_source"]),
                          (before["id"], "company", "registration"))

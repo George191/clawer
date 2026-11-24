@@ -218,6 +218,7 @@ class OntologyWorkspaceTests(unittest.IsolatedAsyncioTestCase):
 
         async def sync(session, schema, table, **kwargs):
             self.assertIs(session, pg)
+            self.assertIs(kwargs["catalog_session"], pg)
             self.assertTrue(pg.active)
             self.assertIn((schema, table), pg.state["tables"])
             self.assertEqual(kwargs["provenance"], "flow:create_table")

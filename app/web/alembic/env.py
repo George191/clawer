@@ -41,12 +41,12 @@ target_metadata = SQLModel.metadata
 # other schemas as tables in public during autogenerate.  The unprefixed names
 # remain available for future platform schemas without creating another
 # migration chain.
-_USER_SCHEMAS = {"etl", "web", "meta"}
+_USER_SCHEMAS = {"app", "etl", "web", "meta"}
 
 
 def include_name(name, type_, parent_names):
     # Ontology owns these table definitions and its explicit metadata migration.
-    if type_ == "table" and parent_names.get("schema_name") in {None, "public"}:
+    if type_ == "table" and parent_names.get("schema_name") in {None, "app", "public"}:
         if name in {"ontology_objects", "ontology_object_properties", "ontology_object_relations"}:
             return False
     if type_ != "schema":
@@ -86,7 +86,6 @@ def run_migrations_offline():
         compare_type=True,
         include_schemas=True,
         include_name=include_name,
-        version_table_schema="public",
     )
 
     with context.begin_transaction():
@@ -100,7 +99,6 @@ def do_run_migrations(connection):
         compare_type=True,
         include_schemas=True,
         include_name=include_name,
-        version_table_schema="public",
     )
 
     with context.begin_transaction():

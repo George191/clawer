@@ -466,7 +466,7 @@ class EtlWorkspace:
             await self._schema_exists(session, schema)
             for statement in statements:
                 await session.execute(text(statement.replace(":", r"\:")))
-            await sync_object_metadata(session, schema, payload["name"],
+            await sync_object_metadata(session, schema, payload["name"], catalog_session=session,
                 data_type=data_type, data_type_source="registration",
                 provenance="flow:create_table", description=payload.get("description") or (payload.get("options") or {}).get("comment"),
                 ddl_sql=";\n".join(statements) + ";\n")
@@ -550,7 +550,9 @@ class EtlWorkspace:
             WHERE schema_name = :schema AND table_name = :table FOR UPDATE"""), identity)).mappings().first()
         if not metadata or not metadata["is_active"]:
             try:
-                metadata = await sync_object_metadata(session, schema, table, provenance=provenance)
+                metadata = await sync_object_metadata(
+                    session, schema, table, catalog_session=session, provenance=provenance,
+                )
             except ValueError as error:
                 raise HTTPException(404, "Table does not exist in this schema") from error
             await session.execute(text("UPDATE public.ontology_objects SET is_active = TRUE WHERE id = :id"),

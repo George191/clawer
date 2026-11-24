@@ -78,13 +78,14 @@ class MetadataPg:
     async def execute(self, statement, params=None):
         sql = " ".join(str(statement).split())
         self.calls.append((sql, deepcopy(params)))
+        sql = sql.replace("public.ontology_", "ontology_")
         params = params or {}
         if sql.startswith("SELECT c.oid"):
             row = self.catalog.get((params["schema"], params["table"]))
             return Result([row] if row else [])
         if sql.startswith("SELECT a.attname"):
             return Result(self.columns.get(params["oid"], []))
-        if sql.startswith("SELECT") and "FROM public.ontology_objects" in sql:
+        if sql.startswith("SELECT") and "FROM ontology_objects" in sql:
             rows = list(self.objects.values())
             schema, table = params.get("schema", params.get("schema_name")), params.get("table", params.get("table_name"))
             if schema is not None:
@@ -96,7 +97,7 @@ class MetadataPg:
             if params.get("table_role") and "AND table_role = :table_role" in sql:
                 rows = [row for row in rows if row["table_role"] == params["table_role"]]
             return Result(rows)
-        if sql.startswith("INSERT INTO public.ontology_objects"):
+        if sql.startswith("INSERT INTO ontology_objects"):
             schema, table = params.get("schema", params.get("schema_name")), params.get("table", params.get("table_name"))
             identity = (schema, table)
             previous = self.objects.get(identity, {})
@@ -108,14 +109,14 @@ class MetadataPg:
                 record["description_source"] = previous.get("description_source", "not_configured")
             self.objects[identity] = record
             return Result(scalar=record["id"])
-        if sql.startswith("DELETE FROM public.ontology_object_properties"):
+        if sql.startswith("DELETE FROM ontology_object_properties"):
             self.properties[params["object_id"]] = []
-        elif sql.startswith("INSERT INTO public.ontology_object_properties"):
+        elif sql.startswith("INSERT INTO ontology_object_properties"):
             for row in params:
                 self.properties.setdefault(row["object_id"], []).append(deepcopy(row))
                 if self.fail_properties:
                     raise RuntimeError("Fixture rejects property insertion")
-        elif sql.startswith("UPDATE public.ontology_objects"):
+        elif sql.startswith("UPDATE ontology_objects"):
             for record in self.objects.values():
                 if record["id"] == params["id"] and record["data_type_source"] != "registration":
                     record.update(data_type=params["data_type"], data_type_source="table_definition")
@@ -127,7 +128,18 @@ class MetadataPg:
 class OntologyMetadataTests(unittest.IsolatedAsyncioTestCase):
     async def sync(self, pg, **kwargs):
         async with pg.session() as session:
-            return await ontology.sync_object_metadata(session, "ts_custom", "items", **kwargs)
+            return await ontology.sync_object_metadata(session, "ts_custom", "items", catalog_session=session, **kwargs)
+
+    async def test_separate_catalog_session_keeps_metadata_on_the_system_session(self):
+        catalog = MetadataPg()
+        system = MetadataPg(physical=False)
+        async with system.session() as session:
+            result = await ontology.sync_object_metadata(session, "ts_custom", "items", catalog_session=catalog)
+
+        self.assertEqual(result["properties_count"], 1)
+        self.assertEqual(len(catalog.calls), 2)
+        self.assertEqual(catalog.objects, {})
+        self.assertIn(("ts_custom", "items"), system.objects)
 
     async def test_catalog_properties_preserve_real_type_primary_order_and_generated_identity(self):
         pg = MetadataPg()
@@ -220,7 +232,10 @@ class OntologyMetadataTests(unittest.IsolatedAsyncioTestCase):
                 # Stand-in for the caller's transactional CREATE; no real database is used.
                 pg.catalog[("ts_custom", "items")] = {"oid": 100, "comment": None,
                     "partstrat": None, "partition_fields": [], "partition_count": 0}
-                await ontology.sync_object_metadata(session, "ts_custom", "items", ddl_sql="CREATE TABLE ts_custom.items (id bigint);")
+                await ontology.sync_object_metadata(
+                    session, "ts_custom", "items", catalog_session=session,
+                    ddl_sql="CREATE TABLE ts_custom.items (id bigint);",
+                )
         self.assertEqual((pg.catalog, pg.objects, pg.properties), ({}, {}, {}))
         self.assertEqual((pg.commits, pg.rollbacks), (0, 1))
 
@@ -238,12 +253,14 @@ class OntologyMetadataTests(unittest.IsolatedAsyncioTestCase):
         for schema, table in [("public", "x"), ("ts_meta", "x"), ("ts_meta_hist", "x"), ("ts_ods;drop", "x"), ("ts_ods", 'x"')]:
             pg = MetadataPg(physical=False)
             with self.assertRaises(ValueError):
-                await ontology.sync_object_metadata(pg, schema, table)
+                await ontology.sync_object_metadata(pg, schema, table, catalog_session=pg)
             self.assertEqual(pg.calls, [])
         pg = MetadataPg(physical=False)
-        self.assertIsNone(await ontology.sync_object_metadata(pg, "ts_custom", "missing", allow_missing=True))
+        self.assertIsNone(await ontology.sync_object_metadata(
+            pg, "ts_custom", "missing", catalog_session=pg, allow_missing=True,
+        ))
         with self.assertRaises(ValueError):
-            await ontology.sync_object_metadata(pg, "ts_custom", "missing")
+            await ontology.sync_object_metadata(pg, "ts_custom", "missing", catalog_session=pg)
         self.assertEqual(pg.objects, {})
 
     async def test_unsupported_partition_layout_cannot_store_incorrect_checksum(self):
@@ -277,13 +294,13 @@ class OntologyMetadataTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_known_identity_requires_managed_ddl_and_never_overrides_expression_default(self):
         pg = MetadataPg("ts_rds", "rds_organization")
-        await ontology.sync_object_metadata(pg, "ts_rds", "rds_organization")
+        await ontology.sync_object_metadata(pg, "ts_rds", "rds_organization", catalog_session=pg)
         record = pg.objects[("ts_rds", "rds_organization")]
         self.assertEqual(record["data_type"], "")
         await registry.save_registered_ddl(pg, layer="rds", table="organization", ddl_sql="Trusted current DDL")
         self.assertEqual(pg.objects[("ts_rds", "rds_organization")]["data_type"], "organization")
         pg.columns[100].append(property_row("data_type", ordinal_position=2, default_expression="current_user", is_primary_key=False, primary_key_position=None))
-        await ontology.sync_object_metadata(pg, "ts_rds", "rds_organization")
+        await ontology.sync_object_metadata(pg, "ts_rds", "rds_organization", catalog_session=pg)
         self.assertEqual(pg.objects[("ts_rds", "rds_organization")]["data_type_source"], "not_configured")
 
     async def test_history_keeps_independent_identity_and_uses_real_history_properties(self):
@@ -311,13 +328,13 @@ class OntologyMetadataTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_catalog_only_record_accepts_first_managed_ddl_without_review(self):
         pg = MetadataPg("ts_custom", "custom_items")
-        await ontology.sync_object_metadata(pg, "ts_custom", "custom_items")
+        await ontology.sync_object_metadata(pg, "ts_custom", "custom_items", catalog_session=pg)
         result = await registry.save_registered_ddl(pg, layer="custom", table="items", ddl_sql="DDL", allow_update=False)
         self.assertEqual((len(pg.objects), result["version"], result["changed"]), (1, 1, True))
 
     async def test_reads_never_bootstrap_or_return_catalog_only_and_inactive_rows(self):
         pg = MetadataPg("ts_custom", "custom_items")
-        await ontology.sync_object_metadata(pg, "ts_custom", "custom_items")
+        await ontology.sync_object_metadata(pg, "ts_custom", "custom_items", catalog_session=pg)
         self.assertIsNone(await registry.get_registered_ddl(pg, "custom", "items"))
         self.assertIsNone(await registry.get_registered_ddl_record(pg, "custom", "items"))
         self.assertEqual(await registry.list_registered_ddl_records(pg), [])

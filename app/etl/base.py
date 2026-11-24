@@ -232,7 +232,7 @@ class ETLBase:
             await self._pg.init_schema([ddl_record["ddl_sql"]])
         schema_name, table_name = self._table_fqn(table, table_role).split(".")
         async with self._pg.session() as session:
-            await sync_object_metadata(session, schema_name, table_name)
+            await sync_object_metadata(session, schema_name, table_name, catalog_session=session)
         if table_role == "current" and settings.etl_output_mode == "debezium":
             await self._ensure_cdc_identity(self._table_fqn(table, table_role))
         logger.info(

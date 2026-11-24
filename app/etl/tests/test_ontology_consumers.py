@@ -134,8 +134,9 @@ class OntologyConsumerTests(unittest.IsolatedAsyncioTestCase):
     async def test_new_physical_table_is_synchronized_before_cdc_or_partition_use(self):
         instance = worker()
         instance._pg.fetch_one.return_value = {"relation": None}
-        async def sync(session, schema, table):
+        async def sync(session, schema, table, *, catalog_session):
             self.assertIs(session, instance._pg)
+            self.assertIs(catalog_session, instance._pg)
             self.assertEqual((schema, table), ("ts_ods", "ods_fixture"))
             instance._pg.events.append("metadata")
         with patch.object(base, "get_registered_ddl_record", new_callable=AsyncMock, return_value=RECORD), \
