@@ -23,7 +23,7 @@ import './data-connections.css';
 type Props = { onCancel?: () => void; onChanged?: () => void };
 type Draft = { name: string; engine: DataConnectorEngine; config: Omit<DataSourceConfig, 'port'> & { port: string }; secret: string };
 type Confirmation = { title: string; detail: string; label: string; action: () => Promise<boolean> };
-const categories = [{ key: 'all', label: 'All connectors' }, { key: 'relational', label: 'Relational databases' }, { key: 'non_relational', label: 'Non-relational databases' }, { key: 'vector', label: 'Vector databases' }, { key: 'object_storage', label: 'Object storage' }];
+const categories = [{ key: 'all', label: 'All connectors' }, { key: 'relational', label: 'Relational databases' }, { key: 'document', label: 'Document databases' }, { key: 'key_value', label: 'Key-value databases' }, { key: 'search', label: 'Search engines' }, { key: 'vector', label: 'Vector databases' }, { key: 'object_storage', label: 'Object storage' }];
 const providerNames: Record<DataSourceProvider, string> = {
   self_hosted: 'Self-hosted', aws: 'Amazon Web Services', azure: 'Microsoft Azure', gcp: 'Google Cloud',
   aliyun: 'Alibaba Cloud', tencent: 'Tencent Cloud', huawei: 'Huawei Cloud', oracle_cloud: 'Oracle Cloud', other: 'Other cloud provider',

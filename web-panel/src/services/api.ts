@@ -838,7 +838,7 @@ export interface EtlConnection { id: string; name: string; database: string; sch
 export type DataConnectorEngine = 'postgresql' | 'mysql' | 'oracle' | 'dameng' | 'mongodb' | 'elasticsearch' | 'milvus' | 's3' | 'redis' | 'clickhouse';
 export type DataSourceProvider = 'self_hosted' | 'aws' | 'azure' | 'gcp' | 'aliyun' | 'tencent' | 'huawei' | 'oracle_cloud' | 'other';
 export interface DataConnectorType {
-  engine: DataConnectorEngine; name: string; category: 'relational' | 'non_relational' | 'vector' | 'object_storage';
+  engine: DataConnectorEngine; name: string; category: 'relational' | 'document' | 'key_value' | 'search' | 'vector' | 'object_storage';
   port: number; description: string; driverAvailable: boolean; prerequisite: string; catalogAvailable: boolean;
 }
 export interface DataSourceConfig {

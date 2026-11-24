@@ -59,7 +59,7 @@ class DataConnectionContracts(unittest.TestCase):
     def test_mongodb_is_a_document_connector_without_catalog_or_sync(self):
         with patch.object(sources, "_driver") as driver:
             item = next(item for item in sources.connector_types() if item["engine"] == "mongodb")
-        self.assertEqual((item["category"], item["port"]), ("non_relational", 27017))
+        self.assertEqual((item["category"], item["port"]), ("document", 27017))
         self.assertTrue(item["driverAvailable"])
         self.assertFalse(item["catalogAvailable"])
         driver.assert_any_call("mongodb")

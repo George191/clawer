@@ -23,7 +23,7 @@
   background: var(--ontology-panel); color: var(--ontology-text); font: inherit;
 }
 .ontology-connectors__provider { display: flex; align-items: center; gap: 7px; min-width: 0; }
-.ontology-connectors__provider > svg { flex: none; }
+.ontology-connectors__provider > svg { flex: none; box-sizing: border-box; width: 20px; height: 20px; padding: 3px; border-radius: 4px; background: #fff; color: #232f3e; }
 .ontology-connectors__provider > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .ontology-connections-workspace {
@@ -219,20 +219,17 @@
 .ontology-connectors__mark {
   display: inline-flex; box-sizing: border-box; flex: 0 0 29px; align-items: center; justify-content: center; width: 29px; height: 29px;
   white-space: nowrap; overflow-wrap: normal; line-height: 1;
-  border: 1px solid var(--ontology-border); border-radius: 4px; background: var(--ontology-bg); color: #69a7da;
+  border: 1px solid #e5e7eb; border-radius: 4px; background: #fff; color: #336791;
 }
-.ontology-connectors__mark svg { width: 20px; height: 20px; }
+.ontology-connectors__mark svg { width: 17px; height: 17px; }
 .ontology-connectors__mark.is-milvus { color: #50bbce; }
-.ontology-connectors__mark:is(.is-mysql, .is-mongodb) { color: #fff; border-color: transparent; }
-.ontology-connectors__mark.is-mysql { background: #40d649; }
-.ontology-connectors__mark.is-mongodb { background: #ba5001; }
+.ontology-connectors__mark.is-mysql { color: #29a83c; }
+.ontology-connectors__mark.is-mongodb { color: #47a248; }
 .ontology-connectors__mark.is-dameng { color: #e85d5d; }
-.ontology-connectors__mark.is-redis { color: #fff; background: #ff787b; border-color: transparent; }
-.ontology-connectors__mark.is-clickhouse { color: #e4a84c; }
-.ontology-connectors__mark.is-s3 { background: #fff; border-color: transparent; }
-.ontology-connectors__mark.is-postgresql { background: #4085ff; color: #fff; border-color: transparent; }
-.ontology-connectors__mark.is-oracle { background: #f80032; color: #fff; border-color: transparent; }
-.ontology-connectors__oracle { width: 19px; height: 11px; border: 2px solid currentColor; border-radius: 12px; }
+.ontology-connectors__mark.is-redis { color: #ff787b; }
+.ontology-connectors__mark.is-clickhouse { color: #161616; }
+.ontology-connectors__mark.is-oracle { color: #f80032; }
+.ontology-connectors__oracle { width: 16px; height: 9px; border: 2px solid currentColor; border-radius: 12px; }
 .ontology-connectors__scope {
   display: flex; gap: 7px; align-items: flex-start; margin: 14px 0 0; padding-top: 12px;
   border-top: 1px solid var(--ontology-border); color: var(--ontology-muted); font-size: 11px;

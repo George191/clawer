@@ -9,8 +9,8 @@ const nodes = tree => tree && typeof tree === 'object' ? [tree, ...[tree.props?.
 const text = value => Array.isArray(value) ? value.map(text).join('') : value?.props ? text(value.props.children) : value == null || value === false ? '' : String(value);
 const types = [
   ['mysql', 'MySQL', 3306, 'relational'], ['postgresql', 'PostgreSQL', 5432, 'relational'],
-  ['s3', 'S3-compatible storage', 443, 'object_storage'], ['redis', 'Redis', 6379, 'non_relational'],
-  ['clickhouse', 'ClickHouse', 8443, 'relational'], ['mongodb', 'MongoDB', 27017, 'non_relational'],
+  ['s3', 'S3-compatible storage', 443, 'object_storage'], ['redis', 'Redis', 6379, 'key_value'],
+  ['clickhouse', 'ClickHouse', 8443, 'relational'], ['mongodb', 'MongoDB', 27017, 'document'],
 ].map(([engine, name, port, category]) => ({ engine, name, port, category, driverAvailable: true, catalogAvailable: false }));
 const source = (engine = 'mysql', patch = {}) => ({ id: 'source-a', name: 'Synthetic source', engine,
   config: { host: 'db.synthetic.test', port: types.find(type => type.engine === engine).port, database: 'analytics', username: 'reader', auth: 'password', tls: true,
@@ -249,7 +249,7 @@ test('editing an existing database shows self-hosted and changing providers requ
 });
 
 test('MongoDB requires a target database and tests and saves its own authentication database', async () => {
-  const ui = await mount(); ui.choose('mongodb', 'non_relational');
+  const ui = await mount(); ui.choose('mongodb', 'document');
   assert.equal(ui.field('Port').props.value, '27017');
   assert.equal(ui.field('Authentication database').props.value, 'admin');
   ui.valid(); ui.fill('Database', '');

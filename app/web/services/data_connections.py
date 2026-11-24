@@ -42,11 +42,11 @@ CONNECTORS = (
     {"engine": "mysql", "name": "MySQL", "category": "relational", "port": 3306, "driver": "pymysql", "description": "Connect a MySQL database."},
     {"engine": "oracle", "name": "Oracle", "category": "relational", "port": 1521, "driver": "oracledb", "description": "Oracle Database 12.1 or later, using Thin mode."},
     {"engine": "dameng", "name": "Dameng", "category": "relational", "port": 5236, "driver": "dmPython", "description": "Requires the vendor dmPython driver and matching DPI libraries."},
-    {"engine": "mongodb", "name": "MongoDB", "category": "non_relational", "port": 27017, "driver": "pymongo", "description": "Connect a MongoDB document database."},
-    {"engine": "elasticsearch", "name": "Elasticsearch", "category": "non_relational", "port": 9200, "driver": "httpx", "description": "Connect a search cluster using its REST API."},
+    {"engine": "mongodb", "name": "MongoDB", "category": "document", "port": 27017, "driver": "pymongo", "description": "Connect a MongoDB document database."},
+    {"engine": "elasticsearch", "name": "Elasticsearch", "category": "search", "port": 9200, "driver": "httpx", "description": "Connect a search cluster using its REST API."},
     {"engine": "milvus", "name": "Milvus", "category": "vector", "port": 19530, "driver": "pymilvus", "description": "Connect a Milvus vector database."},
     {"engine": "s3", "name": "S3-compatible storage", "category": "object_storage", "port": 443, "driver": "boto3", "description": "Connect a bucket through an S3-compatible service endpoint."},
-    {"engine": "redis", "name": "Redis", "category": "non_relational", "port": 6379, "driver": "redis.asyncio", "description": "Connect a Redis database using its RESP endpoint."},
+    {"engine": "redis", "name": "Redis", "category": "key_value", "port": 6379, "driver": "redis.asyncio", "description": "Connect a Redis database using its RESP endpoint."},
     {"engine": "clickhouse", "name": "ClickHouse", "category": "relational", "port": 8443, "driver": "httpx", "description": "Connect a ClickHouse database through its HTTP interface."},
 )
 _PUBLIC_COLUMNS = "id, name, engine, config, created_by, created_at, updated_at, tested_at"
