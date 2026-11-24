@@ -19,7 +19,6 @@ import {
   ControlOutlined,
   DatabaseOutlined,
   DeploymentUnitOutlined,
-  DownOutlined,
   ExperimentOutlined,
   FileSearchOutlined,
   FileTextOutlined,
@@ -36,7 +35,7 @@ import {
   ScheduleOutlined,
   SearchOutlined,
   SettingOutlined,
-  ThunderboltOutlined,
+  UserOutlined,
 } from '@/components/ui/icons';
 import { Link, matchPath, useLocation, useNavigate } from 'react-router-dom';
 import { useThemeStore } from '@/stores/settings';
@@ -289,7 +288,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const palette = {
     appBg: isDark ? '#171A22' : '#F6F8FB',
     surface: isDark ? '#22262F' : '#FFFFFF',
-    header: isDark ? '#111820' : '#E2E8F0',
     sidebar: isDark ? '#20242C' : '#FFFFFF',
     border: isDark ? 'rgba(255, 255, 255, 0.08)' : '#E2E8F0',
     borderSoft: isDark ? 'rgba(255, 255, 255, 0.05)' : '#EEF2F7',
@@ -348,6 +346,9 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     || currentUserContext?.user.email.split('@')[0]
     || 'Account';
   const currentUserEmail = currentUserContext?.user.email ?? '';
+  const currentUserRole = currentUserContext
+    ? currentUserContext.user.is_superuser ? 'Super administrator' : currentUserContext.user.is_tenant_admin ? 'Administrator' : 'Member'
+    : '';
 
   const collapsed = isMobile ? manualCollapsed : !pinned && manualCollapsed;
   const projectTextVisible = !collapsed && projectTextReady;
@@ -654,114 +655,89 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   return (
     <div className={isFlowSurface ? 'flow-platform-shell' : undefined} style={{ height: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', background: palette.appBg, ...(isFlowSurface ? { '--flow-header-height': `${HEADER_H}px` } : {}) } as React.CSSProperties}>
       <Header
+        className="platform-header"
         style={{
           position: 'fixed',
           top: 0,
           left: 0,
           right: 0,
           height: HEADER_H,
-          padding: '0 18px',
-          background: palette.header,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: isFlowSurface && isMobile ? 8 : undefined,
-          lineHeight: `${HEADER_H}px`,
-          borderBottom: `1px solid ${palette.border}`,
           zIndex: 101,
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
-          {isMobile && !hideSidebar && (
-            <Button
-              type="text"
-              aria-label="Open project sidebar"
-              icon={<MenuOutlined />}
-              onClick={() => setManualCollapsed(false)}
-              style={{ width: 34, height: 34, color: palette.secondary }}
-            />
-          )}
+        {isMobile && !hideSidebar && (
           <button
             type="button"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              flexShrink: isFlowSurface && isMobile ? 1 : 0,
-              minWidth: 0,
-              cursor: 'pointer',
-              border: 'none',
-              padding: 0,
-              background: 'transparent',
-            }}
-            onClick={() => navigate('/')}
+            className="platform-header-icon"
+            aria-label="Open project sidebar"
+            onClick={() => setManualCollapsed(false)}
+          ><MenuOutlined /></button>
+        )}
+        <button
+          type="button"
+          className="platform-header-brand"
+          aria-label="Astral Helio home"
+          onClick={() => navigate('/')}
+        >
+          <picture>
+            <source media="(max-width: 767px)" srcSet="/astral-helio-mark.svg" />
+            <img src="/astral-helio-logo-white.svg" alt="Astral Helio" />
+          </picture>
+        </button>
+        <nav className="platform-header-nav" aria-label="Main navigation">
+          <Dropdown
+            trigger={['click']}
+            open={projectMenuOpen}
+            onOpenChange={setProjectMenuOpen}
+            menu={{ items: [] }}
+            popupRender={renderProjectPanel}
           >
-            <img
-              src={isDark ? '/astral-helio-logo-white.svg' : '/astral-helio-logo.svg'}
-              alt="Astral Helio"
-              style={{ height: isFlowSurface && isMobile ? 'auto' : 28, width: 'auto', maxHeight: 28, maxWidth: isFlowSurface && isMobile ? '100%' : undefined }}
-            />
+            <button
+              type="button"
+              className="platform-header-menu"
+              aria-label={`Switch project domain: ${activeProject.shortLabel}`}
+            >
+              Projects
+            </button>
+          </Dropdown>
+          <button
+            type="button"
+            aria-label="Automation"
+            aria-current={isAutomationSurface ? 'page' : undefined}
+            onClick={() => navigate('/automation/workflows')}
+            className="platform-header-menu"
+          >
+            Automation
           </button>
-          {!isMobile && (
-            <div className="header-context-group" style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0 }}>
-              <Dropdown
-                trigger={['click']}
-                open={projectMenuOpen}
-                onOpenChange={setProjectMenuOpen}
-                menu={{ items: [] }}
-                popupRender={renderProjectPanel}
-              >
-                <Button
-                  type="text"
-                  size="small"
-                  className="header-context-button is-enabled project-domain-switch"
-                  aria-label={`Switch project domain: ${activeProject.shortLabel}`}
-                  style={{ color: palette.secondary, background: 'transparent', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', lineHeight: 1, gap: 10 }}
-                >
-                  <span className="header-context-label" style={{ color: palette.muted }}>DOMAIN:</span>
-                  <span style={{ width: 20, height: 20, borderRadius: 5, background: `linear-gradient(135deg, ${activeProject.accent}, #1D4ED8)`, color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 800 }}>{activeProject.shortLabel.slice(0, 1)}</span>
-                  <span className="header-context-value">{activeProject.shortLabel}</span>
-                  <DownOutlined style={{ color: palette.secondary, fontSize: 9 }} />
-                </Button>
-              </Dropdown>
-            </div>
-          )}
-        </div>
+          <button
+            type="button"
+            aria-label="Access"
+            aria-current={isPlatformManagementSurface ? 'page' : undefined}
+            onClick={() => navigate('/organization')}
+            className="platform-header-menu"
+          >
+            Access
+          </button>
+          <button
+            type="button"
+            aria-label="Settings"
+            aria-current={isSystemSettingsSurface ? 'page' : undefined}
+            onClick={() => navigate('/settings')}
+            className="platform-header-menu"
+          >
+            Settings
+          </button>
+          <button
+            type="button"
+            className="platform-header-menu"
+            aria-current={location.pathname === '/faq' ? 'page' : undefined}
+            onClick={() => navigate('/faq')}
+          >Help</button>
+        </nav>
 
-        <div style={{ height: '100%', display: 'flex', alignItems: 'center', gap: 4 }}>
-          <div style={{ height: '100%', display: 'flex', alignItems: 'center', gap: 2, marginRight: 6, paddingRight: 8, borderRight: `1px solid ${palette.border}` }}>
-            <Button
-              type="text"
-              aria-label="Automation"
-              title="Automation"
-              onClick={() => navigate('/automation/workflows')}
-              className="header-shortcut-button"
-              style={{ color: isAutomationSurface ? palette.text : palette.secondary, background: isAutomationSurface ? palette.hover : 'transparent', border: 'none', display: 'inline-flex', alignItems: 'center', gap: 5, lineHeight: 1 }}
-            >
-              <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 16, lineHeight: 0 }}><ThunderboltOutlined style={{ display: 'block', fontSize: 14 }} /></span>
-              <span className="header-shortcut-label" style={{ display: 'inline-flex', alignItems: 'center', height: 16, lineHeight: 1 }}>Automation</span>
-            </Button>
-            <Button
-              type="text"
-              aria-label="Access"
-              title="Access"
-              onClick={() => navigate('/organization')}
-              className="header-shortcut-button"
-              style={{ color: isPlatformManagementSurface ? palette.text : palette.secondary, background: isPlatformManagementSurface ? palette.hover : 'transparent', border: 'none', display: 'inline-flex', alignItems: 'center', gap: 5, lineHeight: 1 }}
-            >
-              <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 16, lineHeight: 0 }}><SafetyCertificateOutlined style={{ display: 'block', fontSize: 14 }} /></span>
-              <span className="header-shortcut-label" style={{ display: 'inline-flex', alignItems: 'center', height: 16, lineHeight: 1 }}>Access</span>
-            </Button>
-            <Button
-              type="text"
-              aria-label="Settings"
-              title="Settings"
-              onClick={() => navigate('/settings')}
-              className="header-shortcut-button"
-              style={{ color: isSystemSettingsSurface ? palette.text : palette.secondary, background: isSystemSettingsSurface ? palette.hover : 'transparent', border: 'none', display: 'inline-flex', alignItems: 'center', gap: 5, lineHeight: 1 }}
-            >
-              <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 16, lineHeight: 0 }}><SettingOutlined style={{ display: 'block', fontSize: 14 }} /></span>
-              <span className="header-shortcut-label" style={{ display: 'inline-flex', alignItems: 'center', height: 16, lineHeight: 1 }}>Settings</span>
-            </Button>
+        <div className="platform-header-status">
+          <div className="platform-header-project">
+            <b>PROJECT:</b><span>{activeProject.shortLabel}</span>
           </div>
           <Dropdown
             trigger={['click']}
@@ -771,36 +747,21 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             menu={{ items: [] }}
             popupRender={renderAccountPanel}
           >
-            <Button
-              type="text"
+            <button
+              type="button"
+              className="platform-header-account"
               aria-label="Open account menu"
-              style={{
-                height: 34,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '0 6px',
-                border: 'none',
-              }}
             >
-              <div
-                style={{
-                  width: 25,
-                  height: 25,
-                  borderRadius: 6,
-                  background: 'linear-gradient(135deg, #018BFF, #0060CC)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: '#fff',
-                  fontSize: 12,
-                  fontWeight: 700,
-                }}
-              >
-                BG
-              </div>
-            </Button>
+              <UserOutlined />
+              <span className="platform-header-user">
+                <strong>{currentUserName}</strong>
+                {currentUserRole && <small>{currentUserRole}</small>}
+              </span>
+            </button>
           </Dropdown>
+          <button type="button" className="platform-header-icon" aria-label="Log out" title="Log out" onClick={logout}>
+            <LogoutOutlined />
+          </button>
         </div>
       </Header>
 

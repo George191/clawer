@@ -97,74 +97,94 @@ body {
   color: #e4e7eb !important;
 }
 
-.header-context-button:hover,
-.header-context-button:focus,
-.header-context-button:active,
-.header-context-button.ui-btn-clicked {
-  background: transparent !important;
-}
-
-.project-domain-switch:hover,
-.project-domain-switch:focus,
-.project-domain-switch:active,
-.project-domain-switch.ui-btn-clicked {
-  background: transparent !important;
-}
-.project-domain-switch:hover,
-.project-domain-switch:focus,
-.project-domain-switch:active,
-.project-domain-switch.ui-btn-clicked {
-  background: transparent !important;
-  box-shadow: none !important;
-}
-.ui-btn-text.project-domain-switch:not(.ui-btn-danger):hover,
-.ui-btn-text.project-domain-switch:not(.ui-btn-danger):focus,
-.ui-btn-text.project-domain-switch:not(.ui-btn-danger):active {
-  background: transparent !important;
-  color: inherit !important;
-  box-shadow: none !important;
-}
-
-/* Header context selectors share one baseline and clearer label/value spacing. */
-.header-context-button {
-  height: 34px;
-  padding-inline: 8px !important;
-  gap: 10px !important;
-  align-items: center !important;
-  line-height: 1 !important;
-  vertical-align: middle;
-}
-.header-context-label {
-  display: inline-flex;
+/* Navigation chrome follows the situation project's compact top bar. */
+.platform-header {
+  display: flex;
   align-items: center;
-  margin-right: 2px;
-  font-size: 10px;
-  line-height: 20px;
-  letter-spacing: .04em;
+  gap: 20px;
+  padding: 0 30px;
+  color: #fff;
+  background: rgba(39, 45, 54, .9);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(255, 255, 255, .08);
+  line-height: 1.5;
   white-space: nowrap;
 }
-.header-context-value {
-  display: block;
-  max-width: 160px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  line-height: 20px;
-  white-space: nowrap;
-  font-size: 12px;
+.platform-header button {
+  appearance: none;
+  border: 0;
+  border-radius: 5px;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
 }
-.header-shortcut-button > span:last-child { font-size: 12px; }
-@media (min-width: 768px) and (max-width: 1100px) {
-  .header-context-group { gap: 8px !important; }
+.platform-header button:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: -2px;
 }
-@media (max-width: 1100px) {
-  .header-shortcut-label { display: none !important; }
-}
-@media (min-width: 768px) and (max-width: 900px) {
-  .project-domain-switch .header-context-label { display: none; }
-}
-.header-context-group .ui-dropdown-trigger {
+.platform-header-brand,
+.platform-header-brand picture,
+.platform-header-status,
+.platform-header .ui-dropdown-trigger {
   display: inline-flex;
   align-items: center;
+  flex-shrink: 0;
+}
+.platform-header-brand img { display: block; height: 30px; width: auto; }
+.platform-header-nav {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, .3) transparent;
+}
+.platform-header .platform-header-menu {
+  flex-shrink: 0;
+  height: 30px;
+  padding: 0 20px;
+  font-size: 14px;
+  font-weight: 700;
+}
+.platform-header-menu:hover,
+.platform-header-menu[aria-expanded='true'],
+.platform-header-menu[aria-current='page'],
+.platform-header-account:hover,
+.platform-header-account[aria-expanded='true'],
+.platform-header-icon:hover { background: rgba(188, 188, 188, .25); }
+.platform-header-status { gap: 20px; }
+.platform-header-project { display: flex; align-items: center; gap: 20px; font-size: 14px; }
+.platform-header .platform-header-account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 6px;
+}
+.platform-header-account > .ui-icon,
+.platform-header-icon > .ui-icon { font-size: 24px; }
+.platform-header-user { display: flex; flex-direction: column; max-width: 160px; text-align: left; font-size: 12px; }
+.platform-header-user strong,
+.platform-header-user small { overflow: hidden; text-overflow: ellipsis; }
+.platform-header-user small { color: rgb(242, 212, 121); font-size: inherit; }
+.platform-header .platform-header-icon { display: grid; place-items: center; flex-shrink: 0; width: 30px; height: 30px; }
+@media (max-width: 1200px) {
+  .platform-header { gap: 12px; padding-inline: 16px; }
+  .platform-header .platform-header-menu { padding-inline: 12px; }
+  .platform-header-status { gap: 12px; }
+  .platform-header-project { gap: 10px; }
+}
+@media (max-width: 1000px) {
+  .platform-header-project { display: none; }
+}
+@media (max-width: 767px) {
+  .platform-header { gap: 8px; padding-inline: 10px; }
+  .platform-header-brand img { width: 30px; height: 30px; }
+  .platform-header-user { display: none; }
+  .platform-header-status { gap: 4px; }
 }
 .glass-card {
   background: rgba(36, 40, 54, 0.8) !important;
