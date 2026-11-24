@@ -176,6 +176,24 @@ class OntologyConsumerTests(unittest.IsolatedAsyncioTestCase):
 
 
 class CdcOntologyConsumerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_worker_only_alters_tables_without_full_replica_identity(self):
+        table = "ts_ods.ods_fixture"
+        for has_full_identity in (True, False):
+            with self.subTest(has_full_identity=has_full_identity):
+                instance = object.__new__(base.ETLBase)
+                instance._pg = Pg()
+                instance._pg.fetch_one.return_value = {"has_full_identity": has_full_identity}
+                with patch.object(cdc, "ensure_table_publication", new_callable=AsyncMock) as publish:
+                    await instance._ensure_cdc_identity(table)
+                sql, params = instance._pg.fetch_one.await_args.args
+                self.assertIn("relreplident = 'f' AS has_full_identity", sql)
+                self.assertEqual(params, {"table_name": table})
+                if has_full_identity:
+                    instance._pg.execute.assert_not_awaited()
+                else:
+                    instance._pg.execute.assert_awaited_once_with(f"ALTER TABLE {table} REPLICA IDENTITY FULL")
+                publish.assert_awaited_once_with(instance._pg, table)
+
     async def test_discovery_is_limited_to_active_registered_ods_current_parents(self):
         sql = cdc._ODS_CURRENT_SQL
         self.assertIn("FROM public.ontology_objects r", sql)

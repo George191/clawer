@@ -250,10 +250,11 @@ class ETLBase:
         if not cdc_table_enabled(*table_name.split(".")):
             return
         row = await self._pg.fetch_one(
-            "SELECT relreplident FROM pg_class WHERE oid=to_regclass(:table_name)",
+            "SELECT relreplident = 'f' AS has_full_identity "
+            "FROM pg_class WHERE oid=to_regclass(:table_name)",
             {"table_name": table_name},
         )
-        if row and row["relreplident"] != "f":
+        if row and not row["has_full_identity"]:
             await self._pg.execute(f"ALTER TABLE {table_name} REPLICA IDENTITY FULL")
         await ensure_table_publication(self._pg, table_name)
 
