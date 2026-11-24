@@ -839,7 +839,8 @@ export type DataConnectorEngine = 'postgresql' | 'mysql' | 'oracle' | 'dameng' |
 export type DataSourceProvider = 'self_hosted' | 'aws' | 'azure' | 'gcp' | 'aliyun' | 'tencent' | 'huawei' | 'oracle_cloud' | 'other';
 export interface DataConnectorType {
   engine: DataConnectorEngine; name: string; category: 'relational' | 'document' | 'key_value' | 'search' | 'vector' | 'object_storage';
-  port: number; description: string; driverAvailable: boolean; prerequisite: string; catalogAvailable: boolean;
+  port: number; description: string; driverAvailable: boolean; prerequisite: string; catalogAvailable: boolean; cdcSupported: boolean;
+  captureKind?: 'cdc' | 'dmdrs' | 'object_events' | null;
 }
 export interface DataSourceConfig {
   host: string; port: number; database: string; username: string;
@@ -859,6 +860,49 @@ export interface DataSource extends Omit<DataSourcePayload, 'credentials' | 'exp
   capabilities?: Partial<Record<DataSourceCapabilityKey, DataSourceCapability>>;
 }
 export interface DataSourceTest { ok: boolean; message: string; latencyMs: number; testedAt?: string; }
+export interface SourceCdcSelection {
+  tables: string[]; snapshot: 'initial' | 'no_data'; publication?: string | null; serverId?: number | null;
+  oracleDatabase?: string | null; oraclePdb?: string | null;
+  milvus?: { kafkaBrokers: string; etcdEndpoints: string[]; etcdRoot: string; pchannels: string[] } | null;
+}
+export interface SourceCdcStatus {
+  connector: string; pluginAvailable: boolean; prerequisite: string; state: string;
+  tasks: { id: number; state: string; connector?: string }[]; selection: SourceCdcSelection | null;
+  topicPrefix: string | null; sourceChanged?: boolean; slot?: string | null;
+}
+const sourceCdcPath = (id: string) => `/etl/data-connections/${encodeURIComponent(id)}/cdc`;
+export const fetchSourceCdc = (id: string, signal?: AbortSignal): Promise<SourceCdcStatus> =>
+  client.get(sourceCdcPath(id), { signal }).then(r => unwrap<SourceCdcStatus>(r.data));
+export const createSourceCdc = (id: string, selection: SourceCdcSelection, expectedUpdatedAt: string): Promise<unknown> =>
+  client.post(sourceCdcPath(id), { ...selection, expectedUpdatedAt }).then(r => unwrap(r.data));
+export const controlSourceCdc = (id: string, action: 'pause' | 'resume' | 'restart' | 'remove', expectedUpdatedAt: string): Promise<unknown> =>
+  client.post(`${sourceCdcPath(id)}/control`, { action, expectedUpdatedAt }).then(r => unwrap(r.data));
+export interface SourceObjectEventStatus {
+  kind: 'object_events'; state: 'configured' | 'unconfigured'; configurationHash: string; deliveryVerified: false;
+  notification: { Id: string; QueueArn?: string; Events: string[]; Filter?: { Key: { FilterRules: { Name: string; Value: string }[] } } } | null;
+}
+export interface SourceObjectEventPayload {
+  expectedUpdatedAt: string; expectedConfigurationHash: string; targetArn: string; prefix: string; suffix: string;
+  events: ('s3:ObjectCreated:*' | 's3:ObjectRemoved:*')[];
+}
+const objectEventsPath = (id: string) => `/etl/data-connections/${encodeURIComponent(id)}/object-events`;
+export const fetchSourceObjectEvents = (id: string, signal?: AbortSignal): Promise<SourceObjectEventStatus> =>
+  client.get(objectEventsPath(id), { signal }).then(r => unwrap<SourceObjectEventStatus>(r.data));
+export const createSourceObjectEvents = (id: string, payload: SourceObjectEventPayload): Promise<unknown> =>
+  client.post(objectEventsPath(id), payload).then(r => unwrap(r.data));
+export const removeSourceObjectEvents = (id: string, expectedUpdatedAt: string, expectedConfigurationHash: string): Promise<unknown> =>
+  client.post(`${objectEventsPath(id)}/remove`, { expectedUpdatedAt, expectedConfigurationHash }).then(r => unwrap(r.data));
+export interface SourceDamengCdcStatus {
+  kind: 'dmdrs'; state: 'bound' | 'unconfigured'; schemaReady: boolean; deliveryVerified: false; captureHealth: 'externally_managed';
+  binding: { topic: string; tables: string[]; sourceChanged: boolean } | null;
+}
+const dmdrsPath = (id: string) => `/etl/data-connections/${encodeURIComponent(id)}/dmdrs`;
+export const fetchSourceDamengCdc = (id: string, signal?: AbortSignal): Promise<SourceDamengCdcStatus> =>
+  client.get(dmdrsPath(id), { signal }).then(r => unwrap<SourceDamengCdcStatus>(r.data));
+export const bindSourceDamengCdc = (id: string, expectedUpdatedAt: string, topic: string, tables: string[]): Promise<unknown> =>
+  client.post(dmdrsPath(id), { expectedUpdatedAt, topic, tables }).then(r => unwrap(r.data));
+export const removeSourceDamengCdc = (id: string, expectedUpdatedAt: string): Promise<unknown> =>
+  client.post(`${dmdrsPath(id)}/remove`, { expectedUpdatedAt }).then(r => unwrap(r.data));
 export type DataSourceRelation = { name: string; kind: 'table' | 'partitioned_table' | 'view' | 'materialized_view' | 'foreign_table' };
 export type DataSourceCatalog = { schemas: string[]; schema: string | null; relations: DataSourceRelation[]; hasMore: boolean; schemaHasMore: boolean };
 export type DataSourceColumns = { referencesAvailable?: true; schema: string; table: string; columns: { name: string; type: string; nullable: boolean; primaryKey: boolean; position: number }[]; hasMore: boolean };

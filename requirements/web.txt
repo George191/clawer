@@ -46,6 +46,7 @@ sqlalchemy[asyncio]>=2.0
 asyncpg>=0.30
 PyMySQL[rsa]>=1.1,<2
 oracledb>=2.5,<4
+dmPython==2.6.1
 
 # Local AI generation used by app.web.agents.
 transformers>=4.40,<5

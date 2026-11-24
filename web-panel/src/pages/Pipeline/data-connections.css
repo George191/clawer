@@ -283,3 +283,9 @@
 .ontology-source-catalog__references ol { padding-inline-start: 16px; overflow-wrap: anywhere; }
 .ontology-source-catalog__references ul > li + li { margin-top: 8px; }
 .ontology-source-catalog__references button[aria-pressed="true"] { font-weight: 700; }
+.ontology-source-cdc { margin-block: 20px; padding: 20px; border: 1px solid var(--ontology-border); border-radius: 8px; }
+.ontology-source-cdc header, .ontology-source-cdc__actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.ontology-source-cdc header { justify-content: space-between; }
+.ontology-source-cdc form { display: grid; gap: 12px; max-width: 640px; }
+.ontology-source-cdc label { display: grid; gap: 6px; }
+.ontology-source-cdc code { overflow-wrap: anywhere; }

@@ -52,7 +52,7 @@ async def _connect() -> ConnectState:
         raise ValueError("Expected expanded connector statuses")
     connectors = []
     for name, item in body.items():
-        if not name.startswith(f"{settings.kafka_topic}-"):
+        if not name.startswith((f"{settings.kafka_topic}-", "spider-source-")):
             continue
         status = item["status"]
         connectors.append(ConnectorState(
@@ -62,6 +62,7 @@ async def _connect() -> ConnectState:
     if not connectors:
         return ConnectState(state="not_ready", reason="Kafka Connect is reachable, but no project connectors were found")
     expected = set()
+    expected.update(item.name for item in connectors if item.name.startswith("spider-source-"))
     if settings.db_url and settings.db_name:
         expected.add(f"{mongo_cdc_topic_prefix()}-{settings.db_name}")
     if settings.etl_output_mode == "debezium":

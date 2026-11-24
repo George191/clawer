@@ -138,6 +138,12 @@ from app.web.services.asset_weekly_job_quality import (
     weekly_evidence_unavailable,
 )
 from app.web.services.data_connections import connector_types, get_data_connections
+from app.web.api.models.source_cdc import (
+    DamengCdcBind, DamengCdcRemove, ObjectEventsCreate, ObjectEventsRemove, SourceCdcAction, SourceCdcCreate,
+)
+from app.web.services.source_cdc import SourceCdc
+from app.web.services.source_dameng_cdc import SourceDamengCdc
+from app.web.services.source_object_events import SourceObjectEvents
 from app.web.services.batch_lineage import available_batch_lineage_asset, list_batch_lineage, read_batch_lineage
 from app.web.services.batch_source_identity import read_source_identity, verify_source_identity
 from app.web.services.batch_incremental_preflight import preflight_incremental_batch
@@ -1452,6 +1458,51 @@ async def run_saved_batch_sync(
 @write.get("/data-connections")
 async def data_connections() -> list[dict[str, Any]]:
     return await get_data_connections().list()
+
+
+@write.get("/data-connections/{connection_id}/cdc")
+async def source_cdc_status(connection_id: UUID) -> dict[str, Any]:
+    return await SourceCdc(get_data_connections()).describe(connection_id)
+
+
+@write.post("/data-connections/{connection_id}/cdc", status_code=202)
+async def create_source_cdc(connection_id: UUID, payload: SourceCdcCreate) -> dict[str, Any]:
+    return await SourceCdc(get_data_connections()).create(connection_id, payload)
+
+
+@write.post("/data-connections/{connection_id}/cdc/control", status_code=202)
+async def control_source_cdc(connection_id: UUID, payload: SourceCdcAction) -> dict[str, Any]:
+    return await SourceCdc(get_data_connections()).control(connection_id, payload)
+
+
+@write.get("/data-connections/{connection_id}/object-events")
+async def source_object_events(connection_id: UUID) -> dict[str, Any]:
+    return await SourceObjectEvents(get_data_connections()).describe(connection_id)
+
+
+@write.post("/data-connections/{connection_id}/object-events")
+async def configure_source_object_events(connection_id: UUID, payload: ObjectEventsCreate) -> dict[str, Any]:
+    return await SourceObjectEvents(get_data_connections()).change(connection_id, payload)
+
+
+@write.post("/data-connections/{connection_id}/object-events/remove")
+async def remove_source_object_events(connection_id: UUID, payload: ObjectEventsRemove) -> dict[str, Any]:
+    return await SourceObjectEvents(get_data_connections()).change(connection_id, payload, remove=True)
+
+
+@write.get("/data-connections/{connection_id}/dmdrs")
+async def source_dmdrs(connection_id: UUID) -> dict[str, Any]:
+    return await SourceDamengCdc(get_data_connections()).describe(connection_id)
+
+
+@write.post("/data-connections/{connection_id}/dmdrs")
+async def bind_source_dmdrs(connection_id: UUID, payload: DamengCdcBind) -> dict[str, Any]:
+    return await SourceDamengCdc(get_data_connections()).bind(connection_id, payload)
+
+
+@write.post("/data-connections/{connection_id}/dmdrs/remove")
+async def remove_source_dmdrs(connection_id: UUID, payload: DamengCdcRemove) -> dict[str, Any]:
+    return await SourceDamengCdc(get_data_connections()).remove(connection_id, payload)
 
 
 def _data_connection_draft_openapi() -> dict[str, Any]:

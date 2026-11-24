@@ -53,7 +53,7 @@ COPY requirements/base.txt requirements/web.txt ./requirements/
 RUN --mount=type=cache,target=/data/pip-cache,sharing=locked \
     --mount=type=cache,id=spider-web-wheelhouse,target=/data/wheel-cache,sharing=locked \
     if ! pip wheel --no-index --find-links=/data/wheel-cache --wheel-dir=/data/wheels -r requirements/web.txt; then \
-        pip wheel --retries 10 --cache-dir=/data/pip-cache --find-links=/data/wheel-cache --wheel-dir=/data/wheel-cache -r requirements/web.txt \
+        pip wheel --only-binary=dmPython --retries 10 --cache-dir=/data/pip-cache --find-links=/data/wheel-cache --wheel-dir=/data/wheel-cache -r requirements/web.txt \
         && rm -f /data/wheels/*.whl \
         && pip wheel --no-index --find-links=/data/wheel-cache --wheel-dir=/data/wheels -r requirements/web.txt; \
     fi
@@ -95,7 +95,8 @@ RUN mkdir -p /data/apt-cache/archives/partial /data/apt-lists/partial \
     && rm -rf /data/apt-lists/* /data/apt-cache/archives/*.deb
 
 RUN --mount=type=bind,from=builder,source=/data/wheels,target=/wheels,readonly \
-    pip install --no-cache-dir --no-index --find-links=/wheels /wheels/*.whl
+    pip install --no-cache-dir --no-index --find-links=/wheels /wheels/*.whl \
+    && python -c "import dmPython"
 
 COPY app/ ./app/
 COPY --from=frontend /static/ ./static/

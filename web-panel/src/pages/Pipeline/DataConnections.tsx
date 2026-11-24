@@ -9,6 +9,9 @@ import ConnectorMark from './ConnectorMark';
 import HostingProviderIcon from './HostingProviderIcon';
 import SourceBatchSyncs from './SourceBatchSyncs';
 import SourceIdentity from './SourceIdentity';
+import SourceCdc from './SourceCdc';
+import SourceDamengCdc from './SourceDamengCdc';
+import SourceObjectEvents from './SourceObjectEvents';
 import SourceCatalogReferences from './SourceCatalogReferences';
 import { useSandboxIdentity } from './SandboxMarkings';
 import SavedConnectionCapabilities from './SavedConnectionCapabilities';
@@ -533,6 +536,9 @@ export default function DataConnections({ onChanged }: Props = {}) {
           onVerificationSettled={() => { metadataVerifying.current.delete(viewedSource.id); refreshCapabilities(viewedSource.id); }} disabled={blocked} />}
         {!sourcePaused && exploring && viewedSource.catalogAvailable && viewedType?.catalogAvailable && <SourceCatalog key={JSON.stringify(["catalog", sessionIdentity, viewedSource.id])} sourceId={viewedSource.id} sourceRevision={viewedSource.updatedAt} onSetUpSync={selection => setSyncSelection({ sourceId: viewedSource.id, selection })} />}
         {(sourcePaused || viewedSource.catalogAvailable && viewedType?.catalogAvailable) && <SourceBatchSyncs key={`sync:${proofKey}`} source={viewedSource} sourceProof={sourcePaused ? undefined : activeProof} selection={!sourcePaused && syncSelection?.sourceId === viewedSource.id ? syncSelection.selection : undefined} selectedSchedule={selectedSchedule} onComposerClosed={() => setSyncSelection(undefined)} />}
+        {!sourcePaused && viewedType?.cdcSupported && <SourceCdc key={`cdc:${proofKey}`} source={viewedSource} />}
+        {!sourcePaused && viewedType?.captureKind === 'dmdrs' && <SourceDamengCdc key={`dmdrs:${proofKey}`} source={viewedSource} />}
+        {!sourcePaused && viewedType?.captureKind === 'object_events' && <SourceObjectEvents key={`events:${proofKey}`} source={viewedSource} />}
         <div className="ontology-connections-detail__destructive"><Button size="small" danger icon={<DeleteOutlined />} disabled={blocked} onClick={remove}>Delete source</Button></div>
       </section> : <section className="ontology-connections-inventory" aria-label="Sources">
         <header><div><h2>Sources <span>{sources.length}</span></h2><p>Open a source to review its settings or run a read-only check.</p></div><Button size="small" icon={<ReloadOutlined />} disabled={blocked} onClick={() => setReload((value) => value + 1)}>Refresh sources</Button></header>

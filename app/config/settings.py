@@ -125,7 +125,7 @@ class AppSettings(BaseSettings):
     kafka_paused_topics: list[str] = Field(
         default_factory=list, description="临时维护时排除订阅的精确 topic 名；JSON 数组，重启消费者生效",
     )
-    cdc_connect_url: str = Field(default="", description="Kafka Connect 管理地址，留空时不进行运行状态查询")
+    cdc_connect_url: str = Field(default="", description="Kafka Connect 管理地址，用于 CDC 状态和 Data Source 持续捕获任务；留空时不可配置任务")
     pg_cdc_url: str = Field(default="", description="专用 Postgres CDC 复制账号连接串，留空复用 PG_URL")
     etl_output_mode: Literal["debezium", "direct"] = Field(
         default="debezium", description="ETL 出站由 Debezium 负责；direct 仅用于回滚",

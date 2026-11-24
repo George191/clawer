@@ -25,6 +25,7 @@ from sqlalchemy.exc import DBAPIError
 
 from app.storage.postgres_client import get_pg_client
 from app.web.api.models.batch_syncs import INCREMENTAL_TARGET, TARGET_SCHEMA as BATCH_TARGET_SCHEMA
+from app.web.services.source_cdc import CONNECTORS as CDC_CONNECTORS, require_unconfigured
 from app.web.api.models.data_connections import (
     DataConnectionPauseChange, DataConnectionPayload, SavedSourceCapabilities, SavedSourceCapability,
     SavedSourceCapabilityReason, SourceCatalog, SourceColumn, SourceColumns, SourceReference,
@@ -41,7 +42,7 @@ CONNECTORS = (
     {"engine": "postgresql", "name": "PostgreSQL", "category": "relational", "port": 5432, "driver": "asyncpg", "description": "Connect a PostgreSQL database."},
     {"engine": "mysql", "name": "MySQL", "category": "relational", "port": 3306, "driver": "pymysql", "description": "Connect a MySQL database."},
     {"engine": "oracle", "name": "Oracle", "category": "relational", "port": 1521, "driver": "oracledb", "description": "Oracle Database 12.1 or later, using Thin mode."},
-    {"engine": "dameng", "name": "Dameng", "category": "relational", "port": 5236, "driver": "dmPython", "description": "Requires the vendor dmPython driver and matching DPI libraries."},
+    {"engine": "dameng", "name": "Dameng", "category": "relational", "port": 5236, "driver": "dmPython", "description": "Connect a Dameng database using the official dmPython driver."},
     {"engine": "mongodb", "name": "MongoDB", "category": "document", "port": 27017, "driver": "pymongo", "description": "Connect a MongoDB document database."},
     {"engine": "elasticsearch", "name": "Elasticsearch", "category": "search", "port": 9200, "driver": "httpx", "description": "Connect a search cluster using its REST API."},
     {"engine": "milvus", "name": "Milvus", "category": "vector", "port": 19530, "driver": "pymilvus", "description": "Connect a Milvus vector database."},
@@ -93,6 +94,10 @@ def connector_types() -> list[dict[str, Any]]:
     result = []
     for connector in CONNECTORS:
         item = {key: value for key, value in connector.items() if key != "driver"}
+        item["cdcSupported"] = connector["engine"] in CDC_CONNECTORS
+        item["captureKind"] = ("dmdrs" if connector["engine"] == "dameng" else
+                               "object_events" if connector["engine"] == "s3" else
+                               "cdc" if connector["engine"] in CDC_CONNECTORS else None)
         try:
             _driver(connector["engine"])
             item.update(driverAvailable=True, prerequisite="", catalogAvailable=connector["engine"] == "postgresql")
@@ -465,6 +470,7 @@ class DataConnections:
                                           "message": "The saved source changed; reload it before changing its pause state"})
             if (row["paused_at"] is not None) == change.paused:
                 return _public(row, pause_available=True)
+            await require_unconfigured(connection_id, row["engine"], registry=self, row=row, session=session)
             updated = (await session.execute(text(f"""
                 UPDATE public.ontology_data_connections
                 SET paused_at=CASE WHEN :paused THEN clock_timestamp() ELSE NULL END, tested_at=NULL,
@@ -702,6 +708,7 @@ class DataConnections:
                 return await self._save_verified(session, params)
         async with self._session() as session:
             stored = await self._stored(connection_id, session=session, lock=" FOR UPDATE")
+            await require_unconfigured(connection_id, stored["engine"], registry=self, row=stored, session=session)
             self._require_draft_revision(payload, stored, expected_updated_at)
             params = await self._prepare_save(payload, user_id, uuid.UUID(connection_id), stored)
             return await self._save_verified(session, params)
@@ -740,6 +747,11 @@ class DataConnections:
 
     async def delete(self, connection_id):
         async with self._session() as session:
+            stored = (await session.execute(text("SELECT engine FROM public.ontology_data_connections WHERE id=:id FOR UPDATE"),
+                                            {"id": uuid.UUID(connection_id)})).mappings().first()
+            if stored is None:
+                raise HTTPException(404, "Data source not found")
+            await require_unconfigured(connection_id, stored["engine"], registry=self, session=session)
             row = (await session.execute(text("DELETE FROM public.ontology_data_connections WHERE id=:id RETURNING id"), {"id": uuid.UUID(connection_id)})).first()
             if row is None:
                 raise HTTPException(404, "Data source not found")
