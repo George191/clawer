@@ -1,4 +1,4 @@
-"""Exercise desktop login with normal Chromium, a stalled scene, and WebGL disabled."""
+"""Verify fullscreen login loading, scene readiness, and compact layout."""
 
 import argparse
 from functools import partial
@@ -21,7 +21,7 @@ def verify(base, chromium):
     expect.set_options(timeout=10_000)
     results = {}
     with sync_playwright() as playwright:
-        for condition in ("stalled scene", "normal desktop", "no WebGL"):
+        for condition in ("stalled scene", "reduced motion", "normal desktop", "no WebGL", "compact layout"):
             flags = ["--disable-dev-shm-usage", "--no-proxy-server"]
             if condition == "no WebGL":
                 flags.append("--disable-webgl")
@@ -29,11 +29,12 @@ def verify(base, chromium):
             paused = []
             try:
                 page = browser.new_page(
-                    viewport={"width": 1280, "height": 800}, reduced_motion="no-preference"
+                    viewport={"width": 390, "height": 844} if condition == "compact layout" else {"width": 1280, "height": 800},
+                    reduced_motion="reduce" if condition == "reduced motion" else "no-preference",
                 )
                 page.set_default_timeout(10_000)
                 start = monotonic()
-                if condition == "stalled scene":
+                if condition in ("stalled scene", "reduced motion"):
                     page.route("**/assets/CinematicSpace-*.js", lambda route: paused.append(route))
                     with page.expect_request("**/assets/CinematicSpace-*.js"):
                         page.goto(base + "/", wait_until="domcontentloaded")
@@ -42,6 +43,29 @@ def verify(base, chromium):
                 email = page.get_by_placeholder("name@company.com", exact=True)
                 password = page.get_by_placeholder("Enter your password", exact=True)
                 sign_in = page.get_by_role("button", name="Sign in", exact=True)
+                loader = page.locator(".sp-login-background-loader")
+                if condition in ("stalled scene", "reduced motion"):
+                    expect(loader).to_be_visible()
+                    expect(loader).not_to_have_class("sp-login-background-loader is-ready")
+                    expect(loader).to_have_css("position", "fixed")
+                    expect(loader).to_have_css("pointer-events", "auto")
+                    expect(email).to_be_hidden()
+                    expect(sign_in).to_be_hidden()
+                    expect(loader.locator(".sp-auth-loading-satellite")).to_have_css(
+                        "animation-name", "none" if condition == "reduced motion" else "sp-auth-loader-orbit"
+                    )
+                    assert loader.bounding_box() == {"x": 0, "y": 0, "width": 1280, "height": 800}
+                    assert loader.evaluate("node => [[1, 1], [innerWidth - 1, innerHeight - 1], [innerWidth / 2, innerHeight / 2]].every(([x, y]) => node.contains(document.elementFromPoint(x, y)))"), "Loader must cover the entire page"
+                    assert paused, "The cinematic chunk must still be waiting"
+                    for request in paused:
+                        request.continue_()
+                    paused.clear()
+                if condition == "compact layout":
+                    expect(loader).to_have_count(0)
+                else:
+                    expect(loader).to_have_class("sp-login-background-loader is-ready", timeout=60_000)
+                    expect(loader).to_be_hidden()
+                    expect(loader).to_have_css("pointer-events", "none")
                 expect(email).to_be_visible()
                 expect(password).to_be_enabled()
                 expect(sign_in).to_be_enabled()
@@ -49,24 +73,8 @@ def verify(base, chromium):
                 email.fill("desktop-check@example.org")
                 expect(email).to_have_value("desktop-check@example.org")
                 expect(email).to_be_focused()
-                if condition == "stalled scene":
-                    loader = page.locator(".sp-login-background-loader")
-                    expect(loader).to_be_visible()
-                    expect(loader).not_to_have_class("sp-login-background-loader is-ready")
-                    expect(loader).to_have_css("pointer-events", "none")
-                    expect(loader.locator(".sp-auth-loading-satellite")).to_have_css(
-                        "animation-name", "sp-auth-loader-orbit"
-                    )
-                    loading_area, panel = (
-                        loader.bounding_box(),
-                        page.locator(".sp-login-panel").bounding_box(),
-                    )
-                    assert loading_area["x"] + loading_area["width"] <= panel["x"] + 1, (
-                        "Loading animation overlaps the login panel"
-                    )
-                    assert paused, "The cinematic chunk must still be waiting"
                 results[condition] = {
-                    "viewportWidth": 1280,
+                    "viewportWidth": page.viewport_size["width"],
                     "usableWithinSeconds": round(monotonic() - start, 2),
                 }
             finally:
