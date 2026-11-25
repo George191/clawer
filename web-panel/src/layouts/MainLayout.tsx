@@ -36,6 +36,7 @@ import {
   ScheduleOutlined,
   SearchOutlined,
   SettingOutlined,
+  TeamOutlined,
   UserOutlined,
 } from '@/components/ui/icons';
 import { Link, matchPath, useLocation, useNavigate } from 'react-router-dom';
@@ -63,35 +64,35 @@ type HeaderMenuKey = 'projects' | 'automation' | 'access' | 'settings' | 'help';
 const headerMenus: { key: Exclude<HeaderMenuKey, 'projects'>; label: string; items: MenuProps['items'] }[] = [
   { key: 'automation', label: 'Automation', items: [
     { key: 'execution', type: 'group', label: 'Execution', children: [
-      { key: '/automation/workflows', label: 'Workflows' },
-      { key: '/automation/schedules', label: 'Schedules' },
-      { key: '/automation/runs', label: 'Runs' },
+      { key: '/automation/workflows', label: 'Workflows', icon: <BranchesOutlined /> },
+      { key: '/automation/schedules', label: 'Schedules', icon: <ScheduleOutlined /> },
+      { key: '/automation/runs', label: 'Runs', icon: <HistoryOutlined /> },
     ] },
   ] },
   { key: 'access', label: 'Access', items: [
     { key: 'management', type: 'group', label: 'Administration', children: [
-      { key: '/organization?view=users', label: 'Users' },
-      { key: '/organization?view=roles', label: 'Roles' },
-      { key: '/organization?view=permissions', label: 'Permissions' },
-      { key: '/organization?view=tenants', label: 'Organizations' },
-      { key: '/organization?view=teams', label: 'Teams' },
+      { key: '/organization?view=users', label: 'Users', icon: <UserOutlined /> },
+      { key: '/organization?view=roles', label: 'Roles', icon: <SafetyCertificateOutlined /> },
+      { key: '/organization?view=permissions', label: 'Permissions', icon: <AuditOutlined /> },
+      { key: '/organization?view=tenants', label: 'Organizations', icon: <ApartmentOutlined /> },
+      { key: '/organization?view=teams', label: 'Teams', icon: <TeamOutlined /> },
     ] },
   ] },
   { key: 'settings', label: 'Settings', items: [
     { key: 'preferences', type: 'group', label: 'Preferences', children: [
-      { key: '/settings', label: 'System settings' },
-      { key: '/account/settings', label: 'Account settings' },
+      { key: '/settings', label: 'System settings', icon: <SettingOutlined /> },
+      { key: '/account/settings', label: 'Account settings', icon: <UserOutlined /> },
     ] },
   ] },
   { key: 'help', label: 'Help', items: [
     { key: 'support', type: 'group', label: 'Support', children: [
-      { key: '/faq', label: 'Help center' },
+      { key: '/faq', label: 'Help center', icon: <QuestionCircleOutlined /> },
     ] },
     { key: 'legal', type: 'group', label: 'Legal', children: [
-      { key: '/legal/privacy', label: 'Privacy policy' },
-      { key: '/legal/terms', label: 'Terms of service' },
-      { key: '/legal/cookies', label: 'Cookie policy' },
-      { key: '/legal/licenses', label: 'Copyright & licenses' },
+      { key: '/legal/privacy', label: 'Privacy policy', icon: <SafetyCertificateOutlined /> },
+      { key: '/legal/terms', label: 'Terms of service', icon: <FileTextOutlined /> },
+      { key: '/legal/cookies', label: 'Cookie policy', icon: <ControlOutlined /> },
+      { key: '/legal/licenses', label: 'Copyright & licenses', icon: <BookOutlined /> },
     ] },
   ] },
 ];
