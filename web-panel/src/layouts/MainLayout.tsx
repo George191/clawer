@@ -85,10 +85,8 @@ const headerMenus: { key: Exclude<HeaderMenuKey, 'projects'>; label: string; ite
     ] },
   ] },
   { key: 'help', label: 'Help', items: [
-    { key: 'support', type: 'group', label: 'Support', children: [
-      { key: '/faq', label: 'Help center', icon: <QuestionCircleOutlined /> },
-    ] },
-    { key: 'legal', type: 'group', label: 'Legal', children: [
+    { key: '/faq', label: 'Help center', icon: <QuestionCircleOutlined /> },
+    { key: 'legal', label: 'Legal', icon: <BookOutlined />, children: [
       { key: '/legal/privacy', label: 'Privacy policy', icon: <SafetyCertificateOutlined /> },
       { key: '/legal/terms', label: 'Terms of service', icon: <FileTextOutlined /> },
       { key: '/legal/cookies', label: 'Cookie policy', icon: <ControlOutlined /> },
@@ -469,6 +467,15 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     if (openHeaderMenu && event.pointerType === 'mouse') setOpenHeaderMenu(key);
   };
 
+  const moveHeaderMenu = (key: HeaderMenuKey, event: React.KeyboardEvent) => {
+    if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+    event.preventDefault(); event.stopPropagation();
+    const keys: HeaderMenuKey[] = ['projects', ...headerMenus.map(menu => menu.key)];
+    const next = (keys.indexOf(key) + (event.key === 'ArrowRight' ? 1 : keys.length - 1)) % keys.length;
+    if (openHeaderMenu) changeHeaderMenu(keys[next], true);
+    document.querySelectorAll<HTMLButtonElement>('.platform-header-nav .platform-header-menu')[next]?.focus();
+  };
+
   const overlayShellStyle: React.CSSProperties = {
     padding: '6px 0',
     borderRadius: 18,
@@ -507,7 +514,15 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   };
 
   const renderProjectPanel = () => (
-    <div style={{ padding: 6 }}>
+    <div style={{ padding: 6 }} onKeyDown={event => {
+      moveHeaderMenu('projects', event);
+      if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault(); event.stopPropagation();
+      const rows = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
+      const index = rows.indexOf(document.activeElement as HTMLButtonElement);
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? rows.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : rows.length - 1)) % rows.length;
+      rows[next]?.focus();
+    }}>
       {projectOrder.map((key) => {
         const project = projectConfigs[key];
         const isActive = key === activeProjectKey;
@@ -747,7 +762,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             onOpenChange={open => changeHeaderMenu('projects', open)}
             overlayClassName="platform-header-dropdown"
             overlayStyle={{ minWidth: 220, marginTop: 5 }}
-            menu={{ items: [] }}
+            menu={{ items: [], submenuMode: 'popup' }}
             popupRender={renderProjectPanel}
           >
             <button
@@ -755,6 +770,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
               className="platform-header-menu"
               aria-label={`Switch project domain: ${activeProject.shortLabel}`}
               onPointerEnter={event => followHeaderMenu('projects', event)}
+              onKeyDown={event => moveHeaderMenu('projects', event)}
             >
               Projects
             </button>
@@ -767,7 +783,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
               onOpenChange={open => changeHeaderMenu(menu.key, open)}
               overlayClassName="platform-header-dropdown"
               overlayStyle={{ minWidth: 220, marginTop: 5 }}
-              menu={{ items: menu.items, selectedKeys: [activeHeaderPath], onClick: ({ key }) => navigate(key) }}
+              menu={{ items: menu.items, submenuMode: 'popup', selectedKeys: [activeHeaderPath], onClick: ({ key }) => navigate(key), onKeyDown: (event: React.KeyboardEvent) => moveHeaderMenu(menu.key, event) }}
             >
               <button
                 type="button"
@@ -775,6 +791,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                 aria-label={menu.label}
                 aria-current={activeHeaderMenus[menu.key] ? 'page' : undefined}
                 onPointerEnter={event => followHeaderMenu(menu.key, event)}
+                onKeyDown={event => moveHeaderMenu(menu.key, event)}
               >{menu.label}</button>
             </Dropdown>
           ))}
@@ -797,16 +814,21 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
               className="platform-header-account"
               aria-label="Open account menu"
             >
-              <UserOutlined />
+              <span className="platform-header-avatar" aria-hidden="true">
+                <svg className="platform-header-avatar-warn" viewBox="0 0 1024 1024" focusable="false">
+                  <path fill="currentColor" d="M1019.20384 901.632L546.62784 82.944c-15.36-26.112-52.736-26.112-68.096 0L5.44384 901.632c-15.36 26.112 3.584 58.88 34.304 58.88h945.152c30.208 0 49.152-32.768 34.304-58.88z" />
+                  <path fill="#FFFFFF" d="M462.14784 353.792c0.512-26.112 21.504-47.104 47.616-47.104h5.632c26.112 0 47.104 20.992 47.104 47.104v254.464c0 26.112-21.504 47.616-48.128 47.104h-4.608c-26.112 0-47.616-20.992-47.616-47.104V353.792zM569.66784 775.68c-5.12 26.112-20.48 41.984-46.592 47.616-6.144 1.536-12.288 1.536-18.432 0-27.136-5.632-43.52-20.992-49.152-46.592-1.536-6.656-1.536-13.312 0-19.456 5.632-25.6 22.016-40.96 49.152-46.08 6.144-1.024 12.288-1.024 18.432 0 26.112 5.632 41.472 20.992 46.592 47.104 1.024 5.632 1.024 11.776 0 17.408z" />
+                </svg>
+                <svg className="platform-header-avatar-icon" viewBox="0 0 1024 1024" focusable="false">
+                  <path fill="currentColor" d="M512 74.666667C270.933333 74.666667 74.666667 270.933333 74.666667 512S270.933333 949.333333 512 949.333333 949.333333 753.066667 949.333333 512 753.066667 74.666667 512 74.666667z m0 160c70.4 0 128 57.6 128 128s-57.6 128-128 128-128-57.6-128-128 57.6-128 128-128z m236.8 507.733333c-23.466667 32-117.333333 100.266667-236.8 100.266667s-213.333333-68.266667-236.8-100.266667c-8.533333-10.666667-10.666667-21.333333-8.533333-32 29.866667-110.933333 130.133333-187.733333 245.333333-187.733333s215.466667 76.8 245.333333 187.733333c2.133333 10.666667 0 21.333333-8.533333 32z" />
+                </svg>
+              </span>
               <span className="platform-header-user">
                 <strong>{currentUserName}</strong>
                 {currentUserRole && <small>{currentUserRole}</small>}
               </span>
             </button>
           </Dropdown>
-          <button type="button" className="platform-header-icon" aria-label="Log out" title="Log out" onClick={logout}>
-            <LogoutOutlined />
-          </button>
         </div>
       </Header>
 
