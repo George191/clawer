@@ -745,16 +745,13 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             onClick={() => setManualCollapsed(false)}
           ><MenuOutlined /></button>
         )}
-        <button
-          type="button"
+        <div
           className="platform-header-brand"
-          aria-label={`${PRODUCT_NAME} home`}
           title={PRODUCT_NAME}
-          onClick={() => navigate('/')}
         >
           <img src="/project-network-mark.svg" width="36" height="36" alt="" />
           <span className="platform-header-wordmark">{PRODUCT_NAME}</span>
-        </button>
+        </div>
         <nav className="platform-header-nav" aria-label="Main navigation">
           <Dropdown
             trigger={['click']}
