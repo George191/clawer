@@ -12,6 +12,26 @@ def test_missing_asset_metadata_is_not_a_resource_path():
     assert all(not value for _,value in migration.strings(assets))
 
 
+def test_retry_error_preparation_preserves_journal_and_commits_bounded_batches(tmp_path):
+    db=migration.journal(tmp_path/'journal.sqlite')
+    count=migration.BATCH+17
+    db.executemany('INSERT INTO objects(old,prefix,record_id,shard,phase,error) VALUES(?,?,?,?,?,?)',
+        [(f'old/{n}','news/source',str(n),0,'planned' if n%2 else 'source_updated','previous failure') for n in range(count)])
+    db.execute('INSERT INTO objects(old,prefix,record_id,shard,phase,error) VALUES("other","news/source","other",1,"planned","keep")')
+    db.execute('INSERT INTO progress VALUES("source","original-checkpoint",0)');db.commit()
+    batches=[]
+    db.set_trace_callback(lambda sql:batches.append(db.total_changes) if sql=='COMMIT' else None)
+    migration.prepare_retry_errors(db,0,'apply')
+    assert len(batches)>=2
+    assert db.execute('SELECT count(*) FROM error_history').fetchone()[0]==count
+    assert db.execute('SELECT count(*) FROM objects WHERE shard=0 AND error IS NULL').fetchone()[0]==count
+    assert db.execute('SELECT error FROM objects WHERE shard=1').fetchone()[0]=='keep'
+    assert db.execute('SELECT last_key FROM progress WHERE prefix="source"').fetchone()[0]=='original-checkpoint'
+    migration.prepare_retry_errors(db,0,'apply')
+    assert db.execute('SELECT count(*) FROM error_history').fetchone()[0]==count
+    db.close()
+
+
 def test_asset_url_is_not_lost_when_missing_metadata_is_stale():
     key='news/source/'+'a'*32+'/file.pdf'
     assets={'attachments':{'0':{'url':key,'description':'missing','status_code':404}}}

@@ -410,17 +410,30 @@ async def verify_group(db, client, mongo, registered, prefix, record_id):
     db.commit();return True
 
 
+def prepare_retry_errors(db, shard, mode):
+    phase='planned' if mode=='apply' else 'source_updated' if mode=='verify' else 'verified'
+    phases=(phase,'source_updated') if mode=='apply' else (phase,)
+    while True:
+        try:
+            db.execute('BEGIN IMMEDIATE')
+            rows=db.execute('SELECT rowid,old,prefix,record_id,error FROM objects WHERE shard=? AND error IS NOT NULL AND phase IN ('+
+                ','.join('?' for _ in phases)+') LIMIT ?', (shard,*phases,BATCH)).fetchall()
+            if rows:
+                db.executemany('INSERT INTO error_history(old,prefix,record_id,error) VALUES(?,?,?,?)',
+                    [(old,prefix,record_id,error) for _,old,prefix,record_id,error in rows])
+                db.executemany('UPDATE objects SET error=NULL WHERE rowid=?',[(row[0],) for row in rows])
+            db.commit()
+        except Exception:
+            db.rollback();raise
+        if not rows:return
+
+
 def worker(path, shard, mode, db_gate):
     db,client=journal(path),storage()
     with db_gate:registered=asyncio.run(routes())
     mongo_client=MongoClient(settings.db_url,serverSelectionTimeoutMS=15000)
     mongo=mongo_client[settings.db_name]
-    phase='planned' if mode=='apply' else 'source_updated' if mode=='verify' else 'verified'
-    phases_to_retry=(phase,'source_updated') if mode=='apply' else (phase,)
-    db.execute('INSERT INTO error_history(old,prefix,record_id,error) SELECT old,prefix,record_id,error FROM objects WHERE shard=? AND error IS NOT NULL AND phase IN ('+','.join('?' for _ in phases_to_retry)+')',(shard,*phases_to_retry))
-    db.execute('UPDATE objects SET error=NULL WHERE shard=? AND phase=? AND error IS NOT NULL',(shard,phase))
-    if mode=='apply':db.execute('UPDATE objects SET error=NULL WHERE shard=? AND phase="source_updated" AND error IS NOT NULL',(shard,))
-    db.commit()
+    with db_gate:prepare_retry_errors(db,shard,mode)
     async def run():
         pg=get_business_pg_client()
         if mode in {'apply','verify'}:
