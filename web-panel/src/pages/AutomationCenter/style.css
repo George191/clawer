@@ -16,7 +16,7 @@
 }
 .automation-page { display:flex; flex:1; flex-direction:column; width:100%; height:100%; min-width:0; min-height:0; overflow:hidden; background:var(--ontology-bg); }
 .automation-page :is(button,input) { font-family:inherit; }
-.automation-header { display:flex; flex:none; align-items:center; justify-content:space-between; gap:16px; min-height:54px; padding:10px 24px; border-bottom:1px solid var(--ontology-border); background:var(--ontology-panel); }
+.automation-header { display:flex; flex:none; align-items:center; justify-content:space-between; gap:16px; min-height:44px; padding:6px 20px; border-bottom:1px solid var(--ontology-border); background:var(--ontology-panel); }
 .automation-breadcrumb,.automation-header-actions { display:flex; align-items:center; gap:12px; }
 .automation-breadcrumb { color:var(--ontology-muted); font-size:12px; }
 .automation-breadcrumb > .ui-icon { color:var(--ontology-text); font-size:18px; }
@@ -35,16 +35,16 @@
 .automation-domain-mark { display:grid; flex:none; place-items:center; width:18px; height:18px; border:1px solid var(--ontology-control-border); border-radius:3px; font-size:10px; font-weight:500; }
 .automation-ontology-link { margin-top:auto; border-top:1px solid var(--ontology-border); border-radius:0; padding-top:14px; }
 .automation-ontology-link > span:nth-child(2) { flex:1; }
-.automation-main { display:flex; flex:1; flex-direction:column; min-width:0; min-height:0; padding:26px 28px 16px; overflow:hidden; }
-.automation-page-heading { display:flex; flex:none; align-items:center; justify-content:space-between; gap:24px; margin-bottom:24px; }
+.automation-main { display:flex; flex:1; flex-direction:column; min-width:0; min-height:0; padding:14px 24px 12px; overflow:hidden; }
+.automation-page-heading { display:flex; flex:none; align-items:center; justify-content:space-between; gap:24px; margin-bottom:12px; }
 .automation-eyebrow { color:var(--ontology-muted); font-size:11px; }
-.automation-page-heading h1 { margin:4px 0 7px; font-size:24px; font-weight:600; line-height:1.3; }
+.automation-page-heading h1 { margin:2px 0 3px; font-size:20px; font-weight:600; line-height:1.3; }
 .automation-page-heading p { margin:0; color:var(--ontology-muted); font-size:12px; }
 .automation-summary { display:flex; gap:28px; }
 .automation-summary > div { display:flex; flex-direction:column; gap:5px; min-width:48px; }
 .automation-summary strong { font-size:22px; font-weight:500; font-variant-numeric:tabular-nums; line-height:1.2; }
 .automation-summary span { color:var(--ontology-muted); font-size:11px; }
-.automation-toolbar { display:flex; flex:none; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px; }
+.automation-toolbar { display:flex; flex:none; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; }
 .automation-search { width:300px; max-width:100%; }
 .automation-data-type-select { min-width:160px; }
 .automation-status-filters { display:flex; gap:2px; padding:2px; border:1px solid var(--ontology-border); border-radius:3px; background:var(--ontology-panel); }
@@ -196,7 +196,7 @@
 
 @media(max-width:1000px) {
   .automation-sidebar { width:180px; }
-  .automation-main { padding:22px 18px 12px; }
+  .automation-main { padding:14px 18px 12px; }
   .automation-summary { gap:18px; }
 }
 @media(max-width:700px) {
@@ -208,8 +208,8 @@
   .automation-sidebar nav { flex-direction:row; flex:none; margin:0; }
   .automation-sidebar nav[aria-label="Filter by product domain"] { border-left:1px solid var(--ontology-border); padding-left:10px; }
   .automation-sidebar nav :is(a,button) { white-space:nowrap; }
-  .automation-main { padding:18px 14px 10px; }
-  .automation-page-heading { align-items:flex-start; gap:16px; margin-bottom:18px; }
+  .automation-main { padding:12px 14px 10px; }
+  .automation-page-heading { align-items:flex-start; gap:16px; margin-bottom:10px; }
   .automation-summary { gap:12px; }
   .automation-summary strong { font-size:18px; }
   .automation-summary > div { min-width:35px; }
@@ -237,13 +237,13 @@
 .automation-workflow-path small { display:block; margin-top:5px; font-size:11px; color:var(--ontology-muted); }
 .automation-rule-preview { grid-column:1/-1; padding:12px 14px; border:1px solid var(--ontology-border); background:var(--ontology-bg); }
 .automation-rule-preview span { display:block; margin-bottom:7px; color:var(--ontology-muted); font-size:10px; }
-.automation-runs-workspace { display:flex; flex:1; flex-direction:column; min-height:0; gap:14px; }
+.automation-runs-workspace { display:flex; flex:1; flex-direction:column; min-height:0; gap:10px; }
 .automation-run-stats { display:grid; grid-template-columns:repeat(4,1fr); border:1px solid var(--ontology-border); border-radius:3px; background:var(--ontology-panel); }
-.automation-run-stats button { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:15px 18px; border:0; border-right:1px solid var(--ontology-border); background:transparent; color:var(--ontology-text); cursor:pointer; }
+.automation-run-stats button { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 14px; border:0; border-right:1px solid var(--ontology-border); background:transparent; color:var(--ontology-text); cursor:pointer; }
 .automation-run-stats button:last-child { border-right:0; }
 .automation-run-stats button[aria-pressed='true'] { background:var(--ontology-hover); }
 .automation-run-stats span { font-size:12px; text-transform:capitalize; color:var(--ontology-muted); }
-.automation-run-stats strong { font-size:24px; font-weight:500; }
+.automation-run-stats strong { font-size:20px; font-weight:500; }
 .automation-runs-workspace > .automation-toolbar { justify-content:flex-start; margin:0; flex-wrap:wrap; }
 .automation-runs-workspace > .automation-toolbar > .ui-select { min-width:150px; margin-left:auto; }
 .automation-runs-body { display:flex; flex:1; min-height:0; gap:16px; }

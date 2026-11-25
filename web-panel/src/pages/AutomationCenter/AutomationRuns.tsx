@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, App, Badge, Button, Empty, Popconfirm, Select, Table } from '@/components/ui';
-import { CloseOutlined, ReloadOutlined } from '@/components/ui/icons';
+import { Alert, App, Badge, Button, Empty, Input, Popconfirm, Select, Table } from '@/components/ui';
+import { CloseOutlined, ReloadOutlined, SearchOutlined } from '@/components/ui/icons';
 import { fetchWorkspaceTasks, fetchWorkspaceTask, fetchWorkspaceTaskLogs, fetchWorkspaceTaskLogRuns, runWorkspaceTaskAction, getAiAnalyzeWsUrl, type WorkspaceTask, type WorkspaceTaskLog, type WorkspaceTaskLogRun } from '@/services/aiApi';
 import type { ProductDomain } from '@/services/types';
 import { useWebSocket } from '@/hooks/useWebSocket';
@@ -15,8 +15,8 @@ const duration = (run?: WorkspaceTaskLogRun | null) => {
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 };
 
-export default function AutomationRuns({ domain, keyword, taskId, onSelect }: {
-  domain: ProductDomain | 'all'; keyword: string; taskId: string | null; onSelect: (id: string | null) => void;
+export default function AutomationRuns({ domain, keyword, onKeywordChange, taskId, onSelect }: {
+  domain: ProductDomain | 'all'; keyword: string; onKeywordChange: (value: string) => void; taskId: string | null; onSelect: (id: string | null) => void;
 }) {
   const { message } = App.useApp();
   const [acting, setActing] = useState(false);
@@ -122,7 +122,7 @@ export default function AutomationRuns({ domain, keyword, taskId, onSelect }: {
   };
   return <div className="automation-runs-workspace">
     <div className="automation-run-stats">{(['running', 'queued', 'completed', 'failed'] as const).map(value => <button key={value} type="button" aria-pressed={filter === value} onClick={() => setFilter(filter === value ? 'all' : value)}><span>{value}</span><strong>{loading || error ? '—' : scoped.filter(task => task.status === value).length}</strong></button>)}</div>
-    <div className="automation-toolbar"><div className="automation-status-filters" role="group" aria-label="Run status">{statuses.map(value => <button type="button" key={value} aria-pressed={filter === value} className={filter === value ? 'is-active' : ''} onClick={() => setFilter(value)}>{value === 'all' ? 'All runs' : value}</button>)}</div><Select allowClear aria-label="Run data type" placeholder="All data types" value={dataType} onChange={setDataType} options={[...new Set(tasks.flatMap(task => [task.data_type || '', ...(task.data_types || [])]).filter(Boolean))].map(value => ({ value, label: value }))} /><Button icon={<ReloadOutlined />} onClick={() => setVersion(value => value + 1)}>Refresh</Button></div>
+    <div className="automation-toolbar"><Input allowClear value={keyword} onChange={event => onKeywordChange(event.target.value)} prefix={<SearchOutlined />} aria-label="Search runs" placeholder="Search runs…" className="automation-search" /><div className="automation-status-filters" role="group" aria-label="Run status">{statuses.map(value => <button type="button" key={value} aria-pressed={filter === value} className={filter === value ? 'is-active' : ''} onClick={() => setFilter(value)}>{value === 'all' ? 'All runs' : value}</button>)}</div><Select allowClear aria-label="Run data type" placeholder="All data types" value={dataType} onChange={setDataType} options={[...new Set(tasks.flatMap(task => [task.data_type || '', ...(task.data_types || [])]).filter(Boolean))].map(value => ({ value, label: value }))} /><Button icon={<ReloadOutlined />} onClick={() => setVersion(value => value + 1)}>Refresh</Button></div>
     {error && <Alert type="error" showIcon message={error} />}
     <div className={`automation-runs-body${taskId ? ' has-detail' : ''}`}>
       <div className="automation-run-list"><Table rowKey="id" loading={loading} dataSource={error ? [] : visible} scroll={{ x: 780, y: 'calc(100vh - 470px)' }} pagination={{ pageSize: 12, showSizeChanger: false }} rowClassName={task => task.id === taskId ? 'is-selected' : ''} onRow={task => ({ onClick: () => onSelect(task.id) })} locale={{ emptyText: <Empty description={error ? 'Run data unavailable' : 'No runs match these filters'} /> }} columns={[
