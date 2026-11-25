@@ -63,11 +63,11 @@ type ProjectKey = 'ai-collect' | 'data-lake' | 'etl-pipeline' | 'data-cockpit' |
 type HeaderMenuKey = 'projects' | 'automation' | 'access' | 'settings' | 'help';
 
 const headerMenus: { key: Exclude<HeaderMenuKey, 'projects'>; label: string; items: MenuProps['items'] }[] = [
-  { key: 'automation', label: 'Automation', items: [
-    { key: 'execution', type: 'group', label: 'Execution', children: [
-      { key: '/automation/workflows', label: 'Workflows', icon: <BranchesOutlined /> },
-      { key: '/automation/schedules', label: 'Schedules', icon: <ScheduleOutlined /> },
-      { key: '/automation/runs', label: 'Runs', icon: <HistoryOutlined /> },
+  { key: 'automation', label: 'AUTOMATION', items: [
+    { key: 'execution', type: 'group', label: 'EXECUTION', children: [
+      { key: '/automation/workflows', label: 'WORKFLOWS', icon: <BranchesOutlined /> },
+      { key: '/automation/schedules', label: 'SCHEDULES', icon: <ScheduleOutlined /> },
+      { key: '/automation/runs', label: 'RUNS', icon: <HistoryOutlined /> },
     ] },
   ] },
   { key: 'access', label: 'ACCESS', items: [
@@ -569,7 +569,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                 {project.shortLabel.slice(0, 1)}
               </span>
               <span style={{ flex: 1, minWidth: 0 }}>
-                <span style={{ display: 'block', fontSize: 12, fontWeight: isActive ? 600 : 400 }}>{project.shortLabel}</span>
+                <span style={{ display: 'block', fontSize: 12, fontWeight: isActive ? 600 : 400 }}>{project.shortLabel.toUpperCase()}</span>
               </span>
               {isDisabled ? (
                 <span style={{ color: '#8f99a8', fontSize: 11, fontWeight: 400 }}>Not enabled yet</span>
@@ -774,7 +774,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
               onPointerEnter={event => followHeaderMenu('projects', event)}
               onKeyDown={event => moveHeaderMenu('projects', event)}
             >
-              Projects
+              PROJECTS
             </button>
           </Dropdown>
           {headerMenus.map(menu => (
