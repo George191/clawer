@@ -22,7 +22,8 @@ const AccountSettings: React.FC = () => {
   const [deactivate, setDeactivate] = useState(false);
 
   return <div className="acc-page">
-    <nav className="acc-tabs" aria-label="Account settings sections">{tabs.map(item => <button type="button" key={item.key} className={tab === item.key ? 'is-active' : ''} onClick={() => setTab(item.key)}>{item.icon}<span>{item.label}</span></button>)}</nav>
+    <header className="management-page-header"><span className="management-eyebrow">PERSONAL PREFERENCES</span><Typography.Title level={2}>ACCOUNT SETTINGS</Typography.Title><Typography.Text type="secondary">Manage your profile, security and account preferences.</Typography.Text></header>
+    <nav className="acc-tabs" aria-label="Account settings sections">{tabs.map(item => <button type="button" key={item.key} aria-pressed={tab === item.key} className={tab === item.key ? 'is-active' : ''} onClick={() => setTab(item.key)}>{item.icon}<span>{item.label.toUpperCase()}</span></button>)}</nav>
 
     <div className="acc-content" key={tab}>
       {tab === 'account' && <>

@@ -44,6 +44,7 @@ import { useThemeStore } from '@/stores/settings';
 import { fetchCurrentUserContext } from '@/services/api';
 import { clearSession } from '@/services/session';
 import { getCurrentProjectDomain, resolveProjectDomain, setCurrentProjectDomain, type ProjectDomain } from '@/services/projectDomains';
+import ManagementWorkspace, { managementSection } from '@/components/ManagementWorkspace';
 import type { CurrentUserContext } from '@/services/types';
 
 const { Header, Content } = Layout;
@@ -69,28 +70,28 @@ const headerMenus: { key: Exclude<HeaderMenuKey, 'projects'>; label: string; ite
       { key: '/automation/runs', label: 'Runs', icon: <HistoryOutlined /> },
     ] },
   ] },
-  { key: 'access', label: 'Access', items: [
-    { key: 'management', type: 'group', label: 'Administration', children: [
-      { key: '/organization?view=users', label: 'Users', icon: <UserOutlined /> },
-      { key: '/organization?view=roles', label: 'Roles', icon: <SafetyCertificateOutlined /> },
-      { key: '/organization?view=permissions', label: 'Permissions', icon: <AuditOutlined /> },
-      { key: '/organization?view=tenants', label: 'Organizations', icon: <ApartmentOutlined /> },
-      { key: '/organization?view=teams', label: 'Teams', icon: <TeamOutlined /> },
+  { key: 'access', label: 'ACCESS', items: [
+    { key: 'management', type: 'group', label: 'ADMINISTRATION', children: [
+      { key: '/organization?view=users', label: 'USERS', icon: <UserOutlined /> },
+      { key: '/organization?view=roles', label: 'ROLES', icon: <SafetyCertificateOutlined /> },
+      { key: '/organization?view=permissions', label: 'PERMISSIONS', icon: <AuditOutlined /> },
+      { key: '/organization?view=tenants', label: 'ORGANIZATIONS', icon: <ApartmentOutlined /> },
+      { key: '/organization?view=teams', label: 'TEAMS', icon: <TeamOutlined /> },
     ] },
   ] },
-  { key: 'settings', label: 'Settings', items: [
-    { key: 'preferences', type: 'group', label: 'Preferences', children: [
-      { key: '/settings', label: 'System settings', icon: <SettingOutlined /> },
-      { key: '/account/settings', label: 'Account settings', icon: <UserOutlined /> },
+  { key: 'settings', label: 'SETTINGS', items: [
+    { key: 'preferences', type: 'group', label: 'PREFERENCES', children: [
+      { key: '/settings', label: 'SYSTEM SETTINGS', icon: <SettingOutlined /> },
+      { key: '/account/settings', label: 'ACCOUNT SETTINGS', icon: <UserOutlined /> },
     ] },
   ] },
-  { key: 'help', label: 'Help', items: [
-    { key: '/faq', label: 'Help center', icon: <QuestionCircleOutlined /> },
-    { key: 'legal', label: 'Legal', icon: <BookOutlined />, children: [
-      { key: '/legal/privacy', label: 'Privacy policy', icon: <SafetyCertificateOutlined /> },
-      { key: '/legal/terms', label: 'Terms of service', icon: <FileTextOutlined /> },
-      { key: '/legal/cookies', label: 'Cookie policy', icon: <ControlOutlined /> },
-      { key: '/legal/licenses', label: 'Copyright & licenses', icon: <BookOutlined /> },
+  { key: 'help', label: 'HELP', items: [
+    { key: '/faq', label: 'HELP CENTER', icon: <QuestionCircleOutlined /> },
+    { key: 'legal', label: 'LEGAL', icon: <BookOutlined />, children: [
+      { key: '/legal/privacy', label: 'PRIVACY POLICY', icon: <SafetyCertificateOutlined /> },
+      { key: '/legal/terms', label: 'TERMS OF SERVICE', icon: <FileTextOutlined /> },
+      { key: '/legal/cookies', label: 'COOKIE POLICY', icon: <ControlOutlined /> },
+      { key: '/legal/licenses', label: 'COPYRIGHT & LICENSES', icon: <BookOutlined /> },
     ] },
   ] },
 ];
@@ -330,7 +331,8 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     next.delete('domain');
     navigate(`${location.pathname}${next.toString() ? `?${next.toString()}` : ''}`, { replace: true });
   }, [location.pathname, location.search, navigate]);
-  const hideSidebar = activeProjectKey === 'etl-pipeline' || activeProjectKey === 'ai-collect' || isAtlasSurface || isGraphSurface || isAutomationSurface || isPlatformManagementSurface || isSystemSettingsSurface;
+  const isManagementSurface = managementSection(location.pathname) !== null;
+  const hideSidebar = isManagementSurface || activeProjectKey === 'etl-pipeline' || activeProjectKey === 'ai-collect' || isAtlasSurface || isGraphSurface || isAutomationSurface || isPlatformManagementSurface || isSystemSettingsSurface;
   const palette = {
     appBg: isDark ? '#171A22' : '#F6F8FB',
     surface: isDark ? '#22262F' : '#FFFFFF',
@@ -370,8 +372,8 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   }, [currentProject, routedProject]);
 
   useEffect(() => {
-    document.title = `${activeProject.shortLabel} - ${PRODUCT_NAME}`;
-  }, [activeProject.label]);
+    document.title = `${managementSection(location.pathname)?.toUpperCase() || activeProject.shortLabel} - ${PRODUCT_NAME}`;
+  }, [activeProject.shortLabel, location.pathname]);
 
   useEffect(() => {
     let cancelled = false;
@@ -654,9 +656,9 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
 
   const renderAccountPanel = () => {
     const accountRows = [
-      { key: 'account', icon: <SettingOutlined />, label: 'Account settings', onClick: () => { setAccountMenuOpen(false); navigate('/account/settings'); } },
+      { key: 'account', icon: <SettingOutlined />, label: 'ACCOUNT SETTINGS', onClick: () => { setAccountMenuOpen(false); navigate('/account/settings'); } },
       { key: 'faq', icon: <QuestionCircleOutlined />, label: 'FAQ', onClick: () => { setAccountMenuOpen(false); navigate('/faq'); } },
-      { key: 'legal', icon: <SafetyCertificateOutlined />, label: 'Legal', onClick: () => { setAccountMenuOpen(false); navigate('/legal/privacy'); } },
+      { key: 'legal', icon: <SafetyCertificateOutlined />, label: 'LEGAL', onClick: () => { setAccountMenuOpen(false); navigate('/legal/privacy'); } },
     ];
 
     return (
@@ -1153,7 +1155,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         >
           <Content style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             <div className={isDark ? '' : 'light-mode'} style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-              {routedProject && (isAtlasSurface || isGraphSurface || isRagSurface) ? null : children}
+              {routedProject && (isAtlasSurface || isGraphSurface || isRagSurface) ? null : <ManagementWorkspace>{children}</ManagementWorkspace>}
             </div>
           </Content>
         </main>

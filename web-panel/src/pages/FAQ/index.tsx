@@ -1,5 +1,5 @@
-import React from 'react';
-import { Card, Collapse, Input, Space, Tag, Typography, theme } from '@/components/ui';
+import React, { useState } from 'react';
+import { Card, Collapse, Input, Space, Typography } from '@/components/ui';
 import { ApiOutlined, BookOutlined, QuestionCircleOutlined, SearchOutlined, SafetyCertificateOutlined } from '@/components/ui/icons';
 import './style.css';
 
@@ -35,15 +35,17 @@ const groups = [
 ];
 
 const FAQ: React.FC = () => {
-  const { token } = theme.useToken();
-  return <main className="faq-page" style={{ '--faq-primary': token.colorPrimary } as React.CSSProperties}>
-    <section className="faq-hero">
-      <div className="faq-hero-copy"><Tag color="cyan">HELP CENTER</Tag><Typography.Title>Frequently Asked Questions</Typography.Title><Typography.Paragraph>Find quick answers about Astral Helio and keep your data workflows moving.</Typography.Paragraph><Input size="large" prefix={<SearchOutlined />} placeholder="Search your question" aria-label="Search frequently asked questions" /></div>
-      <div className="faq-hero-art"><QuestionCircleOutlined /><ApiOutlined /></div>
-    </section>
-    <div className="faq-heading"><Typography.Title level={3}>Knowledge base</Typography.Title><Typography.Text type="secondary">Browse common questions by topic</Typography.Text></div>
-    <div className="faq-grid">{groups.map((group) => <Card key={group.title} className="faq-card" title={<Space><span className="faq-icon">{group.icon}</span><span>{group.title}</span></Space>}><Collapse ghost items={group.items.map(([question, answer]) => ({ key: question, label: question, children: <Typography.Paragraph>{answer}</Typography.Paragraph> }))} /></Card>)}</div>
-    <div className="faq-contact"><Typography.Text strong>Still need help?</Typography.Text><Typography.Text type="secondary"> Contact your workspace administrator for assistance.</Typography.Text></div>
+  const [search, setSearch] = useState('');
+  const query = search.trim().toLowerCase();
+  const filtered = groups.map(group => ({ ...group, items: group.items.filter(([question, answer]) => `${group.title} ${question} ${answer}`.toLowerCase().includes(query)) })).filter(group => group.items.length);
+  const count = filtered.reduce((total, group) => total + group.items.length, 0);
+  return <main className="faq-page">
+    <header className="management-page-header"><span className="management-eyebrow">DOCUMENTATION & SUPPORT</span><Typography.Title level={2}>HELP CENTER</Typography.Title><Typography.Paragraph type="secondary">Find answers and guidance for your data workflows.</Typography.Paragraph></header>
+    <section className="faq-search"><SearchOutlined /><Input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search questions, topics and answers…" aria-label="Search frequently asked questions" allowClear /><span>{groups.reduce((total, group) => total + group.items.length, 0)} ARTICLES</span></section>
+    <div className="faq-heading"><Typography.Title level={3}>{query ? 'SEARCH RESULTS' : 'KNOWLEDGE BASE'}</Typography.Title><Typography.Text type="secondary" role="status">{query ? `${count} matching ${count === 1 ? 'article' : 'articles'}` : 'Browse by topic'}</Typography.Text></div>
+    <div className="faq-grid">{filtered.map(group => <Card key={group.title} className="faq-card" title={<Space><span className="faq-icon">{group.icon}</span><span>{group.title.toUpperCase()}</span><span className="faq-count">{group.items.length}</span></Space>}><Collapse ghost key={query} defaultActiveKey={query ? group.items.map(([question]) => question) : []} items={group.items.map(([question, answer]) => ({ key: question, label: question, children: <Typography.Paragraph>{answer}</Typography.Paragraph> }))} /></Card>)}</div>
+    {!filtered.length && <div className="faq-empty"><QuestionCircleOutlined /><Typography.Title level={4}>NO MATCHING ARTICLES</Typography.Title><Typography.Paragraph type="secondary">Try another keyword or browse all topics.</Typography.Paragraph><button type="button" onClick={() => setSearch('')}>CLEAR SEARCH</button></div>}
+    <footer className="faq-contact"><QuestionCircleOutlined /><div><strong>NEED ASSISTANCE?</strong><p>Contact your workspace administrator for account, access or platform support.</p></div></footer>
   </main>;
 };
 

@@ -1,0 +1,106 @@
+.management-workspace {
+  --management-bg: #1c2127;
+  --management-panel: #232a31;
+  --management-raised: #29323b;
+  --management-border: #39434e;
+  --management-text: #e2e8ee;
+  --management-muted: #98a5b3;
+  --management-accent: #8abbef;
+  --management-selected: #283e53;
+  --ui-bg: var(--management-bg);
+  --ui-panel: var(--management-panel);
+  --ui-elevated: var(--management-raised);
+  --ui-border: var(--management-border);
+  --ui-border-soft: var(--management-border);
+  --ui-text: var(--management-text);
+  --ui-muted: var(--management-muted);
+  --ui-action-bg: #2d72d2;
+  --ui-action-hover: #245fae;
+  --ui-action-active: #1e518f;
+  --ui-action-text: #fff;
+  --ui-action-link: var(--management-accent);
+  --ui-radius: 2px;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  color: var(--management-text);
+  background: var(--management-bg);
+  font-size: 13px;
+}
+html[data-theme='light'] .management-workspace {
+  --management-bg: #f5f7f8;
+  --management-panel: #fff;
+  --management-raised: #edf1f4;
+  --management-border: #d6dce2;
+  --management-text: #24313d;
+  --management-muted: #5f6f7d;
+  --management-accent: #215f9a;
+  --management-selected: #e3edf7;
+}
+.management-sidebar { display: flex; flex-direction: column; flex: 0 0 236px; min-height: 0; overflow-y: auto; border-right: 1px solid var(--management-border); background: var(--management-panel); }
+.management-identity { display: flex; gap: 12px; align-items: center; min-height: 100px; padding: 22px 20px; border-bottom: 1px solid var(--management-border); }
+.management-identity > span { display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid var(--management-border); color: var(--management-accent); font-size: 18px; }
+.management-identity strong { display: block; font-size: 14px; letter-spacing: .1em; }
+.management-identity small { display: block; margin-top: 5px; font-size: 9px; letter-spacing: .06em; color: var(--management-muted); }
+.management-sidebar nav { padding: 20px 10px; }
+.management-nav-group + .management-nav-group { margin-top: 26px; }
+.management-nav-group h2 { margin: 0 10px 9px; color: var(--management-muted); font-size: 10px; font-weight: 600; letter-spacing: .12em; }
+.management-nav-group a { display: flex; align-items: center; gap: 10px; min-height: 37px; padding: 9px 10px; border-left: 2px solid transparent; color: var(--management-muted); font-size: 11px; letter-spacing: .035em; text-decoration: none; }
+.management-nav-group a:hover { background: var(--management-raised); color: var(--management-text); }
+.management-nav-group a.is-active { border-left-color: var(--management-accent); color: var(--management-accent); background: var(--management-selected); }
+.management-workspace :is(a, button, input, select):focus-visible { outline: 2px solid var(--management-accent); outline-offset: 2px; }
+.management-sidebar-footer { margin-top: auto; padding: 18px 20px; border-top: 1px solid var(--management-border); font-size: 9px; letter-spacing: .12em; color: var(--management-muted); }
+.management-sidebar-footer span { margin: 0 8px; }
+.management-main { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; }
+.management-breadcrumb { display: flex; align-items: center; gap: 12px; min-height: 43px; padding: 0 32px; border-bottom: 1px solid var(--management-border); background: var(--management-panel); color: var(--management-muted); font-size: 10px; letter-spacing: .08em; }
+.management-breadcrumb strong { color: var(--management-text); font-weight: 500; }
+.management-content { max-width: 1440px; margin: auto; padding: 28px 32px 48px; }
+.management-page-header { margin-bottom: 26px; }
+.management-eyebrow { color: var(--management-muted); font-size: 10px; letter-spacing: .12em; }
+.management-workspace :is(.management-page-header, .access-header, .system-settings-header) h2 { margin: 8px 0; color: var(--management-text); font-size: 25px; font-weight: 500; letter-spacing: .025em; }
+.management-workspace .ui-typography-secondary { color: var(--management-muted); }
+.management-workspace :is(.ui-card, .acc-card) { border: 1px solid var(--management-border) !important; border-radius: 2px; background: var(--management-panel) !important; box-shadow: none !important; }
+.management-workspace .access-page { width: 100%; max-width: none; min-height: 0; margin: 0; padding: 0; overflow: visible; color: var(--management-text); }
+.management-workspace .access-directory-page { height: calc(100dvh - 171px); min-height: 540px; }
+.management-workspace .access-header { min-height: 0; align-items: center; margin: 0 0 26px; }
+.management-workspace .access-kicker { color: var(--management-muted) !important; }
+.management-workspace .access-list-filters { background: var(--management-panel); border-bottom: 1px solid var(--management-border); padding: 18px 20px; }
+.management-workspace :is(.access-toolbar, .access-page .ui-table-thead > tr > th) { background: var(--management-raised); }
+.management-workspace .access-page :is(.ui-select, .ui-input-affix-wrapper, .ui-btn-default) { border: 1px solid var(--management-border) !important; border-radius: 2px; color: var(--management-text) !important; background: var(--management-panel) !important; }
+.management-workspace .access-page :is(.ui-select, .ui-input-affix-wrapper, .ui-btn-default):hover { border-color: var(--management-accent) !important; background: var(--management-raised) !important; }
+.management-workspace .access-page :is(.ui-table-cell, .ui-table-container) { border-color: var(--management-border) !important; }
+.management-workspace .access-page :is(.ui-table-thead > tr > th, .access-list-filters h5, .access-role-card h4) { color: var(--management-text); text-transform: uppercase; font-size: 11px; letter-spacing: .05em; }
+.management-workspace .access-page .access-user-link { color: var(--management-accent) !important; }
+.management-workspace .access-role-card { height: auto; min-height: 180px; }
+.management-workspace .access-contract-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.management-workspace .access-role-card .ui-card-body { min-height: 0; }
+.management-workspace .acc-page { max-width: none; margin: 0; padding: 0; color: var(--management-text); }
+.management-workspace .acc-tabs { gap: 4px; margin-bottom: 24px; border-bottom: 1px solid var(--management-border); overflow-x: auto; }
+.management-workspace .acc-tabs button { margin: 0; padding: 10px 14px; border-radius: 0; border-bottom: 2px solid transparent; color: var(--management-muted); font-size: 11px; white-space: nowrap; }
+.management-workspace .acc-tabs button.is-active { border-bottom-color: var(--management-accent); color: var(--management-accent); background: var(--management-selected); }
+.management-workspace .acc-card :is(h3, h4, h5) { text-transform: uppercase; }
+.management-workspace .acc-card-title h4 { color: var(--management-text); text-transform: uppercase; font-size: 13px; letter-spacing: .05em; }
+.management-workspace .acc-card { --ui-focus-ring: var(--management-accent); --ui-action-link: var(--management-accent); padding: 22px; }
+.management-workspace .acc-card :is(strong, h3, h4, h5, .ui-form-item-label > label) { color: var(--management-text); }
+.management-workspace .acc-card :is(.ui-input, .ui-input-affix-wrapper, .ui-select) { color: var(--management-text); border-color: var(--management-border) !important; border-radius: 2px !important; }
+.management-workspace .acc-card :is(.acc-table, .acc-device, .acc-connection-item, .acc-notification-row, .acc-saved-cards, .acc-saved-card) { border-color: var(--management-border); }
+.management-workspace .acc-card :is(.acc-provider, .acc-table-head, .acc-notification-head) { background: var(--management-raised); color: var(--management-muted); }
+.management-workspace .acc-card .acc-profile-head .ui-avatar { background: var(--management-selected); color: var(--management-accent); border-radius: 2px; }
+@media (max-width: 1050px) {
+  .management-sidebar { flex-basis: 206px; }
+  .management-content { padding: 24px; }
+  .management-workspace .access-header { align-items: flex-start; flex-direction: column; gap: 14px; }
+}
+@media (max-width: 760px) {
+  .management-workspace { flex-direction: column; }
+  .management-sidebar { flex: none; max-height: 210px; border-right: 0; border-bottom: 1px solid var(--management-border); }
+  .management-identity { min-height: 0; padding: 12px 16px; }
+  .management-sidebar nav { display: flex; gap: 18px; padding: 12px; overflow-x: auto; }
+  .management-nav-group { flex: none; }
+  .management-nav-group + .management-nav-group { margin-top: 0; }
+  .management-nav-group a { display: inline-flex; white-space: nowrap; }
+  .management-sidebar-footer { display: none; }
+  .management-breadcrumb { padding: 0 16px; }
+  .management-content { padding: 20px 16px 32px; }
+  .management-workspace .access-contract-grid { grid-template-columns: 1fr; }
+}
