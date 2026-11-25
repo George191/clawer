@@ -115,3 +115,66 @@
 .flow-transfer-source-preview { max-width: 100%; max-height: 300px; overflow: auto; }
 .flow-transfer-source-preview table { border-collapse: collapse; font-size: 11px; }
 .flow-transfer-source-preview :is(th, td) { padding: 5px 8px; border-bottom: 1px solid var(--ontology-border); text-align: left; max-width: 320px; overflow-wrap: anywhere; vertical-align: top; }
+
+.flow-lineage-views {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--ui-elevated);
+  border-bottom: 1px solid var(--ui-border);
+}
+.flow-lineage-views > button[aria-pressed=true] {
+  background: color-mix(in srgb, var(--ui-primary) 14%, var(--ui-panel));
+  color: var(--ui-text);
+}
+.flow-lineage-worker-caption {
+  flex: none;
+  margin: 0;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--ui-border);
+  color: var(--ui-muted);
+}
+.flow-lineage-worker-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.flow-lineage-worker-stage { position: relative; }
+.flow-lineage .flow-lineage-worker-node {
+  --schema-color: var(--ui-primary);
+  padding-inline: 10px;
+  line-height: 1.4;
+}
+.flow-lineage-worker-node > span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+.flow-lineage .flow-lineage-worker-node strong { font-size: 13px; }
+.flow-lineage-worker-node small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.flow-lineage-worker-inspector { position: static; max-width: none; flex: 0 0 260px; }
+.flow-lineage-worker-inspector .flow-lineage-action {
+  justify-content: space-between;
+  text-decoration: none;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.flow-lineage-worker-inspector a:focus-visible { outline: 2px solid var(--ui-focus-ring); }
+@media (max-width: 760px) {
+  .flow-lineage-worker-body { flex-direction: column; }
+  .flow-lineage-worker-inspector {
+    flex: 0 0 auto;
+    width: 100%;
+    max-height: 48%;
+    border-left: 0;
+    border-top: 1px solid var(--ui-border);
+  }
+  .flow-lineage-views > button { min-height: 38px; }
+}

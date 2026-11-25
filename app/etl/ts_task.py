@@ -28,6 +28,7 @@ from sqlalchemy import text
 
 from app.config.settings import settings
 from app.etl.base import ETLBase, extract_meta
+from app.etl.layer_dependencies import TASK_SOURCE_LAYERS
 from app.etl.schema.catalogs import validate_table_name
 from app.etl.tasks import get_tasks
 from app.etl.source_fences import source_snapshot_revision
@@ -73,7 +74,7 @@ RETURNING *
 
 class TsTask(ETLBase):
     _layer = "task"
-    _source_layers = ("ods",)
+    _source_layers = TASK_SOURCE_LAYERS
     _consumer_topics = [settings.etl_ods_topic]
     _consumer_group = settings.etl_task_consumer_group
     _producer_topic = settings.etl_task_topic

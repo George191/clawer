@@ -254,6 +254,24 @@ export const getDashboardWsUrl = () => wsUrl('/ws');
 export const fetchLayers = (signal?: AbortSignal): Promise<LayerNode[]> =>
   client.get('/etl/layers', { signal, ...(signal ? { timeout: 0 } : {}) }).then((r) => unwrap<LayerNode[]>(r.data));
 
+export type WorkerLineageLayer = {
+  layer: string;
+  connectionId: string | null;
+  sourceName: string | null;
+  engine: string | null;
+  database: string | null;
+  schemas: { schemaName: string; tables: number }[];
+  objectCount: number;
+};
+
+export type WorkerLineageGraph = {
+  layers: WorkerLineageLayer[];
+  dependencies: { sourceLayer: string; targetLayer: string }[];
+};
+
+export const fetchWorkerLineage = (signal?: AbortSignal): Promise<WorkerLineageGraph> =>
+  client.get('/etl/lineage/layers', { signal }).then((r) => unwrap<WorkerLineageGraph>(r.data));
+
 export type WarehouseConnection = { id: 'warehouse'; engine: 'postgresql'; database: string; connectionId: string; name: string };
 const warehouseConnectionPath = (id: WarehouseConnection['id'] = 'warehouse') => `/etl/data-connections/${encodeURIComponent(id)}`;
 export const fetchWarehouseConnection = (signal?: AbortSignal): Promise<WarehouseConnection> =>

@@ -13,6 +13,7 @@ import TableLineageReferences from './TableLineageReferences';
 import ColumnLineageReferences from './ColumnLineageReferences';
 import ObservedTableLineage from './ObservedTableLineage';
 import ConnectionFlowNodes from './ConnectionFlowNodes';
+import WorkerLineage from './WorkerLineage';
 import './ontology-lineage.css';
 
 function nodeId(schema: string, connectionId?: string) {
@@ -20,6 +21,20 @@ function nodeId(schema: string, connectionId?: string) {
 }
 
 export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: number }) {
+  const [params, setParams] = useSearchParams();
+  const schemaView = ['schema', 'managedAsset', 'q', 'motion'].some(key => params.has(key)) || params.get('view') === 'references';
+  return <div className="flow-lineage">
+    <nav className="flow-lineage-views" aria-label="Lineage views">
+      <button type="button" className="flow-lineage-action" aria-pressed={!schemaView}
+        onClick={() => setParams({})}>Worker flow</button>
+      <button type="button" className="flow-lineage-action" aria-pressed={schemaView}
+        onClick={() => { if (!schemaView) setParams({ view: 'references' }); }}>Schema references</button>
+    </nav>
+    {schemaView ? <SchemaLineage refreshToken={refreshToken} /> : <WorkerLineage refreshToken={refreshToken} />}
+  </div>;
+}
+
+function SchemaLineage({ refreshToken }: { refreshToken: number }) {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const search = params.get('q') || '';
@@ -57,6 +72,7 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
   const [version, setVersion] = useState(0);
   const updateQuery = (changes: Record<string, string | null>, replace = false) => setParams((current) => {
     const next = new URLSearchParams(current);
+    next.set('view', 'references');
     Object.entries(changes).forEach(([key, value]) => value ? next.set(key, value) : next.delete(key));
     return next;
   }, { replace });
@@ -72,7 +88,7 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
   }, [version, refreshToken]);
   useEffect(() => {
     if (!loading && !error && selected && !schemas.some((schema) => schema.key === selected && (!selectedConnection || schema.connectionId === selectedConnection))) {
-      setParams((current) => { const next = new URLSearchParams(current); next.delete('schema'); next.delete('connectionId'); next.delete('table'); next.delete('tableLineage'); next.delete('column'); next.delete('transferPlan'); next.delete('scheduleKind'); return next; }, { replace: true });
+      setParams((current) => { const next = new URLSearchParams(current); next.set('view', 'references'); next.delete('schema'); next.delete('connectionId'); next.delete('table'); next.delete('tableLineage'); next.delete('column'); next.delete('transferPlan'); next.delete('scheduleKind'); return next; }, { replace: true });
     }
   }, [schemas, loading, error, selected, selectedConnection, setParams]);
   useEffect(() => {
@@ -235,7 +251,7 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
   const motionStatus = reducedMotion ? 'Animations are off because reduced motion is enabled.' : paused ? 'Animation paused' : measuredOutputs ? `${measuredOutputs} active schema outputs${directionLinks ? ` · ${directionLinks} direction previews` : ''}` : directionLinks ? `${directionLinks} direction previews · Output metrics unavailable` : 'No active schema output · Motion stopped';
   return <div className="flow-lineage" data-testid="ontology-lineage">
     <header className="flow-lineage-context">
-      <div className="flow-lineage-context-title"><button type="button" className="flow-lineage-back" aria-label="Back to object types" title="Back to object types" onClick={() => navigate('/ontology')}><ArrowLeftOutlined /></button><h1>Data lineage</h1><span>ETL contract preview</span></div>
+      <div className="flow-lineage-context-title"><button type="button" className="flow-lineage-back" aria-label="Back to object types" title="Back to object types" onClick={() => navigate('/ontology')}><ArrowLeftOutlined /></button><h1>Data lineage</h1><span>Schema references</span></div>
       <div className="flow-lineage-context-actions"><button type="button" className="flow-lineage-action" aria-label="Refresh lineage" title="Refresh schemas and output metrics" disabled={loading} onClick={() => setVersion(value => value + 1)}><ReloadOutlined spin={loading} /><span>Refresh</span></button><button type="button" className="flow-lineage-action is-primary" onClick={() => void copyLink()}>{copyStatus === 'copied' ? <CheckOutlined /> : <CopyOutlined />}<span>{copyStatus === 'copied' ? 'Link copied' : 'Copy link'}</span></button></div>
     </header>
     {copyStatus === 'manual' && <div className="flow-lineage-copy-fallback"><span>Copy this view link:</span><input aria-label="View link to copy" readOnly value={window.location.href} autoFocus onFocus={event => event.currentTarget.select()} /></div>}
@@ -299,7 +315,7 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
                   <TableExportEvidence mode="lineage" version={version} />
                   <button type="button" className="flow-lineage-action flow-lineage-open-workspace" onClick={openWorkspace}>Open table Evidence in Explorer <ArrowRightOutlined /></button>
                   <button type="button" className="flow-lineage-action flow-lineage-open-workspace" onClick={() => updateQuery({ table: null })}>Back to schema details</button>
-                </> : <><p className="flow-lineage-inspector-disclosure">ETL contract preview. Relationships are predefined, not discovered data lineage.</p>
+                </> : <><p className="flow-lineage-inspector-disclosure">Upstream and downstream references come from enabled object relationships.</p>
                 {activePanel === 'details' && <dl><dt>Database</dt><dd>{asset.database || '—'}</dd><dt>Tables</dt><dd>{asset.tables ?? '—'}</dd><dt>Input rate</dt><dd>{asset.metricsAvailable ? `${asset.rateIn.toLocaleString('en-US')} /s` : 'Metrics unavailable'}</dd><dt>Output rate</dt><dd>{asset.metricsAvailable ? `${asset.rateOut.toLocaleString('en-US')} /s` : 'Metrics unavailable'}</dd><dt>Relationships</dt><dd>{relationships.some(pair => pair.includes(nodeId(asset.key, asset.connectionId))) ? 'Registered relationships' : 'None registered'}</dd></dl>}
                 {isExportSchema && activePanel === 'details' && <button type="button" className="flow-lineage-action" onClick={() => updateQuery({ table: asset.exportTable ?? null, transferPlan: null, scheduleKind: null })}>Inspect records export</button>}
                 {activePanel === 'transfers'

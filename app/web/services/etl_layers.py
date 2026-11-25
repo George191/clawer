@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from collections import deque
+from collections import Counter, defaultdict, deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -19,7 +19,10 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
 from app.config.settings import settings as etl_settings
-
+from app.etl.layer_dependencies import (
+    DWD_DATA_TYPES, DWD_SOURCE_LAYERS, ODS_SOURCE_LAYERS, TASK_DATA_TYPES, TASK_SOURCE_LAYERS,
+)
+from app.etl.schema.catalogs import validate_table_name
 from app.etl.schema.object_relations import (
     ObjectRelationsNotInitialized,
     read_object_relations,
@@ -40,6 +43,7 @@ from app.web.api.models.lineage_neighbors import (
     LineageCommonDownstream, LineageCommonUpstream, LineageDirection, LineageEndpoint, LineageNeighborKind, LineageNeighbors,
     LineagePath, LineagePathEdge, LineagePathTargets,
 )
+from app.web.api.models.layer_lineage import LayerLineage, LineageLayer, LineageLayerDependency, LineageLayerSchema
 from app.web.api.models.push_inbox_apply import PUSH_APPLY_SCHEMA, PUSH_APPLY_TARGET
 from app.web.services.index_preview_sandbox import INDEX_SANDBOX_SCHEMA, INDEX_SANDBOX_TABLE
 from app.web.services.batch_snapshot_range_scope import BATCH_RANGE_SOURCE_SCHEMA, BATCH_RANGE_TARGET
@@ -422,6 +426,84 @@ class EtlLayers:
     async def database_name(self) -> str:
         async with self.session() as session:
             return (await session.execute(text("SELECT current_database()"))).scalar_one()
+
+    async def layer_lineage(self, *, can_manage: bool) -> LayerLineage:
+        bindings = await layer_connection_info(pg=self._metadata_pg)
+        async with self._metadata_pg.session() as session:
+            await self._require_ontology(session)
+            result = await session.execute(text("""
+                WITH active AS (
+                    SELECT layer, schema_name, table_name, table_role, data_type, visibility,
+                        ddl_sql = '' AS without_ddl,
+                        count(*) OVER (PARTITION BY layer, table_role, data_type) AS type_count,
+                        bool_or(table_role = 'current' AND data_type = 'orbital' AND ddl_sql = '')
+                            OVER (PARTITION BY layer, schema_name) AS has_mongo_orbital
+                    FROM app.ontology_objects WHERE is_active
+                )
+                SELECT layer, schema_name, table_name, table_role, data_type, without_ddl, type_count, has_mongo_orbital
+                FROM active WHERE visibility <> 'hidden'
+            """))
+            objects = result.mappings().all()
+
+        schemas: dict[str, Counter[str]] = defaultdict(Counter)
+        current_types: dict[str, set[str]] = defaultdict(set)
+        for row in objects:
+            layer, schema, table = row["layer"], row["schema_name"], row["table_name"]
+            if not is_ordinary_schema(schema) or not _PG_IDENTIFIER.fullmatch(table) or (schema, table) in _PROTECTED_TABLES:
+                continue
+            schemas[layer][schema] += 1
+            binding = bindings.get(layer)
+            if binding is None or row["table_role"] != "current":
+                continue
+            if binding["engine"] == "mongodb":
+                if schema != binding.get("database") or not row["without_ddl"] or row["has_mongo_orbital"]:
+                    continue
+            elif row["type_count"] != 1:
+                continue
+            try:
+                data_type = validate_table_name(row["data_type"])
+            except ValueError:
+                continue
+            current_types[layer].add(data_type)
+
+        if can_manage:
+            for layer in bindings:
+                schemas.setdefault(layer, Counter())
+        layers = []
+        for layer, counts in sorted(schemas.items()):
+            binding = bindings.get(layer, {})
+            layers.append(LineageLayer(
+                layer=layer, connectionId=binding.get("id"), sourceName=binding.get("name") if can_manage else None,
+                engine=binding.get("engine"), database=binding.get("database"),
+                schemas=[LineageLayerSchema(schemaName=schema, tables=count) for schema, count in sorted(counts.items())],
+                objectCount=sum(counts.values()),
+            ))
+
+        engines = {layer: binding["engine"] for layer, binding in bindings.items()}
+        dependencies = []
+        for target, sources, handled in (
+            ("ods", ODS_SOURCE_LAYERS, None),
+            ("task", TASK_SOURCE_LAYERS, TASK_DATA_TYPES),
+            ("dwd", DWD_SOURCE_LAYERS, DWD_DATA_TYPES),
+        ):
+            if engines.get(target) != "postgresql" or not current_types[target]:
+                continue
+            for source in sources:
+                source_types = current_types[source]
+                source_engine = engines.get(source)
+                if target == "ods" and source_engine == "mongodb":
+                    if etl_settings.etl_output_mode != "debezium":
+                        continue
+                elif source_engine != "postgresql":
+                    continue
+                if handled is not None:
+                    source_types = source_types & current_types[target] & handled
+                if target == "dwd" and source == "task":
+                    # TASK results are checked against the current PostgreSQL ODS revision.
+                    source_types = source_types & current_types["ods"] if engines.get("ods") == "postgresql" else set()
+                if source_types:
+                    dependencies.append(LineageLayerDependency(sourceLayer=source, targetLayer=target))
+        return LayerLineage(layers=layers, dependencies=dependencies)
 
     async def layers(self) -> list[dict[str, Any]]:
         objects, relations = await self._registered_catalog(relations=True)

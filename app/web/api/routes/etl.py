@@ -22,6 +22,7 @@ from app.web.api.dependencies.session import get_db, get_registered_business_db
 from app.web.api.models.column_planner_statistic import ColumnPlannerStatistic
 from app.web.api.models.data_connections import BusinessDatabaseSelection, LayerConnectionSelection
 from app.web.api.models.lineage_column_mapping_paths import ColumnMappingPaths
+from app.web.api.models.layer_lineage import LayerLineage
 from app.web.api.models.lineage_neighbors import (
     LineageColumnReferences, LineageCommonDownstream, LineageCommonUpstream, LineageDirection, LineageNeighbors, LineagePath,
     LineagePathTargets, ObservedLineage,
@@ -843,6 +844,12 @@ async def layers() -> list[dict[str, Any]]:
         if is_sandbox_connection and row["schemaName"] == export_schema:
             row["exportTable"] = export_table
     return rows
+
+
+@read.get("/lineage/layers")
+async def layer_lineage(response: Response, current_user: Any = Depends(get_current_user)) -> LayerLineage:
+    response.headers["Cache-Control"] = "private, no-store"
+    return await get_etl_layers().layer_lineage(can_manage=current_user.is_superuser)
 
 
 @write.get("/data-connections/layer-bindings")

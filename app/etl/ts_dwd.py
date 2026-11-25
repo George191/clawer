@@ -34,6 +34,7 @@ from sqlalchemy import text
 
 from app.config.settings import settings
 from app.etl.base import ETLBase, extract_meta
+from app.etl.layer_dependencies import DWD_SOURCE_LAYERS
 from app.etl.schema.catalogs import validate_table_name
 from app.etl.source_fences import current_ods_revision, source_snapshot_current, source_snapshot_revision
 from app.logger import get_logger
@@ -127,7 +128,7 @@ def graph_record_complete(row: dict[str, Any]) -> bool:
 
 class TsDwd(ETLBase):
     _layer = "dwd"
-    _source_layers = ("ods", "task")
+    _source_layers = DWD_SOURCE_LAYERS
     _consumer_topics = [settings.etl_ods_topic, settings.etl_task_topic]
     _consumer_group = settings.etl_dwd_consumer_group
     _producer_topic = settings.etl_graph_topic

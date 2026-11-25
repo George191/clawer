@@ -14,6 +14,7 @@ from sqlalchemy.exc import InterfaceError, OperationalError
 from app.adapters.runtime import get_source_module
 from app.config.settings import settings
 from app.etl.base import ETLBase, extract_meta
+from app.etl.layer_dependencies import ODS_SOURCE_LAYERS
 from app.etl.mongo_source import MongoOdsSource, mongo_ods_input
 from app.etl.normalizers import get_normalizer
 from app.etl.normalizers.base import safe_date, safe_datetime, safe_str
@@ -37,7 +38,7 @@ _ODS_BATCH_MAX_BYTES = 4 * 1024 * 1024
 
 class TsOds(ETLBase):
     _layer = "ods"
-    _source_layers = ("rds",)
+    _source_layers = ODS_SOURCE_LAYERS
     _consumer_pattern = rf"^{re.escape(settings.etl_rds_topic)}-[a-z][a-z0-9_]*$"
     _consumer_group = settings.etl_ods_consumer_group
     _producer_topic = settings.etl_ods_topic
