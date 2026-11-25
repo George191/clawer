@@ -64,7 +64,6 @@ export default function TableExports({ openFromLink, onLinkClose }: { openFromLi
     setOpen(openFromLink);
     if (openFromLink) heading.current?.focus();
   }, [openFromLink]);
-  useEffect(() => { if (open) heading.current?.closest('section')?.scrollIntoView({ block: 'start' }); }, [open]);
   return <section className={`ontology-source-catalog ontology-source-sync ontology-transfer-tool${open ? ' is-open' : ''}`} aria-label="Table exports">
     <header>
       <div className="ontology-transfer-tool__description">

@@ -22,6 +22,10 @@ GEOMETRY = """() => {
   return { modal: rect('.ontology-connections-inventory-modal'), replay: rect('[aria-label="Sandbox CDC replay"]'),
     width: workspace.clientWidth, height: workspace.scrollHeight, scrollTop: workspace.scrollTop };
 }"""
+HEADER_GEOMETRY = """card => {
+  const rect = element => { const r = element.getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; };
+  return { header: rect(card.querySelector(':scope > header')), button: rect(card.querySelector(':scope > header > button')) };
+}"""
 
 
 async def check(browser, width, height, armed):
@@ -59,6 +63,15 @@ async def check(browser, width, height, armed):
             data = {'user': {'is_superuser': True}}
         elif path.endswith(('/etl/data-connections', '/etl/connector-types')):
             data = []
+        elif path.endswith('/etl/table-export/capabilities'):
+            data = dict(enabled=False, provisioned=False, sourceSchema='ts_table_export_sandbox', sourceTable='records',
+                        targetSchema='ts_table_export_receiver', targetTable='records', maxRows=50, maxCaptionBytes=65536,
+                        mapping=[dict(sourceColumn='id', targetColumn='id', type='bigint')])
+        elif path.endswith('/etl/table-export'):
+            data = None
+        elif path.endswith('/etl/table-export/grant'):
+            data = dict(available=False, effective=False, status='not_granted', generation=None,
+                        planUpdatedAt=None, approvedAt=None, revokedAt=None, marking='sandbox-synthetic')
         elif path.endswith('/etl/cdc-sandbox'):
             await gate.wait()
             code, data = (403, {'detail': 'Scope denied'}) if mode == 'denied' else (500, {}) if mode == 'failed' else (200, status)
@@ -78,6 +91,26 @@ async def check(browser, width, height, armed):
 
     await page.route('**/api/v1/**', route_api)
     await page.goto(f'http://127.0.0.1:{PORT}/tests/fixtures/connections-refresh.html')
+    for label, show, hide in [('Table exports', 'Set up test export', 'Hide export setup'),
+                              ('Sandbox CDC replay', 'Review test replay', 'Hide change replay')]:
+        card = page.get_by_role('region', name=label, exact=True)
+        button = card.get_by_role('button', name=show, exact=True)
+        await button.focus()
+        before_header = await card.evaluate(HEADER_GEOMETRY)
+        before_neighbour = await page.locator('.ontology-transfer-tool > header').evaluate_all('(nodes) => nodes.map(n => { const r=n.getBoundingClientRect(); return [r.x,r.y,r.width,r.height]; })')
+        await button.click()
+        if label == 'Table exports':
+            await expect(page.get_by_role('table', name='Export column mapping')).to_be_visible()
+        else:
+            await expect(page.get_by_role('button', name='Refresh replay status')).to_be_enabled()
+        await page.wait_for_timeout(80)
+        assert await card.evaluate(HEADER_GEOMETRY) == before_header, 'Opening must preserve the card header and toggle position'
+        if width > 920:
+            after_neighbour = await page.locator('.ontology-transfer-tool > header').evaluate_all('(nodes) => nodes.map(n => { const r=n.getBoundingClientRect(); return [r.x,r.y,r.width,r.height]; })')
+            assert before_neighbour == after_neighbour, 'Opening one desktop card must not move either header'
+        await card.get_by_role('button', name=hide, exact=True).click()
+        await page.wait_for_timeout(80)
+        assert await card.evaluate(HEADER_GEOMETRY) == before_header, 'Closing must preserve the card header and toggle position'
     try:
         await page.get_by_role('button', name='Review test replay', exact=True).click()
     except Exception:
@@ -89,6 +122,11 @@ async def check(browser, width, height, armed):
     if armed:
         await page.get_by_role('button', name='Open version history', exact=True).click()
         await expect(page.get_by_role('list', name='Captured target versions')).to_be_visible()
+    else:
+        await expect(page.get_by_text('Committed receipts could not be loaded.', exact=True)).to_be_visible()
+        await page.get_by_role('button', name='Open version history', exact=True).click()
+        await expect(page.get_by_role('list', name='Captured target versions')).to_be_visible()
+        await page.get_by_role('button', name='Close version history', exact=True).click()
     await refresh.focus()
     before = await page.evaluate(GEOMETRY)
     gate.clear()
@@ -147,13 +185,45 @@ async def check(browser, width, height, armed):
     await refresh.click()
     await expect(page.get_by_role('alert').filter(has_text='Sandbox replay status could not be loaded.')).to_be_visible()
     await expect(page.get_by_text('Reviewed generation', exact=True)).to_have_count(0)
-    await expect(page.get_by_role('region', name='CDC dataset versions')).to_have_count(0)
+    await expect(page.get_by_role('region', name='CDC dataset versions')).to_have_count(1)
+    await expect(page.get_by_role('list', name='Captured target versions')).to_have_count(0)
+    await expect(page.get_by_role('dialog', name='Historical target snapshot', exact=True)).to_have_count(0)
     denied_count = len(requests)
     await page.wait_for_timeout(150)
     assert len(requests) == denied_count, 'Permission denial must not create an automatic retry loop'
+    await page.evaluate("""() => {
+      window.versionGaps = 0;
+      window.versionObserver = new MutationObserver(() => {
+        if (!document.querySelector('[aria-label="CDC dataset versions"] > header')?.getClientRects().length) window.versionGaps++;
+      });
+      window.versionObserver.observe(document.body, {childList:true, subtree:true});
+    }""")
+    versions_header = page.locator('[aria-label="CDC dataset versions"] > header')
+    header_before = await versions_header.bounding_box()
+    gate.clear()
+    await refresh.click()
+    await expect(refresh).to_be_disabled()
+    await page.wait_for_timeout(150)
+    await expect(page.get_by_role('region', name='CDC dataset versions')).to_have_count(1)
+    assert await versions_header.bounding_box() == header_before
+    gate.set()
+    await expect(refresh).to_be_enabled()
+    await expect(page.get_by_role('region', name='CDC dataset versions')).to_have_count(1)
+    assert await versions_header.bounding_box() == header_before
+    assert await page.evaluate('window.versionGaps') == 0, 'A denied refresh must keep the version header visible'
+    await page.evaluate('window.versionObserver.disconnect()')
+    if armed:
+        mode = 'success'
+        gate.clear()
+        await refresh.click()
+        await expect(page.get_by_role('region', name='CDC dataset versions')).to_have_count(1)
+        gate.set()
+        await expect(refresh).to_be_enabled()
+        await expect(page.get_by_role('region', name='CDC dataset versions')).to_have_count(1)
     assert not errors, errors
     await page.close()
-    return {'viewport': [width, height], 'armed': armed, 'geometry_unchanged': True, 'failures_block_execution': True}
+    return {'viewport': [width, height], 'armed': armed, 'toggle_positions_unchanged': True,
+            'geometry_unchanged': True, 'no_version_flash': True, 'failures_block_execution': True}
 
 
 async def main():

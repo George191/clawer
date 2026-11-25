@@ -25,10 +25,8 @@ function clearPending(key: string) {
 
 export default function SandboxCdcReplay() {
   const [open, setOpen] = useState(false);
-  const section = useRef<HTMLElement>(null);
   const identity = useSandboxIdentity();
-  useEffect(() => { if (open) section.current?.scrollIntoView({ block: 'start' }); }, [open]);
-  return <section ref={section} className={`ontology-source-catalog ontology-source-sync ontology-transfer-tool${open ? ' is-open' : ''}`} aria-label="Sandbox CDC replay">
+  return <section className={`ontology-source-catalog ontology-source-sync ontology-transfer-tool${open ? ' is-open' : ''}`} aria-label="Sandbox CDC replay">
     <header>
       <div className="ontology-transfer-tool__description">
         <span className="ontology-transfer-tool__kind">Change data capture · CDC</span>
@@ -57,7 +55,6 @@ function CdcReplayWorkspace() {
   const [decision, setDecision] = useState<Decision>();
   const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(true);
-  const [scopeDenied, setScopeDenied] = useState(false);
   const read = useRef<AbortController>();
   const scopeEpoch = useRef(0);
   const active = useRef(false);
@@ -70,9 +67,9 @@ function CdcReplayWorkspace() {
     scopeEpoch.current++;
     read.current?.abort();
     setStatus(undefined); setReceipts(undefined); setNotice(undefined); setDecision(undefined);
-    setLoadFailed(true); setReceiptsFailed(true); setRefreshing(false); setScopeDenied(true);
+    setLoadFailed(true); setReceiptsFailed(true); setRefreshing(false);
   };
-  const refresh = () => { setScopeDenied(false); setRefreshing(true); setRevision(value => value + 1); };
+  const refresh = () => { setRefreshing(true); setRevision(value => value + 1); };
 
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   useEffect(() => {
@@ -188,7 +185,7 @@ function CdcReplayWorkspace() {
           <span>Receipt ID: <code>{receipt.id}</code></span><span>Original request ID: <code>{receipt.requestId}</code></span>
         </li>)}</ol> : <p>No committed CDC receipts.</p>}
     </section>
-    {!scopeDenied && <SandboxCdcVersions revision={revision} onScopeDenied={invalidate} />}
+    <SandboxCdcVersions key={scopeEpoch.current} revision={revision} onScopeDenied={invalidate} />
     <Modal open={Boolean(decision)} destroyOnHidden className="flow-surface-modal"
       title={decision === 'review' ? 'Review sandbox CDC route?' : decision === 'retry' ? 'Retry original CDC request?' : 'Apply next sandbox CDC batch?'}
       onCancel={() => { if (!busy) setDecision(undefined); }} onOk={submit} confirmLoading={busy}
