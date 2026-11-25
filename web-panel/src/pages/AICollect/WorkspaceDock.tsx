@@ -639,7 +639,7 @@ const renderDownloadLogText = (message: string): React.ReactNode => {
   });
 };
 
-const renderConsoleLogMessage = (message: string): React.ReactNode => {
+export const renderConsoleLogMessage = (message: string): React.ReactNode => {
   const match = message.match(consoleLogPrefixPattern);
   if (!match) return renderDownloadLogText(message);
   const level = match[4].toLowerCase();

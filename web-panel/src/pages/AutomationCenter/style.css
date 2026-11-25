@@ -268,12 +268,20 @@
 .automation-inspector-section h3 { display:flex; justify-content:space-between; margin:0 0 12px; font-size:12px; font-weight:600; }
 .automation-inspector-section h3 small { color:var(--ontology-muted); font-size:10px; font-weight:400; }
 .automation-inspector-section > .ui-select { width:100%; margin-bottom:8px; }
-.automation-logs ol { margin:0; padding:0; list-style:none; }
-.automation-logs li { display:flex; flex-direction:column; gap:5px; padding:10px 0; border-bottom:1px solid var(--ontology-border); }
-.automation-logs time { color:var(--ontology-muted); font-size:10px; }
-.automation-logs code { font-size:11px; line-height:1.6; overflow-wrap:anywhere; white-space:pre-wrap; }
-.automation-logs .is-warn code { color:var(--ui-warning); }
-.automation-logs .is-ok code { color:var(--ui-success); }
+.automation-logs .workspace-dock-log-list { display:flex; flex-direction:column; gap:6px; margin-top:10px; overflow:auto; overscroll-behavior:contain; }
+.automation-logs .workspace-dock-log-row { display:block; color:#C4CBDA; font-size:10px; line-height:1.45; }
+.automation-logs .workspace-dock-log-row code { display:block; color:inherit; font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace; font-size:inherit; letter-spacing:normal; font-variant-numeric:tabular-nums; white-space:pre-wrap; word-break:break-word; }
+.automation-logs .workspace-dock-log-bracket { color:rgba(255,255,255,.38); }
+.automation-logs .workspace-dock-log-time { color:#7DD3FC; }
+.automation-logs .workspace-dock-log-level { color:#8AB4FF; font-weight:600; }
+.automation-logs .workspace-dock-log-level.is-debug { color:#BFA8FF; }
+.automation-logs .workspace-dock-log-level.is-info { color:#65D5A3; }
+.automation-logs .workspace-dock-log-level.is-warning { color:#F6C35B; }
+.automation-logs .workspace-dock-log-level:is(.is-error,.is-critical) { color:#F87171; }
+.automation-logs .workspace-dock-log-process { color:#C4A7FF; font-weight:500; }
+.automation-logs .workspace-dock-download-bar { display:inline-flex; align-items:center; height:1em; overflow:hidden; line-height:1; vertical-align:middle; white-space:nowrap; }
+.automation-logs .workspace-dock-download-cell { display:inline-block; flex:0 0 1ch; width:1ch; height:.75em; overflow:hidden; color:transparent; background:rgba(255,255,255,.14); }
+.automation-logs .workspace-dock-download-cell.is-filled { background:#fff; }
 @media(max-width:1000px) { .automation-runs-body.has-detail { flex-direction:column; overflow:auto; } .automation-run-inspector { width:100%; max-width:none; min-height:360px; flex:none; } .automation-run-list { min-height:280px; } }
 @media(max-width:700px) { .automation-sidebar { width:100%; } .automation-run-stats button { flex-direction:column; align-items:flex-start; padding:10px; } .automation-node-editor { grid-template-columns:1fr; } .automation-node-preview { display:none; } }
 .automation-workflow-modal .ui-modal-content { display:flex; flex-direction:column; max-height:calc(100dvh - 64px); overflow:hidden; border-radius:3px; }

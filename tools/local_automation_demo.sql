@@ -107,4 +107,9 @@ SELECT run.task_id,run.id,CASE WHEN run.status='failed' AND line=4 THEN 'warn' W
   run.started_at+line*interval '20 seconds'
 FROM app.automation_task_runs run CROSS JOIN generate_series(1,4) AS line
 WHERE run.task_id IN (SELECT id FROM app.automation_tasks WHERE owner='Local demo' AND parameters->>'synthetic'='true');
+UPDATE app.automation_task_logs log SET message = format('[%s: %s/LocalDemo] %s',
+  to_char(log.created_at AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI:SS,MS'),
+  CASE log.level WHEN 'warn' THEN 'WARNING' WHEN 'ok' THEN 'OK' ELSE 'INFO' END, log.message)
+WHERE log.task_id IN (SELECT id FROM app.automation_tasks WHERE owner='Local demo' AND parameters->>'synthetic'='true')
+  AND log.message LIKE '[DEMO]%';
 COMMIT;

@@ -4,6 +4,7 @@ import { CloseOutlined, ReloadOutlined } from '@/components/ui/icons';
 import { fetchWorkspaceTasks, fetchWorkspaceTask, fetchWorkspaceTaskLogs, fetchWorkspaceTaskLogRuns, runWorkspaceTaskAction, getAiAnalyzeWsUrl, type WorkspaceTask, type WorkspaceTaskLog, type WorkspaceTaskLogRun } from '@/services/aiApi';
 import type { ProductDomain } from '@/services/types';
 import { useWebSocket } from '@/hooks/useWebSocket';
+import { renderConsoleLogMessage } from '@/pages/AICollect/WorkspaceDock';
 
 const statuses = ['all', 'running', 'queued', 'paused', 'completed', 'failed'] as const;
 const date = (value?: string | null) => value ? new Date(value).toLocaleString() : '—';
@@ -145,7 +146,7 @@ export default function AutomationRuns({ domain, keyword, taskId, onSelect }: {
           <dl className="automation-run-facts"><div><dt>Status</dt><dd>{status(detail.status)}</dd></div><div><dt>Owner</dt><dd>{detail.owner}</dd></div><div><dt>Started</dt><dd>{date(selectedRun?.started_at || detail.started_at)}</dd></div><div><dt>Duration</dt><dd>{duration(selectedRun)}</dd></div><div><dt>Records</dt><dd>{detail.records.toLocaleString()}</dd></div><div><dt>Run ID</dt><dd><code>{runId || 'Not started'}</code></dd></div></dl>
           <div className="automation-inspector-section"><h3>Execution history</h3><Select aria-label="Select execution" value={runId} onChange={setRunId} options={runs.map(run => ({ value: run.id, label: `${date(run.started_at)} · ${run.status}` }))} />{historyMore && <Button size="small" loading={historyLoading} onClick={() => void loadHistory()}>Earlier executions</Button>}{historyError && <p role="alert">{historyError}</p>}</div>
           <div className="automation-inspector-section automation-logs"><h3>Execution logs <small>{selectedRun?.log_count ?? 0} events</small></h3>{logsError && <p role="alert">{logsError}</p>}{hasMore && <Button size="small" loading={logsLoading} onClick={() => void loadOlder()}>Load older logs</Button>}
-            {logsLoading && !logs.length ? <p role="status">Loading logs…</p> : logs.length ? <ol>{logs.map(log => <li key={log.id} className={`is-${log.level}`}><time>{date(log.created_at)}</time><code>{log.message}</code></li>)}</ol> : <p className="automation-muted">{runId ? 'No logs recorded for this execution.' : 'This task has not started.'}</p>}
+            {logsLoading && !logs.length ? <p role="status">Loading logs…</p> : logs.length ? <div className="workspace-dock-log-list is-detail">{logs.slice().reverse().map(log => <div key={log.id} className={`workspace-dock-log-row is-${log.level}`}><code>{renderConsoleLogMessage(log.message)}</code></div>)}</div> : <p className="automation-muted">{runId ? 'No logs recorded for this execution.' : 'This task has not started.'}</p>}
           </div>
         </>}
       </aside>}
