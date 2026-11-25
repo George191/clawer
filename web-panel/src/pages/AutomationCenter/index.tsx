@@ -6,7 +6,7 @@ import {
 } from '@/components/ui';
 import enUS from '@/components/ui/locale';
 import {
-  ApartmentOutlined, ClockCircleOutlined, CloseOutlined, DeleteOutlined,
+  ApartmentOutlined, ArrowRightOutlined, BranchesOutlined, ClockCircleOutlined, CloseOutlined, DeleteOutlined,
   EditOutlined, ExportOutlined, FieldTimeOutlined,
   PlusOutlined, SearchOutlined,
 } from '@/components/ui/icons';
@@ -27,6 +27,8 @@ import WorkspaceDock, { inferSiteKind, TemplateGlyph } from '@/pages/AICollect/W
 import type {
   AutomationWorkflow, ProductDomain, SchedulerTaskConfig, WorkspaceTask,
 } from '@/services/types';
+import '@/pages/Pipeline/ontology-frame.css';
+import '@/pages/Pipeline/foundry-workbench-tokens.css';
 import './style.css';
 import TransferSchedules from './TransferSchedules';
 
@@ -35,20 +37,20 @@ type DomainFilter = ProductDomain | 'all';
 type ScheduleFilter = 'all' | 'enabled' | 'paused';
 type SelectedRecord = AutomationWorkflow | AutomationSchedule;
 
-const domainMeta: Record<ProductDomain, { label: string; color: string; className: string; accent: string }> = {
-  'ai-collect': { label: 'Scout', color: 'purple', className: 'is-ai', accent: '#7C3AED' },
-  'data-lake': { label: 'Vault', color: 'green', className: 'is-lake', accent: '#059669' },
-  'etl-pipeline': { label: 'Helio', color: 'blue', className: 'is-etl', accent: '#0EA5E9' },
-  'data-cockpit': { label: 'Atlas', color: 'gold', className: 'is-cockpit', accent: '#F59E0B' },
-  'knowledge-graph': { label: 'Graph', color: 'purple', className: 'is-graph', accent: '#8B5CF6' },
-  'knowledge-rag': { label: 'RAG', color: 'cyan', className: 'is-rag', accent: '#0D9488' },
-  platform: { label: 'Platform', color: 'default', className: 'is-platform', accent: '#64748B' },
+const domainMeta: Record<ProductDomain, { label: string }> = {
+  'ai-collect': { label: 'Scout' },
+  'data-lake': { label: 'Vault' },
+  'etl-pipeline': { label: 'Helio' },
+  'data-cockpit': { label: 'Atlas' },
+  'knowledge-graph': { label: 'Graph' },
+  'knowledge-rag': { label: 'RAG' },
+  platform: { label: 'Platform' },
 };
 
 const sectionMeta: Record<Section, { label: string; description: string }> = {
-  workflows: { label: 'Workflows', description: 'Compose templates and execution nodes into reusable workflows' },
-  schedules: { label: 'Schedules', description: 'Manage recurring triggers, queues, and retry policies' },
-  runs: { label: 'Runs', description: '' },
+  workflows: { label: 'Workflows', description: 'Reusable execution paths across your workspace.' },
+  schedules: { label: 'Schedules', description: 'Control when work starts and inspect its trigger rules.' },
+  runs: { label: 'Runs', description: 'Follow execution progress and inspect individual runs.' },
 };
 const objectLabel: Record<Section, string> = {
   workflows: 'Workflow', schedules: 'Schedule', runs: 'Run',
@@ -193,18 +195,13 @@ const AutomationCenter: React.FC = () => {
     setSearchParams(next);
   };
 
-  const domainTag = (value: ProductDomain) => <Tag color={(domainMeta[value] ?? domainMeta.platform).color}>{(domainMeta[value] ?? domainMeta.platform).label}</Tag>;
+  const domainTag = (value: ProductDomain) => <Tag>{(domainMeta[value] ?? domainMeta.platform).label}</Tag>;
   const matches = (text: string) => text.toLowerCase().includes(keyword.trim().toLowerCase());
   const filteredWorkflows = useMemo(() => workflows.filter((item) =>
     (domain === 'all' || item.product_domain === domain) && matches(`${item.name} ${item.description}`)), [workflows, domain, keyword]);
   const filteredSchedules = useMemo(() => [...workspaceSchedules, ...schedules].filter((item) =>
     (domain === 'all' || item.product_domain === domain) && matches(`${item.display_name ?? item.task_name} ${item.task_path} ${item.description ?? ''}`)), [workspaceSchedules, schedules, domain, keyword]);
-  const enabledScheduleCount = filteredSchedules.filter((item) => item.enabled).length;
   const visibleSchedules = filteredSchedules.filter((item) => scheduleFilter === 'all' || item.enabled === (scheduleFilter === 'enabled'));
-  const scheduleDomain = (value: ProductDomain) => {
-    const meta = domainMeta[value] ?? domainMeta.platform;
-    return <span className="automation-schedule-domain"><span className="automation-domain-initial" style={{ background: `linear-gradient(135deg, ${meta.accent}, #1D4ED8)` }} aria-hidden="true">{meta.label.slice(0, 1)}</span>{meta.label}</span>;
-  };
 
   const openScheduleDetail = (record: AutomationSchedule) => {
     setEditorOpen(false);
@@ -354,48 +351,36 @@ const AutomationCenter: React.FC = () => {
   const workflowColumns = [
     { title: 'Workflow', dataIndex: 'name', render: (_: string, item: AutomationWorkflow) => <div className="automation-name"><ApartmentOutlined /><span><strong>{item.name}</strong><small>{item.description || 'No description'}</small></span></div> },
     { title: 'Domain', width: 140, render: (_: unknown, item: AutomationWorkflow) => domainTag(item.product_domain) },
-    { title: 'Nodes', width: 100, render: (_: unknown, item: AutomationWorkflow) => `${item.nodes.length} nodes` },
+    { title: 'Execution path', width: 260, render: (_: unknown, item: AutomationWorkflow) => <div className="automation-node-path" title={item.nodes.map(node => node.name).join(' → ')}>{item.nodes.length ? <>{item.nodes.slice(0, 2).map((node, index) => <React.Fragment key={index}>{index > 0 && <ArrowRightOutlined />}<span>{node.name}</span></React.Fragment>)}{item.nodes.length > 2 && <small>+{item.nodes.length - 2}</small>}</> : <span className="automation-muted">No nodes configured</span>}</div> },
     { title: 'Status', width: 110, render: (_: unknown, item: AutomationWorkflow) => <Badge status={item.enabled ? 'success' : 'default'} text={item.enabled ? 'Enabled' : 'Disabled'} /> },
     { title: 'Updated', width: 110, render: (_: unknown, item: AutomationWorkflow) => relativeTime(item.updated_at) },
     { title: '', width: 82, render: (_: unknown, item: AutomationWorkflow) => rowActions(item) },
   ];
-  const scheduleColumns = [{ key: 'schedule', render: (_: unknown, item: AutomationSchedule) => (
-    <article className={`automation-schedule-row ${item.enabled ? 'is-enabled' : 'is-paused'}`}>
-      <div className="automation-schedule-main">
-        <span className="automation-schedule-icon" aria-hidden="true">{item.schedule_type === 'interval' ? <ClockCircleOutlined /> : <FieldTimeOutlined />}</span>
-        <div className="automation-schedule-heading">
-          <button type="button" className="automation-schedule-title" title={item.display_name ?? item.task_name} onClick={(event) => { event.stopPropagation(); openScheduleDetail(item); }}>{item.display_name ?? item.task_name}</button>
-          <span title={item.description || item.task_path}>{item.description || item.task_path}</span>
-        </div>
-        <span className={`automation-schedule-status ${item.enabled ? 'is-enabled' : ''}`}><i />{item.enabled ? 'Enabled' : 'Disabled'}</span>
-      </div>
-      <div className="automation-schedule-meta">
-        {scheduleDomain(item.product_domain)}
-        <span className={`automation-schedule-trigger ${item.schedule_type === 'interval' ? 'is-interval' : 'is-cron'}`}><span>{item.schedule_type === 'interval' ? 'Interval' : 'Cron'}</span><code title={formatSchedule(item)}>{formatSchedule(item)}</code></span>
-        {item.workspace_task_id
-          ? <Link className="automation-schedule-source is-linked" to={`/automation/runs?task=${encodeURIComponent(item.workspace_task_id)}`} onClick={(event) => event.stopPropagation()}>Linked run</Link>
-          : <span className="automation-schedule-source">Scheduled task</span>}
-        <span className="automation-schedule-updated">Updated {relativeTime(item.updated_at)}</span>
-      </div>
-      <div className="automation-schedule-actions" onClick={(event) => event.stopPropagation()}>
-        <Switch size="small" checked={item.enabled} loading={togglingSchedule === item.task_name} disabled={mutating || Boolean(togglingSchedule) || item.workspace_task_canceled} title={item.workspace_task_canceled ? 'Canceled runs cannot be scheduled' : undefined} aria-label={`Enable ${item.display_name ?? item.task_name}`} onChange={(checked) => void toggleSchedule(item, checked)} />
-      </div>
-    </article>
-  ) }];
-  const currentData = section === 'workflows' ? filteredWorkflows : visibleSchedules;
+  const scheduleColumns = [
+    { title: 'Schedule', width: 280, render: (_: unknown, item: AutomationSchedule) => <div className="automation-name"><FieldTimeOutlined /><span><strong>{item.display_name ?? item.task_name}</strong><small title={item.description || item.task_path}>{item.description || item.task_path}</small></span></div> },
+    { title: 'Trigger', width: 210, render: (_: unknown, item: AutomationSchedule) => <div className="automation-trigger"><span>{item.schedule_type === 'interval' ? 'Interval' : 'Cron schedule'}</span><code>{formatSchedule(item)}</code></div> },
+    { title: 'Domain', width: 110, render: (_: unknown, item: AutomationSchedule) => domainTag(item.product_domain) },
+    { title: 'Status', width: 110, render: (_: unknown, item: AutomationSchedule) => <Badge status={item.enabled ? 'success' : 'default'} text={item.enabled ? 'Enabled' : 'Disabled'} /> },
+    { title: 'Updated', width: 110, render: (_: unknown, item: AutomationSchedule) => relativeTime(item.updated_at) },
+    { title: 'Enabled', width: 82, render: (_: unknown, item: AutomationSchedule) => <span onClick={(event) => event.stopPropagation()}><Switch size="small" checked={item.enabled} loading={togglingSchedule === item.task_name} disabled={mutating || Boolean(togglingSchedule) || item.workspace_task_canceled} title={item.workspace_task_canceled ? 'Canceled runs cannot be scheduled' : undefined} aria-label={`Enable ${item.display_name ?? item.task_name}`} onChange={(checked) => void toggleSchedule(item, checked)} /></span> },
+  ];
+  const sectionRecords = section === 'workflows' ? filteredWorkflows : filteredSchedules;
+  const enabledCount = sectionRecords.filter((item) => item.enabled).length;
+  const currentData = section === 'workflows'
+    ? filteredWorkflows.filter((item) => scheduleFilter === 'all' || item.enabled === (scheduleFilter === 'enabled'))
+    : visibleSchedules;
   const currentColumns = section === 'workflows' ? workflowColumns : scheduleColumns;
   useLayoutEffect(() => {
     const updateTableHeight = () => {
       const card = tableCardRef.current;
       if (!card) return;
       const header = card.querySelector<HTMLElement>('.ui-table-thead');
-      const toolbar = card.querySelector<HTMLElement>('.automation-schedule-toolbar');
       const pagination = card.querySelector<HTMLElement>('.ui-pagination');
       const paginationStyle = pagination ? getComputedStyle(pagination) : null;
       const paginationMargins = paginationStyle
         ? parseFloat(paginationStyle.marginTop) + parseFloat(paginationStyle.marginBottom)
         : 0;
-      const fixedHeight = (toolbar?.offsetHeight ?? 0) + (header?.offsetHeight ?? 0) + (pagination?.offsetHeight ?? 0) + paginationMargins + 2;
+      const fixedHeight = (header?.offsetHeight ?? 0) + (pagination?.offsetHeight ?? 0) + paginationMargins + 2;
       setTableBodyHeight(Math.max(56, card.clientHeight - fixedHeight));
     };
     updateTableHeight();
@@ -409,46 +394,38 @@ const AutomationCenter: React.FC = () => {
   const scheduleDetail = detail as AutomationSchedule | null;
   const editingLinkedSchedule = Boolean((editing as AutomationSchedule | null)?.workspace_task_id);
 
-  return <ConfigProvider locale={enUS}><div className={`automation-page${section === 'schedules' ? ` is-schedules${isLight ? ' is-light' : ''}` : ''}`}>
+  return <ConfigProvider locale={enUS}><div className={`automation-page flow-console--ontology flow-foundry-workbench${isLight ? ' is-light' : ''}`}>
     <header className="automation-header">
-      <div><Typography.Text className="automation-kicker">AUTOMATION FOUNDATION</Typography.Text><Typography.Title level={2}>Automation Center</Typography.Title></div>
+      <div className="automation-breadcrumb"><BranchesOutlined /><strong>Automation</strong><span>/</span><span>{sectionMeta[section].label}</span></div>
+      <div className="automation-header-actions">
+        <span className={`automation-connection${connected && streamAvailable ? ' is-live' : ''}`} role="status"><i />{connected && streamAvailable ? 'Live updates' : 'Connecting…'}</span>
+        {section !== 'runs' && <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>New {objectLabel[section].toLowerCase()}</Button>}
+      </div>
     </header>
-
-    <div className="access-tabs automation-tabs">
-      <Segmented value={section} onChange={(value) => changeSection(String(value))} options={[
-        { label: 'Workflows', value: 'workflows', icon: <ApartmentOutlined /> },
-        { label: 'Schedules', value: 'schedules', icon: <FieldTimeOutlined /> }, { label: 'Runs', value: 'runs', icon: <ClockCircleOutlined /> },
-      ]} />
-      <Space wrap className="automation-filters">
-        <Select<DomainFilter>
-          value={domain}
-          placeholder="Select domain"
-          onChange={changeDomain}
-          className="automation-domain-select"
-          popupClassName="automation-filter-dropdown"
-          options={[{ value: 'all' as const, label: 'All', accent: '#64748B' }, ...Object.entries(domainMeta).map(([value, meta]) => ({ value: value as ProductDomain, ...meta }))].map(({ value, label, accent }) => ({
-            value,
-            label: <span className="automation-filter-option"><span className="automation-domain-initial" style={{ background: `linear-gradient(135deg, ${accent}, #1D4ED8)` }} aria-hidden="true">{label.slice(0, 1)}</span><span>{label}</span></span>,
-          }))}
-        />
-        {section === 'runs' && <Select<string>
-          allowClear
-          value={dataType}
-          placeholder="Select data type"
-          onChange={changeDataType}
-          className="automation-data-type-select"
-          popupClassName="automation-filter-dropdown"
-          options={dataTypes.map((value) => ({ value, label: <span className="automation-filter-option"><TemplateGlyph kind={inferSiteKind(value)} /><span>{value === 'search_result' ? '搜索结果' : value}</span></span> }))}
-        />}
-        <Input allowClear value={keyword} onChange={(event) => setKeyword(event.target.value)} prefix={<SearchOutlined />} placeholder={section === 'schedules' ? 'Search schedules or tasks' : 'Search name, type, or owner'} className="automation-search" />
-        {section !== 'runs' && <Button icon={<PlusOutlined />} onClick={openCreate}>{section === 'schedules' ? 'New Schedule' : 'New Record'}</Button>}
-      </Space>
-    </div>
-
-    {section === 'workflows' && (!connected || !streamAvailable) && <Alert className="automation-load-alert" type="warning" showIcon message="Live updates unavailable. Reconnecting automatically…" />}
-
-    {section === 'schedules' && (domain === 'all' || domain === 'etl-pipeline') && <TransferSchedules keyword={keyword} filter={scheduleFilter} />}
-
+    <div className="automation-workspace">
+      <aside className="automation-sidebar" aria-label="Automation navigation">
+        <div className="automation-sidebar-title">Workspace</div>
+        <nav aria-label="Automation views">
+          {([['workflows', <ApartmentOutlined />], ['schedules', <FieldTimeOutlined />], ['runs', <ClockCircleOutlined />]] as const).map(([value, icon]) => <Link key={value} to={`/automation/${value}?domain=${domain}`} aria-current={section === value ? 'page' : undefined} className={section === value ? 'is-active' : ''} onClick={() => setDetail(null)}>{icon}<span>{sectionMeta[value].label}</span></Link>)}
+        </nav>
+        <div className="automation-sidebar-title">Product domains</div>
+        <nav aria-label="Filter by product domain">
+          <button type="button" aria-pressed={domain === 'all'} className={domain === 'all' ? 'is-active' : ''} onClick={() => changeDomain('all')}><span className="automation-domain-mark">∗</span><span>All domains</span></button>
+          {Object.entries(domainMeta).map(([value, meta]) => <button type="button" key={value} aria-pressed={domain === value} className={domain === value ? 'is-active' : ''} onClick={() => changeDomain(value as ProductDomain)}><span className="automation-domain-mark">{meta.label.slice(0, 1)}</span><span>{meta.label}</span></button>)}
+        </nav>
+        <Link className="automation-ontology-link" to="/ontology"><ApartmentOutlined /><span>Open Ontology</span><ArrowRightOutlined /></Link>
+      </aside>
+      <main className={`automation-main is-${section}`}>
+        <div className="automation-page-heading"><div><span className="automation-eyebrow">{domain === 'all' ? 'All domains' : domainMeta[domain].label}</span><h1>{sectionMeta[section].label}</h1><p>{sectionMeta[section].description}</p></div>
+          {section !== 'runs' && <div className="automation-summary" aria-label={`${sectionMeta[section].label} summary`} aria-busy={loading}><div><strong>{loading ? '—' : sectionRecords.length}</strong><span>Total</span></div><div><strong>{loading ? '—' : enabledCount}</strong><span>Enabled</span></div><div><strong>{loading ? '—' : sectionRecords.length - enabledCount}</strong><span>Disabled</span></div></div>}
+        </div>
+        <div className="automation-toolbar">
+          <Input allowClear value={keyword} onChange={(event) => setKeyword(event.target.value)} prefix={<SearchOutlined />} aria-label={`Search ${sectionMeta[section].label.toLowerCase()}`} placeholder={`Search ${sectionMeta[section].label.toLowerCase()}…`} className="automation-search" />
+          {section === 'runs' ? <Select<string> allowClear value={dataType} placeholder="All data types" aria-label="Filter runs by data type" onChange={changeDataType} className="automation-data-type-select" popupClassName="flow-select-popup" options={dataTypes.map((value) => ({ value, label: <span className="automation-filter-option"><TemplateGlyph kind={inferSiteKind(value)} /><span>{value === 'search_result' ? '搜索结果' : value}</span></span> }))} />
+            : <div className="automation-status-filters" role="group" aria-label="Filter by status">{(['all', 'enabled', 'paused'] as const).map(value => <button type="button" key={value} aria-pressed={scheduleFilter === value} className={scheduleFilter === value ? 'is-active' : ''} onClick={() => setScheduleFilter(value)}>{value === 'all' ? 'All' : value === 'enabled' ? 'Enabled' : 'Disabled'}</button>)}</div>}
+        </div>
+        {section !== 'runs' && (!connected || !streamAvailable) && <Alert className="automation-load-alert" type="warning" showIcon message="Live updates unavailable. Reconnecting automatically…" />}
+        {section === 'schedules' && (domain === 'all' || domain === 'etl-pipeline') && <TransferSchedules keyword={keyword} filter={scheduleFilter} />}
     {section === 'runs' ? <Card className="automation-task-panel" styles={{ body: { padding: 0 } }}>
       <WorkspaceDock
         activePanel="tasks"
@@ -463,18 +440,13 @@ const AutomationCenter: React.FC = () => {
         onClose={() => selectRun(null)}
       />
     </Card> : <Card ref={tableCardRef} className="automation-table-card" styles={{ body: { padding: 0 } }}>
-      {section === 'schedules' && <div className="automation-schedule-toolbar">
-        <div className="automation-schedule-caption"><span className={`automation-schedule-connection ${connected && streamAvailable ? 'is-live' : ''}`} role="status"><i />{connected && streamAvailable ? 'Live updates' : 'Reconnecting automatically…'}</span><span>{filteredSchedules.length} schedules</span></div>
-        <Segmented block value={scheduleFilter} onChange={(value) => setScheduleFilter(value as ScheduleFilter)} options={[
-          { value: 'all', label: <span>All <small>{filteredSchedules.length}</small></span> },
-          { value: 'enabled', label: <span>Enabled <small>{enabledScheduleCount}</small></span> },
-          { value: 'paused', label: <span>Disabled <small>{filteredSchedules.length - enabledScheduleCount}</small></span> },
-        ]} />
-      </div>}
-      <Spin spinning={loading}><Table showHeader={section !== 'schedules'} scroll={{ y: tableBodyHeight }} rowKey={(record) => String('id' in record && record.id ? record.id : 'task_name' in record ? record.task_name : record.name)} columns={currentColumns as never} dataSource={currentData as never} pagination={{ pageSize: section === 'schedules' ? 20 : 10, hideOnSinglePage: false, ...(section === 'schedules' ? { showSizeChanger: false } : {}) }} locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={`No ${sectionMeta[section].label.toLowerCase()} match the current filters`} /> }} onRow={(record) => ({ onClick: () => section === 'schedules' ? openScheduleDetail(record as AutomationSchedule) : setDetail(record as SelectedRecord), style: { cursor: 'pointer' } })} /></Spin>
+      <Spin spinning={loading}><Table scroll={{ y: tableBodyHeight, x: 900 }} rowKey={(record) => String('id' in record && record.id ? record.id : 'task_name' in record ? record.task_name : record.name)} columns={currentColumns as never} dataSource={currentData as never} pagination={{ pageSize: section === 'schedules' ? 20 : 10, hideOnSinglePage: false, ...(section === 'schedules' ? { showSizeChanger: false } : {}) }} locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={`No ${sectionMeta[section].label.toLowerCase()} match the current filters`} /> }} onRow={(record) => ({ onClick: () => section === 'schedules' ? openScheduleDetail(record as AutomationSchedule) : setDetail(record as SelectedRecord), style: { cursor: 'pointer' } })} /></Spin>
     </Card>}
 
-    {section === 'workflows' && <Modal title={editorTitle} open={editorOpen} confirmLoading={mutating} onCancel={() => setEditorOpen(false)} onOk={() => void save()} okText={editing ? 'Save Changes' : 'Create'} width={640} forceRender>
+      </main>
+    </div>
+
+    {section === 'workflows' && <Modal className="flow-surface-modal" title={editorTitle} open={editorOpen} confirmLoading={mutating} onCancel={() => setEditorOpen(false)} onOk={() => void save()} okText={editing ? 'Save Changes' : 'Create'} width={640} forceRender>
       <Form form={form} layout="vertical" className="automation-form">
         {section === 'workflows' && <><Form.Item name="name" label="Workflow Name" rules={[{ required: true }]}><Input disabled={Boolean(editing)} /></Form.Item><Form.Item name="product_domain" label="Domain" rules={[{ required: true }]}><Select options={Object.entries(domainMeta).map(([value, meta]) => ({ value, label: meta.label }))} /></Form.Item><Form.Item name="description" label="Description"><Input.TextArea rows={2} /></Form.Item><Form.Item name="nodes" label="Execution Nodes" extra="One node per line, executed in order"><Input.TextArea rows={6} placeholder={'Collect data\nNormalize fields\nWrite to ODS'} /></Form.Item><Form.Item name="enabled" label="Enabled" valuePropName="checked"><Switch /></Form.Item></>}
       </Form>
@@ -482,7 +454,7 @@ const AutomationCenter: React.FC = () => {
 
     {section === 'schedules' ? <>
     <Modal
-      className={`automation-schedule-modal${!editorOpen ? ' is-readonly' : ''}${isLight ? ' is-light' : ''}`}
+      className={`flow-surface-modal automation-schedule-modal${!editorOpen ? ' is-readonly' : ''}${isLight ? ' is-light' : ''}`}
       rootClassName="automation-schedule-modal-root"
       title={<div className="automation-schedule-modal-heading">
         <span className="automation-schedule-modal-mark" aria-hidden="true"><FieldTimeOutlined /></span>
@@ -517,7 +489,7 @@ const AutomationCenter: React.FC = () => {
           {editorOpen && !editingLinkedSchedule ? <Input placeholder="app.scheduler.tasks.workspace.dispatch_due" /> : <code className="automation-schedule-value is-code">{scheduleDetail?.task_path || '—'}</code>}
         </Form.Item>
         <Form.Item name={editorOpen && !editingLinkedSchedule ? 'product_domain' : undefined} label="Domain" rules={editorOpen && !editingLinkedSchedule ? [{ required: true }] : undefined}>
-          {editorOpen && !editingLinkedSchedule ? <Select popupClassName="automation-filter-dropdown" options={Object.entries(domainMeta).map(([value, meta]) => ({ value, label: meta.label }))} /> : scheduleDetail && scheduleDomain(scheduleDetail.product_domain)}
+          {editorOpen && !editingLinkedSchedule ? <Select popupClassName="flow-select-popup" options={Object.entries(domainMeta).map(([value, meta]) => ({ value, label: meta.label }))} /> : scheduleDetail && domainTag(scheduleDetail.product_domain)}
         </Form.Item>
         <Form.Item name={editorOpen ? 'schedule_type' : undefined} label="Trigger Type">
           {editorOpen ? <Segmented disabled={mutating} options={[{ value: 'crontab', label: editingLinkedSchedule ? 'Daily' : 'Cron' }, { value: 'interval', label: 'Interval' }]} /> : <span className="automation-schedule-value">{scheduleDetail?.schedule_type === 'interval' ? 'Interval' : scheduleDetail?.workspace_task_id ? 'Daily' : 'Cron'}</span>}
@@ -533,7 +505,7 @@ const AutomationCenter: React.FC = () => {
                   <InputNumber min={1} precision={0} inputMode="numeric" aria-label="Interval value" />
                 </Form.Item>
                 <Form.Item name="interval_unit" noStyle rules={[{ required: true }]}>
-                  <Select aria-label="Interval unit" popupClassName="automation-filter-dropdown" options={[
+                  <Select aria-label="Interval unit" popupClassName="flow-select-popup" options={[
                     { value: 'minute', label: 'Minute' }, { value: 'hour', label: 'Hour' },
                     { value: 'day', label: 'Day' }, { value: 'week', label: 'Week' }, { value: 'month', label: 'Month' },
                     ...(!editingLinkedSchedule ? [{ value: 'second', label: 'Second' }] : []),
@@ -566,7 +538,7 @@ const AutomationCenter: React.FC = () => {
       </Form>
     </Modal>
     <Modal
-      className={`automation-schedule-delete-modal${isLight ? ' is-light' : ''}`}
+      className={`flow-surface-modal automation-schedule-delete-modal${isLight ? ' is-light' : ''}`}
       rootClassName="automation-schedule-delete-root"
       open={Boolean(deleteTarget)}
       title={<div className="automation-schedule-delete-heading"><span className="automation-schedule-delete-mark" aria-hidden="true"><DeleteOutlined /></span><div className="automation-schedule-delete-heading-copy"><span className="automation-schedule-delete-eyebrow">REMOVE SCHEDULE</span><h3>Delete this schedule?</h3></div><Button type="text" icon={<CloseOutlined />} aria-label="Close delete confirmation" disabled={mutating} onClick={() => setDeleteTarget(null)} /></div>}
@@ -583,9 +555,15 @@ const AutomationCenter: React.FC = () => {
       {deleteTarget && <div className="automation-schedule-delete-target"><FieldTimeOutlined /><div><strong>{deleteTarget.display_name ?? deleteTarget.task_name}</strong><span>{(domainMeta[deleteTarget.product_domain] ?? domainMeta.platform).label} · {formatSchedule(deleteTarget)}</span></div></div>}
       <div className="automation-schedule-delete-footer"><Button autoFocus disabled={mutating} onClick={() => setDeleteTarget(null)}>Keep schedule</Button><Button type="primary" danger loading={mutating} onClick={() => void confirmScheduleDelete()}>Delete schedule</Button></div>
     </Modal>
-    </> : <Drawer title={detailName} open={Boolean(detail)} onClose={() => { setDetail(null); if (searchParams.has('task')) { const next = new URLSearchParams(searchParams); next.delete('task'); setSearchParams(next); } }} width={520} extra={detail && section !== 'runs' ? <Button onClick={() => openEdit(detail)}>{'workspace_task_id' in detail ? 'View Run' : 'Edit'}</Button> : null}>
+    </> : <Drawer className="flow-surface-modal automation-detail" title={detailName} open={Boolean(detail)} onClose={() => { setDetail(null); if (searchParams.has('task')) { const next = new URLSearchParams(searchParams); next.delete('task'); setSearchParams(next); } }} width={520} extra={detail && section !== 'runs' ? <Button onClick={() => openEdit(detail)}>{'workspace_task_id' in detail ? 'View Run' : 'Edit'}</Button> : null}>
       {detail && <>
-        <Descriptions column={1} bordered size="small" items={Object.entries(detail).filter(([key]) => !['yaml_content', 'metadata', 'parameters', 'policies', 'logs'].includes(key)).slice(0, 12).map(([key, value]) => ({ key, label: key, children: typeof value === 'object' ? JSON.stringify(value) : String(value ?? '—') }))} />
+        <Descriptions column={1} bordered size="small" items={[
+          { key: 'name', label: 'Name', children: detailName },
+          { key: 'description', label: 'Description', children: detail.description || 'No description' },
+          { key: 'domain', label: 'Domain', children: domainTag(detail.product_domain) },
+          { key: 'status', label: 'Status', children: <Badge status={detail.enabled ? 'success' : 'default'} text={detail.enabled ? 'Enabled' : 'Disabled'} /> },
+          { key: 'updated', label: 'Updated', children: detail.updated_at ? new Date(detail.updated_at).toLocaleString() : '—' },
+        ]} />
         {section === 'workflows' && <><Typography.Title level={5} style={{ marginTop: 24 }}>Execution Path</Typography.Title><Timeline items={(detail as AutomationWorkflow).nodes.map((node, index) => ({ color: index === 0 ? 'blue' : 'gray', children: node.name }))} /></>}
       </>}
     </Drawer>}
