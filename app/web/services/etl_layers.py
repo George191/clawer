@@ -435,18 +435,22 @@ class EtlLayers:
                 WITH active AS (
                     SELECT layer, schema_name, table_name, table_role, data_type, visibility,
                         ddl_sql = '' AS without_ddl,
-                        count(*) OVER (PARTITION BY layer, table_role, data_type) AS type_count,
-                        bool_or(table_role = 'current' AND data_type = 'orbital' AND ddl_sql = '')
-                            OVER (PARTITION BY layer, schema_name) AS has_mongo_orbital
+                        count(*) OVER (PARTITION BY layer, table_role, data_type) AS type_count
                     FROM app.ontology_objects WHERE is_active
+                ), mongo_rds AS (
+                    SELECT schema_name, array_agg(DISTINCT data_type) AS mongo_types
+                    FROM active WHERE layer = 'rds' AND table_role = 'current' AND without_ddl AND data_type <> ''
+                    GROUP BY schema_name
                 )
-                SELECT layer, schema_name, table_name, table_role, data_type, without_ddl, type_count, has_mongo_orbital
-                FROM active WHERE visibility <> 'hidden'
+                SELECT layer, schema_name, table_name, table_role, data_type, without_ddl, type_count, mongo_types
+                FROM active LEFT JOIN mongo_rds USING (schema_name)
+                WHERE visibility <> 'hidden'
             """))
             objects = result.mappings().all()
 
         schemas: dict[str, Counter[str]] = defaultdict(Counter)
         current_types: dict[str, set[str]] = defaultdict(set)
+        mongo_types_valid = None
         for row in objects:
             layer, schema, table = row["layer"], row["schema_name"], row["table_name"]
             if not is_ordinary_schema(schema) or not _PG_IDENTIFIER.fullmatch(table) or (schema, table) in _PROTECTED_TABLES:
@@ -456,7 +460,16 @@ class EtlLayers:
             if binding is None or row["table_role"] != "current":
                 continue
             if binding["engine"] == "mongodb":
-                if schema != binding.get("database") or not row["without_ddl"] or row["has_mongo_orbital"]:
+                if layer != "rds" or schema != binding.get("database") or not row["without_ddl"]:
+                    continue
+                if mongo_types_valid is None:
+                    try:
+                        mongo_types = {validate_table_name(kind) for kind in row["mongo_types"] or ()}
+                    except ValueError:
+                        mongo_types_valid = False
+                    else:
+                        mongo_types_valid = bool(mongo_types) and "orbital" not in mongo_types
+                if not mongo_types_valid:
                     continue
             elif row["type_count"] != 1:
                 continue

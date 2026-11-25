@@ -1,4 +1,4 @@
-from collections import Counter
+from collections import Counter, defaultdict
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -26,16 +26,17 @@ def layer_service(monkeypatch, bindings, rows):
         if "to_regclass" in str(statement):
             return SimpleNamespace(scalar_one=lambda: True)
         assert "FROM app.ontology_objects WHERE is_active" in str(statement)
-        assert "FROM active WHERE visibility <> 'hidden'" in str(statement)
+        assert "FROM active LEFT JOIN mongo_rds" in str(statement)
+        assert "WHERE visibility <> 'hidden'" in str(statement)
         active = [row for row in rows if row["is_active"]]
         type_counts = Counter((row["layer"], row["table_role"], row["data_type"]) for row in active)
-        mongo_orbital = {
-            (row["layer"], row["schema_name"]) for row in active
-            if row["table_role"] == "current" and row["data_type"] == "orbital" and row["without_ddl"]
-        }
+        mongo_types = defaultdict(set)
+        for row in active:
+            if row["layer"] == "rds" and row["table_role"] == "current" and row["without_ddl"] and row["data_type"]:
+                mongo_types[row["schema_name"]].add(row["data_type"])
         visible = [
             dict(row, type_count=type_counts[(row["layer"], row["table_role"], row["data_type"])],
-                 has_mongo_orbital=(row["layer"], row["schema_name"]) in mongo_orbital)
+                 mongo_types=mongo_types.get(row["schema_name"]) if row["layer"] == "rds" else None)
             for row in active if row["visibility"] != "hidden"
         ]
         return SimpleNamespace(mappings=lambda: SimpleNamespace(all=lambda: visible))
@@ -153,6 +154,26 @@ async def test_mongodb_uses_collection_identity_and_rejects_hidden_orbital(monke
     assert edges(await service.layer_lineage(can_manage=False)) == {("rds", "ods")}
     rows.append(registered("rds", "raw", "orbital", hidden=True, without_ddl=True))
     assert edges(await service.layer_lineage(can_manage=False)) == set()
+
+
+@pytest.mark.parametrize("hidden", [False, True])
+async def test_mongodb_rejects_invalid_type_in_bound_database_without_exposing_it(monkeypatch, hidden):
+    monkeypatch.setattr(etl_layers.etl_settings, "etl_output_mode", "debezium")
+    bindings = {"rds": connection("rds", "mongodb", database="raw"), "ods": connection("ods")}
+    invalid_type = "Invalid-Type"
+    invalid = registered("rds", "raw", invalid_type, hidden=hidden, without_ddl=True)
+    invalid["table_name"] = "invalid_type_collection"
+    rows = [
+        registered("rds", "raw", "patent", without_ddl=True),
+        registered("ods", "ods", "patent"),
+        dict(invalid, schema_name="other_database"),
+    ]
+    service = layer_service(monkeypatch, bindings, rows)
+    assert edges(await service.layer_lineage(can_manage=False)) == {("rds", "ods")}
+    rows.append(invalid)
+    result = await service.layer_lineage(can_manage=False)
+    assert edges(result) == set()
+    assert invalid_type not in result.model_dump_json()
 
 
 @pytest.mark.parametrize(("engine", "output_mode", "registered_schema", "without_ddl", "kind", "expected"), [
