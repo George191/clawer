@@ -107,6 +107,20 @@ SELECT run.task_id,run.id,CASE WHEN run.status='failed' AND line=4 THEN 'warn' W
   run.started_at+line*interval '20 seconds'
 FROM app.automation_task_runs run CROSS JOIN generate_series(1,4) AS line
 WHERE run.task_id IN (SELECT id FROM app.automation_tasks WHERE owner='Local demo' AND parameters->>'synthetic'='true');
+-- Synthetic worker notifications exercise the separate notifications API payload.
+INSERT INTO app.automation_task_logs(task_id,run_id,level,message,created_at)
+SELECT run.task_id,run.id,'info',
+  format('[%s: INFO/%s] %s', to_char((run.started_at+interval '2 minutes') AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI:SS,MS'),
+    CASE kind WHEN 1 THEN 'Syncer' ELSE 'Downloader' END,
+    CASE kind WHEN 1 THEN 'RecordPublisher: sent → demo.synthetic.records record_id=demo-record-001'
+      ELSE 'DownloadWorker: record completed record_id=demo-record-001 downloaded=2 reused=1 not_found=1 failed=0' END),
+  run.started_at+interval '2 minutes'
+FROM app.automation_task_runs run CROSS JOIN generate_series(1,2) kind
+WHERE run.task_id IN (SELECT id FROM app.automation_tasks WHERE owner='Local demo' AND parameters->>'synthetic'='true')
+ AND NOT EXISTS (SELECT 1 FROM app.automation_task_logs old WHERE old.run_id=run.id AND old.message LIKE CASE kind WHEN 1 THEN '%RecordPublisher:%' ELSE '%DownloadWorker:%' END);
+UPDATE app.automation_task_runs run SET log_count=(SELECT count(*) FROM app.automation_task_logs log WHERE log.run_id=run.id),
+  inserted_records=coalesce(inserted_records,120),updated_records=7,deleted_records=2,downloaded_records=3,synced_records=100
+WHERE run.task_id IN (SELECT id FROM app.automation_tasks WHERE owner='Local demo' AND parameters->>'synthetic'='true');
 UPDATE app.automation_task_logs log SET message = format('[%s: %s/LocalDemo] %s',
   to_char(log.created_at AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI:SS,MS'),
   CASE log.level WHEN 'warn' THEN 'WARNING' WHEN 'ok' THEN 'OK' ELSE 'INFO' END, log.message)
