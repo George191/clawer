@@ -5,6 +5,7 @@ import {
   Space,
   Dropdown,
   Progress,
+  type MenuProps,
 } from '@/components/ui';
 import {
   ApiOutlined,
@@ -35,6 +36,7 @@ import {
   ScheduleOutlined,
   SearchOutlined,
   SettingOutlined,
+  TeamOutlined,
   UserOutlined,
 } from '@/components/ui/icons';
 import { Link, matchPath, useLocation, useNavigate } from 'react-router-dom';
@@ -57,6 +59,43 @@ const PROJECT_LOGO_EXPANDED_X = 26;
 const PROJECT_LOGO_COLLAPSED_X = (SIDER_COLLAPSED - PROJECT_LOGO_SIZE) / 2;
 const PRODUCT_NAME = 'Astral';
 type ProjectKey = 'ai-collect' | 'data-lake' | 'etl-pipeline' | 'data-cockpit' | 'knowledge-graph' | 'knowledge-rag';
+type HeaderMenuKey = 'projects' | 'automation' | 'access' | 'settings' | 'help';
+
+const headerMenus: { key: Exclude<HeaderMenuKey, 'projects'>; label: string; items: MenuProps['items'] }[] = [
+  { key: 'automation', label: 'Automation', items: [
+    { key: 'execution', type: 'group', label: 'Execution', children: [
+      { key: '/automation/workflows', label: 'Workflows', icon: <BranchesOutlined /> },
+      { key: '/automation/schedules', label: 'Schedules', icon: <ScheduleOutlined /> },
+      { key: '/automation/runs', label: 'Runs', icon: <HistoryOutlined /> },
+    ] },
+  ] },
+  { key: 'access', label: 'Access', items: [
+    { key: 'management', type: 'group', label: 'Administration', children: [
+      { key: '/organization?view=users', label: 'Users', icon: <UserOutlined /> },
+      { key: '/organization?view=roles', label: 'Roles', icon: <SafetyCertificateOutlined /> },
+      { key: '/organization?view=permissions', label: 'Permissions', icon: <AuditOutlined /> },
+      { key: '/organization?view=tenants', label: 'Organizations', icon: <ApartmentOutlined /> },
+      { key: '/organization?view=teams', label: 'Teams', icon: <TeamOutlined /> },
+    ] },
+  ] },
+  { key: 'settings', label: 'Settings', items: [
+    { key: 'preferences', type: 'group', label: 'Preferences', children: [
+      { key: '/settings', label: 'System settings', icon: <SettingOutlined /> },
+      { key: '/account/settings', label: 'Account settings', icon: <UserOutlined /> },
+    ] },
+  ] },
+  { key: 'help', label: 'Help', items: [
+    { key: 'support', type: 'group', label: 'Support', children: [
+      { key: '/faq', label: 'Help center', icon: <QuestionCircleOutlined /> },
+    ] },
+    { key: 'legal', type: 'group', label: 'Legal', children: [
+      { key: '/legal/privacy', label: 'Privacy policy', icon: <SafetyCertificateOutlined /> },
+      { key: '/legal/terms', label: 'Terms of service', icon: <FileTextOutlined /> },
+      { key: '/legal/cookies', label: 'Cookie policy', icon: <ControlOutlined /> },
+      { key: '/legal/licenses', label: 'Copyright & licenses', icon: <BookOutlined /> },
+    ] },
+  ] },
+];
 
 const TemplateNavIcon: React.FC = () => (
   <span style={{ width: 21, height: 21, display: 'grid', placeItems: 'center' }} aria-hidden="true">
@@ -262,7 +301,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const [projectTextReady, setProjectTextReady] = useState(true);
   const [currentUserContext, setCurrentUserContext] = useState<CurrentUserContext | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
-  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+  const [openHeaderMenu, setOpenHeaderMenu] = useState<HeaderMenuKey | null>(null);
 
   const navigate = useNavigate();
   const { mode } = useThemeStore();
@@ -275,6 +314,15 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const isAutomationSurface = location.pathname.startsWith('/automation');
   const isPlatformManagementSurface = location.pathname.startsWith('/organization');
   const isSystemSettingsSurface = location.pathname.startsWith('/settings');
+  const activeHeaderMenus = {
+    automation: isAutomationSurface,
+    access: isPlatformManagementSurface,
+    settings: isSystemSettingsSurface || location.pathname === '/account/settings',
+    help: location.pathname === '/faq' || location.pathname.startsWith('/legal/'),
+  };
+  const activeHeaderPath = isPlatformManagementSurface
+    ? `/organization?view=${new URLSearchParams(location.search).get('view') || 'users'}`
+    : location.pathname;
   const isAtlasSurface = activeProjectKey === 'data-cockpit';
   const isGraphSurface = activeProjectKey === 'knowledge-graph';
   const isRagSurface = activeProjectKey === 'knowledge-rag';
@@ -314,8 +362,8 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   }, [handleResize]);
 
   useEffect(() => {
-    setProjectMenuOpen(false);
-  }, [location.pathname, isMobile]);
+    setOpenHeaderMenu(null);
+  }, [location.pathname, location.search, isMobile]);
 
   useEffect(() => {
     if (routedProject && routedProject !== currentProject) {
@@ -384,7 +432,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   }, [activeProject.sections, normalizedPath]);
 
   const handleProjectChange = (key: string) => {
-    setProjectMenuOpen(false);
+    setOpenHeaderMenu(null);
     const nextProject = key as ProjectKey;
     setCurrentProject(nextProject);
     const targetPath = projectConfigs[nextProject].defaultPath;
@@ -410,6 +458,15 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const logout = () => {
     clearSession();
     navigate('/login', { replace: true });
+  };
+
+  const changeHeaderMenu = (key: HeaderMenuKey, open: boolean) => {
+    setOpenHeaderMenu(current => open ? key : current === key ? null : current);
+    if (open) setAccountMenuOpen(false);
+  };
+
+  const followHeaderMenu = (key: HeaderMenuKey, event: React.PointerEvent<HTMLButtonElement>) => {
+    if (openHeaderMenu && event.pointerType === 'mouse') setOpenHeaderMenu(key);
   };
 
   const overlayShellStyle: React.CSSProperties = {
@@ -450,7 +507,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   };
 
   const renderProjectPanel = () => (
-    <div style={{ width: 224, padding: '4px 0' }}>
+    <div style={{ padding: 6 }}>
       {projectOrder.map((key) => {
         const project = projectConfigs[key];
         const isActive = key === activeProjectKey;
@@ -468,12 +525,12 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                 padding: '6px 10px',
                 gap: 8,
                 fontSize: 12,
-                color: isDisabled ? palette.muted : palette.text,
+                color: isDisabled ? '#8f99a8' : '#d3d8de',
                 opacity: isDisabled ? 0.62 : 1,
                 cursor: isDisabled ? 'not-allowed' : 'pointer',
               }}
               onMouseEnter={(event) => { if (!isDisabled) bindOverlayHover(event, {
-                accent: isActive ? (isDark ? 'rgba(143, 227, 232, 0.12)' : '#E0F2FE') : palette.hover,
+                accent: '#2f343c',
               }); }}
               onMouseLeave={resetOverlayHover}
             >
@@ -482,7 +539,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                   width: 18,
                   height: 18,
                   borderRadius: 5,
-                  background: isDisabled ? (isDark ? 'rgba(148, 163, 184, 0.22)' : '#E2E8F0') : `linear-gradient(135deg, ${project.accent}, #1D4ED8)`,
+                  background: isDisabled ? '#37424f' : `linear-gradient(135deg, ${project.accent}, #1D4ED8)`,
                   display: 'inline-flex',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -495,14 +552,14 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                 {project.shortLabel.slice(0, 1)}
               </span>
               <span style={{ flex: 1, minWidth: 0 }}>
-                <span style={{ display: 'block', fontSize: 11, fontWeight: isActive ? 600 : 500 }}>{project.shortLabel}</span>
+                <span style={{ display: 'block', fontSize: 12, fontWeight: isActive ? 600 : 400 }}>{project.shortLabel}</span>
               </span>
               {isDisabled ? (
-                <span style={{ color: palette.muted, fontSize: 11, fontWeight: 500 }}>Not enabled yet</span>
+                <span style={{ color: '#8f99a8', fontSize: 11, fontWeight: 400 }}>Not enabled yet</span>
               ) : isActive ? (
-                <span style={{ color: palette.muted, fontSize: 9, fontWeight: 500 }}>Current</span>
+                <span style={{ color: '#8f99a8', fontSize: 11, fontWeight: 400 }}>Current</span>
               ) : (
-                <RightOutlined style={{ color: palette.secondary, fontSize: 9 }} />
+                <RightOutlined style={{ color: '#8f99a8', fontSize: 9 }} />
               )}
             </button>
           </React.Fragment>
@@ -686,8 +743,10 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         <nav className="platform-header-nav" aria-label="Main navigation">
           <Dropdown
             trigger={['click']}
-            open={projectMenuOpen}
-            onOpenChange={setProjectMenuOpen}
+            open={openHeaderMenu === 'projects'}
+            onOpenChange={open => changeHeaderMenu('projects', open)}
+            overlayClassName="platform-header-dropdown"
+            overlayStyle={{ minWidth: 220, marginTop: 5 }}
             menu={{ items: [] }}
             popupRender={renderProjectPanel}
           >
@@ -695,43 +754,30 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
               type="button"
               className="platform-header-menu"
               aria-label={`Switch project domain: ${activeProject.shortLabel}`}
+              onPointerEnter={event => followHeaderMenu('projects', event)}
             >
               Projects
             </button>
           </Dropdown>
-          <button
-            type="button"
-            aria-label="Automation"
-            aria-current={isAutomationSurface ? 'page' : undefined}
-            onClick={() => navigate('/automation/workflows')}
-            className="platform-header-menu"
-          >
-            Automation
-          </button>
-          <button
-            type="button"
-            aria-label="Access"
-            aria-current={isPlatformManagementSurface ? 'page' : undefined}
-            onClick={() => navigate('/organization')}
-            className="platform-header-menu"
-          >
-            Access
-          </button>
-          <button
-            type="button"
-            aria-label="Settings"
-            aria-current={isSystemSettingsSurface ? 'page' : undefined}
-            onClick={() => navigate('/settings')}
-            className="platform-header-menu"
-          >
-            Settings
-          </button>
-          <button
-            type="button"
-            className="platform-header-menu"
-            aria-current={location.pathname === '/faq' ? 'page' : undefined}
-            onClick={() => navigate('/faq')}
-          >Help</button>
+          {headerMenus.map(menu => (
+            <Dropdown
+              key={menu.key}
+              trigger={['click']}
+              open={openHeaderMenu === menu.key}
+              onOpenChange={open => changeHeaderMenu(menu.key, open)}
+              overlayClassName="platform-header-dropdown"
+              overlayStyle={{ minWidth: 220, marginTop: 5 }}
+              menu={{ items: menu.items, selectedKeys: [activeHeaderPath], onClick: ({ key }) => navigate(key) }}
+            >
+              <button
+                type="button"
+                className="platform-header-menu"
+                aria-label={menu.label}
+                aria-current={activeHeaderMenus[menu.key] ? 'page' : undefined}
+                onPointerEnter={event => followHeaderMenu(menu.key, event)}
+              >{menu.label}</button>
+            </Dropdown>
+          ))}
         </nav>
 
         <div className="platform-header-status">
@@ -742,7 +788,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             trigger={['click']}
             placement="bottomRight"
             open={accountMenuOpen}
-            onOpenChange={setAccountMenuOpen}
+            onOpenChange={open => { setAccountMenuOpen(open); if (open) setOpenHeaderMenu(null); }}
             menu={{ items: [] }}
             popupRender={renderAccountPanel}
           >
