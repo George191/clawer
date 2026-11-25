@@ -199,29 +199,46 @@ function childWithAria(children: React.ReactNode, aria: AnyProps) {
   return React.isValidElement(children) ? React.cloneElement(children as React.ReactElement<any>, { ...aria, tabIndex: (children.props as any).tabIndex ?? (typeof children.type === 'string' && !['button','a','input'].includes(children.type) ? 0 : undefined) }) : children;
 }
 export interface MenuItem extends AnyProps { key?: React.Key; label?: React.ReactNode; icon?: React.ReactNode; children?: MenuItem[]; disabled?: boolean; type?: 'divider' | 'group'; }
-export interface MenuProps extends AnyProps { items?: (MenuItem | null | false)[]; onClick?: (info: any) => void; selectedKeys?: React.Key[]; }
+export interface MenuProps extends AnyProps { items?: (MenuItem | null | false)[]; onClick?: (info: any) => void; selectedKeys?: React.Key[]; submenuMode?: 'inline' | 'popup'; }
 export interface DropdownProps extends AnyProps { children?: React.ReactNode; menu?: MenuProps; open?: boolean; onOpenChange?: (open:boolean, info?: {source:string}) => void; }
-function MenuList({ items = [], menu, close, parentPath = [] }: { items?: (MenuItem | null | false)[]; menu: AnyProps; close: () => void; parentPath?: string[] }) {
+function MenuList({ items = [], menu, close, parentPath = [], onBack }: { items?: (MenuItem | null | false)[]; menu: AnyProps; close: () => void; parentPath?: string[]; onBack?: () => void }) {
   const [expanded, setExpanded] = useState<string | null>(null);
+  const popupSubmenus = menu.submenuMode === 'popup';
   const list=useRef<HTMLUListElement>(null); const pendingChildFocus=useRef<string|null>(null);
-  useLayoutEffect(()=>{if(pendingChildFocus.current===expanded && expanded!==null){(list.current?.querySelector(`:scope > li[data-menu-key="${CSS.escape(expanded)}"] > ul button:not(:disabled)`) as HTMLElement)?.focus();pendingChildFocus.current=null;}},[expanded]);
+  useLayoutEffect(()=>{if(pendingChildFocus.current===expanded && expanded!==null){(list.current?.querySelector(`:scope > li[data-menu-key="${CSS.escape(expanded)}"] > ul button:not(:disabled)`) as HTMLElement)?.focus({preventScroll:popupSubmenus});pendingChildFocus.current=null;}},[expanded]);
+  useLayoutEffect(() => {
+    if (!popupSubmenus || !onBack || !list.current) return;
+    const node = list.current;
+    const parent = node.parentElement!;
+    const position = () => {
+      if (innerWidth < 768) { node.style.removeProperty('left'); node.style.removeProperty('top'); return; }
+      const a = parent.getBoundingClientRect(); const b = node.getBoundingClientRect();
+      node.style.left = `${a.right + b.width <= innerWidth - 8 ? a.width - 1 : 1 - b.width}px`;
+      node.style.top = `${Math.max(8, Math.min(a.top, innerHeight - b.height - 8)) - a.top}px`;
+    };
+    position();
+    const observer = new ResizeObserver(position); observer.observe(parent); observer.observe(node);
+    window.addEventListener('resize', position); window.addEventListener('scroll', position, true);
+    return () => { observer.disconnect(); window.removeEventListener('resize', position); window.removeEventListener('scroll', position, true); };
+  }, [popupSubmenus, onBack]);
   const keydown = (event: React.KeyboardEvent<HTMLUListElement>) => {
     const own = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(':scope > li > button:not(:disabled)')); const index = own.indexOf(document.activeElement as HTMLElement);
     if (['ArrowDown','ArrowUp','Home','End'].includes(event.key)) { event.preventDefault(); event.stopPropagation(); const next = event.key === 'Home' ? 0 : event.key === 'End' ? own.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + own.length) % own.length; own[next]?.focus(); }
     if (event.key === 'Tab') close();
-    if (event.key === 'ArrowLeft' && parentPath.length) { event.preventDefault(); event.stopPropagation(); (event.currentTarget.parentElement?.querySelector(':scope > button') as HTMLElement)?.focus(); }
+    if (popupSubmenus && !onBack && ['ArrowLeft','ArrowRight'].includes(event.key) && menu.onKeyDown) { menu.onKeyDown(event); return; }
+    if ((event.key === 'ArrowLeft' || (event.key === 'Escape' && popupSubmenus && onBack)) && parentPath.length) { event.preventDefault(); event.stopPropagation(); onBack?.(); (event.currentTarget.parentElement?.querySelector(':scope > button') as HTMLElement)?.focus(); }
   };
   return <ul ref={list} className={cx('ui-dropdown-menu', parentPath.length && 'ui-dropdown-menu-sub')} role="menu" onKeyDown={keydown}>{items.filter(Boolean).map((entry, index) => {
     const item = entry as MenuItem; const key = String(item.key ?? index);
     if (item.type === 'divider') return <li key={key} role="separator" className="ui-dropdown-menu-item-divider" />;
     if (item.type === 'group') return <li key={key} role="none" className="ui-dropdown-menu-item-group"><div className="ui-dropdown-menu-item-group-title">{item.label}</div><MenuList items={item.children} menu={menu} close={close} parentPath={[...parentPath,key]} /></li>;
     const selected = menu.selectedKeys?.map(String).includes(key); const hasChildren = !!item.children?.length;
-    const select = (domEvent: React.MouseEvent) => { if (hasChildren) { setExpanded(expanded === key ? null : key); return; } const info = { key, keyPath:[key,...parentPath.slice().reverse()], domEvent }; item.onClick?.(info); menu.onClick?.(info); close(); };
-    return <li key={key} role="none" data-menu-key={key} className="ui-dropdown-menu-entry" onMouseEnter={() => setExpanded(hasChildren ? key : null)}><button type="button" role="menuitem" disabled={item.disabled} aria-disabled={item.disabled || undefined} aria-haspopup={hasChildren ? 'menu' : undefined} aria-expanded={hasChildren ? expanded === key : undefined} className={cx('ui-dropdown-menu-item', selected && 'ui-dropdown-menu-item-selected', item.danger && 'ui-dropdown-menu-item-danger', item.className)} onClick={select} onKeyDown={event => { if (event.key === 'ArrowRight' && hasChildren) { event.preventDefault(); event.stopPropagation(); if(expanded===key)(event.currentTarget.parentElement?.querySelector('ul button:not(:disabled)') as HTMLElement)?.focus();else{pendingChildFocus.current=key;setExpanded(key);} } }}>{item.icon && <span className="ui-dropdown-menu-item-icon">{item.icon}</span>}<span className="ui-dropdown-menu-title-content">{item.label}</span>{hasChildren && <span aria-hidden="true">›</span>}</button>{hasChildren && expanded === key && <MenuList items={item.children} menu={menu} close={close} parentPath={[...parentPath,key]} />}</li>;
+    const select = (domEvent: React.MouseEvent) => { if (hasChildren) { if (popupSubmenus) { if (expanded === key) (domEvent.currentTarget.parentElement?.querySelector(':scope > ul button:not(:disabled)') as HTMLElement)?.focus({preventScroll:true}); else pendingChildFocus.current=key; } setExpanded(popupSubmenus ? key : expanded === key ? null : key); return; } const info = { key, keyPath:[key,...parentPath.slice().reverse()], domEvent }; item.onClick?.(info); menu.onClick?.(info); close(); };
+    return <li key={key} role="none" data-menu-key={key} className="ui-dropdown-menu-entry" onMouseEnter={() => setExpanded(hasChildren ? key : null)}><button type="button" role="menuitem" disabled={item.disabled} aria-disabled={item.disabled || undefined} aria-haspopup={hasChildren ? 'menu' : undefined} aria-expanded={hasChildren ? expanded === key : undefined} className={cx('ui-dropdown-menu-item', selected && 'ui-dropdown-menu-item-selected', item.danger && 'ui-dropdown-menu-item-danger', item.className)} onClick={select} onKeyDown={event => { if (event.key === 'ArrowRight' && hasChildren) { event.preventDefault(); event.stopPropagation(); if(expanded===key)(event.currentTarget.parentElement?.querySelector(':scope > ul button:not(:disabled)') as HTMLElement)?.focus();else{pendingChildFocus.current=key;setExpanded(key);} } }}>{item.icon && <span className="ui-dropdown-menu-item-icon">{item.icon}</span>}<span className="ui-dropdown-menu-title-content">{item.label}</span>{hasChildren && <span aria-hidden="true">›</span>}</button>{hasChildren && expanded === key && <MenuList items={item.children} menu={menu} close={close} parentPath={[...parentPath,key]} onBack={popupSubmenus ? () => setExpanded(null) : undefined} />}</li>;
   })}</ul>;
 }
 export function Dropdown({ children, menu = {}, open: controlled, defaultOpen, onOpenChange, disabled, trigger = ['hover'], placement, overlayClassName, rootClassName, overlayStyle, dropdownRender, popupRender, getPopupContainer, mouseEnterDelay = .12, mouseLeaveDelay = .15 }: DropdownProps) {
-  const [open, setOpen] = useOpen(controlled, defaultOpen, onOpenChange); const anchor = useRef<HTMLSpanElement>(null); const popup = useRef<HTMLDivElement>(null); const [point, setPoint] = useState<{x:number;y:number}|null>(null); const timer = useRef<number>(); const id = useId(); const keyboard = useRef(false);
+  const [open, setOpen] = useOpen(controlled, defaultOpen, onOpenChange); const anchor = useRef<HTMLSpanElement>(null); const popup = useRef<HTMLDivElement>(null); const [point, setPoint] = useState<{x:number;y:number}|null>(null); const timer = useRef<number>(); const id = useId(); const keyboard = useRef<'first' | 'last' | false>(false);
   const shown = open && !disabled; const [present, setPresent] = useState(shown);
   const change = (next: boolean, source = 'trigger') => { window.clearTimeout(timer.current); if (!disabled) setOpen(next, {source}); };
   const style = usePopup(shown, anchor, popup, placement || 'bottomLeft', point, { keepBelow: !placement }); useDismiss(shown, anchor, popup, () => change(false));
@@ -234,11 +251,12 @@ export function Dropdown({ children, menu = {}, open: controlled, defaultOpen, o
     return () => window.clearTimeout(exit);
   }, [shown]);
   useEffect(() => () => window.clearTimeout(timer.current), []);
-  useEffect(() => { if (shown && keyboard.current) { const timer = window.setTimeout(() => visibleItems(popup.current)[0]?.focus(), 0); return () => window.clearTimeout(timer); } }, [shown]);
+  useEffect(() => { if (shown && keyboard.current) { const edge = keyboard.current; keyboard.current = false; const timer = window.setTimeout(() => { const items = visibleItems(popup.current); items[edge === 'last' ? items.length - 1 : 0]?.focus(); }, 0); return () => window.clearTimeout(timer); } }, [shown]);
   const hover = (next: boolean) => { if (!trigger.includes('hover')) return; window.clearTimeout(timer.current); timer.current = window.setTimeout(() => change(next), 1000 * (next ? mouseEnterDelay : mouseLeaveDelay)); };
   const close = () => change(false, 'menu'); const content = <MenuList items={menu.items} menu={menu} close={close} />;
-  return <><span ref={anchor} className="ui-dropdown-trigger" onMouseEnter={() => hover(true)} onMouseLeave={() => hover(false)} onClick={() => { if (trigger.includes('click')) { keyboard.current = false; setPoint(null); change(!open); } }} onContextMenu={event => { if (trigger.includes('contextMenu')) { event.preventDefault(); keyboard.current = true; setPoint({ x:event.clientX,y:event.clientY }); change(true); } }} onKeyDown={event => { if (event.key === 'ArrowDown' || (event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu') { event.preventDefault(); keyboard.current = true; setPoint(null); change(true); } }}>{childWithAria(children, { 'aria-haspopup':'menu', 'aria-expanded':shown, 'aria-controls':shown?id:undefined, 'aria-disabled':disabled || undefined })}</span>
-    {(shown || present) && <Portal container={getPopupContainer ? () => getPopupContainer(anchor.current) : undefined}><div ref={popup} id={id} data-ui-popup data-state={shown ? 'open' : 'closed'} aria-hidden={!shown || undefined} {...(!shown ? { inert: '' } : {})} className={cx('ui-dropdown', overlayClassName, rootClassName)} style={{ ...style,...overlayStyle }} onMouseEnter={() => { if (shown) hover(true); }} onMouseLeave={() => { if (shown) hover(false); }}>{(popupRender || dropdownRender)?.(content) ?? content}</div></Portal>}
+  const blur = (event: React.FocusEvent) => { const next = event.relatedTarget; if (menu.submenuMode === 'popup' && next instanceof Node && !popup.current?.contains(next) && !anchor.current?.contains(next)) change(false); };
+  return <><span ref={anchor} className="ui-dropdown-trigger" onBlur={blur} onMouseEnter={() => hover(true)} onMouseLeave={() => hover(false)} onClick={() => { if (trigger.includes('click')) { keyboard.current = false; setPoint(null); change(!open); } }} onContextMenu={event => { if (trigger.includes('contextMenu')) { event.preventDefault(); keyboard.current = 'first'; setPoint({ x:event.clientX,y:event.clientY }); change(true); } }} onKeyDown={event => { if (event.key === 'ArrowDown' || (menu.submenuMode === 'popup' && ['ArrowUp','Home','End'].includes(event.key)) || (event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu') { event.preventDefault(); keyboard.current = event.key === 'ArrowUp' || event.key === 'End' ? 'last' : 'first'; setPoint(null); change(true); } }}>{childWithAria(children, { 'aria-haspopup':'menu', 'aria-expanded':shown, 'aria-controls':shown?id:undefined, 'aria-disabled':disabled || undefined })}</span>
+    {(shown || present) && <Portal container={getPopupContainer ? () => getPopupContainer(anchor.current) : undefined}><div ref={popup} id={id} data-ui-popup data-state={shown ? 'open' : 'closed'} aria-hidden={!shown || undefined} {...(!shown ? { inert: '' } : {})} className={cx('ui-dropdown', overlayClassName, rootClassName)} style={{ ...style,...overlayStyle }} onBlur={blur} onMouseEnter={() => { if (shown) hover(true); }} onMouseLeave={() => { if (shown) hover(false); }}>{(popupRender || dropdownRender)?.(content) ?? content}</div></Portal>}
   </>;
 }
 export interface TooltipProps extends AnyProps { title?: React.ReactNode | (() => React.ReactNode); children?: React.ReactNode; }

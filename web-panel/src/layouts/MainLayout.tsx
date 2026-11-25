@@ -85,10 +85,8 @@ const headerMenus: { key: Exclude<HeaderMenuKey, 'projects'>; label: string; ite
     ] },
   ] },
   { key: 'help', label: 'Help', items: [
-    { key: 'support', type: 'group', label: 'Support', children: [
-      { key: '/faq', label: 'Help center', icon: <QuestionCircleOutlined /> },
-    ] },
-    { key: 'legal', type: 'group', label: 'Legal', children: [
+    { key: '/faq', label: 'Help center', icon: <QuestionCircleOutlined /> },
+    { key: 'legal', label: 'Legal', icon: <BookOutlined />, children: [
       { key: '/legal/privacy', label: 'Privacy policy', icon: <SafetyCertificateOutlined /> },
       { key: '/legal/terms', label: 'Terms of service', icon: <FileTextOutlined /> },
       { key: '/legal/cookies', label: 'Cookie policy', icon: <ControlOutlined /> },
@@ -469,6 +467,15 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     if (openHeaderMenu && event.pointerType === 'mouse') setOpenHeaderMenu(key);
   };
 
+  const moveHeaderMenu = (key: HeaderMenuKey, event: React.KeyboardEvent) => {
+    if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+    event.preventDefault(); event.stopPropagation();
+    const keys: HeaderMenuKey[] = ['projects', ...headerMenus.map(menu => menu.key)];
+    const next = (keys.indexOf(key) + (event.key === 'ArrowRight' ? 1 : keys.length - 1)) % keys.length;
+    if (openHeaderMenu) changeHeaderMenu(keys[next], true);
+    document.querySelectorAll<HTMLButtonElement>('.platform-header-nav .platform-header-menu')[next]?.focus();
+  };
+
   const overlayShellStyle: React.CSSProperties = {
     padding: '6px 0',
     borderRadius: 18,
@@ -507,7 +514,15 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   };
 
   const renderProjectPanel = () => (
-    <div style={{ padding: 6 }}>
+    <div style={{ padding: 6 }} onKeyDown={event => {
+      moveHeaderMenu('projects', event);
+      if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault(); event.stopPropagation();
+      const rows = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
+      const index = rows.indexOf(document.activeElement as HTMLButtonElement);
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? rows.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : rows.length - 1)) % rows.length;
+      rows[next]?.focus();
+    }}>
       {projectOrder.map((key) => {
         const project = projectConfigs[key];
         const isActive = key === activeProjectKey;
@@ -747,7 +762,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             onOpenChange={open => changeHeaderMenu('projects', open)}
             overlayClassName="platform-header-dropdown"
             overlayStyle={{ minWidth: 220, marginTop: 5 }}
-            menu={{ items: [] }}
+            menu={{ items: [], submenuMode: 'popup' }}
             popupRender={renderProjectPanel}
           >
             <button
@@ -755,6 +770,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
               className="platform-header-menu"
               aria-label={`Switch project domain: ${activeProject.shortLabel}`}
               onPointerEnter={event => followHeaderMenu('projects', event)}
+              onKeyDown={event => moveHeaderMenu('projects', event)}
             >
               Projects
             </button>
@@ -767,7 +783,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
               onOpenChange={open => changeHeaderMenu(menu.key, open)}
               overlayClassName="platform-header-dropdown"
               overlayStyle={{ minWidth: 220, marginTop: 5 }}
-              menu={{ items: menu.items, selectedKeys: [activeHeaderPath], onClick: ({ key }) => navigate(key) }}
+              menu={{ items: menu.items, submenuMode: 'popup', selectedKeys: [activeHeaderPath], onClick: ({ key }) => navigate(key), onKeyDown: (event: React.KeyboardEvent) => moveHeaderMenu(menu.key, event) }}
             >
               <button
                 type="button"
@@ -775,6 +791,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                 aria-label={menu.label}
                 aria-current={activeHeaderMenus[menu.key] ? 'page' : undefined}
                 onPointerEnter={event => followHeaderMenu(menu.key, event)}
+                onKeyDown={event => moveHeaderMenu(menu.key, event)}
               >{menu.label}</button>
             </Dropdown>
           ))}
