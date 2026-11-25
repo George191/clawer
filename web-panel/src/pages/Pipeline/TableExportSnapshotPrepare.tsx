@@ -114,10 +114,10 @@ function Prepare({ identity, subject, revision, refresh }: { identity: string; s
   };
 
   return <section className="ontology-source-sync__body ontology-table-export__mapping" aria-label="Prepare frozen snapshot">
-    <h4>Prepare frozen snapshot</h4>
-    <p>Store a frozen synthetic snapshot for the fixed pilot. Preparation does not send anything. The publication record is capped at 16 retained generations.</p>
+    <h4>Prepare a frozen snapshot</h4>
+    <p>Save the current sample rows so you can send the same data later. Keep the two IDs shown after preparation for the delivery step. Up to 16 snapshot versions can be retained.</p>
     <div className="ontology-source-sync__actions">
-      <Button size="small" disabled={Boolean(busy || retained || storageError)} loading={busy === 'head'} onClick={() => void checkHead()}>Check publication head</Button>
+      <Button size="small" disabled={Boolean(busy || retained || storageError)} loading={busy === 'head'} onClick={() => void checkHead()}>Check destination version</Button>
       <Button size="small" disabled={Boolean(busy || decision)} onClick={refresh}>Recheck preparation availability</Button>
       {!retained && head !== undefined && head < 16 && <Button size="small" disabled={Boolean(busy || decision || storageError)}
         onClick={() => setDecision('new')}>Review frozen snapshot preparation</Button>}
@@ -130,8 +130,8 @@ function Prepare({ identity, subject, revision, refresh }: { identity: string; s
     {retained && busy !== 'prepare' && <p>Original request ID: <code>{retained.requestId}</code> · Reviewed publication generation: {retained.expectedPreviousGeneration}.
       {retained.expectedConfigRevision !== revision && ' The preparation profile changed. The original cannot be retried under a different profile.'}</p>}
     {result && <dl className="ontology-connections-summary" aria-label="Prepared frozen snapshot">
-      <div><dt>Prepared intent ID</dt><dd><code>{result.id}</code></dd></div>
-      <div><dt>Original request ID</dt><dd><code>{result.requestId}</code></dd></div>
+      <div><dt>Snapshot ID</dt><dd><code>{result.id}</code></dd></div>
+      <div><dt>Preparation request ID</dt><dd><code>{result.requestId}</code></dd></div>
       <div><dt>Frozen rows</dt><dd>{result.rowCount}</dd></div>
       <div><dt>Prepared at (UTC)</dt><dd><time dateTime={result.createdAt}>{new Date(result.createdAt).toLocaleString(undefined, { timeZone: 'UTC', timeZoneName: 'short' })}</time></dd></div>
     </dl>}

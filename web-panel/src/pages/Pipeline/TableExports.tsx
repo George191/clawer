@@ -64,13 +64,21 @@ export default function TableExports({ openFromLink, onLinkClose }: { openFromLi
     setOpen(openFromLink);
     if (openFromLink) heading.current?.focus();
   }, [openFromLink]);
-  return <section className="ontology-source-catalog ontology-source-sync" aria-label="Table exports">
+  useEffect(() => { if (open) heading.current?.closest('section')?.scrollIntoView({ block: 'start' }); }, [open]);
+  return <section className={`ontology-source-catalog ontology-source-sync ontology-transfer-tool${open ? ' is-open' : ''}`} aria-label="Table exports">
     <header>
-      <div><h3 ref={heading} tabIndex={-1}>Table exports</h3><p>Bounded outbound pilot from a dedicated table to a fixed approved receiver.</p></div>
+      <div className="ontology-transfer-tool__description">
+        <span className="ontology-transfer-tool__kind">Table export</span>
+        <h3 ref={heading} tabIndex={-1}>Send test data</h3>
+        <p>Send sample table rows to an approved test database, then check the delivery result.</p>
+        <ol className="ontology-transfer-tool__steps" aria-label="Export workflow">
+          <li><span>1</span>Review destination</li><li><span>2</span>Configure &amp; approve</li><li><span>3</span>Send &amp; check receipt</li>
+        </ol>
+      </div>
       <Button size="small" aria-expanded={open} disabled={working} onClick={() => {
         if (open && openFromLink) onLinkClose();
         setOpen(!open);
-      }}>{open ? 'Close table exports' : 'Open table exports'}</Button>
+      }}>{open ? 'Hide export setup' : 'Set up test export'}</Button>
     </header>
     {open && identity && <>
       <ReceiverSelection key={identity} working={working} onWorkingChange={setWorking} />
@@ -322,13 +330,13 @@ function TableExportWorkspace({ destination, label, initialCapabilities, onWorki
   return <div className="ontology-source-sync__body">
     {loadingError ? <p role="alert" className="is-error">Could not load the table export configuration. <Button size="small" onClick={refreshPlan}>Refresh export</Button></p>
       : !capabilities || !grant || plan === undefined ? <p role="status">Loading table export…</p> : <>
-        {!capabilities.enabled && <p role="status">Outbound execution is disabled. Saving a draft does not send data.</p>}
-        {!capabilities.provisioned && <p role="status">The approved pilot receiver is not provisioned. A draft cannot be saved yet.</p>}
+        {!capabilities.enabled && <p role="status">Sending is not enabled for this test. You can review the setup before an administrator enables it.</p>}
+        {!capabilities.provisioned && <p role="status">This test needs a destination. Ask an administrator to configure the approved test database before saving an export.</p>}
         <div className="ontology-table-export__mapping">
-          <h4>Fixed source and approved destination</h4>
+          <h4>Source and destination</h4>
           {receiverLabel && <p>Receiver: <strong>{receiverLabel}</strong></p>}
           {route}
-          <p>Use only synthetic pilot records. The destination and columns are fixed; no custom endpoint, schedule, or target deletion.</p>
+          <p>Review the sample source, test destination, and columns below. Only the mapped columns are sent.</p>
           {plan && (capabilities.appendAvailable || plan.writeMode) && <p>Saved write mode: <strong>{exportModeLabel(savedMode)}</strong>.</p>}
           {!modeAvailable && <p>Append only is unavailable for new exports. An exact retained request may still recover its recorded result.</p>}
           <div className="ontology-source-catalog__columns"><table aria-label="Export column mapping">

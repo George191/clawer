@@ -25,11 +25,20 @@ function clearPending(key: string) {
 
 export default function SandboxCdcReplay() {
   const [open, setOpen] = useState(false);
+  const section = useRef<HTMLElement>(null);
   const identity = useSandboxIdentity();
-  return <section className="ontology-source-catalog ontology-source-sync" aria-label="Sandbox CDC replay">
+  useEffect(() => { if (open) section.current?.scrollIntoView({ block: 'start' }); }, [open]);
+  return <section ref={section} className={`ontology-source-catalog ontology-source-sync ontology-transfer-tool${open ? ' is-open' : ''}`} aria-label="Sandbox CDC replay">
     <header>
-      <div><h3>Sandbox CDC replay</h3><p>Apply a reviewed synthetic change stream manually. No production connection or live consumer.</p></div>
-      <Button size="small" aria-expanded={open} onClick={() => setOpen(value => !value)}>{open ? 'Close sandbox CDC replay' : 'Open sandbox CDC replay'}</Button>
+      <div className="ontology-transfer-tool__description">
+        <span className="ontology-transfer-tool__kind">Change data capture · CDC</span>
+        <h3>Replay test changes</h3>
+        <p>Apply a batch of sample inserts and updates to a test table, then verify what was applied.</p>
+        <ol className="ontology-transfer-tool__steps" aria-label="Replay workflow">
+          <li><span>1</span>Review source &amp; target</li><li><span>2</span>Apply next batch</li><li><span>3</span>Check receipt</li>
+        </ol>
+      </div>
+      <Button size="small" aria-expanded={open} onClick={() => setOpen(value => !value)}>{open ? 'Hide change replay' : 'Review test replay'}</Button>
     </header>
     {open && identity && <CdcReplayWorkspace key={identity} />}
   </section>;
@@ -129,18 +138,18 @@ function CdcReplayWorkspace() {
     {notice && <p role={notice.error ? 'alert' : 'status'} className={notice.error ? 'is-error' : undefined}>{notice.message}</p>}
     {loadFailed ? <p role="alert">Sandbox replay status could not be loaded.</p> : !status ? <p role="status">Loading sandbox replay status…</p> : <>
       <strong role="status">{states[status.state]}</strong>
-      {!loaded && <p>Sandbox replay is disabled or its fixed route is unavailable.</p>}
+      {!loaded && <p>This test is not ready. Ask an administrator to enable it and configure its sample source and target.</p>}
       <div className="ontology-source-sync__route"><code>{status.source}</code><ArrowRightOutlined /><code>{status.target}</code></div>
       <dl className="ontology-cdc-replay__facts">
         <div><dt>Reviewed generation</dt><dd>{status.generation === null ? 'Not reviewed' : status.generation}</dd></div>
-        <div><dt>Source high-water</dt><dd>{status.sourceHighWater !== null ? <code>{status.sourceHighWater}</code> : 'Not verified'}</dd></div>
-        <div><dt>Confirmed applied checkpoint</dt><dd>{status.generation !== null ? <code>{status.appliedThrough}</code> : 'Not reviewed'}</dd></div>
+        <div><dt>Latest source event</dt><dd>{status.sourceHighWater !== null ? <code>{status.sourceHighWater}</code> : 'Not verified'}</dd></div>
+        <div><dt>Last applied event</dt><dd>{status.generation !== null ? <code>{status.appliedThrough}</code> : 'Not reviewed'}</dd></div>
       </dl>
-      <p>The source high-water does not prove delivery. Only a committed target receipt verifies an applied range. Each replay is limited to {status.maxRows} events and {status.maxBytes.toLocaleString()} bytes.</p>
+      <p>Compare the latest source event with the last applied event to see what is pending. Check the receipt below to confirm a batch was applied. Each batch can contain up to {status.maxRows} events ({status.maxBytes.toLocaleString()} bytes).</p>
       {pendingRequest && (canRetry ? <p>Original request retained: <code>{pendingRequest.requestId}</code>.</p>
         : <p>Replay currently unavailable for the retained request.</p>)}
       <div className="ontology-source-sync__actions">
-        {reviewable && <Button size="small" disabled={busy} onClick={() => setDecision('review')}>Review sandbox CDC route</Button>}
+        {reviewable && <Button size="small" disabled={busy} onClick={() => setDecision('review')}>Review source and target</Button>}
         {armed && !pendingRequest && <Button size="small" type="primary" disabled={busy || !canApply} onClick={() => setDecision('apply')}>Apply next change batch</Button>}
         {canRetry && <Button size="small" type="primary" disabled={busy} onClick={() => setDecision('retry')}>Retry original request</Button>}
       </div>

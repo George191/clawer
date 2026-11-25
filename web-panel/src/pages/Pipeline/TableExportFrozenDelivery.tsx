@@ -101,12 +101,12 @@ function DeliveryForm({ identity, subject }: { identity: string; subject: string
   };
 
   return <section className="ontology-source-sync__body ontology-table-export__mapping" aria-label="Deliver frozen snapshot once">
-    <h4>Deliver frozen snapshot once</h4>
-    <p>Send a previously prepared synthetic snapshot to the fixed isolated loopback recipient. Reviewing the IDs reads preparation metadata only and does not contact the recipient.</p>
+    <h4>Send a saved snapshot</h4>
+    <p>Use the snapshot ID and preparation request ID from the preparation result. Review the row count and destination version, then confirm one delivery attempt to the test database.</p>
     <form className="ontology-source-sync__form" onSubmit={event => { event.preventDefault(); void inspect(); }}>
-      <label>Frozen snapshot intent ID<Input aria-label="Frozen snapshot intent ID" autoComplete="off" maxLength={80} value={inputIntent}
+      <label>Snapshot ID<Input aria-label="Snapshot ID" autoComplete="off" maxLength={80} value={inputIntent}
         disabled={busy === 'send'} onChange={event => { clear(); setIntent(event.target.value); }} /></label>
-      <label>Prepared original request ID<Input aria-label="Prepared original request ID" autoComplete="off" maxLength={80} value={inputRequest}
+      <label>Preparation request ID<Input aria-label="Preparation request ID" autoComplete="off" maxLength={80} value={inputRequest}
         disabled={busy === 'send'} onChange={event => { clear(); setRequest(event.target.value); }} /></label>
       <div className="ontology-source-sync__actions">
         <Button htmlType="submit" size="small" disabled={!validIds || Boolean(busy || confirm) || attempt !== 'none'}

@@ -600,10 +600,11 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
         </>}
       </section></Modal>}
 
-    <Modal className="flow-surface-modal ontology-connectors ontology-connections-inventory-modal" title="Data Connections" centered width={960}
+    <Modal className="flow-surface-modal ontology-connectors ontology-connections-inventory-modal" title="Data Connections" centered width={1280}
       open={!detailsOpen && !(wizard && canManage)} onCancel={onCancel} closable={!pending && !captureBusy}
       keyboard={!pending && !captureBusy} maskClosable={false} footer={<Button disabled={pending || captureBusy} onClick={onCancel}>Done</Button>}>
       <div className="ontology-connections-workspace">
+        <p className="ontology-connections-intro">Connect a data source, choose your ETL database, or validate a data flow with sample data.</p>
         <section className="ontology-connections-warehouse" aria-label="Workspace warehouse" aria-busy={!warehouse && !warehouseFailed}>
           <div className="ontology-connections-warehouse__identity">
             {warehouse && <ConnectorMark engine={warehouse.engine} />}
@@ -657,6 +658,12 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
         </>}
         </section>}
         {canManage && !loading && !loadError && <>
+        <section className="ontology-connections-sandbox" aria-label="Test data flows">
+          <header>
+            <div><h2>Test data flows <span className="ontology-connections-sandbox__badge">Sandbox</span></h2>
+              <p>Choose what you want to test. These tools use dedicated sample data and test destinations.</p></div>
+          </header>
+          <div className="ontology-connections-sandbox__tools">
         <TableExports openFromLink={openTableExport} onLinkClose={() => setParams((current) => {
           const next = new URLSearchParams(current);
           next.delete('tableExport');
@@ -664,6 +671,8 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
         }, { replace: true })} />
         <SandboxCdcReplay />
         <SyntheticPushInbox />
+          </div>
+        </section>
         </>}
         {canManage && !sourceId && <SandboxHandoffRecipientProof authorizedIdentity={sessionIdentity} />}
       </div>
