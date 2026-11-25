@@ -21,7 +21,7 @@ from sqlalchemy.engine import make_url
 
 from app.config.settings import settings
 from app.etl.normalizers.financial_fact import normalize_sec_edgar_financial_fact
-from app.storage.postgres_client import _resolved_pg_url
+from app.storage.business_database import business_connection_options, selected_business_connection
 
 
 PROTOCOL = "sec_direct_baseline_v1"
@@ -155,12 +155,14 @@ def prepare_rows(docs: list[dict[str, Any]]) -> tuple[str, str, str]:
 
 
 async def pg_connect(worker: int) -> asyncpg.Connection:
-    url = make_url(_resolved_pg_url()).set(drivername="postgresql")
+    selected_url, options = business_connection_options(await selected_business_connection())
+    url = make_url(selected_url).set(drivername="postgresql")
     return await asyncpg.connect(
         url.render_as_string(hide_password=False),
         timeout=30,
         command_timeout=900,
         server_settings={"application_name": f"sec-facts-baseline-{worker}"},
+        **options,
     )
 
 

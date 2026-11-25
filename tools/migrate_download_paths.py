@@ -27,6 +27,7 @@ from sqlalchemy import text
 from app.config.settings import settings
 from app.records.collection_routes import collection_route_store
 from app.storage.postgres_client import get_pg_client
+from app.storage.business_database import business_database_url, get_business_pg_client
 
 WORKERS = 6
 BATCH = 3000
@@ -96,11 +97,11 @@ async def connect_pg():
     """Do not reserve idle database slots while the six workers copy files."""
     from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
     from sqlalchemy.pool import NullPool
-    from app.storage.postgres_client import _resolved_pg_url
-    pg=get_pg_client()
+    pg=get_business_pg_client()
     if pg._engine is None:
-        pg._engine=create_async_engine(_resolved_pg_url(),poolclass=NullPool,
-            connect_args={'timeout':10,'command_timeout':30,'prepared_statement_cache_size':0})
+        await pg.resolve()
+        pg._engine=create_async_engine(business_database_url(),poolclass=NullPool,
+            connect_args={'timeout':10,'command_timeout':30,'prepared_statement_cache_size':0,**pg._connect_args})
         pg._session_factory=async_sessionmaker(pg._engine,expire_on_commit=False)
         pg._connected=True
     async with pg._engine.connect() as connection:
@@ -109,8 +110,9 @@ async def connect_pg():
 
 
 async def routes():
-    pg = await connect_pg()
+    pg = get_pg_client()
     try:
+        await pg.connect(max_retries=1)
         return await collection_route_store.list_by_data_type(None)
     finally:
         await pg.close()
@@ -303,7 +305,7 @@ async def repair_references(db, mongo, registered, prefix, record_id):
     from app.etl.source_fences import business_version
     rows=db.execute('SELECT old,new FROM objects WHERE prefix=? AND record_id=? AND phase="source_updated"',(prefix,record_id)).fetchall()
     if not rows:return
-    pg=get_pg_client()
+    pg=get_business_pg_client()
     docs=source_documents(mongo,registered,prefix,record_id)
     if not docs:raise RuntimeError('Source disappeared before reference repair')
     for route,doc in docs:
@@ -367,7 +369,7 @@ async def verify_group(db, client, mongo, registered, prefix, record_id):
     from app.etl.source_fences import business_version
     rows=db.execute('SELECT old,new FROM objects WHERE prefix=? AND record_id=? AND phase="source_updated"',(prefix,record_id)).fetchall()
     docs=source_documents(mongo,registered,prefix,record_id)
-    pg=get_pg_client()
+    pg=get_business_pg_client()
     if not docs:
         raise RuntimeError('Source document disappeared; keep old object for review')
     for route, doc in docs:
@@ -420,7 +422,7 @@ def worker(path, shard, mode, db_gate):
     if mode=='apply':db.execute('UPDATE objects SET error=NULL WHERE shard=? AND phase="source_updated" AND error IS NOT NULL',(shard,))
     db.commit()
     async def run():
-        pg=get_pg_client()
+        pg=get_business_pg_client()
         if mode in {'apply','verify'}:
             with db_gate:await connect_pg()
         try:
@@ -461,6 +463,7 @@ def worker(path, shard, mode, db_gate):
                 print(json.dumps({'shard':shard,'mode':mode,'checkpoint':last}),flush=True)
         finally:
             if mode in {'apply','verify'}:await pg.close()
+            await get_pg_client().close()
     asyncio.run(run());mongo_client.close();db.close()
 
 

@@ -251,7 +251,7 @@ async def test_reference_repair_preserves_delivery_positions_and_updates_only_pa
     @asynccontextmanager
     async def session():yield SimpleNamespace(execute=execute)
     module=SimpleNamespace(NORMALIZERS={'news':lambda doc:{'url':new,'images':[{'url':new}],'title':'source title'}})
-    with patch.object(migration,'source_documents',return_value=[(route,doc)]),patch.object(migration,'get_pg_client',return_value=SimpleNamespace(session=session)),patch('app.adapters.runtime.get_source_module',AsyncMock(return_value=module)):
+    with patch.object(migration,'source_documents',return_value=[(route,doc)]),patch.object(migration,'get_business_pg_client',return_value=SimpleNamespace(session=session)),patch('app.adapters.runtime.get_source_module',AsyncMock(return_value=module)):
         await migration.repair_references(db,Mock(),[], 'news/source',record_id)
     rds=[(sql,p) for sql,p in calls if sql.startswith('UPDATE ts_rds')][0]
     assert json.loads(rds[1]['raw'])['_kafka_meta']=={'kafka_offset':123}

@@ -341,10 +341,11 @@ async def recover_pending(connection, root, plan, unit, state, state_path):
 
 async def connect(application_name='source-dedup-prepare'):
     import asyncpg
-    from app.storage.postgres_client import _resolved_pg_url
-    connection = await asyncpg.connect(_resolved_pg_url().replace('postgresql+asyncpg://', 'postgresql://', 1),
+    from app.storage.business_database import business_connection_options, selected_business_connection
+    url, options = business_connection_options(await selected_business_connection())
+    connection = await asyncpg.connect(url.replace('postgresql+asyncpg://', 'postgresql://', 1),
                                       timeout=15, command_timeout=150,
-                                      server_settings={'application_name': application_name})
+                                      server_settings={'application_name': application_name}, **options)
     await connection.execute("SET TIME ZONE 'UTC'")
     return connection
 
