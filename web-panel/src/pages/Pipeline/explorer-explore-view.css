@@ -7,7 +7,7 @@
 .explore-analysis__header p { margin:4px 0 0; color:var(--ontology-muted); font-size:12px; }
 .explore-analysis__property { display:grid; flex:none; gap:4px; min-width:200px; max-width:360px; color:var(--ontology-muted); font-size:11px; }
 .explore-analysis__property > div { display:flex; align-items:center; gap:7px; }
-.explore-analysis .ui-native-select { max-width:100%; min-height:28px; padding:3px 26px 3px 8px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-panel); color:var(--ontology-text); font-size:12px; }
+.explore-analysis .ui-native-select { max-width:100%; min-height:28px; padding:3px 8px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-panel); color:var(--ontology-text); font-size:12px; }
 .explore-analysis__property .ui-native-select { width:100%; }
 .explore-analysis__scope { display:flex; align-items:baseline; flex-wrap:wrap; gap:4px 10px; margin-bottom:12px; color:var(--ontology-muted); font-size:11px; }
 .explore-analysis__scope > span { color:var(--ontology-text); font-weight:500; }

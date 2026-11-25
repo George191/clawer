@@ -6,7 +6,7 @@
 .flow-source-connection-actions { display: flex; align-items: center; gap: 6px; }
 .flow-source-connection-actions a { display: inline-flex; align-items: center; min-height: 32px; color: var(--ontology-link); white-space: nowrap; }
 .flow-source-connection.ui-select { width: 100%; }
-.flow-semantic-wizard .flow-source-connection { min-height: 32px; padding: 3px 28px 3px 8px; }
+.flow-semantic-wizard .flow-source-connection { min-height: 32px; padding: 3px 8px; }
 .flow-source-connection:has(.ui-select-selection-item) .ui-select-selection-search { left: 36px; }
 .flow-source-connection-option { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; }
 .flow-source-connection-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

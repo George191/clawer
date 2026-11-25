@@ -4771,7 +4771,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           justify-content: center !important;
           height: 22px !important;
           min-height: 22px !important;
-          padding: 0 36px 0 8px !important;
+          padding: 0 8px !important;
           border: 0 !important;
           background: transparent !important;
           box-shadow: none !important;
