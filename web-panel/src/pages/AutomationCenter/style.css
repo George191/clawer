@@ -220,3 +220,59 @@
   .automation-schedule-fields { grid-template-columns:minmax(0,1fr); }
 }
 @media(prefers-reduced-motion:reduce) { .automation-page * { scroll-behavior:auto; } }
+
+.automation-sidebar { width:190px; }
+.automation-node-editor { display:grid; grid-template-columns:minmax(0,1.3fr) minmax(0,1fr); gap:24px; }
+.automation-node-fields { display:flex; flex-direction:column; gap:12px; }
+.automation-node-field { padding:14px; border:1px solid var(--ontology-border); border-radius:3px; }
+.automation-node-field header { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+.automation-node-field label { display:flex; flex-direction:column; gap:5px; font-size:11px; color:var(--ontology-muted); }
+.automation-node-config { display:grid; grid-template-columns:110px 1fr; gap:10px; margin-top:10px; }
+.automation-node-preview { padding:18px; background:var(--ontology-bg); border:1px solid var(--ontology-border); border-radius:3px; }
+.automation-workflow-path { list-style:none; margin:16px 0 0; padding:0; }
+.automation-workflow-path li { position:relative; display:flex; align-items:flex-start; gap:12px; padding:0 0 28px; }
+.automation-workflow-path li:not(:last-child)::after { content:''; position:absolute; top:28px; bottom:0; left:13px; width:1px; background:var(--ontology-control-border); }
+.automation-step-number { display:grid; flex:none; place-items:center; width:28px; height:28px; border:1px solid var(--ontology-control-border); border-radius:3px; color:var(--ontology-muted); font-size:11px; }
+.automation-workflow-path strong { display:block; font-size:12px; font-weight:500; }
+.automation-workflow-path small { display:block; margin-top:5px; font-size:11px; color:var(--ontology-muted); }
+.automation-rule-preview { grid-column:1/-1; padding:12px 14px; border:1px solid var(--ontology-border); background:var(--ontology-bg); }
+.automation-rule-preview span { display:block; margin-bottom:7px; color:var(--ontology-muted); font-size:10px; }
+.automation-runs-workspace { display:flex; flex:1; flex-direction:column; min-height:0; gap:14px; }
+.automation-run-stats { display:grid; grid-template-columns:repeat(4,1fr); border:1px solid var(--ontology-border); border-radius:3px; background:var(--ontology-panel); }
+.automation-run-stats button { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:15px 18px; border:0; border-right:1px solid var(--ontology-border); background:transparent; color:var(--ontology-text); cursor:pointer; }
+.automation-run-stats button:last-child { border-right:0; }
+.automation-run-stats button[aria-pressed='true'] { background:var(--ontology-hover); }
+.automation-run-stats span { font-size:12px; text-transform:capitalize; color:var(--ontology-muted); }
+.automation-run-stats strong { font-size:24px; font-weight:500; }
+.automation-runs-workspace > .automation-toolbar { justify-content:flex-start; margin:0; flex-wrap:wrap; }
+.automation-runs-workspace > .automation-toolbar > .ui-select { min-width:150px; margin-left:auto; }
+.automation-runs-body { display:flex; flex:1; min-height:0; gap:16px; }
+.automation-run-list { flex:1; min-width:0; overflow:auto; border:1px solid var(--ontology-border); border-radius:3px; background:var(--ontology-panel); }
+.automation-run-list .ui-table-thead > tr > th { background:var(--ontology-bg); color:var(--ontology-muted); font-size:11px; font-weight:500; }
+.automation-run-list .ui-table-tbody > tr > td { padding:14px 12px; border-color:var(--ontology-border); font-size:12px; }
+.automation-run-list tr.is-selected > td { background:var(--ontology-hover); }
+.automation-record-link { display:block; max-width:260px; padding:0; border:0; background:transparent; color:var(--ontology-text); text-align:left; cursor:pointer; }
+.automation-record-link strong { display:block; font-weight:500; }
+.automation-record-link small { display:block; overflow:hidden; margin-top:5px; color:var(--ontology-muted); font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
+.automation-progress { display:flex; flex-direction:column; gap:6px; width:65px; font-size:11px; color:var(--ontology-muted); }
+.automation-progress progress { width:65px; height:3px; accent-color:var(--ontology-primary); }
+.automation-run-inspector { display:flex; flex-direction:column; width:430px; max-width:45%; min-height:0; padding:18px; overflow:auto; border:1px solid var(--ontology-border); border-radius:3px; background:var(--ontology-panel); }
+.automation-run-inspector > header { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+.automation-run-inspector h2 { margin:5px 0 16px; font-size:16px; font-weight:500; }
+.automation-run-facts { display:grid; grid-template-columns:1fr 1fr; gap:18px 12px; margin:8px 0 20px; }
+.automation-run-facts div { min-width:0; }
+.automation-run-facts dt { margin-bottom:6px; color:var(--ontology-muted); font-size:10px; }
+.automation-run-facts dd { margin:0; font-size:12px; overflow-wrap:anywhere; }
+.automation-run-facts code { font-size:10px; }
+.automation-inspector-section { margin-top:16px; padding-top:16px; border-top:1px solid var(--ontology-border); }
+.automation-inspector-section h3 { display:flex; justify-content:space-between; margin:0 0 12px; font-size:12px; font-weight:600; }
+.automation-inspector-section h3 small { color:var(--ontology-muted); font-size:10px; font-weight:400; }
+.automation-inspector-section > .ui-select { width:100%; margin-bottom:8px; }
+.automation-logs ol { margin:0; padding:0; list-style:none; }
+.automation-logs li { display:flex; flex-direction:column; gap:5px; padding:10px 0; border-bottom:1px solid var(--ontology-border); }
+.automation-logs time { color:var(--ontology-muted); font-size:10px; }
+.automation-logs code { font-size:11px; line-height:1.6; overflow-wrap:anywhere; white-space:pre-wrap; }
+.automation-logs .is-warn code { color:var(--ui-warning); }
+.automation-logs .is-ok code { color:var(--ui-success); }
+@media(max-width:1000px) { .automation-runs-body.has-detail { flex-direction:column; overflow:auto; } .automation-run-inspector { width:100%; max-width:none; min-height:360px; flex:none; } .automation-run-list { min-height:280px; } }
+@media(max-width:700px) { .automation-sidebar { width:100%; } .automation-run-stats button { flex-direction:column; align-items:flex-start; padding:10px; } .automation-node-editor { grid-template-columns:1fr; } .automation-node-preview { display:none; } }
