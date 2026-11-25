@@ -30,11 +30,11 @@ export default function SandboxCdcVersions({ revision, onScopeDenied }: { revisi
     <header><div><h4>CDC dataset versions</h4><p>Up to 25 recent read-only snapshots captured with committed synthetic target receipts. These are not live table reads.</p></div>
       <Button size="small" aria-expanded={open} onClick={() => setOpen(value => !value)}>{open ? 'Close version history' : 'Open version history'}</Button>
     </header>
-    {open && <VersionWorkspace key={revision} onScopeDenied={onScopeDenied} />}
+    {open && <VersionWorkspace refreshRevision={revision} onScopeDenied={onScopeDenied} />}
   </section>;
 }
 
-function VersionWorkspace({ onScopeDenied }: { onScopeDenied?: () => void }) {
+function VersionWorkspace({ refreshRevision, onScopeDenied }: { refreshRevision: number; onScopeDenied?: () => void }) {
   const identity = useRef(getSessionState().identity).current;
   const [list, setList] = useState<SandboxCdcVersionList>();
   const [listFailed, setListFailed] = useState(false);
@@ -48,28 +48,49 @@ function VersionWorkspace({ onScopeDenied }: { onScopeDenied?: () => void }) {
   const [compareFailed, setCompareFailed] = useState(false);
   const [comparing, setComparing] = useState(false);
   const compareRequest = useRef<AbortController>();
+  const detailRequest = useRef<AbortController>();
+  const selected = useRef({ from, to, inspecting });
+  selected.current = { from, to, inspecting };
   const live = (signal: AbortSignal) => {
     const session = getSessionState();
     return !signal.aborted && session.authenticated && !session.locked && session.identity === identity;
   };
   const invalidate = () => {
+    detailRequest.current?.abort();
     compareRequest.current?.abort(); compareRequest.current = undefined;
     setList(undefined); setListFailed(true); setInspecting(undefined); setDetail(undefined);
     setFrom(''); setTo(''); setComparison(undefined); setComparing(false);
     onScopeDenied?.();
   };
+  useEffect(() => () => compareRequest.current?.abort(), []);
 
   useEffect(() => {
     const controller = new AbortController();
-    setList(undefined); setListFailed(false);
-    void fetchSandboxCdcVersions(controller.signal).then(value => { if (live(controller.signal)) setList(value); })
-      .catch(() => { if (live(controller.signal)) setListFailed(true); });
-    return () => { controller.abort(); compareRequest.current?.abort(); compareRequest.current = undefined; };
-  }, [identity, revision]);
+    setListFailed(false);
+    void fetchSandboxCdcVersions(controller.signal).then(value => {
+      if (!live(controller.signal)) return;
+      setList(value);
+      const present = (id: string) => value.available && value.versions.some(version => version.id === id);
+      const latest = selected.current;
+      if (latest.from && !present(latest.from) || latest.to && !present(latest.to)) {
+        compareRequest.current?.abort(); compareRequest.current = undefined; setComparing(false); setComparison(undefined);
+        if (!present(latest.from)) setFrom(''); if (!present(latest.to)) setTo('');
+      }
+      if (latest.inspecting && !present(latest.inspecting.id)) {
+        detailRequest.current?.abort(); setInspecting(undefined); setDetail(undefined);
+      }
+    }).catch(failure => {
+      if (!live(controller.signal)) return;
+      if (sandboxScopeDenied(failure)) invalidate();
+      else { setList(undefined); setListFailed(true); }
+    });
+    return () => controller.abort();
+  }, [identity, revision, refreshRevision]);
 
   useEffect(() => {
     if (!inspecting) return;
     const controller = new AbortController();
+    detailRequest.current = controller;
     void fetchSandboxCdcVersion(inspecting.id, controller.signal).then(value => {
       if (!live(controller.signal)) return;
       if (value.id === inspecting.id) setDetail(value); else setDetailFailed(true);

@@ -5,7 +5,7 @@ import { applySandboxCdc, fetchSandboxCdc, fetchSandboxCdcReceipts, reviewSandbo
 import type { SandboxCdcReceipt, SandboxCdcRunRequest, SandboxCdcStatus } from '../../services/api';
 import { getSessionState } from '../../services/session';
 import SandboxCdcVersions from './SandboxCdcVersions';
-import { SandboxMarkings, useSandboxIdentity } from './SandboxMarkings';
+import { SandboxMarkings, sandboxScopeDenied, useSandboxIdentity } from './SandboxMarkings';
 
 const states: Record<SandboxCdcStatus['state'], string> = {
   unreviewed: 'Not reviewed', armed: 'Reviewed · manual replay only', blocked: 'Blocked',
@@ -56,20 +56,38 @@ function CdcReplayWorkspace() {
   const [revision, setRevision] = useState(0);
   const [decision, setDecision] = useState<Decision>();
   const [busy, setBusy] = useState(false);
+  const [refreshing, setRefreshing] = useState(true);
+  const [scopeDenied, setScopeDenied] = useState(false);
+  const read = useRef<AbortController>();
+  const scopeEpoch = useRef(0);
   const active = useRef(false);
   const working = useRef(false);
   const live = (signal?: AbortSignal) => {
     const session = getSessionState();
     return active.current && !signal?.aborted && session.authenticated && !session.locked && session.identity === identity;
   };
+  const invalidate = () => {
+    scopeEpoch.current++;
+    read.current?.abort();
+    setStatus(undefined); setReceipts(undefined); setNotice(undefined); setDecision(undefined);
+    setLoadFailed(true); setReceiptsFailed(true); setRefreshing(false); setScopeDenied(true);
+  };
+  const refresh = () => { setScopeDenied(false); setRefreshing(true); setRevision(value => value + 1); };
 
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   useEffect(() => {
     const controller = new AbortController();
-    setStatus(undefined); setReceipts(undefined); setLoadFailed(false); setReceiptsFailed(false);
-    void fetchSandboxCdc(controller.signal).then(value => { if (live(controller.signal)) setStatus(value); })
-      .catch(() => { if (live(controller.signal)) setLoadFailed(true); });
-    void fetchSandboxCdcReceipts(controller.signal).then(value => {
+    read.current = controller;
+    setRefreshing(true); setLoadFailed(false); setReceiptsFailed(false);
+    const failed = (failure: unknown, receiptsOnly: boolean) => {
+      if (!live(controller.signal)) return;
+      if (sandboxScopeDenied(failure)) { invalidate(); return; }
+      if (receiptsOnly) { setReceipts(undefined); setReceiptsFailed(true); }
+      else { setStatus(undefined); setLoadFailed(true); }
+    };
+    const statusRead = fetchSandboxCdc(controller.signal).then(value => { if (live(controller.signal)) setStatus(value); })
+      .catch(failure => failed(failure, false));
+    const receiptsRead = fetchSandboxCdcReceipts(controller.signal).then(value => {
       if (!live(controller.signal)) return;
       setReceipts(value);
       const saved = readPending(storageKey);
@@ -78,7 +96,8 @@ function CdcReplayWorkspace() {
         clearPending(storageKey); setPendingRequest(undefined);
         setNotice({ message: `Original receipt confirmed: ${original.id}.` });
       }
-    }).catch(() => { if (live(controller.signal)) setReceiptsFailed(true); });
+    }).catch(failure => failed(failure, true));
+    void Promise.all([statusRead, receiptsRead]).then(() => { if (live(controller.signal)) setRefreshing(false); });
     return () => controller.abort();
   }, [revision, identity]);
 
@@ -91,8 +110,10 @@ function CdcReplayWorkspace() {
   const canApply = armed && !pendingRequest && hasChanges;
 
   const submit = async () => {
-    if (!status || !decision || working.current || !live()) return;
+    if (!status || !decision || refreshing || loadFailed || working.current || !live()) return;
     if ((decision === 'review' && !reviewable) || (decision === 'apply' && !canApply) || (decision === 'retry' && !canRetry)) return;
+    const epoch = scopeEpoch.current;
+    const current = () => live() && epoch === scopeEpoch.current;
     let request = pendingRequest;
     if (decision === 'apply' && status.generation !== null) {
       try {
@@ -107,17 +128,18 @@ function CdcReplayWorkspace() {
     try {
       if (decision === 'review') {
         await reviewSandboxCdc();
-        if (live()) setNotice({ message: 'The fixed route was reviewed. No changes were applied.' });
+        if (current()) setNotice({ message: 'The fixed route was reviewed. No changes were applied.' });
       } else if (request) {
         const receipt = await applySandboxCdc(request);
         clearPending(storageKey);
-        if (live()) {
+        if (current()) {
           setPendingRequest(undefined);
           setNotice({ message: `${decision === 'retry' ? 'Original' : 'Committed'} receipt confirmed: ${receipt.id}.` });
         }
       }
     } catch (failure) {
-      if (live()) {
+      if (current()) {
+        if (sandboxScopeDenied(failure)) { invalidate(); return; }
         const code = (failure as { response?: { status?: number } })?.response?.status;
         if (decision !== 'review' && (code === 409 || code === 422)) {
           clearPending(storageKey); setPendingRequest(undefined);
@@ -129,12 +151,12 @@ function CdcReplayWorkspace() {
       }
     } finally {
       working.current = false;
-      if (live()) { setBusy(false); setDecision(undefined); setRevision(value => value + 1); }
+      if (live()) { setBusy(false); setDecision(undefined); if (epoch === scopeEpoch.current) refresh(); }
     }
   };
 
-  return <div className="ontology-source-sync__body ontology-cdc-replay__body">
-    <div className="ontology-source-sync__actions"><Button size="small" disabled={busy} onClick={() => setRevision(value => value + 1)}>Refresh replay status</Button></div>
+  return <div className="ontology-source-sync__body ontology-cdc-replay__body" aria-busy={refreshing}>
+    <div className="ontology-source-sync__actions"><Button size="small" disabled={busy || refreshing} onClick={refresh}>Refresh replay status</Button></div>
     {notice && <p role={notice.error ? 'alert' : 'status'} className={notice.error ? 'is-error' : undefined}>{notice.message}</p>}
     {loadFailed ? <p role="alert">Sandbox replay status could not be loaded.</p> : !status ? <p role="status">Loading sandbox replay status…</p> : <>
       <strong role="status">{states[status.state]}</strong>
@@ -149,9 +171,9 @@ function CdcReplayWorkspace() {
       {pendingRequest && (canRetry ? <p>Original request retained: <code>{pendingRequest.requestId}</code>.</p>
         : <p>Replay currently unavailable for the retained request.</p>)}
       <div className="ontology-source-sync__actions">
-        {reviewable && <Button size="small" disabled={busy} onClick={() => setDecision('review')}>Review source and target</Button>}
-        {armed && !pendingRequest && <Button size="small" type="primary" disabled={busy || !canApply} onClick={() => setDecision('apply')}>Apply next change batch</Button>}
-        {canRetry && <Button size="small" type="primary" disabled={busy} onClick={() => setDecision('retry')}>Retry original request</Button>}
+        {reviewable && <Button size="small" disabled={busy || refreshing} onClick={() => setDecision('review')}>Review source and target</Button>}
+        {armed && !pendingRequest && <Button size="small" type="primary" disabled={busy || refreshing || !canApply} onClick={() => setDecision('apply')}>Apply next change batch</Button>}
+        {canRetry && <Button size="small" type="primary" disabled={busy || refreshing} onClick={() => setDecision('retry')}>Retry original request</Button>}
       </div>
     </>}
     <section aria-label="Committed CDC receipts">
@@ -166,10 +188,7 @@ function CdcReplayWorkspace() {
           <span>Receipt ID: <code>{receipt.id}</code></span><span>Original request ID: <code>{receipt.requestId}</code></span>
         </li>)}</ol> : <p>No committed CDC receipts.</p>}
     </section>
-    <SandboxCdcVersions revision={revision} onScopeDenied={() => {
-      setStatus(undefined); setReceipts(undefined); setNotice(undefined); setDecision(undefined);
-      setRevision(value => value + 1);
-    }} />
+    {!scopeDenied && <SandboxCdcVersions revision={revision} onScopeDenied={invalidate} />}
     <Modal open={Boolean(decision)} destroyOnHidden className="flow-surface-modal"
       title={decision === 'review' ? 'Review sandbox CDC route?' : decision === 'retry' ? 'Retry original CDC request?' : 'Apply next sandbox CDC batch?'}
       onCancel={() => { if (!busy) setDecision(undefined); }} onOk={submit} confirmLoading={busy}

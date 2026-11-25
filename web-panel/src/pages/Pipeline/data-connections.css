@@ -29,7 +29,7 @@
 
 .ontology-connections-workspace {
   min-width: 0; max-height: calc(100dvh - 170px); padding: 18px;
-  overflow: auto; overscroll-behavior: contain;
+  overflow: auto; scrollbar-gutter: stable; overscroll-behavior: contain;
 }
 .ontology-connections-inventory-modal { max-width: calc(100vw - 40px); }
 .ontology-connections-inventory-modal .ui-modal-content {
