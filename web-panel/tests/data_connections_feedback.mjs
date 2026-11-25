@@ -45,7 +45,7 @@ async function mount({ sources = [], selected = '', query = '', overrides = {}, 
     createDataSource: async payload => { const saved = source(payload.engine, { name: payload.name, config: payload.config }); store.sources.push(saved); return saved; },
     updateDataSource: async (identifier, payload) => { const saved = source(payload.engine, { id: identifier, name: payload.name, config: payload.config }); store.sources = store.sources.map(row => row.id === identifier ? saved : row); return saved; },
     deleteDataSource: async identifier => { store.sources = store.sources.filter(row => row.id !== identifier); },
-    selectBusinessDatabase: async saved => ({ id: 'warehouse', engine: 'postgresql', database: saved.config.database, connectionId: saved.id, name: saved.name }),
+    fetchDataConnectionDependencies: async () => ({ dependencies: [], canDisconnect: true }),
   };
   const implementations = { ...defaults, ...overrides };
   const api = Object.fromEntries(Object.keys(defaults).map(name => [name, (...args) => { requests.push({ name, args }); return implementations[name](...args); }]));
@@ -129,30 +129,27 @@ test('the inventory dialog shows the real warehouse even with no saved external 
   ui.inventory().props.onCancel(); assert.equal(ui.store.closed, true); ui.unmount();
 });
 
-test('ETL selection uses a saved active PostgreSQL connection and refreshes the business database', async () => {
+test('connections have independent sync actions without a global ETL selector', async () => {
   const postgres = source('postgresql', { id: 'business-target', name: 'Business target' });
   const ui = await mount({ warehouseFailed: true, sources: [postgres, source('mysql', { id: 'mysql-source' }),
     source('postgresql', { id: 'paused-source', pausedAt: '2026-01-01T00:00:00Z' })] });
-  const selector = ui.nodes().find(node => node.props['aria-label'] === 'ETL business connection');
-  const options = nodes(selector).filter(node => node.type === 'option').map(node => node.props.value);
-  assert.deepEqual(options, ['', postgres.id]);
-  ui.select('ETL business connection', postgres.id);
-  await ui.click('Use for ETL'); await ui.settle();
-  assert.equal(ui.requests.find(request => request.name === 'selectBusinessDatabase').args[0].id, postgres.id);
-  assert.equal(ui.store.warehouseRetries, 1);
-  assert.ok(ui.notices.some(notice => notice.kind === 'success' && /Business database selected/.test(notice.value.content)));
+  assert.equal(ui.nodes().find(node => node.props['aria-label'] === 'ETL business connection'), undefined);
+  assert.equal(ui.button('Use for ETL'), undefined);
+  assert.equal(ui.nodes().filter(node => node.type === 'Button' && text(node) === 'Syncs').length, 3);
+  ui.click('Syncs'); await ui.settle();
+  assert.equal(ui.params().get('sourceId'), postgres.id);
+  assert.equal(ui.params().get('sourcePanel'), 'sync');
+  assert.equal(ui.nodes().find(node => node.type === 'SourceNodeSyncs').props.source.id, postgres.id);
 });
 
-test('a failed business selection keeps the explicit selection and reports its error', async () => {
+test('node sync links retain their connection, scope and kind', async () => {
   const postgres = source('postgresql', { id: 'business-target' });
-  const ui = await mount({ warehouseFailed: true, sources: [postgres], overrides: {
-    selectBusinessDatabase: async () => { throw new Error('Connection changed; reload it'); },
-  } });
-  ui.select('ETL business connection', postgres.id);
-  await ui.click('Use for ETL'); await ui.settle();
-  assert.equal(ui.store.warehouseRetries, 0);
-  assert.equal(ui.nodes().find(node => node.props['aria-label'] === 'ETL business connection').props.value, postgres.id);
-  assert.ok(ui.notices.some(notice => notice.kind === 'error' && /Connection changed/.test(notice.value.content)));
+  const ui = await mount({ sources: [postgres], selected: postgres.id, query: 'sourcePanel=sync&sourceKind=schema&sourceSchema=public' });
+  const syncs = ui.nodes().find(node => node.type === 'SourceNodeSyncs');
+  assert.equal(syncs.props.source.id, postgres.id);
+  assert.equal(syncs.props.kind, 'schema'); assert.equal(syncs.props.scope, 'public');
+  ui.details().props.onCancel(); await ui.settle();
+  assert.equal(ui.params().has('sourceKind'), false); assert.equal(ui.params().has('sourceSchema'), false);
 });
 
 test('warehouse visibility is independent of external source access and errors', async () => {
@@ -249,7 +246,7 @@ test('catalog table selection opens batch sync configuration with the selected t
   const selection = { schema: 'public', table: 'events' };
   catalog.props.onSetUpSync(selection); ui.render();
   assert.equal(ui.nodes().find(node => node.type === 'SourceBatchSyncs').props.selection, selection);
-  assert.equal(ui.button('Batch syncs').props['aria-pressed'], true); ui.unmount();
+  assert.equal(ui.button('Syncs').props['aria-pressed'], true); ui.unmount();
 });
 
 test('existing schedule links select the sync section inside the details dialog', async () => {
@@ -257,7 +254,7 @@ test('existing schedule links select the sync section inside the details dialog'
   const ui = await mount({ sources: [saved], selected: saved.id, query: 'batchSync=scheduled-plan' });
   assert.ok(ui.details());
   assert.equal(ui.nodes().find(node => node.type === 'SourceBatchSyncs').props.selectedSchedule, 'scheduled-plan');
-  assert.equal(ui.button('Batch syncs').props['aria-pressed'], true); ui.unmount();
+  assert.equal(ui.button('Syncs').props['aria-pressed'], true); ui.unmount();
 });
 
 test('repeated invalid connection submissions each show a toast without calling a probe or adding an error row', async () => {
@@ -291,14 +288,43 @@ test('save and confirmed delete notify through toast, and a failed delete keeps 
   ui.click('Save source'); await ui.settle();
   assert.equal(ui.calls('createDataSource').length, 1); assert.equal(ui.wizard(), undefined);
   assert.equal(ui.feedback().at(-1).kind, 'success'); assert.match(ui.feedback().at(-1).value.content, /Source saved/);
-  ui.click('Delete source'); assert.equal(ui.calls('deleteDataSource').length, 0);
+  ui.click('Disconnect connection'); await ui.settle(); assert.equal(ui.calls('deleteDataSource').length, 0);
   ui.implementations.deleteDataSource = async () => { throw new Error('Deletion rejected.'); };
   await ui.confirmation().props.onOk(); await ui.settle();
   assert.ok(ui.confirmation()); assert.equal(ui.feedback().at(-1).value.content, 'Deletion rejected.'); ui.noInlineErrors();
   ui.implementations.deleteDataSource = async identifier => { ui.store.sources = ui.store.sources.filter(row => row.id !== identifier); };
   await ui.confirmation().props.onOk(); await ui.settle();
   assert.equal(ui.confirmation(), undefined); assert.equal(ui.calls('deleteDataSource').length, 2);
-  assert.equal(ui.feedback().at(-1).kind, 'success'); assert.equal(ui.feedback().at(-1).value.content, 'Data source deleted.'); ui.unmount();
+  assert.equal(ui.feedback().at(-1).kind, 'success'); assert.equal(ui.feedback().at(-1).value.content, 'Connection disconnected.'); ui.unmount();
+});
+
+test('disconnect shows dependencies and cannot delete a connection with defined flows', async () => {
+  const saved = source('mysql');
+  const ui = await mount({ sources: [saved], selected: saved.id, overrides: {
+    fetchDataConnectionDependencies: async () => ({ canDisconnect: false, dependencies: [{ type: 'batch_sync', id: 'sync-a', name: 'Orders sync', message: 'Reassign this sync first.' }] }),
+  } });
+  ui.click('Disconnect connection'); await ui.settle();
+  assert.match(text(ui.confirmation()), /Orders sync/);
+  assert.equal(ui.confirmation().props.okButtonProps.disabled, true);
+  await ui.confirmation().props.onOk(); await ui.settle();
+  assert.equal(ui.calls('deleteDataSource').length, 0);
+  ui.click('Review syncs'); await ui.settle();
+  assert.equal(ui.params().get('sourceId'), saved.id); assert.equal(ui.params().get('sourcePanel'), 'sync');
+});
+
+test('disconnect fails closed if dependency lookup fails and refreshes dependencies on a delete race', async () => {
+  const saved = source('mysql');
+  const ui = await mount({ sources: [saved], selected: saved.id, overrides: {
+    fetchDataConnectionDependencies: async () => { throw new Error('Dependency check unavailable'); },
+  } });
+  ui.click('Disconnect connection'); await ui.settle();
+  assert.equal(ui.confirmation(), undefined); assert.equal(ui.calls('deleteDataSource').length, 0);
+  ui.implementations.fetchDataConnectionDependencies = async () => ({ dependencies: [], canDisconnect: true });
+  ui.click('Disconnect connection'); await ui.settle();
+  ui.implementations.deleteDataSource = async () => { throw { response: { data: { detail: { code: 'connection_in_use', message: 'A flow was added', dependencies: [{ type: 'object_type', id: 'object-a', name: 'Orders', message: 'Change this object source first' }] } } } }; };
+  await ui.confirmation().props.onOk(); await ui.settle();
+  assert.match(text(ui.confirmation()), /Orders/); assert.equal(ui.confirmation().props.okButtonProps.disabled, true);
+  assert.equal(ui.details().props.open, true);
 });
 
 test('a PostgreSQL revision conflict clears the entered password and locks saving until the saved source is reloaded', async () => {

@@ -7,7 +7,7 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Response
-from sqlalchemy import String, func, or_, update
+from sqlalchemy import String, func, or_, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
@@ -52,6 +52,15 @@ def dump(model):
 
 def draft_view(row: OntologyDefinitionRow):
     return {"id": row.id, "revision": row.revision, "definition": row.draft_definition}
+
+
+async def lock_upstream_connection(session, source):
+    if source.mode != "existing" or source.upstreamConnectionId is None:
+        return True
+    # Hold the connection until the definition commits so a concurrent disconnect
+    # either sees this reference or completes first and rejects this new binding.
+    return await session.scalar(text("""SELECT id FROM app.ontology_data_connections
+        WHERE id=:id FOR SHARE"""), {"id": source.upstreamConnectionId}) is not None
 
 
 @router.get("/projects")
@@ -139,6 +148,8 @@ async def new_draft(payload: Definition, session: SessionDep, user: CurrentUser)
     await get_project(session, user, payload.projectId, manage=True)
     await require_clearance(session, user, payload.projectId, payload.security.markings)
     require_source_access(user, payload.source)
+    if not await lock_upstream_connection(session, payload.source):
+        raise HTTPException(409, "The selected data connection no longer exists")
     row = OntologyDefinitionRow(
         project_id=payload.projectId, owner_id=user.id, semantic_id=payload.id,
         draft_definition=dump(payload),
@@ -163,6 +174,8 @@ async def update_draft(draft_id: UUID, payload: UpdateDraft, session: SessionDep
     await get_project(session, user, definition.projectId, manage=True)
     await require_clearance(session, user, definition.projectId, definition.security.markings)
     require_source_access(user, definition.source)
+    if not await lock_upstream_connection(session, definition.source):
+        raise HTTPException(409, "The selected data connection no longer exists")
     row.project_id = definition.projectId
     row.semantic_id = definition.id
     row.draft_definition = dump(definition)
@@ -194,11 +207,8 @@ async def evaluate(session, user, row):
         session, row.project_id, definition_principals(definition.actions, definition.security),
     )
     result = assess_definition(definition, source, eligible=eligible)
-    if definition.source.mode == "existing" and definition.source.upstreamConnectionId:
-        from app.web.services.data_connections import get_data_connections
-
-        if not await get_data_connections().exists(definition.source.upstreamConnectionId):
-            result.errors.append(DefinitionIssue(path="source.upstreamConnectionId", message="The selected data connection no longer exists"))
+    if not await lock_upstream_connection(session, definition.source):
+        result.errors.append(DefinitionIssue(path="source.upstreamConnectionId", message="The selected data connection no longer exists"))
     from app.web.services.ontology_record_policy import validate_record_policy_refs
 
     for message in await validate_record_policy_refs(session, row.id, definition):

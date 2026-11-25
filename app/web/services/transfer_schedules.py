@@ -38,7 +38,7 @@ def _utc_now() -> datetime:
 
 
 def _eligible(plan: TransferPlanRow) -> bool:
-    return (plan.trigger in {"scheduled", "weekly", "monthly"} and plan.schedule_time is not None and plan.write_mode == "upsert"
+    return (plan.source_node is None and plan.trigger in {"scheduled", "weekly", "monthly"} and plan.schedule_time is not None and plan.write_mode == "upsert"
             and plan.source_schema == SANDBOX and plan.target_schema == SANDBOX and plan.incremental_cursor is None)
 
 
@@ -294,6 +294,7 @@ def _calendar_lease_scope(now: datetime, *, monthly: bool):
     )
     return exists(select(plan.id).join(binding, binding.plan_id == plan.id).where(
         plan.id == job.plan_id, plan.trigger == ("monthly" if monthly else "weekly"), plan.write_mode == "upsert",
+        plan.source_node.is_(None),
         plan.source_schema == SANDBOX, plan.target_schema == SANDBOX, plan.incremental_cursor.is_(None),
         *reviewed_day,
         plan.schedule_time == func.to_char(utc_slot, "HH24:MI"), extract("second", utc_slot) == 0,
@@ -335,6 +336,7 @@ async def collect_due_transfer_jobs(session: AsyncSession, *, now: datetime | No
             TransferScheduleRow.enabled, TransferScheduleRow.armed_for_updated_at == TransferPlanRow.updated_at,
             TransferScheduleRow.updated_at <= slot,
             or_(*modes), TransferPlanRow.write_mode == "upsert",
+            TransferPlanRow.source_node.is_(None),
             TransferPlanRow.source_schema == SANDBOX, TransferPlanRow.target_schema == SANDBOX,
             TransferPlanRow.schedule_time == slot.strftime("%H:%M"), TransferPlanRow.incremental_cursor.is_(None),
             ~exists().where(

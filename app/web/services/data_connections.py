@@ -798,16 +798,84 @@ class DataConnections:
 
     async def delete(self, connection_id):
         async with self._session() as session:
-            stored = (await session.execute(text("SELECT engine FROM ontology_data_connections WHERE id=:id FOR UPDATE"),
-                                            {"id": uuid.UUID(connection_id)})).mappings().first()
+            stored = (await session.execute(text("""SELECT id,name,engine,config,credentials_ciphertext
+                FROM ontology_data_connections WHERE id=:id FOR UPDATE"""),
+                {"id": uuid.UUID(connection_id)})).mappings().first()
             if stored is None:
                 raise HTTPException(404, "Data source not found")
+            dependencies = await self._connection_dependencies(session, connection_id, stored)
+            if dependencies:
+                raise HTTPException(409, {"code": "connection_in_use",
+                    "message": "Resolve the configured flows before disconnecting this connection.",
+                    "dependencies": dependencies})
             await self._require_not_business_connection(session, connection_id)
-            await require_unconfigured(connection_id, stored["engine"], registry=self, session=session)
             row = (await session.execute(text("DELETE FROM ontology_data_connections WHERE id=:id RETURNING id"), {"id": uuid.UUID(connection_id)})).first()
             if row is None:
                 raise HTTPException(404, "Data source not found")
         return {"deleted": True}
+
+    async def dependencies(self, connection_id):
+        async with self._session() as session:
+            stored = (await session.execute(text("""SELECT id,name,engine,config,credentials_ciphertext
+                FROM ontology_data_connections WHERE id=:id FOR SHARE"""),
+                {"id": uuid.UUID(connection_id)})).mappings().first()
+            if stored is None:
+                raise HTTPException(404, "Data source not found")
+            dependencies = await self._connection_dependencies(session, connection_id, stored)
+            return {"dependencies": dependencies, "canDisconnect": not dependencies}
+
+    async def _connection_dependencies(self, session, connection_id, stored):
+        params = {"id": uuid.UUID(connection_id), "source": connection_id}
+        installed = (await session.execute(text("""SELECT
+            to_regclass('app.etl_business_connection') IS NOT NULL AS business,
+            to_regclass('app.ontology_batch_sync_plans') IS NOT NULL AS batch,
+            to_regclass('app.ontology_transfer_plans') IS NOT NULL AS transfer,
+            to_regclass('app.ontology_registry_definitions') IS NOT NULL AS ontology
+        """))).mappings().one()
+        dependencies = []
+        if installed["business"] and await session.scalar(text("""SELECT EXISTS (
+            SELECT 1 FROM app.etl_business_connection WHERE connection_id=:id)
+        """), params):
+            dependencies.append({"type": "business_database", "id": connection_id, "name": stored["name"],
+                "message": "This connection is used by the running warehouse and Workers. Reassign that runtime before disconnecting."})
+        if installed["batch"]:
+            rows = (await session.execute(text("""SELECT id,name,source_schema,source_table
+                FROM app.ontology_batch_sync_plans WHERE connection_id=:id ORDER BY name,id
+            """), params)).mappings()
+            dependencies.extend({"type": "batch_sync", "id": str(row["id"]), "name": row["name"],
+                "message": f"Batch sync reads {row['source_schema']}.{row['source_table']}. Remove or reassign it before disconnecting."}
+                for row in rows)
+        if installed["transfer"]:
+            rows = (await session.execute(text("""SELECT id,name,source_schema,source_table
+                FROM app.ontology_transfer_plans WHERE source_node->>'connectionId'=:source ORDER BY name,id
+            """), params)).mappings()
+            dependencies.extend({"type": "transfer_plan", "id": str(row["id"]), "name": row["name"],
+                "message": f"Transfer draft reads {row['source_schema']}.{row['source_table']}. Reassign or remove it before disconnecting."}
+                for row in rows)
+        if installed["ontology"]:
+            rows = (await session.execute(text("""SELECT id,semantic_id,
+                coalesce(published_definition->>'name',draft_definition->>'name',semantic_id) AS name,
+                draft_definition #>> '{source,upstreamConnectionId}'=:source AS draft,
+                published_definition #>> '{source,upstreamConnectionId}'=:source AS published
+                FROM app.ontology_registry_definitions
+                WHERE draft_definition #>> '{source,upstreamConnectionId}'=:source
+                   OR published_definition #>> '{source,upstreamConnectionId}'=:source
+                ORDER BY semantic_id,id
+            """), params)).mappings()
+            for row in rows:
+                versions = "draft and published definition" if row["draft"] and row["published"] else "draft" if row["draft"] else "published definition"
+                dependencies.append({"type": "object_type", "id": str(row["id"]), "name": row["name"],
+                    "message": f"The {versions} references this connection. Reassign or remove the definition before disconnecting."})
+        # Preserve the existing capture guards, including their external verification.
+        # An unavailable capture service must fail explicitly instead of permitting deletion.
+        try:
+            await require_unconfigured(connection_id, stored["engine"], registry=self, row=stored, session=session)
+        except HTTPException as error:
+            if error.status_code != 409:
+                raise
+            kind = {"s3": "object_events", "dameng": "dameng_cdc"}.get(stored["engine"], "cdc")
+            dependencies.append({"type": kind, "id": connection_id, "name": stored["name"], "message": str(error.detail)})
+        return dependencies
 
 
 @lru_cache

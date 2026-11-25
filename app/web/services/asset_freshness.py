@@ -67,7 +67,7 @@ async def _identity(session: AsyncSession, table: str) -> tuple[int, int] | None
 
 
 def _eligible(plan: TransferPlanRow | None, table: str) -> bool:
-    return (plan is not None and plan.source_schema == SANDBOX
+    return (plan is not None and plan.source_node is None and plan.source_schema == SANDBOX
             and plan.target_schema == SANDBOX and plan.target_table == table)
 
 
@@ -136,6 +136,7 @@ async def get_asset_freshness_candidates(session: AsyncSession, schema: str, tab
     plans = (await session.scalars(select(TransferPlanRow).where(
         TransferPlanRow.target_schema == SANDBOX, TransferPlanRow.target_table == table,
         TransferPlanRow.source_schema == SANDBOX,
+        TransferPlanRow.source_node.is_(None),
     ).order_by(TransferPlanRow.name, TransferPlanRow.id).limit(100))).all()
     return [AssetFreshnessCandidate(id=p.id, name=p.name, updatedAt=p.updated_at) for p in plans]
 

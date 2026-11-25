@@ -102,7 +102,7 @@ def scheduled_observed_lineage_enabled() -> bool:
 
 
 def is_sandbox_upsert(plan: TransferPlanRow, trigger: str) -> bool:
-    return (plan.trigger == trigger and plan.write_mode == "upsert" and plan.incremental_cursor is None
+    return (plan.source_node is None and plan.trigger == trigger and plan.write_mode == "upsert" and plan.incremental_cursor is None
             and plan.source_schema == plan.target_schema == SANDBOX)
 
 
@@ -175,7 +175,7 @@ async def _pin_attempt_scope(
 ) -> dict:
     # Save only the target of the exact admitted draft revision. Execution
     # rechecks the revision and physical relation under its existing write locks.
-    if plan.updated_at != request.expectedUpdatedAt or plan.source_schema != SANDBOX or plan.target_schema != SANDBOX:
+    if plan.source_node is not None or plan.updated_at != request.expectedUpdatedAt or plan.source_schema != SANDBOX or plan.target_schema != SANDBOX:
         return {}
     trigger, expected_mode = "manual", "manual"
     if scheduled_job_id is not None:
@@ -386,7 +386,7 @@ async def _lock_schedule_job(
         or binding.armed_for_updated_at != plan.updated_at or binding.armed_by != actor_id
         or plan.updated_at != job.plan_updated_at or plan.trigger != expected_trigger or plan.write_mode != "upsert"
         or plan.incremental_cursor is not None or plan.schedule_time != job.slot.astimezone(timezone.utc).strftime("%H:%M")
-        or plan.source_schema != SANDBOX or plan.target_schema != SANDBOX):
+        or plan.source_node is not None or plan.source_schema != SANDBOX or plan.target_schema != SANDBOX):
         raise HTTPException(409, "The scheduled transfer was paused or its draft binding changed")
     upstream = await session.get(UpstreamTriggerRow, plan.id, populate_existing=True)
     if upstream is not None and upstream.enabled and upstream.mixed_time_utc is not None:
@@ -597,6 +597,8 @@ async def run_sandbox_transfer(
              if scheduled_job_id is not None else await session.get(TransferPlanRow, plan_id, populate_existing=True))
     if draft is None:
         raise HTTPException(404, "Transfer draft does not exist")
+    if draft.source_node is not None:
+        raise HTTPException(422, "Saved-source transfer drafts cannot execute through the internal sandbox runner")
     scope = await _pin_attempt_scope(session, draft, request, scheduled_job_id=scheduled_job_id,
                                     upstream_job_id=upstream_job_id)
     attempt = TransferAttemptRow(plan_id=plan_id, request_id=request.requestId, started_at=datetime.now(timezone.utc),
@@ -627,6 +629,8 @@ async def run_sandbox_transfer(
             plan = (await lock_transfer_plans(session, plan_id)).get(plan_id)
         if plan is None:
             raise HTTPException(404, "Transfer draft does not exist")
+        if plan.source_node is not None:
+            raise HTTPException(422, "Saved-source transfer drafts cannot execute through the internal sandbox runner")
         job = (await _lock_schedule_job(session, plan, request, scheduled_job_id, actor_id, scheduled_now)
                if scheduled_job_id is not None else None)
         if upstream_job_id is not None:

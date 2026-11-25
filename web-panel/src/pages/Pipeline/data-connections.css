@@ -39,6 +39,10 @@
 .ontology-connections-inventory-modal .ui-modal-body { display: flex; flex: 1; min-height: 0; }
 .ontology-connections-inventory-modal .ontology-connections-workspace { flex: 1; min-height: 0; max-height: none; padding: 20px 24px; }
 .ontology-connections-intro { margin: 0 0 14px; color: var(--ontology-muted); font-size: 13px; }
+.ontology-connections-source-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.ontology-connections-dependencies { max-height: 340px; overflow: auto; padding-left: 20px; }
+.ontology-connections-dependencies li { margin: 10px 0; overflow-wrap: anywhere; }
+.ontology-connections-dependencies p { margin: 4px 0; color: var(--ontology-muted); }
 .ontology-connections-sandbox { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--ontology-border); }
 .ontology-connections-sandbox > header { margin-bottom: 12px; }
 .ontology-connections-sandbox h2 { display: flex; align-items: center; gap: 9px; font-size: 15px; }

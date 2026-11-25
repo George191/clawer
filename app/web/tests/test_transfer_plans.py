@@ -170,6 +170,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
             "app.web.alembic.versions.c81fb5290a74_ontology_scheduled_observed_lineage",
         )
         self.timeline_migration = import_module("app.web.alembic.versions.db42c1589a0e_ontology_transfer_timeline")
+        self.source_node_migration = import_module("app.web.alembic.versions.c731f0d2a6b9_transfer_source_nodes")
         async with self.pg.session() as session:
             for sql in (
                 "CREATE SCHEMA ts_rds", "CREATE SCHEMA ts_ods", "CREATE SCHEMA ts_meta",
@@ -205,6 +206,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
             await self.migrate(session, self.scheduled_observed_migration.upgrade)
             await self.migrate(session, self.monthly_migration.upgrade)
             await self.migrate(session, self.schema_drift_migration.upgrade)
+            await self.migrate(session, self.source_node_migration.upgrade)
         self.addAsyncCleanup(self.drop_fixtures)
         self.layers = object.__new__(EtlLayers)
         self.layers._pg = self.pg
@@ -892,6 +894,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def test_downgrade_only_removes_transfer_configuration_table(self):
         async with self.pg.session() as session:
+            await self.migrate(session, self.source_node_migration.downgrade)
             await self.migrate(session, self.monthly_migration.downgrade)
             await self.migrate(session, self.scheduled_observed_migration.downgrade)
             await self.migrate(session, self.weekly_migration.downgrade)

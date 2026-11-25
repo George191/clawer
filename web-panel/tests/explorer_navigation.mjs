@@ -48,7 +48,7 @@ test('opening and dismissing Data Connections retains the underlying catalog sel
   const search = 'catalog=published&publishedQ=Airport&objectType=selected&tab=properties&view=list';
   const path = dataConnectionHref(id, search);
   assert.equal(path, `/ontology/connections?${search}&sourceId=${id}`);
-  assert.equal(closeDataConnectionsHref(params(path).toString() + '&batchSync=active&tableExport=1'), `/ontology?${search}`);
+  assert.equal(closeDataConnectionsHref(params(path).toString() + '&batchSync=active&tableExport=1&sourcePanel=sync&sourceKind=database&sourceSchema=orders'), `/ontology?${search}`);
   assert.equal(dataConnectionHref(undefined, 'source=ts_ods&q=news'), '/ontology/connections?source=ts_ods&q=news');
   assert.equal(closeDataConnectionsHref('sourceId=' + id), '/ontology');
 });

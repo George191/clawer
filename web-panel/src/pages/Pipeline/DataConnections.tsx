@@ -2,13 +2,14 @@ import React, { useEffect, useId, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Button, Checkbox, Input, message, Modal, Select, NativeSelect } from '@/components/ui';
 import { ArrowLeftOutlined, ArrowRightOutlined, DatabaseOutlined, DeleteOutlined, EyeOutlined, FolderOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, TableOutlined } from '@/components/ui/icons';
-import apiClient, { createDataSource, deleteDataSource, fetchCurrentUserContext, fetchDataConnectorTypes, fetchDataSourceCatalog, fetchDataSourceColumns, fetchDataSources, selectBusinessDatabase, setDataSourcePaused, testDataSource, updateDataSource } from '../../services/api';
-import type { DataConnectorEngine, DataConnectorType, DataSource, DataSourceCatalog, DataSourceColumns, DataSourceConfig, DataSourcePayload, DataSourceProvider, DataSourceRelation, DataSourceTest, BatchSourceIdentity, WarehouseConnection } from '../../services/api';
+import apiClient, { createDataSource, deleteDataSource, fetchCurrentUserContext, fetchDataConnectorTypes, fetchDataConnectionDependencies, fetchDataSourceCatalog, fetchDataSourceColumns, fetchDataSources, setDataSourcePaused, testDataSource, updateDataSource } from '../../services/api';
+import type { DataConnectionDependencies, DataConnectorEngine, DataConnectorType, DataSource, DataSourceCatalog, DataSourceColumns, DataSourceConfig, DataSourcePayload, DataSourceProvider, DataSourceRelation, DataSourceTest, BatchSourceIdentity, WarehouseConnection } from '../../services/api';
 import { ontologyCatalogHref } from '../../services/explorerNavigation';
 import { getSessionState } from '../../services/session';
 import ConnectorMark from './ConnectorMark';
 import HostingProviderIcon from './HostingProviderIcon';
 import SourceBatchSyncs from './SourceBatchSyncs';
+import SourceNodeSyncs from './SourceNodeSyncs';
 import SourceIdentity from './SourceIdentity';
 import SourceCdc from './SourceCdc';
 import SourceDamengCdc from './SourceDamengCdc';
@@ -81,13 +82,13 @@ function catalogError(failure: unknown) {
   return 'Could not read metadata from the saved connection.';
 }
 
-function SourceCatalog({ sourceId, sourceRevision, onSetUpSync }: { sourceId: string; sourceRevision: string; onSetUpSync: (selection: BatchSyncSource) => void }) {
+function SourceCatalog({ sourceId, sourceRevision, initialSchema = '', onSetUpSync }: { sourceId: string; sourceRevision: string; initialSchema?: string; onSetUpSync: (selection: BatchSyncSource) => void }) {
   const liveIdentity = useSandboxIdentity();
   const [catalog, setCatalog] = useState<DataSourceCatalog>();
   const [relations, setRelations] = useState<DataSourceCatalog>();
   const [columns, setColumns] = useState<DataSourceColumns>();
   const [columnRevision, setColumnRevision] = useState<string>();
-  const [schema, setSchema] = useState('');
+  const [schema, setSchema] = useState(initialSchema);
   const [table, setTable] = useState('');
   const [search, setSearch] = useState('');
   const [appliedSearch, setAppliedSearch] = useState('');
@@ -209,7 +210,6 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
   const feedbackKey = useId();
   const [connectors, setConnectors] = useState<DataConnectorType[]>([]);
   const [sources, setSources] = useState<DataSource[]>([]);
-  const [businessSelection, setBusinessSelection] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [canManage, setCanManage] = useState(false);
@@ -221,6 +221,9 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
   const [params, setParams] = useSearchParams();
   const sourceId = params.get('sourceId') ?? '';
   const selectedSchedule = params.get('batchSync') || undefined;
+  const requestedPanel = params.get('sourcePanel');
+  const sourceSchema = params.get('sourceSchema') || undefined;
+  const sourceKind = params.get('sourceKind') || undefined;
   const openTableExport = params.get('tableExport') === '1';
   const [exploringSource, setExploringSource] = useState('');
   const [syncSelection, setSyncSelection] = useState<{ sourceId: string; selection: BatchSyncSource }>();
@@ -236,8 +239,9 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
   const [editingRevision, setEditingRevision] = useState<{ updatedAt: string; engine: DataConnectorEngine }>();
   const [editConflict, setEditConflict] = useState(false);
   const [baseline, setBaseline] = useState('');
-  const [operation, setOperation] = useState<'' | 'test' | 'save' | 'delete' | 'pause' | 'business'>('');
+  const [operation, setOperation] = useState<'' | 'test' | 'save' | 'delete' | 'pause' | 'dependencies'>('');
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
+  const [disconnect, setDisconnect] = useState<({ source: DataSource } & DataConnectionDependencies) | null>(null);
   const active = useRef(true);
   const pendingRef = useRef(false);
   const metadataRequest = useRef<AbortController>();
@@ -252,26 +256,6 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
   };
   const notifyTest = (result: DataSourceTest) => notify(result.ok ? 'success' : 'error', result.message, `${result.latencyMs} ms`);
   const pending = !!operation;
-  const businessId = businessSelection || warehouse?.connectionId || '';
-  const businessSources = sources.filter(source => source.engine === 'postgresql' && !isConnectionPaused(source));
-  const chooseBusinessDatabase = async () => {
-    const source = businessSources.find(item => item.id === businessId);
-    if (!source || pendingRef.current) return;
-    pendingRef.current = true;
-    setOperation('business');
-    try {
-      await selectBusinessDatabase(source);
-      if (!current()) return;
-      notify('success', 'Business database selected. Restart ETL Workers and the PostgreSQL CDC relay to apply it.');
-      onRetryWarehouse();
-      onChanged?.();
-    } catch (error) {
-      notify('error', errorText(error));
-    } finally {
-      pendingRef.current = false;
-      if (current()) setOperation('');
-    }
-  };
   const blocked = pending || loading || !!loadError || !canManage;
   const connector = connectors.find((item) => item.engine === draft?.engine);
   const selected = sources.find((item) => item.id === editingId);
@@ -299,9 +283,9 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
 
   useEffect(() => { active.current = true; return () => { active.current = false; metadataRequest.current?.abort(); message.destroy(feedbackKey); }; }, [feedbackKey]);
   useEffect(() => {
-    setExploringSource(''); setSyncSelection(undefined); setSourceProof(undefined);
-    setSourcePanel(selectedSchedule ? 'sync' : 'overview');
-  }, [sourceId]);
+    setExploringSource(requestedPanel === 'catalog' ? sourceId : ''); setSyncSelection(undefined); setSourceProof(undefined);
+    setSourcePanel(selectedSchedule || requestedPanel === 'sync' ? 'sync' : requestedPanel === 'catalog' ? 'catalog' : requestedPanel === 'capture' ? 'capture' : 'overview');
+  }, [sourceId, requestedPanel]);
   useEffect(() => { if (selectedSchedule) setSourcePanel('sync'); }, [selectedSchedule]);
   useEffect(() => {
     const session = getSessionState();
@@ -352,6 +336,9 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
     if (id) next.set('sourceId', id); else next.delete('sourceId');
     next.delete('batchSync');
     next.delete('tableExport');
+    next.delete('sourcePanel');
+    next.delete('sourceSchema');
+    next.delete('sourceKind');
     return next;
   });
   const showSource = (source?: DataSource) => {
@@ -394,7 +381,7 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
       },
       credentials: draft.secret ? { [authFields[config.auth].key]: draft.secret } : {} };
   };
-  const mutate = async (kind: 'test' | 'save' | 'delete' | 'pause', action: () => Promise<void>, draftEdit = false) => {
+  const mutate = async (kind: 'test' | 'save' | 'delete' | 'pause' | 'dependencies', action: () => Promise<void>, draftEdit = false) => {
     if (!current() || pendingRef.current || blocked) return false;
     pendingRef.current = true; setOperation(kind); resetFeedback();
     try { await action(); return current(); }
@@ -511,18 +498,42 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
       }),
     });
   };
-  const remove = () => {
-    if (!viewedSource || blocked) return;
-    const source = viewedSource;
-    setConfirmation({ title: 'Delete data source?', detail: `Delete “${source.name}” and its stored credentials? This retains the external database and all data.`, label: 'Delete source', action: async () => {
-      const done = await mutate('delete', async () => {
-        await deleteDataSource(source.id);
-        if (!current()) return;
-        setSources((items) => items.filter((item) => item.id !== source.id)); selectSource(); notify('success', 'Data source deleted.'); onChanged?.();
-      });
-      return done;
-    } });
+  const reviewDisconnect = async (source: DataSource) => {
+    if (blocked || captureBusy) return;
+    await mutate('dependencies', async () => {
+      const result = await fetchDataConnectionDependencies(source.id);
+      if (current()) setDisconnect({ source, ...result });
+    });
   };
+  const remove = async () => {
+    if (!disconnect?.canDisconnect || disconnect.dependencies.length || blocked) return;
+    const source = disconnect.source;
+    await mutate('delete', async () => {
+      try {
+        await deleteDataSource(source.id);
+      } catch (failure) {
+        const data = (failure as { response?: { data?: { detail?: { code?: string; message?: string; dependencies?: DataConnectionDependencies['dependencies'] }; errors?: { code?: string; message?: string; dependencies?: DataConnectionDependencies['dependencies'] } } } }).response?.data;
+        const detail = data?.errors ?? data?.detail;
+        if (detail?.code === 'connection_in_use' && detail.dependencies && current()) {
+          setDisconnect({ source, dependencies: detail.dependencies, canDisconnect: false });
+          throw new Error(detail.message || 'Resolve the configured flows before disconnecting this connection.');
+        }
+        throw failure;
+      }
+      if (!current()) return;
+      setDisconnect(null);
+      setSources((items) => items.filter((item) => item.id !== source.id));
+      if (sourceId === source.id) selectSource();
+      notify('success', 'Connection disconnected.'); onChanged?.();
+    });
+  };
+  const manageSyncs = (source: DataSource) => setParams(currentParams => {
+    const next = new URLSearchParams(currentParams);
+    next.set('sourceId', source.id); next.set('sourcePanel', 'sync');
+    next.delete('sourceSchema'); next.delete('batchSync'); next.delete('tableExport');
+    next.delete('sourceKind');
+    return next;
+  });
   const filtered = connectors.filter((item) => (category === 'all' || item.category === category) && `${item.name} ${item.description}`.toLowerCase().includes(search.trim().toLowerCase()));
   const secretLabel = draft ? authFields[draft.config.auth].label : '';
   const usernameLabel = draft?.config.auth === 'access_key' ? 'Access key ID' : 'Username';
@@ -558,7 +569,7 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
         <nav className="ontology-connections-detail__nav" aria-label="Source sections">
           <Button aria-pressed={sourcePanel === 'overview'} disabled={pending || captureBusy} onClick={() => openSourcePanel('overview')}>Overview</Button>
           {catalogAvailable && <Button aria-pressed={sourcePanel === 'catalog'} disabled={pending || captureBusy} onClick={() => openSourcePanel('catalog')}>Source catalog</Button>}
-          {syncAvailable && <Button aria-pressed={sourcePanel === 'sync'} disabled={pending || captureBusy} onClick={() => openSourcePanel('sync')}>Batch syncs</Button>}
+          <Button aria-pressed={sourcePanel === 'sync'} disabled={pending || captureBusy} onClick={() => openSourcePanel('sync')}>Syncs</Button>
           {captureAvailable && <Button aria-pressed={sourcePanel === 'capture'} disabled={pending || captureBusy} onClick={() => openSourcePanel('capture')}>{captureLabel}</Button>}
           <Link className="ui-btn ui-btn-link" to={ontologyCatalogHref(new URLSearchParams({ publishedSource: viewedSource.id }).toString(), 'published')}
             aria-disabled={pending || captureBusy || undefined} tabIndex={pending || captureBusy ? -1 : undefined}
@@ -589,10 +600,15 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
           onIdentity={value => { if (current()) setSourceProof({ key: proofKey, value }); }}
           onVerificationStarted={() => invalidateVerificationCapability(viewedSource.id)}
           onVerificationSettled={() => { metadataVerifying.current.delete(viewedSource.id); refreshCapabilities(viewedSource.id); }} disabled={blocked} />}
-        <div className="ontology-connections-detail__destructive"><Button size="small" danger icon={<DeleteOutlined />} disabled={blocked || captureBusy} onClick={remove}>Delete source</Button></div>
+        <div className="ontology-connections-detail__destructive"><Button size="small" danger icon={<DeleteOutlined />} disabled={blocked || captureBusy} onClick={() => void reviewDisconnect(viewedSource)}>Disconnect connection</Button></div>
         </>}
-        {sourcePanel === 'catalog' && exploring && catalogAvailable && <SourceCatalog key={JSON.stringify(["catalog", sessionIdentity, viewedSource.id])} sourceId={viewedSource.id} sourceRevision={viewedSource.updatedAt} onSetUpSync={selection => { setSyncSelection({ sourceId: viewedSource.id, selection }); openSourcePanel('sync'); }} />}
-        {sourcePanel === 'sync' && syncAvailable && <SourceBatchSyncs key={`sync:${proofKey}`} source={viewedSource} sourceProof={sourcePaused ? undefined : activeProof} selection={!sourcePaused && syncSelection?.sourceId === viewedSource.id ? syncSelection.selection : undefined} selectedSchedule={selectedSchedule} onComposerClosed={() => setSyncSelection(undefined)} />}
+        {sourcePanel === 'catalog' && exploring && catalogAvailable && <SourceCatalog key={JSON.stringify(["catalog", sessionIdentity, viewedSource.id, sourceSchema])} sourceId={viewedSource.id} sourceRevision={viewedSource.updatedAt} initialSchema={sourceSchema} onSetUpSync={selection => { setParams(currentParams => { const next = new URLSearchParams(currentParams); next.set('sourceSchema', selection.schema); return next; }); setSyncSelection({ sourceId: viewedSource.id, selection }); openSourcePanel('sync'); }} />}
+        {sourcePanel === 'sync' && <>
+          <p>Syncs belong to this connection{sourceSchema ? <> and {sourceKind || 'schema'} <code>{sourceSchema}</code></> : null}. Choose a source object to configure a separate sync.</p>
+          <SourceNodeSyncs key={`nodes:${proofKey}`} source={viewedSource} kind={sourceKind} scope={sourceSchema} />
+          {catalogAvailable && <Button disabled={blocked || captureBusy} onClick={() => openSourcePanel('catalog')}>Explore source to set up sync</Button>}
+          {syncAvailable && <SourceBatchSyncs key={`sync:${proofKey}:${sourceSchema || ''}`} source={viewedSource} sourceProof={sourcePaused ? undefined : activeProof} selection={!sourcePaused && syncSelection?.sourceId === viewedSource.id ? syncSelection.selection : undefined} schemaFilter={sourceSchema} selectedSchedule={selectedSchedule} onComposerClosed={() => setSyncSelection(undefined)} />}
+        </>}
         {sourcePanel === 'capture' && captureAvailable && <>
           {viewedType?.cdcSupported && <SourceCdc key={`cdc:${proofKey}`} source={viewedSource} onBusyChange={setCaptureBusy} />}
           {viewedType?.captureKind === 'dmdrs' && <SourceDamengCdc key={`dmdrs:${proofKey}`} source={viewedSource} onBusyChange={setCaptureBusy} />}
@@ -604,11 +620,11 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
       open={!detailsOpen && !(wizard && canManage)} onCancel={onCancel} closable={!pending && !captureBusy}
       keyboard={!pending && !captureBusy} maskClosable={false} footer={<Button disabled={pending || captureBusy} onClick={onCancel}>Done</Button>}>
       <div className="ontology-connections-workspace">
-        <p className="ontology-connections-intro">Connect a data source, choose your ETL database, or validate a data flow with sample data.</p>
+        <p className="ontology-connections-intro">Manage each connection and its syncs independently. Use PostgreSQL schemas, MySQL databases or Elasticsearch indices as separate source nodes.</p>
         <section className="ontology-connections-warehouse" aria-label="Workspace warehouse" aria-busy={!warehouse && !warehouseFailed}>
           <div className="ontology-connections-warehouse__identity">
             {warehouse && <ConnectorMark engine={warehouse.engine} />}
-            <div><h2>Business database</h2>
+            <div><h2>Storage catalog</h2>
               {warehouse ? <p>PostgreSQL · <code>{warehouse.database}</code> · {warehouse.name}</p>
                 : warehouseFailed ? <p role="alert">Unable to read the warehouse connection.</p>
                   : <p role="status">Loading warehouse connection…</p>}
@@ -616,20 +632,10 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
           </div>
           {warehouse && <Link className="ui-btn ui-btn-default" to={ontologyCatalogHref(params.toString(), 'backed')}>Browse warehouse tables <ArrowRightOutlined /></Link>}
           {warehouseFailed && <Button size="small" icon={<ReloadOutlined />} onClick={onRetryWarehouse}>Retry warehouse</Button>}
-          {canManage && <div>
-            <label>ETL business connection <NativeSelect aria-label="ETL business connection" value={businessId}
-              disabled={blocked} onChange={event => setBusinessSelection(event.target.value)}>
-              <option value="">Select a PostgreSQL connection</option>
-              {businessSources.map(source => <option key={source.id} value={source.id}>{source.name} · {source.config.database}</option>)}
-            </NativeSelect></label>
-            <Button disabled={blocked || !businessId || businessId === warehouse?.connectionId}
-              loading={operation === 'business'} onClick={chooseBusinessDatabase}>Use for ETL</Button>
-            <p>Stop Workers and the current PostgreSQL CDC capture before switching. Configure capture for the selected database, then restart Workers and the relay.</p>
-          </div>}
         </section>
 
         {canManage && <section className="ontology-connections-inventory" aria-label="External sources" aria-busy={loading || pending}>
-        <header><h2>External sources {!loading && !loadError && <span>{sources.length}</span>}</h2>
+        <header><h2>Connections {!loading && !loadError && <span>{sources.length}</span>}</h2>
           <div className="ontology-connectors__actions">
             <Button size="small" icon={<ReloadOutlined />} disabled={pending || loading} onClick={() => setReload(value => value + 1)}>Refresh sources</Button>
             <Button type="primary" icon={<PlusOutlined />} disabled={blocked} onClick={newSource}>New source</Button>
@@ -645,11 +651,12 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
         </div>}
         {filteredSources.length ? <div className="ontology-connections-inventory__table" role="region" aria-label="Saved external sources" tabIndex={0}><table>
           <colgroup><col className="ontology-connections-inventory__source-column" /><col className="ontology-connections-inventory__connector-column" /><col className="ontology-connections-inventory__endpoint-column" /><col className="ontology-connections-inventory__tested-column" /></colgroup>
-          <thead><tr><th scope="col">Source</th><th scope="col">Connector</th><th scope="col">Endpoint</th><th scope="col">Last connectivity test</th></tr></thead>
+          <thead><tr><th scope="col">Source</th><th scope="col">Connector</th><th scope="col">Endpoint</th><th scope="col">Last connectivity test</th><th scope="col">Actions</th></tr></thead>
           <tbody>{filteredSources.map((source) => <tr key={source.id}>
             <td><div className="ontology-connections-source"><button type="button" className="ontology-connections-source-link" title={source.name} onClick={() => showSource(source)}><ConnectorMark engine={source.engine} /><span>{source.name}</span></button>
               {isConnectionPaused(source) && <span className="ontology-connections-source__paused">Paused</span>}</div></td>
             <td>{labelFor(source.engine)}</td><td><code title={endpoint(source.config)}>{endpoint(source.config)}</code></td><td><time dateTime={source.testedAt || undefined}>{formatDate(source.testedAt)}</time></td>
+            <td><div className="ontology-connections-source-actions"><Button size="small" disabled={blocked} onClick={() => manageSyncs(source)}>Syncs</Button><Button size="small" danger disabled={blocked} onClick={() => void reviewDisconnect(source)}>Disconnect</Button></div></td>
           </tr>)}</tbody>
         </table></div> : <div className="ontology-connections-inventory__empty" role="status">
           <DatabaseOutlined /><strong>{sources.length ? 'No sources match your filters' : 'No external sources configured'}</strong>
@@ -744,6 +751,19 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
             <div className="ontology-connectors__actions ontology-connectors__wizard-footer"><span /><Button disabled={pending} onClick={() => navigate(closeWizard)}>Cancel</Button><Button onClick={() => editConflict ? reloadSavedSource() : void test()} loading={operation === 'test'} disabled={blocked || !editConflict && !connector.driverAvailable}>{editConflict ? 'Reload saved source' : 'Test connection'}</Button><Button type="primary" onClick={() => void save()} loading={operation === 'save'} disabled={blocked || editConflict || !connector.driverAvailable || !!editingId && !dirty}>Save source</Button></div>
           </form>}
       </div>
+    </Modal>}
+    {disconnect && <Modal className="flow-surface-modal ontology-connectors__disconnect" title={disconnect.dependencies.length ? 'Resolve flows before disconnecting' : 'Disconnect connection?'} open width={680}
+      okText="Disconnect connection" okButtonProps={{ danger: true, disabled: !disconnect.canDisconnect || !!disconnect.dependencies.length }} confirmLoading={pending}
+      cancelText="Close" cancelButtonProps={{ disabled: pending }} closable={!pending} maskClosable={false} onCancel={() => { if (!pendingRef.current) setDisconnect(null); }} onOk={remove}>
+      <p>Disconnect “{disconnect.source.name}” and remove its saved credentials. The external database and its data are retained.</p>
+      {!!disconnect.dependencies.length && <div role="alert"><p>This connection is used by the following definitions. Reassign or remove them, then check again.</p>
+        <ul className="ontology-connections-dependencies">{disconnect.dependencies.map(item => <li key={`${item.type}:${item.id}`}><strong>{item.name}</strong><p>{item.message}</p></li>)}</ul>
+        <div className="ontology-connections-source-actions">
+          {disconnect.dependencies.some(item => item.type === 'batch_sync' || item.type === 'transfer_plan') && <Button disabled={pending} onClick={() => { const source = disconnect.source; setDisconnect(null); manageSyncs(source); }}>Review syncs</Button>}
+          {disconnect.dependencies.some(item => ['cdc', 'dameng_cdc', 'object_events'].includes(item.type)) && <Button disabled={pending} onClick={() => { const source = disconnect.source; setDisconnect(null); setParams(currentParams => { const next = new URLSearchParams(currentParams); next.set('sourceId', source.id); next.set('sourcePanel', 'capture'); next.delete('batchSync'); next.delete('sourceSchema'); next.delete('sourceKind'); return next; }); }}>Review capture</Button>}
+          <Button disabled={pending} onClick={() => void reviewDisconnect(disconnect.source)}>Check again</Button>
+        </div>
+      </div>}
     </Modal>}
     {confirmation && <Modal className="flow-surface-modal ontology-connectors__confirmation" title={confirmation.title} open okText={confirmation.label} confirmLoading={pending} cancelButtonProps={{ disabled: pending }} closable={!pending} maskClosable={false} onCancel={() => { if (!pendingRef.current) setConfirmation(null); }} onOk={async () => { if (await confirmation.action() && current()) setConfirmation(null); }}><p>{confirmation.detail}</p></Modal>}
   </>;

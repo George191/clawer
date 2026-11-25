@@ -121,6 +121,18 @@ class BusinessDatabaseSelection(BaseModel):
     expectedUpdatedAt: AwareDatetime
 
 
+class ConnectionDependency(BaseModel):
+    type: Literal["business_database", "batch_sync", "transfer_plan", "object_type", "cdc", "object_events", "dameng_cdc"]
+    id: str
+    name: str
+    message: str
+
+
+class ConnectionDependencies(BaseModel):
+    dependencies: list[ConnectionDependency]
+    canDisconnect: bool
+
+
 SavedSourceCapabilityReason = Literal[
     "source_paused", "driver_missing", "unsupported_engine", "explicit_local_required",
     "mode_disabled", "numeric_loopback_required", "source_identity_not_configured",

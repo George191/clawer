@@ -205,8 +205,8 @@ function BatchSyncSchedulePanel({ plan, source, capability, sourceReviewNeeded }
   </section>;
 }
 
-export default function SourceBatchSyncs({ source, sourceProof, selection, selectedSchedule, onComposerClosed }: {
-  source: DataSource; sourceProof: BatchSourceIdentity | undefined; selection: BatchSyncSource | undefined; selectedSchedule?: string; onComposerClosed: () => void;
+export default function SourceBatchSyncs({ source, sourceProof, selection, selectedSchedule, schemaFilter, onComposerClosed }: {
+  source: DataSource; sourceProof: BatchSourceIdentity | undefined; selection: BatchSyncSource | undefined; selectedSchedule?: string; schemaFilter?: string; onComposerClosed: () => void;
 }) {
   const [capability, setCapability] = useState<BatchSyncCapabilities>();
   const [plans, setPlans] = useState<BatchSyncPlan[]>();
@@ -434,6 +434,7 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
     } finally { pending.current = false; if (live()) { setBusy(undefined); setRevision(value => value + 1); cancelRun(); } }
   };
 
+  const visiblePlans = plans?.filter(plan => !schemaFilter || plan.sourceSchema === schemaFilter);
   return <section className="ontology-source-catalog ontology-source-sync" aria-label="Batch syncs">
     <header><div><h3>Batch syncs</h3><p>{capability?.incrementalBatchSync ? 'Use Snapshot Upsert or the fixed synthetic Committed batch Upsert. Runs are manual or use an armed daily schedule. Neither mode deletes rows.' : 'Snapshot Upsert into the local sandbox only, run manually or on an armed daily schedule. No deletes or incremental reads.'}</p></div>
       {rangeAvailable && <Button size="small" disabled={Boolean(draft || busy)} onClick={prepareRange}>Set up snapshot ID interval</Button>}
@@ -494,7 +495,7 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
         </fieldset>
         {saveError && <p role="alert" className="is-error">{saveError}</p>}
         <div className="ontology-source-sync__actions"><Button disabled={Boolean(busy)} onClick={closeDraft}>Cancel</Button><Button type="primary" htmlType="submit" loading={busy === 'save'} disabled={sourcePaused || !fullyMapped || !draft.name.trim() || sourceProof?.state === 'blocked'}>Save draft</Button></div>
-      </form> : !plans ? !stateError && <p role="status">Loading batch syncs…</p> : plans.length ? <ul className="ontology-source-sync__items">{plans.map(plan => <li key={plan.id}>
+      </form> : !visiblePlans ? !stateError && <p role="status">Loading batch syncs…</p> : visiblePlans.length ? <ul className="ontology-source-sync__items">{visiblePlans.map(plan => <li key={plan.id}>
         <div><strong>{plan.name}</strong> · {plan.keyRange ? 'Snapshot ID interval' : plan.mode === 'incremental' ? 'Committed batch Upsert' : capability?.incrementalBatchSync ? 'Snapshot Upsert' : 'Draft'}</div>
         {plan.keyRange && <p><RangeFacts range={plan.keyRange} /></p>}
         {plan.mode === 'incremental' && <p>Committed through: <code>{plan.appliedThrough ?? 'Not recorded'}</code>. This is the saved target checkpoint, not the latest source head.</p>}

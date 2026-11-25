@@ -48,7 +48,7 @@ async def _context(session: AsyncSession, policy: AssetFreshnessPolicyRow, ident
         return None, None
     statement = select(TransferPlanRow).where(TransferPlanRow.id == policy.plan_id)
     plan = await session.scalar(statement.with_for_update(read=True, nowait=True) if lock else statement)
-    if (plan is None or plan.updated_at != policy.plan_updated_at or plan.source_schema != SANDBOX
+    if (plan is None or plan.source_node is not None or plan.updated_at != policy.plan_updated_at or plan.source_schema != SANDBOX
         or plan.target_schema != SANDBOX or plan.target_table != policy.target_table
         or plan.trigger != "weekly" or plan.write_mode != "upsert" or plan.incremental_cursor is not None
         or plan.schedule_time is None or plan.schedule_weekday_utc not in range(1, 8)):

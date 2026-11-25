@@ -112,3 +112,6 @@
 .flow-lineage-reference-path__actions{display:flex;gap:6px;flex-wrap:wrap}
 .flow-lineage-reference-path__actions .flow-lineage-action{white-space:normal;text-align:left}
 .flow-lineage-reference-path__witness,.flow-lineage-reference-path__witness > section{display:grid;gap:6px;min-width:0}
+.flow-transfer-source-preview { max-width: 100%; max-height: 300px; overflow: auto; }
+.flow-transfer-source-preview table { border-collapse: collapse; font-size: 11px; }
+.flow-transfer-source-preview :is(th, td) { padding: 5px 8px; border-bottom: 1px solid var(--ontology-border); text-align: left; max-width: 320px; overflow-wrap: anywhere; vertical-align: top; }

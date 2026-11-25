@@ -299,6 +299,7 @@ export const fetchColumnPlannerStatistic = (schema: string, table: string, colum
     .then(r => unwrap<ColumnPlannerStatistic>(r.data));
 
 export type TransferPlanInput = {
+  sourceNode?: StorageNodeRef | null; sourceUpdatedAt?: string | null;
   name: string;
   sourceSchema: string;
   sourceTable: string;
@@ -473,8 +474,8 @@ export type TransferPlanPreflight = {
   checkedColumns: number;
 };
 
-export const fetchTransferPlans = (schema: string, signal?: AbortSignal): Promise<TransferPlan[]> =>
-  client.get('/etl/transfer-plans', { params: { schema }, signal }).then((r) => unwrap<TransferPlan[]>(r.data));
+export const fetchTransferPlans = (schema: string, signal?: AbortSignal, sourceNode?: StorageNodeRef): Promise<TransferPlan[]> =>
+  client.get('/etl/transfer-plans', { params: { schema, ...(sourceNode ? { connectionId: sourceNode.connectionId, nodeKind: sourceNode.kind } : {}) }, signal }).then((r) => unwrap<TransferPlan[]>(r.data));
 
 export const checkTransferPlan = (draft: TransferPlanInput, signal?: AbortSignal): Promise<TransferPlanPreflight> =>
   client.post('/etl/transfer-plans/preflight', draft, { signal }).then((r) => unwrap<TransferPlanPreflight>(r.data));
@@ -482,6 +483,8 @@ export const checkTransferPlan = (draft: TransferPlanInput, signal?: AbortSignal
 export const saveTransferPlan = (draft: TransferPlanInput, id?: string): Promise<TransferPlan> =>
   (id ? client.put(`/etl/transfer-plans/${encodeURIComponent(id)}`, draft) : client.post('/etl/transfer-plans', draft))
     .then((r) => unwrap<TransferPlan>(r.data));
+export const deleteTransferPlan = (id: string, expectedUpdatedAt: string): Promise<void> =>
+  client.delete(`/etl/transfer-plans/${encodeURIComponent(id)}`, { params: { expectedUpdatedAt } }).then(() => undefined);
 
 export type ExplorerTableEvidenceSnapshot = {
   observedAt: string;
@@ -914,6 +917,15 @@ export const removeSourceDamengCdc = (id: string, expectedUpdatedAt: string): Pr
   client.post(`${dmdrsPath(id)}/remove`, { expectedUpdatedAt }).then(r => unwrap(r.data));
 export type DataSourceRelation = { name: string; kind: 'table' | 'partitioned_table' | 'view' | 'materialized_view' | 'foreign_table' };
 export type DataSourceCatalog = { schemas: string[]; schema: string | null; relations: DataSourceRelation[]; hasMore: boolean; schemaHasMore: boolean };
+export type StorageNodeRef = { connectionId: string; kind: 'schema' | 'database' | 'index' | 'collection' | 'bucket'; name: string };
+export type StorageNode = StorageNodeRef & { id: string; engine: DataConnectorEngine; connectionName: string; sourceUpdatedAt: string };
+export const fetchDataSourceNodes = (id: string, signal?: AbortSignal, search?: string): Promise<{ nodes: StorageNode[]; hasMore: boolean }> =>
+  client.get(`/etl/data-connections/${encodeURIComponent(id)}/nodes`, { params: { search }, signal }).then(r => unwrap<{ nodes: StorageNode[]; hasMore: boolean }>(r.data));
+export const fetchStorageNodeRelations = (node: StorageNodeRef, sourceUpdatedAt?: string | null, signal?: AbortSignal, options: { search?: string; limit?: number; offset?: number } = {}): Promise<{ relations: { name: string }[]; hasMore: boolean }> =>
+  client.get(`/etl/data-connections/${encodeURIComponent(node.connectionId)}/nodes/relations`, { params: { kind: node.kind, scope: node.name, expectedUpdatedAt: sourceUpdatedAt, limit: 100, ...options }, signal }).then(r => unwrap<{ relations: { name: string }[]; hasMore: boolean }>(r.data));
+export type StorageNodePreview = { columns: string[]; rows: Record<string, unknown>[]; hasMore: boolean };
+export const fetchStorageNodePreview = (node: StorageNodeRef, relation: string, sourceUpdatedAt: string, signal?: AbortSignal): Promise<StorageNodePreview> =>
+  client.get(`/etl/data-connections/${encodeURIComponent(node.connectionId)}/nodes/preview`, { params: { kind: node.kind, scope: node.name, relation, expectedUpdatedAt: sourceUpdatedAt, limit: 20 }, signal }).then(r => unwrap<StorageNodePreview>(r.data));
 export type DataSourceColumns = { referencesAvailable?: true; schema: string; table: string; columns: { name: string; type: string; nullable: boolean; primaryKey: boolean; position: number }[]; hasMore: boolean };
 const dataSourceCatalogPath = (id: string) => `/etl/data-connections/${encodeURIComponent(id)}/catalog`;
 export const fetchDataSourceCatalog = (
@@ -1111,6 +1123,10 @@ export const updateDataSource = (id: string, payload: DataSourcePayload): Promis
   client.put(`/etl/data-connections/${id}`, payload, { timeout: 45000 }).then((r) => unwrap<DataSource>(r.data));
 export const setDataSourcePaused = (id: string, request: { paused: boolean; expectedUpdatedAt: string }): Promise<DataSource> =>
   client.put(`/etl/data-connections/${encodeURIComponent(id)}/pause`, request).then((r) => unwrap<DataSource>(r.data));
+export type DataConnectionDependency = { type: 'business_database' | 'batch_sync' | 'transfer_plan' | 'object_type' | 'cdc' | 'object_events' | 'dameng_cdc'; id: string; name: string; message: string };
+export type DataConnectionDependencies = { dependencies: DataConnectionDependency[]; canDisconnect: boolean };
+export const fetchDataConnectionDependencies = (id: string): Promise<DataConnectionDependencies> =>
+  client.get(`/etl/data-connections/${encodeURIComponent(id)}/dependencies`).then((r) => unwrap<DataConnectionDependencies>(r.data));
 export const deleteDataSource = (id: string): Promise<void> =>
   client.delete(`/etl/data-connections/${id}`).then(() => undefined);
 export interface EtlDataQuery {

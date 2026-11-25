@@ -124,6 +124,7 @@ async def list_upstream_candidates(session: AsyncSession, plan_id: UUID) -> list
         return []
     rows = await session.scalars(select(TransferPlanRow).where(
         TransferPlanRow.id != plan_id, TransferPlanRow.trigger == "manual", TransferPlanRow.write_mode == "upsert",
+        TransferPlanRow.source_node.is_(None),
         TransferPlanRow.source_schema == SANDBOX, TransferPlanRow.target_schema == SANDBOX,
         TransferPlanRow.target_table == child.source_table, TransferPlanRow.source_table != child.target_table,
         TransferPlanRow.incremental_cursor.is_(None),

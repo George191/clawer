@@ -8,7 +8,7 @@ export function publishedSourceFilter(value: string | null) {
 
 function searchWithoutConnection(search: string) {
   const params = new URLSearchParams(search);
-  for (const key of ['sourceId', 'batchSync', 'tableExport']) params.delete(key);
+  for (const key of ['sourceId', 'sourcePanel', 'sourceSchema', 'sourceKind', 'batchSync', 'tableExport']) params.delete(key);
   return params;
 }
 

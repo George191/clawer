@@ -111,9 +111,13 @@ from app.web.api.models.etl import (
     SqlQuery,
 )
 from app.web.api.models.data_connections import (
-    DataConnectionDraftPayload, DataConnectionPauseChange, DataConnectionPayload, SourceCatalog, SourceColumns, SourceReferenceDirection, SourceReferences,
+    ConnectionDependencies, DataConnectionDraftPayload, DataConnectionPauseChange, DataConnectionPayload, SourceCatalog, SourceColumns, SourceReferenceDirection, SourceReferences,
 )
 from app.web.api.models.storage_relationship_types import StorageRelationshipTypeCreate, StorageRelationshipTypeUpdate
+from app.web.api.models.storage_nodes import (
+    StorageNodeCatalog, StorageNodeColumns, StorageNodeKind, StorageNodePreview, StorageNodeRelations,
+)
+from app.web.services.storage_nodes import StorageNodes
 from app.web.api.models.transfer_plans import (
     TableName, TransferAttempt, TransferPlan, TransferPlanPayload, TransferPreflight, TransferRun, TransferRunCapabilities,
     TransferRunRequest, WarehouseSchema,
@@ -213,7 +217,7 @@ from app.web.services.lineage_column_mapping_paths import ColumnMappingRootUnava
 from app.web.services.lineage_column_references import read_lineage_column_references
 from app.web.services.preview_index_coverage import preview_index_coverage
 from app.web.services.transfer_observed_lineage import observed_transfer_lineage
-from app.web.services.transfer_plans import list_transfer_plans, preflight_transfer_plan, save_transfer_plan
+from app.web.services.transfer_plans import delete_external_transfer_plan, list_transfer_plans, preflight_transfer_plan, save_transfer_plan
 from app.web.services.transfer_runs import (
     SANDBOX, list_transfer_attempts, list_transfer_runs, run_sandbox_transfer, transfer_run_capabilities,
 )
@@ -912,8 +916,10 @@ async def connections() -> list[dict[str, Any]]:
 
 
 @write.get("/transfer-plans")
-async def transfer_plans(session: SessionDep, schema: WarehouseSchema | None = None) -> list[TransferPlan]:
-    return await list_transfer_plans(session, schema)
+async def transfer_plans(session: SessionDep, schema: str | None = Query(None, min_length=1, max_length=255),
+                         connectionId: UUID | None = None,
+                         nodeKind: Literal["schema", "database", "index", "collection", "bucket"] | None = None) -> list[TransferPlan]:
+    return await list_transfer_plans(session, schema, connection_id=connectionId, node_kind=nodeKind)
 
 
 @write.post("/transfer-plans", status_code=201)
@@ -1082,6 +1088,11 @@ async def get_transfer_timeline_entry(
 @write.put("/transfer-plans/{plan_id}")
 async def update_transfer_plan(plan_id: UUID, payload: TransferPlanPayload, session: SessionDep) -> TransferPlan:
     return await save_transfer_plan(session, payload, plan_id)
+
+
+@write.delete("/transfer-plans/{plan_id}")
+async def remove_external_transfer_plan(plan_id: UUID, session: SessionDep, expectedUpdatedAt: AwareDatetime) -> dict[str, Any]:
+    return await delete_external_transfer_plan(session, plan_id, expectedUpdatedAt)
 
 
 @write.get("/connector-types")
@@ -1604,6 +1615,44 @@ async def browse_data_connection_catalog(
     return await get_data_connections().catalog(str(connection_id), schema=schema, search=search, limit=limit, offset=offset)
 
 
+@write.get("/data-connections/{connection_id}/nodes")
+async def data_connection_nodes(connection_id: UUID, response: Response, search: str = Query("", max_length=100)) -> StorageNodeCatalog:
+    response.headers["Cache-Control"] = "private, no-store"
+    return await StorageNodes(get_data_connections()).nodes(connection_id, search=search)
+
+
+@write.get("/data-connections/{connection_id}/nodes/relations")
+async def storage_node_relations(
+    connection_id: UUID, kind: StorageNodeKind, response: Response, scope: str = Query(min_length=1, max_length=255),
+    search: str = Query("", max_length=100), limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0, le=5000), expectedUpdatedAt: AwareDatetime | None = None,
+) -> StorageNodeRelations:
+    response.headers["Cache-Control"] = "private, no-store"
+    return await StorageNodes(get_data_connections()).relations(connection_id, kind, scope,
+        search=search, limit=limit, offset=offset, expected_updated_at=expectedUpdatedAt)
+
+
+@write.get("/data-connections/{connection_id}/nodes/columns")
+async def storage_node_columns(
+    connection_id: UUID, kind: StorageNodeKind, response: Response, scope: str = Query(min_length=1, max_length=255),
+    relation: str = Query(min_length=1, max_length=255), expectedUpdatedAt: AwareDatetime | None = None,
+) -> StorageNodeColumns:
+    response.headers["Cache-Control"] = "private, no-store"
+    return await StorageNodes(get_data_connections()).columns(connection_id, kind, scope, relation,
+        expected_updated_at=expectedUpdatedAt)
+
+
+@write.get("/data-connections/{connection_id}/nodes/preview")
+async def storage_node_preview(
+    connection_id: UUID, kind: StorageNodeKind, expectedUpdatedAt: AwareDatetime, response: Response,
+    scope: str = Query(min_length=1, max_length=255), relation: str = Query(min_length=1, max_length=255),
+    limit: int = Query(20, ge=1, le=100),
+) -> StorageNodePreview:
+    response.headers["Cache-Control"] = "private, no-store"
+    return await StorageNodes(get_data_connections()).preview(connection_id, kind, scope, relation,
+        limit=limit, expected_updated_at=expectedUpdatedAt)
+
+
 @write.get("/data-connections/{connection_id}/catalog/columns", response_model_exclude_none=True)
 async def browse_data_connection_columns(
     connection_id: UUID, schema: str = Query(..., min_length=1, max_length=128, pattern=r"^[^\x00-\x1f\x7f]+$"),
@@ -1635,6 +1684,12 @@ async def update_data_connection(connection_id: UUID, request: Request,
     return await get_data_connections().save(
         payload, str(current_user.id), str(connection_id), expected_updated_at=payload.expectedUpdatedAt,
     )
+
+
+@write.get("/data-connections/{connection_id}/dependencies")
+async def data_connection_dependencies(connection_id: UUID, response: Response) -> ConnectionDependencies:
+    response.headers["Cache-Control"] = "private, no-store"
+    return await get_data_connections().dependencies(str(connection_id))
 
 
 @write.delete("/data-connections/{connection_id}")

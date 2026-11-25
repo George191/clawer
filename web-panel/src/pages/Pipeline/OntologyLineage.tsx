@@ -13,6 +13,7 @@ import TableExportEvidence, { TABLE_EXPORT_SOURCE } from './TableExportEvidence'
 import TableLineageReferences from './TableLineageReferences';
 import ColumnLineageReferences from './ColumnLineageReferences';
 import ObservedTableLineage from './ObservedTableLineage';
+import ConnectionFlowNodes from './ConnectionFlowNodes';
 import './ontology-lineage.css';
 
 // Current ETL processor contracts: TsOds, TsTask, TsDim, TsDwd and TsDws.
@@ -257,6 +258,7 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
       <label className="flow-lineage-search ui-input-surface"><SearchOutlined /><input ref={searchRef} aria-label="Search lineage nodes" placeholder="Find schemas" value={search} onChange={event => updateQuery({ q: event.target.value || null }, true)} />{search && <button type="button" aria-label="Clear lineage search" onClick={() => { updateQuery({ q: null }, true); searchRef.current?.focus(); }}><CloseOutlined /></button>}</label>
       <span className="flow-lineage-notice" title="Relationships are predefined ETL processor contracts, not discovered data lineage.">Relationships predefined</span>
     </div>
+    <ConnectionFlowNodes version={version + refreshToken} schemas={transferSchemas} />
     {canPlanTransfers && managedAsset && <ManagedBatchLineage asset={managedAsset} selected={managedSelected} exactReceipt={managedReceipt} version={version + refreshToken}
       onSelect={() => { if (!managedSelected) updateQuery({ managedAsset: MANAGED_BATCH_ASSET, batchReceipt: null, schema: null, table: null, tableLineage: null, column: null, transferPlan: null, scheduleKind: null }); }}
       onClose={() => updateQuery({ managedAsset: null, batchReceipt: null }, true)} />}

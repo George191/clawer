@@ -2,8 +2,8 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Modal, NativeSelect } from '@/components/ui';
 import { ArrowRightOutlined, PlusOutlined } from '@/components/ui/icons';
-import { checkTransferPlan, fetchEtlObjectTypes, fetchEtlTableColumns, fetchTransferPlans, fetchTransferRunAttempts, fetchTransferRunCapabilities, fetchTransferRunHistory, fetchTransferSchedule, fetchTransferScheduleJobs, runSandboxTransfer, saveTransferPlan, updateTransferSchedule } from '../../services/api';
-import type { TransferPlan, TransferPlanInput, TransferPlanPreflight, TransferRunAttempt, TransferRunCapabilities, TransferRunReceipt, TransferSchedule, TransferScheduleJob } from '../../services/api';
+import { checkTransferPlan, deleteTransferPlan, fetchEtlObjectTypes, fetchEtlTableColumns, fetchStorageNodePreview, fetchStorageNodeRelations, fetchTransferPlans, fetchTransferRunAttempts, fetchTransferRunCapabilities, fetchTransferRunHistory, fetchTransferSchedule, fetchTransferScheduleJobs, runSandboxTransfer, saveTransferPlan, updateTransferSchedule } from '../../services/api';
+import type { StorageNode, StorageNodeRef, StorageNodePreview, TransferPlan, TransferPlanInput, TransferPlanPreflight, TransferRunAttempt, TransferRunCapabilities, TransferRunReceipt, TransferSchedule, TransferScheduleJob } from '../../services/api';
 import { isUtcMonthDay, isoWeekdayName, isoWeekdaysUtc } from '../../services/scheduleTime';
 import { getSessionState } from '../../services/session';
 import LineageUpstreamTrigger from './LineageUpstreamTrigger';
@@ -23,14 +23,15 @@ function errorMessage(error: unknown) {
   return 'The request failed. Try again.';
 }
 
-const emptyDraft = (schema: string): TransferPlanInput => ({
-  name: '', sourceSchema: schema, sourceTable: '', targetSchema: '', targetTable: '',
+const emptyDraft = (schema: string, node?: StorageNode): TransferPlanInput => ({
+  name: '', sourceSchema: schema, sourceTable: node?.kind === 'index' ? node.name : '', targetSchema: '', targetTable: '',
+  ...(node ? { sourceNode: { connectionId: node.connectionId, kind: node.kind, name: node.name }, sourceUpdatedAt: node.sourceUpdatedAt } : {}),
   writeMode: 'append', trigger: 'manual', scheduleTime: null,
 });
 
 function validateDraft(draft: TransferPlanInput, weeklyAvailable: boolean, monthlyAvailable: boolean) {
   if (!draft.name.trim() || !draft.sourceTable || !draft.targetTable) return 'Enter a name and select both tables.';
-  if (draft.sourceSchema === draft.targetSchema && draft.sourceTable === draft.targetTable) return 'The source and destination must be different tables.';
+  if (!draft.sourceNode && draft.sourceSchema === draft.targetSchema && draft.sourceTable === draft.targetTable) return 'The source and destination must be different tables.';
   if (draft.trigger === 'scheduled' && !draft.scheduleTime) return 'Enter the daily time in UTC.';
   if (draft.trigger === 'weekly') {
     if (!weeklyAvailable) return 'Weekly scheduling is unavailable in this environment.';
@@ -255,31 +256,44 @@ function IncrementalCursorPicker({ schema, table, cursor, onChange }: {
   </div>;
 }
 
-function TablePicker({ label, schema, table, setTable }: {
-  label: string; schema: string; table: string; setTable: (table: string) => void;
+function TablePicker({ label, schema, table, setTable, sourceNode, sourceUpdatedAt }: {
+  label: string; schema: string; table: string; setTable: (table: string) => void; sourceNode?: StorageNodeRef | null; sourceUpdatedAt?: string | null;
 }) {
   const [options, setOptions] = useState<string[]>();
   const [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState({ scope: '', offset: 0 });
+  const scopeKey = JSON.stringify([schema, sourceNode?.connectionId, sourceNode?.kind, sourceNode?.name, sourceUpdatedAt]);
+  const offset = page.scope === scopeKey ? page.offset : 0;
   useEffect(() => {
     if (!schema) return;
     const request = new AbortController();
-    setOptions(undefined);
+    if (!sourceNode || !offset) setOptions(undefined);
     setError('');
+    setHasMore(false);
+    setLoading(true);
     const load = async () => {
+      if (sourceNode) {
+        const result = await fetchStorageNodeRelations(sourceNode, sourceUpdatedAt, request.signal, { limit: 100, offset });
+        if (!request.signal.aborted) { setOptions(previous => [...new Set([...(offset ? previous || [] : []), ...result.relations.map(item => item.name)])]); setHasMore(result.hasMore); }
+        return;
+      }
       const names: string[] = [];
-      let offset = 0;
+      let warehouseOffset = 0;
       while (!request.signal.aborted) {
-        const page = await fetchEtlObjectTypes({ schema, limit: 500, offset }, request.signal);
+        const page = await fetchEtlObjectTypes({ schema, limit: 500, offset: warehouseOffset }, request.signal);
         names.push(...page.items.map(asset => asset.table));
-        if (!page.items.length || offset + page.items.length >= page.total) break;
-        offset += page.items.length;
+        if (!page.items.length || warehouseOffset + page.items.length >= page.total) break;
+        warehouseOffset += page.items.length;
       }
       if (!request.signal.aborted) setOptions(names);
     };
-    void load().catch(failure => { if (!request.signal.aborted) setError(errorMessage(failure)); });
+    void load().catch(failure => { if (!request.signal.aborted) setError(errorMessage(failure)); })
+      .finally(() => { if (!request.signal.aborted) setLoading(false); });
     return () => { request.abort(); };
-  }, [schema, revision]);
+  }, [schema, revision, sourceNode?.connectionId, sourceNode?.kind, sourceNode?.name, sourceUpdatedAt, offset]);
 
   return <div className="flow-transfer-picker">
     <label>{label}<NativeSelect required disabled={!options?.length} value={table} onChange={event => setTable(event.target.value)}>
@@ -288,10 +302,12 @@ function TablePicker({ label, schema, table, setTable }: {
       {options?.map(option => <option value={option} key={option}>{option}</option>)}
     </NativeSelect></label>
     {error && <div role="alert">{error} <button className="flow-lineage-action" type="button" onClick={() => setRevision(value => value + 1)}>Retry {label.toLowerCase()} lookup</button></div>}
+    {sourceNode && hasMore && <button type="button" className="flow-lineage-action" disabled={loading} onClick={() => setPage({ scope: scopeKey, offset: offset + 100 })}>Load more source objects</button>}
+    {sourceNode && loading && offset > 0 && <p role="status">Loading more source objects…</p>}
   </div>;
 }
 
-export default function LineageTransferPlans({ schema, schemas, selectedSchedule, selectedUpstream }: { schema: string; schemas: string[]; selectedSchedule?: string; selectedUpstream?: boolean }) {
+export default function LineageTransferPlans({ schema, schemas, selectedSchedule, selectedUpstream, sourceNode }: { schema: string; schemas: string[]; selectedSchedule?: string; selectedUpstream?: boolean; sourceNode?: StorageNode }) {
   const titleId = useId();
   const [plans, setPlans] = useState<TransferPlan[]>();
   const [loadError, setLoadError] = useState('');
@@ -304,6 +320,13 @@ export default function LineageTransferPlans({ schema, schemas, selectedSchedule
   const [checking, setChecking] = useState(false);
   const [preflight, setPreflight] = useState<TransferPlanPreflight>();
   const [preflightError, setPreflightError] = useState('');
+  const [sourcePreview, setSourcePreview] = useState<StorageNodePreview>();
+  const [previewError, setPreviewError] = useState('');
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [deletePlan, setDeletePlan] = useState<TransferPlan>();
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
+  const previewRequest = useRef<AbortController>();
   const [capabilities, setCapabilities] = useState<TransferRunCapabilities>();
   const [capabilityError, setCapabilityError] = useState('');
   const [confirmPlan, setConfirmPlan] = useState<TransferPlan>();
@@ -332,19 +355,20 @@ export default function LineageTransferPlans({ schema, schemas, selectedSchedule
     return () => {
       active.current = false;
       preflightRequest.current?.abort();
+      previewRequest.current?.abort();
     };
   }, [schema]);
   useEffect(() => {
     const request = new AbortController();
     setPlans(undefined);
     setLoadError('');
-    fetchTransferPlans(schema, request.signal).then(items => {
+    fetchTransferPlans(schema, request.signal, sourceNode).then(items => {
       if (!request.signal.aborted && isCurrent()) setPlans(items);
     }).catch(error => {
       if (!request.signal.aborted && isCurrent()) setLoadError(errorMessage(error));
     });
     return () => { request.abort(); };
-  }, [revision, schema, sessionIdentity]);
+  }, [revision, schema, sessionIdentity, sourceNode?.id]);
   useEffect(() => {
     const request = new AbortController();
     fetchTransferRunCapabilities(request.signal).then(result => {
@@ -375,10 +399,10 @@ export default function LineageTransferPlans({ schema, schemas, selectedSchedule
   }, [historyFor, historyRevision, historyView, sessionIdentity]);
 
   const storageKey = (planId: string) => `ontology-transfer-run:${sessionIdentity}:${planId}`;
-  const eligible = (plan: TransferPlan) => capabilities?.enabled && plan.trigger === 'manual' &&
+  const eligible = (plan: TransferPlan) => !plan.sourceNode && capabilities?.enabled && plan.trigger === 'manual' &&
     plan.sourceSchema === capabilities.sourceSchema && plan.targetSchema === capabilities.targetSchema;
   const confirmRun = async () => {
-    if (!confirmPlan || runPending.current || !isCurrent() || !capabilities?.enabled) return;
+    if (!confirmPlan || confirmPlan.sourceNode || runPending.current || !isCurrent() || !capabilities?.enabled) return;
     const plan = confirmPlan;
     const key = storageKey(plan.id);
     const previous = savedRun(key);
@@ -429,8 +453,14 @@ export default function LineageTransferPlans({ schema, schemas, selectedSchedule
     setPreflight(undefined);
     setPreflightError('');
   };
+  const resetSourcePreview = () => {
+    previewRequest.current?.abort();
+    previewRequest.current = undefined;
+    setSourcePreview(undefined); setPreviewError(''); setPreviewLoading(false);
+  };
   const closeDraft = () => {
     resetPreflight();
+    resetSourcePreview();
     setDraft(undefined);
   };
   const change = (patch: Partial<TransferPlanInput>) => {
@@ -445,12 +475,14 @@ export default function LineageTransferPlans({ schema, schemas, selectedSchedule
     setEditingId(plan?.id);
     setDraft(plan ? {
       name: plan.name, sourceSchema: plan.sourceSchema, sourceTable: plan.sourceTable,
+      sourceNode: plan.sourceNode, sourceUpdatedAt: plan.sourceUpdatedAt,
       targetSchema: plan.targetSchema, targetTable: plan.targetTable, writeMode: plan.writeMode,
       incrementalCursor: plan.incrementalCursor,
       trigger: plan.trigger, scheduleTime: plan.scheduleTime,
       scheduleWeekdayUtc: plan.trigger === 'weekly' ? plan.scheduleWeekdayUtc : undefined,
       scheduleDayOfMonthUtc: plan.trigger === 'monthly' ? plan.scheduleDayOfMonthUtc : undefined,
-    } : emptyDraft(schema));
+    } : emptyDraft(schema, sourceNode));
+    resetSourcePreview();
   };
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -500,19 +532,42 @@ export default function LineageTransferPlans({ schema, schemas, selectedSchedule
       }
     }
   };
+  const previewSource = async () => {
+    if (!draft?.sourceNode || !draft.sourceUpdatedAt || !draft.sourceTable || previewRequest.current || !isCurrent()) return;
+    const request = new AbortController(); previewRequest.current = request;
+    setSourcePreview(undefined); setPreviewError(''); setPreviewLoading(true);
+    try {
+      const result = await fetchStorageNodePreview(draft.sourceNode, draft.sourceTable, draft.sourceUpdatedAt, request.signal);
+      if (!request.signal.aborted && isCurrent()) setSourcePreview(result);
+    } catch (failure) {
+      if (!request.signal.aborted && isCurrent()) setPreviewError(errorMessage(failure));
+    } finally {
+      if (previewRequest.current === request) { previewRequest.current = undefined; if (isCurrent()) setPreviewLoading(false); }
+    }
+  };
+  const removeDraft = async () => {
+    if (!deletePlan?.sourceNode || pending.current || !isCurrent()) return;
+    pending.current = true; setDeleting(true); setDeleteError('');
+    try {
+      await deleteTransferPlan(deletePlan.id, deletePlan.updatedAt);
+      if (isCurrent()) { setDeletePlan(undefined); setNotice('Transfer draft deleted. No source or destination data was changed.'); setRevision(value => value + 1); }
+    } catch (failure) {
+      if (isCurrent()) setDeleteError(errorMessage(failure));
+    } finally { pending.current = false; if (isCurrent()) setDeleting(false); }
+  };
   const schemaOptions = (selected: string) => [...new Set([...schemas, ...(selected ? [selected] : [])])].sort()
     .map(item => <option key={item} value={item}>{item}</option>);
   const retrying = confirmPlan ? savedRun(storageKey(confirmPlan.id)) : undefined;
-  const cursorEligible = draft && capabilities?.incrementalAppend && draft.writeMode === 'append' &&
+  const cursorEligible = draft && !draft.sourceNode && capabilities?.incrementalAppend && draft.writeMode === 'append' &&
     draft.trigger === 'manual' && draft.sourceSchema === capabilities.sourceSchema && draft.targetSchema === capabilities.targetSchema;
-  const scheduleEligible = (plan: TransferPlanInput) => capabilities && (plan.trigger === 'scheduled' || plan.trigger === 'weekly' || plan.trigger === 'monthly' || plan.trigger === 'upstream') && plan.writeMode === 'upsert' &&
+  const scheduleEligible = (plan: TransferPlanInput) => !plan.sourceNode && capabilities && (plan.trigger === 'scheduled' || plan.trigger === 'weekly' || plan.trigger === 'monthly' || plan.trigger === 'upstream') && plan.writeMode === 'upsert' &&
     plan.sourceSchema === capabilities.sourceSchema && plan.targetSchema === capabilities.targetSchema;
-  const canSelectUpstream = draft && capabilities && draft.writeMode === 'upsert' &&
+  const canSelectUpstream = draft && !draft.sourceNode && capabilities && draft.writeMode === 'upsert' &&
     draft.sourceSchema === capabilities.sourceSchema && draft.targetSchema === capabilities.targetSchema;
 
   return <section className="flow-transfer" aria-labelledby={titleId}>
     <div className="flow-transfer-heading"><h3 id={titleId}>Transfer plans</h3>{!draft && <button type="button" className="flow-lineage-action is-primary" disabled={Boolean(runningPlan)} onClick={() => edit()}><PlusOutlined /> New plan</button>}</div>
-    <p>Plan transfers between internal PostgreSQL tables. Saving a draft does not run it, schedule jobs, or change the lineage graph.</p>
+    <p>{sourceNode ? <>Read from {sourceNode.connectionName} · {sourceNode.kind} <code>{sourceNode.name}</code>. Source selection belongs to this node. External transfers can be drafted and previewed; execution is not available.</> : 'Plan transfers between internal PostgreSQL tables. Saving a draft does not run it, schedule jobs, or change the lineage graph.'}</p>
     {!draft && capabilityError && <p role="alert" className="flow-transfer-error">Could not check whether sandbox runs are available. {capabilityError}</p>}
     {!draft && selectedSchedule && plans && !plans.some(plan => plan.id === selectedSchedule) && <p role="status">The linked transfer plan is not in this schema.</p>}
     {notice && <p role="status" className="flow-transfer-notice">{notice}</p>}
@@ -520,8 +575,8 @@ export default function LineageTransferPlans({ schema, schemas, selectedSchedule
       <fieldset disabled={saving}>
         <legend>{editingId ? 'Edit draft' : 'New draft'}</legend>
         <label>Plan name<input autoFocus required maxLength={120} value={draft.name} onChange={event => change({ name: event.target.value })} /></label>
-        <label>Source schema<NativeSelect required value={draft.sourceSchema} onChange={event => change({ sourceSchema: event.target.value, sourceTable: '', incrementalCursor: null })}><option value="">Select a schema</option>{schemaOptions(draft.sourceSchema)}</NativeSelect></label>
-        <TablePicker key={`source:${draft.sourceSchema}`} label="Source table" schema={draft.sourceSchema} table={draft.sourceTable} setTable={sourceTable => change({ sourceTable, incrementalCursor: null })} />
+        {draft.sourceNode ? <label>Source node<input readOnly value={`${sourceNode?.connectionName || draft.sourceNode.connectionId} · ${draft.sourceNode.kind} · ${draft.sourceNode.name}`} /></label> : <label>Source schema<NativeSelect required value={draft.sourceSchema} onChange={event => change({ sourceSchema: event.target.value, sourceTable: '', incrementalCursor: null })}><option value="">Select a schema</option>{schemaOptions(draft.sourceSchema)}</NativeSelect></label>}
+        <TablePicker key={`source:${draft.sourceSchema}`} label={draft.sourceNode?.kind === 'index' ? 'Source index' : 'Source table'} schema={draft.sourceSchema} table={draft.sourceTable} sourceNode={draft.sourceNode} sourceUpdatedAt={draft.sourceUpdatedAt} setTable={sourceTable => { change({ sourceTable, incrementalCursor: null }); resetSourcePreview(); }} />
         <label>Destination schema<NativeSelect required value={draft.targetSchema} onChange={event => change({ targetSchema: event.target.value, targetTable: '', incrementalCursor: null })}><option value="">Select a schema</option>{schemaOptions(draft.targetSchema)}</NativeSelect></label>
         <TablePicker key={`target:${draft.targetSchema}`} label="Destination table" schema={draft.targetSchema} table={draft.targetTable} setTable={targetTable => change({ targetTable, incrementalCursor: null })} />
         <label>Write mode<NativeSelect value={draft.writeMode} onChange={event => change({ writeMode: event.target.value === 'upsert' ? 'upsert' : 'append', incrementalCursor: null })}><option value="append">Append</option><option value="upsert">Upsert by destination primary key</option></NativeSelect></label>
@@ -559,12 +614,18 @@ export default function LineageTransferPlans({ schema, schemas, selectedSchedule
         {draft.trigger === 'upstream' && <p>Save this draft, then open Schedule to select an eligible manual producer. {capabilities && !capabilities.upstreamUpsert && 'Upstream execution is disabled in this environment.'}</p>}
         {cursorEligible && <IncrementalCursorPicker key={`${draft.sourceSchema}:${draft.sourceTable}`} schema={draft.sourceSchema} table={draft.sourceTable} cursor={draft.incrementalCursor} onChange={incrementalCursor => change({ incrementalCursor })} />}
       </fieldset>
+      {draft.sourceNode && <section className="flow-transfer-preflight" aria-label="Source data preview">
+        <div className="flow-transfer-heading"><h4>Source data</h4><button type="button" className="flow-lineage-action" disabled={previewLoading || !draft.sourceTable || saving} onClick={() => void previewSource()}>{previewLoading ? 'Reading source…' : 'Preview source data'}</button></div>
+        <p>Read up to 20 rows from the selected connection and storage node.</p>
+        {previewError && <p role="alert">{previewError}</p>}
+        {sourcePreview && <><div className="flow-transfer-source-preview"><table><thead><tr>{sourcePreview.columns.map(column => <th key={column}>{column}</th>)}</tr></thead><tbody>{sourcePreview.rows.map((row, index) => <tr key={index}>{sourcePreview.columns.map(column => <td key={column}>{row[column] == null ? 'NULL' : typeof row[column] === 'object' ? JSON.stringify(row[column]) : String(row[column])}</td>)}</tr>)}</tbody></table></div><p role="status">{sourcePreview.rows.length} rows shown{sourcePreview.hasMore ? ' · More rows available' : ''}.</p></>}
+      </section>}
       <section className="flow-transfer-preflight" aria-label="Compatibility check">
         <div className="flow-transfer-heading">
           <h4>Compatibility</h4>
           <button type="button" className="flow-lineage-action" disabled={checking || saving} onClick={() => void checkCompatibility()}>{checking ? 'Checking…' : 'Check compatibility'}</button>
         </div>
-        <p>Checks PostgreSQL catalog metadata only. No rows are scanned or moved. This does not guarantee a transfer will succeed.</p>
+        <p>{draft.sourceNode ? 'Checks the selected source and destination metadata. Cross-engine compatibility must be verified before execution.' : 'Checks PostgreSQL catalog metadata only. No rows are scanned or moved. This does not guarantee a transfer will succeed.'}</p>
         {checking && <div role="status">Checking table compatibility…</div>}
         {preflightError && <div role="alert" className="flow-transfer-error">{preflightError}</div>}
         {preflight && <div role="status" className="flow-transfer-preflight-result">
@@ -582,11 +643,12 @@ export default function LineageTransferPlans({ schema, schemas, selectedSchedule
           <div className="flow-transfer-route"><code>{plan.sourceSchema}.{plan.sourceTable}</code><ArrowRightOutlined /><code>{plan.targetSchema}.{plan.targetTable}</code></div>
           <div className="flow-transfer-meta"><small>{plan.writeMode === 'upsert' ? 'Upsert' : plan.incrementalCursor ? `Incremental append by ${plan.incrementalCursor}` : 'One-time append'} · {plan.trigger === 'scheduled' ? `Daily at ${plan.scheduleTime} UTC` : plan.trigger === 'weekly' ? `Weekly on ${isoWeekdayName(plan.scheduleWeekdayUtc) ?? 'unrecorded weekday'} at ${plan.scheduleTime ?? 'unrecorded time'} UTC` : plan.trigger === 'monthly' ? `Monthly on day ${isUtcMonthDay(plan.scheduleDayOfMonthUtc) ? plan.scheduleDayOfMonthUtc : 'not recorded'} at ${plan.scheduleTime ?? 'unrecorded time'} UTC` : plan.trigger === 'upstream' ? 'On upstream commit' : 'Manual'} (intended)</small><button type="button" className="flow-lineage-action" aria-label={`Edit ${plan.name}`} disabled={Boolean(runningPlan)} onClick={() => edit(plan)}>Edit</button></div>
           <div className="flow-transfer-run-actions">
+            {plan.sourceNode && <button type="button" className="flow-lineage-action" disabled={deleting} aria-label={`Delete ${plan.name}`} onClick={() => { setDeleteError(''); setDeletePlan(plan); }}>Delete draft</button>}
             <button type="button" className="flow-lineage-action" aria-expanded={historyFor === plan.id} onClick={() => { setHistory(undefined); setAttempts(undefined); setHistoryError(''); setHistoryView('receipts'); setHistoryFor(historyFor === plan.id ? undefined : plan.id); }}>Run history</button>
-            {(scheduleEligible(plan) || selectedSchedule === plan.id) && <button type="button" className="flow-lineage-action" aria-expanded={scheduleFor === plan.id} onClick={() => setScheduleFor(scheduleFor === plan.id ? undefined : plan.id)}>Schedule</button>}
-            {(eligible(plan) || capabilities?.enabled && savedRun(storageKey(plan.id))) && <button type="button" className="flow-lineage-action is-primary" disabled={Boolean(runningPlan)} onClick={() => setConfirmPlan(plan)}>{runningPlan === plan.id ? 'Running…' : savedRun(storageKey(plan.id)) ? 'Retry same request' : 'Run sandbox transfer'}</button>}
+            {!plan.sourceNode && (scheduleEligible(plan) || selectedSchedule === plan.id) && <button type="button" className="flow-lineage-action" aria-expanded={scheduleFor === plan.id} onClick={() => setScheduleFor(scheduleFor === plan.id ? undefined : plan.id)}>Schedule</button>}
+            {!plan.sourceNode && (eligible(plan) || capabilities?.enabled && savedRun(storageKey(plan.id))) && <button type="button" className="flow-lineage-action is-primary" disabled={Boolean(runningPlan)} onClick={() => setConfirmPlan(plan)}>{runningPlan === plan.id ? 'Running…' : savedRun(storageKey(plan.id)) ? 'Retry same request' : 'Run sandbox transfer'}</button>}
           </div>
-          {scheduleFor === plan.id && capabilities && (plan.trigger === 'upstream' || (selectedUpstream && selectedSchedule === plan.id)
+          {!plan.sourceNode && scheduleFor === plan.id && capabilities && (plan.trigger === 'upstream' || (selectedUpstream && selectedSchedule === plan.id)
             ? <LineageUpstreamTrigger key={`${plan.id}:${plan.updatedAt}`} plan={plan} maxRows={capabilities.maxRows} formatError={errorMessage} />
             : <TransferSchedulePanel key={`${plan.id}:${plan.updatedAt}`} plan={plan} maxRows={capabilities.maxRows} />)}
           {runError?.planId === plan.id && <p role="alert" className="flow-transfer-error">{runError.message}</p>}
@@ -603,6 +665,11 @@ export default function LineageTransferPlans({ schema, schemas, selectedSchedule
                 : history ? <TransferReceipts receipts={history} /> : <p role="status">Loading run history…</p>}
           </section>}
         </li>)}</ul> : <p>No draft uses <code>{schema}</code> as a source or destination yet.</p>}
+    <Modal open={Boolean(deletePlan)} destroyOnHidden className="flow-surface-modal" title="Delete transfer draft?" confirmLoading={deleting} okText="Delete draft" okButtonProps={{ danger: true }} cancelButtonProps={{ disabled: deleting }} closable={!deleting} maskClosable={false}
+      onCancel={() => { if (!deleting) setDeletePlan(undefined); }} onOk={() => void removeDraft()}>
+      <p>Delete “{deletePlan?.name}”? The source and destination data are retained. Drafts referenced by execution history or other definitions must be resolved before deletion.</p>
+      {deleteError && <p role="alert" className="flow-transfer-error">{deleteError}</p>}
+    </Modal>
     <Modal open={Boolean(confirmPlan)} destroyOnHidden className="flow-surface-modal" title={retrying ? 'Retry previous sandbox request?' : 'Run sandbox transfer?'}
       onCancel={() => setConfirmPlan(undefined)} onOk={() => void confirmRun()} okText={retrying ? 'Retry same request' : 'Confirm sandbox run'}>
       {confirmPlan && (retrying

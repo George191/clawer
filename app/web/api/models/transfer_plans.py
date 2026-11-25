@@ -1,24 +1,31 @@
-"""Configuration-only transfer drafts for internal warehouse tables."""
+"""Configuration-only transfer drafts for saved sources and warehouse tables."""
 
 from datetime import datetime
+import re
 from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, model_validator
 from sqlalchemy import BigInteger, CheckConstraint, Column, DateTime, Index, UniqueConstraint, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field as DbField, SQLModel
+
+from app.web.api.models.storage_nodes import StorageNodeRef
 
 WarehouseSchema = Annotated[str, Field(pattern=r"^ts_[a-z0-9_]+$", max_length=63)]
 TableName = Annotated[str, Field(pattern=r"^[a-z_][a-z0-9_]{0,62}$")]
 DailyUtcTime = Annotated[str, Field(pattern=r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]$")]
+SourceName = Annotated[str, StringConstraints(strip_whitespace=False, min_length=1, max_length=255, pattern=r"^[^\x00-\x1f\x7f]+$")]
 
 
 class TransferPlanPayload(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     name: str = Field(min_length=1, max_length=120)
-    sourceSchema: WarehouseSchema
-    sourceTable: TableName
+    sourceSchema: SourceName
+    sourceTable: SourceName
+    sourceNode: StorageNodeRef | None = Field(default=None, exclude_if=lambda value: value is None)
+    sourceUpdatedAt: AwareDatetime | None = Field(default=None, exclude_if=lambda value: value is None)
     targetSchema: WarehouseSchema
     targetTable: TableName
     writeMode: Literal["append", "upsert"]
@@ -30,7 +37,14 @@ class TransferPlanPayload(BaseModel):
 
     @model_validator(mode="after")
     def validate_plan(self):
-        if (self.sourceSchema, self.sourceTable) == (self.targetSchema, self.targetTable):
+        if (self.sourceNode is None) != (self.sourceUpdatedAt is None):
+            raise ValueError("A saved source node and its connection revision are required together")
+        if self.sourceNode is not None:
+            if self.sourceSchema != self.sourceNode.name:
+                raise ValueError("Source schema must match the selected source node")
+        elif not re.fullmatch(r"ts_[a-z0-9_]{1,60}", self.sourceSchema) or not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", self.sourceTable):
+            raise ValueError("Internal sources require a warehouse schema and table name")
+        if self.sourceNode is None and (self.sourceSchema, self.sourceTable) == (self.targetSchema, self.targetTable):
             raise ValueError("Source and target tables must be different")
         if (self.trigger in {"scheduled", "weekly", "monthly"}) != (self.scheduleTime is not None):
             raise ValueError("A UTC time is required only for a daily, weekly or monthly trigger")
@@ -39,15 +53,15 @@ class TransferPlanPayload(BaseModel):
         if (self.trigger == "monthly") != (self.scheduleDayOfMonthUtc is not None):
             raise ValueError("A UTC calendar day 1–28 is required only for a monthly trigger")
         if self.trigger in {"weekly", "monthly"} and (
-            self.writeMode != "upsert" or self.sourceSchema != "ts_transfer_sandbox" or self.targetSchema != "ts_transfer_sandbox"
+            self.sourceNode is not None or self.writeMode != "upsert" or self.sourceSchema != "ts_transfer_sandbox" or self.targetSchema != "ts_transfer_sandbox"
         ):
             raise ValueError("A weekly or monthly trigger requires a sandbox Upsert plan")
         if self.trigger == "upstream" and (
-            self.writeMode != "upsert" or self.sourceSchema != "ts_transfer_sandbox" or self.targetSchema != "ts_transfer_sandbox"
+            self.sourceNode is not None or self.writeMode != "upsert" or self.sourceSchema != "ts_transfer_sandbox" or self.targetSchema != "ts_transfer_sandbox"
         ):
             raise ValueError("An upstream trigger requires a sandbox Upsert plan")
         if self.incrementalCursor is not None and (
-            self.trigger != "manual" or self.writeMode != "append"
+            self.sourceNode is not None or self.trigger != "manual" or self.writeMode != "append"
             or self.sourceSchema != "ts_transfer_sandbox" or self.targetSchema != "ts_transfer_sandbox"
         ):
             raise ValueError("An incremental cursor is supported only for manual sandbox Append plans")
@@ -147,8 +161,13 @@ class TransferPlanRow(SQLModel, table=True):
     __table_args__ = (
         CheckConstraint("write_mode IN ('append', 'upsert')", name="ck_ontology_transfer_plans_mode"),
         CheckConstraint(MONTHLY_PLAN_CHECK, name="ck_ontology_transfer_plans_schedule"),
-        CheckConstraint("source_schema <> target_schema OR source_table <> target_table",
+        CheckConstraint("source_node IS NOT NULL OR source_schema <> target_schema OR source_table <> target_table",
                         name="ck_ontology_transfer_plans_endpoints"),
+        CheckConstraint("(source_node IS NULL) = (source_updated_at IS NULL)",
+                        name="ck_ontology_transfer_plans_source_revision"),
+        CheckConstraint("source_node IS NULL OR (jsonb_typeof(source_node)='object' "
+                        "AND source_node->>'connectionId' IS NOT NULL AND source_node->>'kind' IS NOT NULL "
+                        "AND source_node->>'name' IS NOT NULL AND source_node->>'name'=source_schema)", name="ck_ontology_transfer_plans_source_node"),
         CheckConstraint("incremental_cursor IS NULL OR (write_mode = 'append' AND trigger = 'manual' "
                         "AND source_schema = 'ts_transfer_sandbox' AND target_schema = 'ts_transfer_sandbox')",
                         name="ck_ontology_transfer_plans_incremental"),
@@ -158,8 +177,10 @@ class TransferPlanRow(SQLModel, table=True):
 
     id: UUID = DbField(default_factory=uuid4, primary_key=True)
     name: str = DbField(max_length=120)
-    source_schema: str = DbField(max_length=63)
-    source_table: str = DbField(max_length=63)
+    source_schema: str = DbField(max_length=255)
+    source_table: str = DbField(max_length=255)
+    source_node: dict | None = DbField(default=None, sa_column=Column(JSONB(none_as_null=True), nullable=True))
+    source_updated_at: datetime | None = DbField(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
     target_schema: str = DbField(max_length=63)
     target_table: str = DbField(max_length=63)
     write_mode: str = DbField(max_length=6)
