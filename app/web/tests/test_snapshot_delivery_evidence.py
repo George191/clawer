@@ -20,7 +20,7 @@ from app.web.services.table_export_snapshot_intent import compute_snapshot_inten
 from app.web.tests.test_transfer_plans import TEST_ACTOR, api
 
 _PATH = "/etl/table-export-sandbox/snapshot-delivery-evidence"
-_SCHEMA = "ontology_snapshot_intent_private"
+_SCHEMA = "snapshot"
 _URL = os.getenv("ONTOLOGY_TABLE_EXPORT_TEST_URL")
 
 
@@ -40,6 +40,7 @@ class SnapshotDeliveryEvidenceTests(unittest.IsolatedAsyncioTestCase):
             with Operations.context(MigrationContext.configure(conn)):
                 migration.upgrade()
                 delivery.upgrade()
+                conn.execute(text("ALTER SCHEMA ontology_snapshot_intent_private RENAME TO snapshot"))
 
         async with engine.begin() as db:
             await db.run_sync(provision)

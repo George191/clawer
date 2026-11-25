@@ -1,6 +1,6 @@
 """Protect sender-only immutable snapshot intent from generic catalog/data surfaces."""
 
-SNAPSHOT_INTENT_PRIVATE_SCHEMA = "ontology_snapshot_intent_private"
+SNAPSHOT_INTENT_PRIVATE_SCHEMA = "snapshot"
 SNAPSHOT_INTENT_FROZEN_REGCLASSES = tuple(
     f"{SNAPSHOT_INTENT_PRIVATE_SCHEMA}.{name}" for name in ("identity", "intents", "records")
 )

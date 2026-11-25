@@ -22,7 +22,7 @@ from app.web.services.synthetic_governance import BASE, BASE_TAG, RESTRICTED, ma
 
 _SCHEMA = HANDOFF_PRIVATE_SCHEMA
 _NAMES = ("copies", "copy_rows", "sink_state")
-_CATALOG = text("""
+_CATALOG = text(f"""
     SELECT c.relname::text, c.oid::bigint, pg_catalog.pg_relation_filenode(c.oid)::bigint,
         ARRAY(SELECT pg_catalog.concat_ws(':', f.attname, f.atttypid, f.atttypmod, f.attcollation, f.attnotnull)
               FROM pg_catalog.pg_attribute f WHERE f.attrelid=c.oid AND f.attnum>0 AND NOT f.attisdropped
@@ -34,7 +34,7 @@ _CATALOG = text("""
               FROM pg_catalog.pg_index i WHERE i.indrelid=c.oid ORDER BY i.indexrelid)
     FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
     JOIN pg_catalog.pg_am a ON a.oid=c.relam AND a.amname='heap'
-    WHERE n.nspname='ontology_handoff_private' AND c.relname IN ('copies','copy_rows','sink_state')
+    WHERE n.nspname='{_SCHEMA}' AND c.relname IN ('copies','copy_rows','sink_state')
       AND c.relkind='r' AND c.relpersistence='p' AND NOT c.relispartition AND NOT c.relrowsecurity
       AND NOT c.relforcerowsecurity AND NOT c.relhasrules
       AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i WHERE c.oid IN (i.inhrelid,i.inhparent))
@@ -45,7 +45,7 @@ _CATALOG = text("""
       )
       AND NOT EXISTS (
           SELECT 1 FROM pg_catalog.pg_constraint p WHERE p.conrelid=c.oid AND p.contype='f'
-          AND NOT (c.relname='copy_rows' AND p.confrelid=pg_catalog.to_regclass('ontology_handoff_private.copies'))
+          AND NOT (c.relname='copy_rows' AND p.confrelid=pg_catalog.to_regclass('{_SCHEMA}.copies'))
       )
     ORDER BY c.relname::text COLLATE "C"
 """)

@@ -1,6 +1,6 @@
 """Fixed relation identities for generic-workspace isolation of Builder custody."""
 
-HANDOFF_PRIVATE_SCHEMA = "ontology_handoff_private"
+HANDOFF_PRIVATE_SCHEMA = "handoff"
 # Check records independently. Marker removal or an orphaned ledger must not
 # restore free-form SQL, and an empty migration alone must not disable it.
 HANDOFF_PROTECTED_REGCLASSES = tuple(

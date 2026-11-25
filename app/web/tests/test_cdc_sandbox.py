@@ -655,12 +655,13 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
             with Operations.context(MigrationContext.configure(sync.connection())):
                 operation()
 
-        self.addAsyncCleanup(self.pg.execute, "DROP SCHEMA IF EXISTS ontology_handoff_private CASCADE")
+        self.addAsyncCleanup(self.pg.execute, "DROP SCHEMA IF EXISTS handoff CASCADE")
         async with self.pg.session() as session:
             for operation in (migration.upgrade, migration.downgrade, migration.upgrade):
                 await session.run_sync(migrate, operation)
+            await session.execute(text("ALTER SCHEMA ontology_handoff_private RENAME TO handoff"))
             await session.execute(text("SET LOCAL search_path=pg_catalog,public,pg_temp"))
-            await session.execute(text("INSERT INTO ontology_handoff_private.sink_state VALUES(true,:marker)"), {"marker": marker})
+            await session.execute(text("INSERT INTO handoff.sink_state VALUES(true,:marker)"), {"marker": marker})
             physical = await _physical(session)
             self.assertIsNotNone(physical)
         approval = HandoffCopyGrant(**grant.model_dump(), databaseMarker=marker, physicalDigest=physical)
@@ -676,14 +677,14 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
                 execute = AsyncSession.execute
 
                 async def fail_rows(session, query, params=None, **kwargs):
-                    if "INSERT INTO ontology_handoff_private.copy_rows" in str(query):
+                    if "INSERT INTO handoff.copy_rows" in str(query):
                         params = [{**row, "position": 101} for row in params]
                     return await execute(session, query, params, **kwargs)
 
                 with patch.object(AsyncSession, "execute", fail_rows):
                     result = await client.post(route + "/copies", json=body)
                     self.assertEqual(result.status_code, 503, result.text)
-                self.assertEqual((await self.pg.fetch_one("SELECT count(*) AS n FROM ontology_handoff_private.copies"))["n"], 0)
+                self.assertEqual((await self.pg.fetch_one("SELECT count(*) AS n FROM handoff.copies"))["n"], 0)
                 original = await client.post(route + "/copies", json=body)
                 self.assertEqual(original.status_code, 201, original.text)
                 receipt = original.json()
@@ -696,10 +697,10 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(replay.json(), receipt)
                     duplicate = await client.post(route + "/copies", json={**body, "requestId": str(uuid4())})
                     self.assertEqual(duplicate.status_code, 409, duplicate.text)
-                    await self.pg.execute("UPDATE ontology_handoff_private.copy_rows SET row_values=ARRAY['2']")
+                    await self.pg.execute("UPDATE handoff.copy_rows SET row_values=ARRAY['2']")
                     tampered = await client.post(route + "/copies", json=body)
                     self.assertEqual(tampered.status_code, 409, tampered.text)
-                    await self.pg.execute("DELETE FROM ontology_handoff_private.copy_rows")
+                    await self.pg.execute("DELETE FROM handoff.copy_rows")
                     self.assertEqual((await client.post(route + "/copies", json=body)).status_code, 409)
                     source.assert_not_called()
 
@@ -740,6 +741,7 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
                     await self.assert_recipient_handoff_proof(route, settled.json(), approved)
         with self.assertRaisesRegex(RuntimeError, "Cannot remove provisioned synthetic handoff"):
             async with self.pg.session() as session:
+                await session.execute(text("ALTER SCHEMA handoff RENAME TO ontology_handoff_private"))
                 await session.run_sync(migrate, migration.downgrade)
 
     async def assert_sender_handoff_proof(self, client, route, original_body, original_receipt, approval):
@@ -749,11 +751,11 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
 
         async def no_payload(session, query, params=None, **kwargs):
             sql = " ".join(str(query).lower().split())
-            self.assertNotIn("from only ontology_handoff_private.copy_rows", sql)
+            self.assertNotIn("from only handoff.copy_rows", sql)
             self.assertNotIn("ontology_pipeline_sandbox_output_rows", sql)
             self.assertNotIn("ontology_cdc_sandbox_version_rows", sql)
             self.assertFalse(sql.startswith(("insert ", "update ", "delete ")))
-            if "from only ontology_handoff_private.copies" in sql:
+            if "from only handoff.copies" in sql:
                 self.assertIn("and actor_id=:actor", sql)
                 lookups.append(sql)
             return await execute(session, query, params, **kwargs)
@@ -801,7 +803,7 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual((await reader.post(endpoint, json=original_body)).status_code, 403)
                 async with self.pg.session() as holder:
                     # A busy private heap must not become a false statement that nothing was recorded.
-                    await holder.execute(text("LOCK TABLE ontology_handoff_private.copies IN ACCESS EXCLUSIVE MODE"))
+                    await holder.execute(text("LOCK TABLE handoff.copies IN ACCESS EXCLUSIVE MODE"))
                     busy = await client.post(endpoint, json=original_body)
                     self.assertEqual((busy.status_code, busy.json()), (404, off.json()))
 
@@ -828,9 +830,9 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
 
         async def no_payload(session, query, params=None, **kwargs):
             sql = " ".join(str(query).lower().split())
-            if sql.startswith("select ") and "from only ontology_handoff_private.copies" in sql:
+            if sql.startswith("select ") and "from only handoff.copies" in sql:
                 receipt_selects.append(sql)
-            self.assertNotIn("from only ontology_handoff_private.copy_rows", sql)
+            self.assertNotIn("from only handoff.copy_rows", sql)
             self.assertNotIn("ontology_cdc_sandbox_version_rows", sql)
             self.assertNotIn("ontology_pipeline_sandbox_output_rows", sql)
             return await execute(session, query, params, **kwargs)

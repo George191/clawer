@@ -24,11 +24,11 @@ _NATIVE = text(f"""
        AND session_user::text = :username AND current_user::text = :username
        AND pg_catalog.has_schema_privilege(pg_catalog.to_regnamespace('{_SCHEMA}'), 'USAGE')
 """)
-_HELD = text("""
+_HELD = text(f"""
     SELECT count(*) = 3
     FROM pg_catalog.pg_class c
     JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
-    WHERE n.nspname='ontology_handoff_private' AND c.relname IN ('copies','copy_rows','sink_state')
+    WHERE n.nspname='{_SCHEMA}' AND c.relname IN ('copies','copy_rows','sink_state')
       AND EXISTS (
           SELECT 1 FROM pg_catalog.pg_locks l
           WHERE l.pid=pg_catalog.pg_backend_pid() AND l.locktype='relation'

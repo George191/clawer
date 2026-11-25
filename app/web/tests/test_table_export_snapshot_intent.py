@@ -23,7 +23,7 @@ from app.web.services.table_export_snapshot_publication_receiver import Snapshot
 from app.web.tests.test_transfer_plans import TEST_ACTOR, api
 
 _URL = os.getenv("ONTOLOGY_TABLE_EXPORT_TEST_URL")
-_SCOPE = "ontology_snapshot_intent_private"
+_SCOPE = "snapshot"
 _SOURCE = "ts_table_export_sandbox"
 
 
@@ -46,6 +46,7 @@ class SnapshotIntentPGTests(unittest.IsolatedAsyncioTestCase):
             with Operations.context(MigrationContext.configure(connection)):
                 migration.upgrade()
                 delivery_migration.upgrade()
+                connection.execute(text("ALTER SCHEMA ontology_snapshot_intent_private RENAME TO snapshot"))
 
         async with engine.begin() as db:
             await db.run_sync(provision)
