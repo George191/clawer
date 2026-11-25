@@ -153,11 +153,17 @@ function SourceCatalog({ sourceId, sourceRevision, initialSchema = '', onSetUpSy
   useExplorerErrorToast(columnError, 'Unable to load column metadata', () => setRefresh(value => value + 1));
 
   return <section className="ontology-source-catalog" aria-label="Source catalog">
-    <header><div><h3>Source catalog</h3><p>Read-only metadata. No rows are read or imported. Results depend on the saved database account’s permissions.</p></div><Button size="small" icon={<ReloadOutlined />} onClick={() => setRefresh(value => value + 1)}>Refresh catalog</Button></header>
+    <header><div><span className="source-detail-badge">Read-only metadata</span><h3>Explore tables and fields</h3><p>Find a source table and review its structure before configuring a sync. Visibility depends on this connection’s database permissions.</p></div><Button size="small" icon={<ReloadOutlined />} onClick={() => setRefresh(value => value + 1)}>Refresh catalog</Button></header>
+    <ol className="source-detail-steps" aria-label="Source catalog steps">
+      <li aria-current={!schema ? 'step' : undefined}><span>1</span><div><strong>Choose a schema</strong><p>Browse the namespaces visible to this connection.</p></div></li>
+      <li aria-current={schema && !table ? 'step' : undefined}><span>2</span><div><strong>Select a table or view</strong><p>Search by name, then inspect its fields.</p></div></li>
+      <li aria-current={table ? 'step' : undefined}><span>3</span><div><strong>Review and configure</strong><p>Check field types and the primary key before setting up a batch sync.</p></div></li>
+    </ol>
+    <div className="source-detail-context" aria-label="Selected source resource"><span>Selected source</span><code>{schema || 'Choose a schema'}</code><ArrowRightOutlined /><code>{table || 'Choose a table'}</code><span className="source-detail-context__note">Browsing here does not read or import rows.</span></div>
     <div className="ontology-source-catalog__layout">
       <section aria-label="Schemas">
-        <h4>Schemas</h4>
-        {schemaError ? null : !catalog ? <p role="status">Loading schemas…</p> : !catalog.schemas.length ? <p>No visible schemas.</p> : <>
+        <h4>1 · Schemas {catalog && <small>{catalog.schemas.length}</small>}</h4>
+        {schemaError ? <div className="source-detail-empty"><p>Schema metadata is unavailable.</p><Button size="small" onClick={() => setRefresh(value => value + 1)}>Retry schemas</Button></div> : !catalog ? <p role="status">Loading schemas…</p> : !catalog.schemas.length ? <p>No visible schemas. Check this account’s schema permissions.</p> : <>
           <ul className="ontology-source-catalog__list">{catalog.schemas.map(item => <li key={item}>
             <button type="button" aria-pressed={schema === item} onClick={() => changeSchema(item)}><FolderOutlined /><span>{item}</span></button>
           </li>)}</ul>
@@ -165,14 +171,14 @@ function SourceCatalog({ sourceId, sourceRevision, initialSchema = '', onSetUpSy
         </>}
       </section>
       <section aria-label="Source relations">
-        <h4>{schema ? <><code>{schema}</code> · Tables and views</> : 'Tables and views'}</h4>
-        {!schema ? <p>Select a schema to browse its tables and views.</p> : <>
+        <h4>2 · {schema ? <><code>{schema}</code> · Tables and views</> : 'Tables and views'}</h4>
+        {!schema ? <div className="source-detail-empty"><FolderOutlined /><strong>Choose a schema to begin</strong><p>Its tables and views will appear here.</p></div> : <>
           <form className="ontology-source-catalog__search" onSubmit={event => { event.preventDefault(); searchRelations(search); }}>
             <Input aria-label="Search tables and views" prefix={<SearchOutlined />} placeholder="Search tables and views" maxLength={100} value={search} onChange={event => setSearch(event.target.value)} />
             <Button size="small" htmlType="submit">Search</Button>
             {(search || appliedSearch) && <Button size="small" onClick={() => { setSearch(''); searchRelations(''); }}>Clear</Button>}
           </form>
-          {relationError ? null : !relations ? <p role="status">Loading tables and views…</p> : relations.relations.length ? <ul className="ontology-source-catalog__list">
+          {relationError ? <div className="source-detail-empty"><p>Table metadata is unavailable.</p><Button size="small" onClick={() => setRefresh(value => value + 1)}>Retry tables</Button></div> : !relations ? <p role="status">Loading tables and views…</p> : relations.relations.length ? <ul className="ontology-source-catalog__list">
             {relations.relations.map(relation => <li key={relation.name}><button type="button" aria-pressed={table === relation.name} aria-label={`${relation.name} · ${relationLabel[relation.kind]}`} onClick={() => changeTable(relation.name)}>
               {relation.kind === 'view' || relation.kind === 'materialized_view' ? <EyeOutlined /> : <TableOutlined />}
               <span>{relation.name}</span><small>{relationLabel[relation.kind]}</small>
@@ -187,9 +193,9 @@ function SourceCatalog({ sourceId, sourceRevision, initialSchema = '', onSetUpSy
         </>}
       </section>
       <section aria-label="Column metadata">
-        <h4>{table ? <code>{schema}.{table}</code> : 'Columns'}</h4>
-        {!table ? <p>Select a table or view to inspect its column metadata.</p>
-          : columnError ? null
+        <h4>3 · {table ? <code>{schema}.{table}</code> : 'Fields and primary key'}</h4>
+        {!table ? <div className="source-detail-empty"><TableOutlined /><strong>Select a table or view</strong><p>Review the fields, types, nullability and primary key here.</p></div>
+          : columnError ? <div className="source-detail-empty"><p>Field metadata is unavailable.</p><Button size="small" onClick={() => setRefresh(value => value + 1)}>Retry fields</Button></div>
           : !columns || columnRevision !== sourceRevision ? <p role="status">Loading column metadata…</p>
           : !columns.columns.length ? <p>No columns are visible with this connection.</p>
           : <><div className="ontology-source-catalog__columns"><table aria-label="Source columns">
@@ -197,7 +203,9 @@ function SourceCatalog({ sourceId, sourceRevision, initialSchema = '', onSetUpSy
             <tbody>{columns.columns.map(column => <tr key={column.position}><th scope="row"><code>{column.name}</code></th><td><code>{column.type}</code></td><td>{column.nullable ? 'Yes' : 'No'}</td><td>{column.primaryKey ? 'Primary key' : '—'}</td></tr>)}</tbody>
           </table></div>{columns.hasMore && <p role="status">Column list limited to 200 visible results.</p>}
           {!columns.hasMore && relations?.relations.some(relation => relation.name === table && relation.kind === 'table') &&
-            <Button className="ontology-source-catalog__setup" size="small" onClick={() => onSetUpSync({ schema, table })}>Set up batch sync</Button>}
+            <div className="source-detail-next"><div><strong>Ready to configure a batch sync?</strong><p>Map this table’s fields to an existing sandbox destination. Saving the draft does not copy data.</p></div><Button className="ontology-source-catalog__setup" type="primary" onClick={() => onSetUpSync({ schema, table })}>Set up batch sync</Button></div>}
+          {columns.hasMore && <p className="source-detail-note">Batch sync setup requires the complete field catalog. This table exceeds the 200-field browsing limit.</p>}
+          {!columns.hasMore && !relations?.relations.some(relation => relation.name === table && relation.kind === 'table') && <p className="source-detail-note">This resource can be inspected here. Batch sync setup is available for ordinary tables only.</p>}
           {liveIdentity && liveIdentity === identity && columns.referencesAvailable === true && columns.schema === schema && columns.table === table &&
             <SourceCatalogReferences key={JSON.stringify([sourceRevision, schema, table, refresh])} sourceId={sourceId} schema={schema} table={table} sourceRevision={sourceRevision} />}
           </>}
@@ -230,6 +238,10 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
   const [sourcePanel, setSourcePanel] = useState<'overview' | 'catalog' | 'sync' | 'capture'>('overview');
   const [createdSource, setCreatedSource] = useState('');
   const [captureBusy, setCaptureBusy] = useState(false);
+  const [captureDirty, setCaptureDirty] = useState(false);
+  const [nodeSyncActivity, setNodeSyncActivity] = useState({ busy: false, dirty: false });
+  const [batchSyncActivity, setBatchSyncActivity] = useState({ busy: false, dirty: false });
+  const [batchToolsOpen, setBatchToolsOpen] = useState(Boolean(selectedSchedule));
   const exploring = !!sourceId && exploringSource === sourceId;
   const [wizard, setWizard] = useState<'choose' | 'configure' | null>(null);
   const [chosenEngine, setChosenEngine] = useState<DataConnectorEngine>();
@@ -255,7 +267,9 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
     if (current() && session.authenticated && !session.locked) message[kind]({ key: feedbackKey, content, description, className: 'explorer-toast' });
   };
   const notifyTest = (result: DataSourceTest) => notify(result.ok ? 'success' : 'error', result.message, `${result.latencyMs} ms`);
-  const pending = !!operation;
+  const syncBusy = nodeSyncActivity.busy || batchSyncActivity.busy;
+  const panelDirty = nodeSyncActivity.dirty || batchSyncActivity.dirty || captureDirty;
+  const pending = !!operation || syncBusy;
   const blocked = pending || loading || !!loadError || !canManage;
   const connector = connectors.find((item) => item.engine === draft?.engine);
   const selected = sources.find((item) => item.id === editingId);
@@ -287,16 +301,17 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
     setSourcePanel(selectedSchedule || requestedPanel === 'sync' ? 'sync' : requestedPanel === 'catalog' ? 'catalog' : requestedPanel === 'capture' ? 'capture' : 'overview');
   }, [sourceId, requestedPanel]);
   useEffect(() => { if (selectedSchedule) setSourcePanel('sync'); }, [selectedSchedule]);
+  useEffect(() => { if (selectedSchedule || syncSelection) setBatchToolsOpen(true); }, [selectedSchedule, syncSelection]);
   useEffect(() => {
     const session = getSessionState();
     if (loading && current() && session.authenticated && !session.locked) return message.loading({ key: `${feedbackKey}-loading`, content: 'Loading data sources…', className: 'explorer-toast' });
   }, [loading, feedbackKey, sessionIdentity]);
   useEffect(() => {
-    if (!dirty && !pending) return;
+    if (!dirty && !panelDirty && !pending && !captureBusy) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
-  }, [dirty, pending]);
+  }, [dirty, panelDirty, pending, captureBusy]);
   useEffect(() => {
     let valid = true;
     setLoading(true); setLoadError('');
@@ -313,9 +328,11 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
   }, [reload, sessionIdentity]);
 
   const navigate = (action: () => void) => {
-    if (pendingRef.current) return;
+    if (pendingRef.current || syncBusy || captureBusy) return;
     if (dirty) {
       setConfirmation({ title: 'Discard unsaved changes?', detail: 'Your unsaved connection settings will be discarded.', label: 'Discard changes', action: async () => { if (!current() || pendingRef.current) return false; action(); return true; } });
+    } else if (panelDirty) {
+      setConfirmation({ title: 'Discard unsaved setup?', detail: 'Your unsaved sync or capture settings will be discarded. Saved definitions and completed work are retained.', label: 'Discard setup', action: async () => { if (!current() || pendingRef.current || syncBusy || captureBusy) return false; action(); return true; } });
     } else action();
   };
   const resetFeedback = () => message.destroy(feedbackKey);
@@ -346,9 +363,27 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
     navigate(() => { setCreatedSource(''); selectSource(source?.id); resetFeedback(); });
   };
   const openSourcePanel = (panel: typeof sourcePanel) => {
-    if (captureBusy) return;
-    setSourcePanel(panel);
-    setExploringSource(panel === 'catalog' && viewedSource ? viewedSource.id : '');
+    if (panel === sourcePanel) return;
+    navigate(() => {
+      setSourcePanel(panel);
+      setExploringSource(panel === 'catalog' && viewedSource ? viewedSource.id : '');
+    });
+  };
+  const sourceSections: { key: typeof sourcePanel; label: string }[] = [
+    { key: 'overview', label: 'Overview' },
+    ...(catalogAvailable ? [{ key: 'catalog' as const, label: 'Source catalog' }] : []),
+    { key: 'sync', label: 'Syncs' },
+    ...(captureAvailable ? [{ key: 'capture' as const, label: captureLabel }] : []),
+  ];
+  const switchSourceTab = (event: React.KeyboardEvent<HTMLElement>) => {
+    if (pending || captureBusy || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const index = sourceSections.findIndex(section => section.key === sourcePanel);
+    const target = event.key === 'Home' ? 0 : event.key === 'End' ? sourceSections.length - 1
+      : (index + (event.key === 'ArrowRight' ? 1 : -1) + sourceSections.length) % sourceSections.length;
+    const next = sourceSections[target];
+    openSourcePanel(next.key);
+    if (!panelDirty) document.getElementById(`${feedbackKey}-tab-${next.key}`)?.focus();
   };
   const configure = (type: DataConnectorType) => {
     const next = initialDraft(type);
@@ -472,7 +507,7 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
     refreshCapabilities(source.id);
   };
   const changePause = () => {
-    if (!viewedSource || !pauseAvailable || blocked) return;
+    if (!viewedSource || !pauseAvailable || blocked || panelDirty) return;
     const source = viewedSource;
     const paused = !sourcePaused;
     setConfirmation({
@@ -548,17 +583,19 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
   useExplorerErrorToast(visibleConnector && !visibleConnector.driverAvailable ? visibleConnector.prerequisite : undefined, 'Connector unavailable');
 
   return <>
-    {detailsOpen && viewedSource && <Modal className="flow-surface-modal ontology-connectors ontology-connections-modal" title="Source details" open centered width={960}
+    {detailsOpen && viewedSource && <Modal className="flow-surface-modal ontology-connectors ontology-connections-modal" title="Source details" open centered width={1280}
         onCancel={() => showSource()} closable={!pending && !captureBusy} keyboard={!pending && !captureBusy && !confirmation} maskClosable={false}
         footer={<Button disabled={pending || captureBusy} onClick={() => showSource()}>Done</Button>}>
       <section className="ontology-connections-detail" aria-label="Source details" aria-busy={pending || captureBusy}>
         <header>
           <div className="ontology-connections-detail__identity"><ConnectorMark engine={viewedSource.engine} /><div><span className="ontology-connectors__eyebrow">Source details · {labelFor(viewedSource.engine)}</span><h2 title={viewedSource.name}>{viewedSource.name}</h2>
+            <p className="source-detail-endpoint"><code>{viewedSource.config.database || viewedSource.config.bucket || endpoint(viewedSource.config)}</code><span>{endpoint(viewedSource.config)}</span></p>
             {sourcePaused && <span className="ontology-connectors__capability is-unavailable" role="status">Paused</span>}</div></div>
           <div className="ontology-connections-detail__actions">
             <Button disabled={blocked || captureBusy || sourcePaused || !viewedType?.driverAvailable} loading={operation === 'test'} onClick={() => void testSaved()}>Test saved connection</Button>
             <Button type="primary" disabled={blocked || captureBusy || sourcePaused || !viewedType} onClick={() => openSource(viewedSource)}>Edit connection</Button>
-            {pauseAvailable && <Button disabled={blocked || captureBusy} loading={operation === 'pause'} onClick={changePause}>{sourcePaused ? 'Resume connection' : 'Pause connection'}</Button>}
+            {pauseAvailable && <Button disabled={blocked || captureBusy || panelDirty} title={panelDirty ? 'Save or discard the open setup before changing the connection status.' : undefined} loading={operation === 'pause'} onClick={changePause}>{sourcePaused ? 'Resume connection' : 'Pause connection'}</Button>}
+            {panelDirty && <span className="source-detail-badge" role="status">Unsaved setup</span>}
           </div>
         </header>
         {createdSource === viewedSource.id && <div className="ontology-connections-detail__next">
@@ -566,16 +603,21 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
           <div>{captureAvailable && <Button disabled={blocked || captureBusy} onClick={() => openSourcePanel('capture')}>Configure {captureLabel}</Button>}
             {catalogAvailable && <Button disabled={blocked || captureBusy} onClick={() => openSourcePanel('catalog')}>Explore source</Button>}</div>
         </div>}
-        <nav className="ontology-connections-detail__nav" aria-label="Source sections">
-          <Button aria-pressed={sourcePanel === 'overview'} disabled={pending || captureBusy} onClick={() => openSourcePanel('overview')}>Overview</Button>
-          {catalogAvailable && <Button aria-pressed={sourcePanel === 'catalog'} disabled={pending || captureBusy} onClick={() => openSourcePanel('catalog')}>Source catalog</Button>}
-          <Button aria-pressed={sourcePanel === 'sync'} disabled={pending || captureBusy} onClick={() => openSourcePanel('sync')}>Syncs</Button>
-          {captureAvailable && <Button aria-pressed={sourcePanel === 'capture'} disabled={pending || captureBusy} onClick={() => openSourcePanel('capture')}>{captureLabel}</Button>}
-          <Link className="ui-btn ui-btn-link" to={ontologyCatalogHref(new URLSearchParams({ publishedSource: viewedSource.id }).toString(), 'published')}
-            aria-disabled={pending || captureBusy || undefined} tabIndex={pending || captureBusy ? -1 : undefined}
-            onClick={event => { if (pending || captureBusy) event.preventDefault(); }}>View published object types <ArrowRightOutlined /></Link>
+        <div className="source-detail-navigation"><nav className="ontology-connections-detail__nav" role="tablist" aria-label="Source sections" onKeyDown={switchSourceTab}>
+          {sourceSections.map(section => <Button key={section.key} role="tab" id={`${feedbackKey}-tab-${section.key}`} aria-selected={sourcePanel === section.key}
+            aria-controls={`${feedbackKey}-panel`} tabIndex={sourcePanel === section.key ? 0 : -1} disabled={pending || captureBusy} onClick={() => openSourcePanel(section.key)}>{section.label}</Button>)}
         </nav>
+          <Link className="ui-btn ui-btn-link" to={ontologyCatalogHref(new URLSearchParams({ publishedSource: viewedSource.id }).toString(), 'published')}
+            aria-disabled={pending || captureBusy || panelDirty || undefined} tabIndex={pending || captureBusy || panelDirty ? -1 : undefined}
+            onClick={event => { if (pending || captureBusy || panelDirty) event.preventDefault(); if (!pending && !captureBusy && panelDirty) notify('error', 'Save or cancel the open setup before viewing published object types.'); }}>View published object types <ArrowRightOutlined /></Link>
+        </div>
+        <div className="ontology-connections-detail__body" role="tabpanel" id={`${feedbackKey}-panel`} aria-labelledby={`${feedbackKey}-tab-${sourcePanel}`}>
         {sourcePanel === 'overview' && <>
+        <div className="source-detail-start"><h3>What would you like to do?</h3><div>
+          {catalogAvailable && <button type="button" disabled={pending || captureBusy} onClick={() => openSourcePanel('catalog')}><FolderOutlined /><strong>Explore the source</strong><span>Browse schemas, tables and fields.</span></button>}
+          <button type="button" disabled={pending || captureBusy} onClick={() => openSourcePanel('sync')}><TableOutlined /><strong>Configure a sync</strong><span>Preview source data and review a transfer draft or sandbox batch sync.</span></button>
+          {captureAvailable && <button type="button" disabled={pending || captureBusy} onClick={() => openSourcePanel('capture')}><DatabaseOutlined /><strong>{captureLabel === 'Continuous CDC' ? 'Capture ongoing changes' : `Configure ${captureLabel}`}</strong><span>{captureLabel === 'Continuous CDC' ? 'Select tables and stream changes to Kafka.' : 'Review prerequisites and configure this source’s capture mode.'}</span></button>}
+        </div></div>
         <dl className="ontology-connections-summary">
           <div><dt>Endpoint</dt><dd><code>{endpoint(viewedSource.config)}</code></dd></div>
           <div><dt>Hosting provider</dt><dd>{providerLabel(viewedSource.config.provider)}</dd></div>
@@ -604,16 +646,25 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
         </>}
         {sourcePanel === 'catalog' && exploring && catalogAvailable && <SourceCatalog key={JSON.stringify(["catalog", sessionIdentity, viewedSource.id, sourceSchema])} sourceId={viewedSource.id} sourceRevision={viewedSource.updatedAt} initialSchema={sourceSchema} onSetUpSync={selection => { setParams(currentParams => { const next = new URLSearchParams(currentParams); next.set('sourceSchema', selection.schema); return next; }); setSyncSelection({ sourceId: viewedSource.id, selection }); openSourcePanel('sync'); }} />}
         {sourcePanel === 'sync' && <>
-          <p>Syncs belong to this connection{sourceSchema ? <> and {sourceKind || 'schema'} <code>{sourceSchema}</code></> : null}. Choose a source object to configure a separate sync.</p>
-          <SourceNodeSyncs key={`nodes:${proofKey}`} source={viewedSource} kind={sourceKind} scope={sourceSchema} />
-          {catalogAvailable && <Button disabled={blocked || captureBusy} onClick={() => openSourcePanel('catalog')}>Explore source to set up sync</Button>}
-          {syncAvailable && <SourceBatchSyncs key={`sync:${proofKey}:${sourceSchema || ''}`} source={viewedSource} sourceProof={sourcePaused ? undefined : activeProof} selection={!sourcePaused && syncSelection?.sourceId === viewedSource.id ? syncSelection.selection : undefined} schemaFilter={sourceSchema} selectedSchedule={selectedSchedule} onComposerClosed={() => setSyncSelection(undefined)} />}
+          <div className="source-detail-page-heading"><div><h3>Choose how to work with source data</h3><p>Each definition belongs to this connection. Start with a source node to inspect data and prepare a transfer draft.</p></div><span className="source-detail-badge">Explicit setup · No automatic start</span></div>
+          <SourceNodeSyncs key={`nodes:${proofKey}`} source={viewedSource} kind={sourceKind} scope={sourceSchema} onStateChange={setNodeSyncActivity} />
+          {syncAvailable && <section className="source-detail-batch-mode" aria-label="PostgreSQL sandbox batch sync">
+            <header><div><span className="source-detail-badge">Sandbox batch sync</span><h3>Map and run a PostgreSQL batch sync</h3><p>Use a supported PostgreSQL table and an existing sandbox destination. Runs require an enabled environment and the required source identity checks.</p></div><Button disabled={pending || captureBusy} aria-expanded={batchToolsOpen} onClick={() => setBatchToolsOpen(value => !value)}>{batchToolsOpen ? 'Hide batch syncs' : 'Open batch syncs'}</Button></header>
+            <div hidden={!batchToolsOpen}>
+              <div className="source-detail-next"><div><strong>Start from a source table</strong><p>In Source catalog, choose a schema and table, review the primary key, then select Set up batch sync. Verify source identity in Overview when required.</p></div><div className="ontology-connections-source-actions">
+                {catalogAvailable && <Button disabled={blocked || captureBusy} onClick={() => openSourcePanel('catalog')}>Explore source to set up sync</Button>}
+                {!sourcePaused && <Button disabled={blocked || captureBusy} onClick={() => openSourcePanel('overview')}>Review source identity</Button>}
+              </div></div>
+              <SourceBatchSyncs key={`sync:${proofKey}:${sourceSchema || ''}`} source={viewedSource} sourceProof={sourcePaused ? undefined : activeProof} selection={!sourcePaused && syncSelection?.sourceId === viewedSource.id ? syncSelection.selection : undefined} schemaFilter={sourceSchema} selectedSchedule={selectedSchedule} onComposerClosed={() => setSyncSelection(undefined)} onStateChange={setBatchSyncActivity} />
+            </div>
+          </section>}
         </>}
         {sourcePanel === 'capture' && captureAvailable && <>
-          {viewedType?.cdcSupported && <SourceCdc key={`cdc:${proofKey}`} source={viewedSource} onBusyChange={setCaptureBusy} />}
-          {viewedType?.captureKind === 'dmdrs' && <SourceDamengCdc key={`dmdrs:${proofKey}`} source={viewedSource} onBusyChange={setCaptureBusy} />}
-          {viewedType?.captureKind === 'object_events' && <SourceObjectEvents key={`events:${proofKey}`} source={viewedSource} onBusyChange={setCaptureBusy} />}
+          {viewedType?.cdcSupported && <SourceCdc key={`cdc:${proofKey}`} source={viewedSource} onBusyChange={setCaptureBusy} onDirtyChange={setCaptureDirty} />}
+          {viewedType?.captureKind === 'dmdrs' && <SourceDamengCdc key={`dmdrs:${proofKey}`} source={viewedSource} onBusyChange={setCaptureBusy} onDirtyChange={setCaptureDirty} />}
+          {viewedType?.captureKind === 'object_events' && <SourceObjectEvents key={`events:${proofKey}`} source={viewedSource} onBusyChange={setCaptureBusy} onDirtyChange={setCaptureDirty} />}
         </>}
+        </div>
       </section></Modal>}
 
     <Modal className="flow-surface-modal ontology-connectors ontology-connections-inventory-modal" title="Data Connections" centered width={1280}

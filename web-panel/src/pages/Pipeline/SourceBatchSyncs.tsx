@@ -119,7 +119,7 @@ const scheduleLabels: Record<BatchSyncScheduleJob['state'], string> = {
 const utcClock = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
 const utcText = (value: string) => new Date(value).toLocaleString(undefined, { timeZone: 'UTC', timeZoneName: 'short' });
 
-function BatchSyncSchedulePanel({ plan, source, capability, sourceReviewNeeded }: { plan: BatchSyncPlan; source: DataSource; capability: BatchSyncCapabilities; sourceReviewNeeded: boolean }) {
+function BatchSyncSchedulePanel({ plan, source, capability, sourceReviewNeeded, onStateChange }: { plan: BatchSyncPlan; source: DataSource; capability: BatchSyncCapabilities; sourceReviewNeeded: boolean; onStateChange?: (state: { busy: boolean; dirty: boolean }) => void }) {
   const [schedule, setSchedule] = useState<BatchSyncSchedule>();
   const [jobs, setJobs] = useState<BatchSyncScheduleJob[]>();
   const [plannedTime, setPlannedTime] = useState('');
@@ -133,6 +133,12 @@ function BatchSyncSchedulePanel({ plan, source, capability, sourceReviewNeeded }
   const active = useRef(false);
   const title = useRef<HTMLHeadingElement>(null);
   const identity = useRef(getSessionState().identity).current;
+  const plannedTimeBaseline = useRef('');
+  const stateCallback = useRef(onStateChange);
+  stateCallback.current = onStateChange;
+  const dirty = plannedTime !== plannedTimeBaseline.current;
+  useEffect(() => { stateCallback.current?.({ busy, dirty }); }, [busy, dirty]);
+  useEffect(() => () => stateCallback.current?.({ busy: false, dirty: false }), []);
   const current = (signal?: AbortSignal) => {
     const session = getSessionState();
     return active.current && !signal?.aborted && session.authenticated && !session.locked && session.identity === identity;
@@ -142,7 +148,7 @@ function BatchSyncSchedulePanel({ plan, source, capability, sourceReviewNeeded }
     const read = new AbortController();
     setSchedule(undefined); setJobs(undefined); setStateError(''); setJobError('');
     void fetchBatchSyncSchedule(plan.id, read.signal).then(result => {
-      if (current(read.signal)) { setSchedule(result); setPlannedTime(result.plannedTimeUtc ?? ''); }
+      if (current(read.signal)) { plannedTimeBaseline.current = result.plannedTimeUtc ?? ''; setSchedule(result); setPlannedTime(plannedTimeBaseline.current); }
     }).catch(failure => { if (current(read.signal)) setStateError(syncError(failure)); });
     void fetchBatchSyncScheduleJobs(plan.id, read.signal).then(result => {
       if (current(read.signal)) setJobs(result);
@@ -205,8 +211,8 @@ function BatchSyncSchedulePanel({ plan, source, capability, sourceReviewNeeded }
   </section>;
 }
 
-export default function SourceBatchSyncs({ source, sourceProof, selection, selectedSchedule, schemaFilter, onComposerClosed }: {
-  source: DataSource; sourceProof: BatchSourceIdentity | undefined; selection: BatchSyncSource | undefined; selectedSchedule?: string; schemaFilter?: string; onComposerClosed: () => void;
+export default function SourceBatchSyncs({ source, sourceProof, selection, selectedSchedule, schemaFilter, onComposerClosed, onStateChange }: {
+  source: DataSource; sourceProof: BatchSourceIdentity | undefined; selection: BatchSyncSource | undefined; selectedSchedule?: string; schemaFilter?: string; onComposerClosed: () => void; onStateChange?: (state: { busy: boolean; dirty: boolean }) => void;
 }) {
   const [capability, setCapability] = useState<BatchSyncCapabilities>();
   const [plans, setPlans] = useState<BatchSyncPlan[]>();
@@ -232,10 +238,19 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
   const [confirm, setConfirm] = useState<BatchSyncPlan>();
   const [retryAttempt, setRetryAttempt] = useState<RunRequest>();
   const [busy, setBusy] = useState<'save' | 'run'>();
+  const [scheduleState, setScheduleState] = useState({ busy: false, dirty: false });
   const pending = useRef(false);
   const active = useRef(false);
   const composer = useRef<HTMLHeadingElement>(null);
   const identity = useRef(getSessionState().identity).current;
+  const draftBaseline = useRef('');
+  const stateCallback = useRef(onStateChange);
+  stateCallback.current = onStateChange;
+  const dirty = Boolean(draft && JSON.stringify(draft) !== draftBaseline.current) || scheduleState.dirty;
+  const mutationBusy = Boolean(busy) || scheduleState.busy;
+  useEffect(() => { stateCallback.current?.({ busy: mutationBusy, dirty }); }, [mutationBusy, dirty]);
+  useEffect(() => () => stateCallback.current?.({ busy: false, dirty: false }), []);
+  const startDraft = (next: Draft) => { draftBaseline.current = JSON.stringify(next); setDraft(next); };
   const live = (signal?: AbortSignal) => {
     const session = getSessionState();
     return active.current && !signal?.aborted && session.authenticated && !session.locked && session.identity === identity;
@@ -276,7 +291,7 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
       composer.current?.focus();
       return;
     }
-    setDraft({ ...selection, name: '', target: '', mapping: {}, key: '' });
+    startDraft({ ...selection, name: '', target: '', mapping: {}, key: '' });
     setSourceColumns(undefined); setTargetColumns(undefined); setSourceError(''); setDestinationError('');
     setSaveError(''); setNotice('');
   }, [selection]);
@@ -346,22 +361,22 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
   const targetKeys = targetColumns?.filter(column => column.primary) ?? [];
   const mappingRows = targetColumns?.map(column => ({ column, options: sourceColumns?.columns.filter(item => item.type === column.type && (!column.primary || item.name === sourceKey)) ?? [] })) ?? [];
   const change = (patch: Partial<Draft>) => { setSaveError(''); setDraft(value => value && { ...value, ...patch }); };
-  const closeDraft = () => { setDraft(undefined); onComposerClosed(); };
+  const closeDraft = () => { draftBaseline.current = ''; setDraft(undefined); onComposerClosed(); };
   const edit = (plan: BatchSyncPlan) => {
     if (sourcePaused) return;
     onComposerClosed(); setNotice(''); setSaveError('');
     setSourceColumns(undefined); setTargetColumns(undefined); setSourceError(''); setDestinationError('');
-    setDraft({ id: plan.id, mode: plan.mode, keyRange: plan.keyRange, schema: plan.sourceSchema, table: plan.sourceTable, name: plan.name, key: plan.sourceKeyColumn,
+    startDraft({ id: plan.id, mode: plan.mode, keyRange: plan.keyRange, schema: plan.sourceSchema, table: plan.sourceTable, name: plan.name, key: plan.sourceKeyColumn,
       target: plan.targetTable, mapping: Object.fromEntries(plan.mapping.map(item => [item.targetColumn, item.sourceColumn])) });
   };
   const prepareCommitted = () => {
     onComposerClosed(); setNotice(''); setSaveError('');
-    setDraft({ mode: 'incremental', schema: committedStream.schema, table: committedStream.table, key: committedStream.key,
+    startDraft({ mode: 'incremental', schema: committedStream.schema, table: committedStream.table, key: committedStream.key,
       target: committedStream.target, mapping: {}, name: '' });
   };
   const prepareRange = () => {
     onComposerClosed(); setNotice(''); setSaveError('');
-    setDraft({ schema: rangeFixture.schema, table: rangeFixture.table, key: rangeFixture.key,
+    startDraft({ schema: rangeFixture.schema, table: rangeFixture.table, key: rangeFixture.key,
       target: rangeFixture.target, mapping: {}, name: '', keyRange: { min: '', max: '' } });
   };
   const validRange = Boolean(draft?.keyRange && int64Range(draft.keyRange.min) && int64Range(draft.keyRange.max) &&
@@ -435,11 +450,21 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
   };
 
   const visiblePlans = plans?.filter(plan => !schemaFilter || plan.sourceSchema === schemaFilter);
+  const executionLabel = sourcePaused ? 'Connection paused' : sourceProof?.state === 'blocked' ? 'Identity policy blocked'
+    : stateError ? 'Execution status unavailable' : !capability ? 'Checking execution'
+      : !capability.enabled ? 'Drafts only'
+        : !sourceProof || capability.sourceIdentityRequired && !proofCurrent ? 'Source review required' : 'Sandbox runs available';
   return <section className="ontology-source-catalog ontology-source-sync" aria-label="Batch syncs">
-    <header><div><h3>Batch syncs</h3><p>{capability?.incrementalBatchSync ? 'Use Snapshot Upsert or the fixed synthetic Committed batch Upsert. Runs are manual or use an armed daily schedule. Neither mode deletes rows.' : 'Snapshot Upsert into the local sandbox only, run manually or on an armed daily schedule. No deletes or incremental reads.'}</p></div>
-      {rangeAvailable && <Button size="small" disabled={Boolean(draft || busy)} onClick={prepareRange}>Set up snapshot ID interval</Button>}
-      {committedModeAvailable && <Button size="small" disabled={Boolean(draft || busy)} onClick={prepareCommitted}>Set up committed batch sync</Button>}
+    <header><div><h3>PostgreSQL sandbox batch syncs</h3><p>Copy a bounded snapshot into an existing local sandbox table using Upsert. Target rows are not deleted.</p><span className="ontology-source-sync__execution" role="status">{executionLabel}</span></div>
+      {rangeAvailable && <Button size="small" disabled={Boolean(draft) || mutationBusy} onClick={prepareRange}>Set up snapshot ID interval</Button>}
+      {committedModeAvailable && <Button size="small" disabled={Boolean(draft) || mutationBusy} onClick={prepareCommitted}>Set up committed batch sync</Button>}
     </header>
+    <ol className="ontology-source-sync__guide" aria-label="Batch sync setup steps">
+      <li><span>1</span><div><strong>Choose a source table.</strong><p>Open Source catalog and select Set up batch sync. Snapshot Upsert requires complete metadata and one smallint, integer, bigint or UUID primary key.</p></div></li>
+      <li><span>2</span><div><strong>Review the destination and mapping.</strong><p>Choose an existing sandbox table with one primary key. Map each destination column to a source column of the same type, then save the draft.</p></div></li>
+      <li><span>3</span><div><strong>Run explicitly.</strong><p>When execution and source review permit, confirm Run sandbox sync or arm a daily UTC schedule. Saving a draft does not copy rows or arm a schedule.</p></div></li>
+    </ol>
+    {capability?.incrementalBatchSync && <p>The separate Committed batch Upsert mode reads only the fixed synthetic published stream; it is not general incremental capture.</p>}
     <div className="ontology-source-sync__body">
       {sourcePaused && <p role="status">The saved source is paused. New syncs and schedule arming are blocked. An exact retry can only recover an existing receipt.</p>}
       {!sourcePaused && sourceProof?.state === 'blocked' && <p role="status">Saving syncs, starting new runs and arming schedules are blocked by the saved source identity policy.</p>}
@@ -509,13 +534,13 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
         {capability?.sourceIdentityRequired && proofCurrent && plansForProof === proofVersion && !plan.sourceIdentityReviewed && <p>Requires review. Review and save this sync again to bind it to the verified source identity.</p>}
         {!sameRevision(plan.sourceUpdatedAt, source.updatedAt) && <p>This source has changed. Review and save the mapping before running.</p>}
         <div className="ontology-source-sync__actions">
-          <Button size="small" disabled={Boolean(busy) || sourcePaused} onClick={() => edit(plan)}>Edit sync</Button>
-          <Button size="small" aria-expanded={scheduleId === plan.id} onClick={() => setScheduleId(value => value === plan.id ? undefined : plan.id)}>Schedule</Button>
+          <Button size="small" disabled={mutationBusy || sourcePaused} onClick={() => edit(plan)}>Edit sync</Button>
+          <Button size="small" disabled={mutationBusy} aria-expanded={scheduleId === plan.id} onClick={() => setScheduleId(value => value === plan.id ? undefined : plan.id)}>Schedule</Button>
           <Button size="small" aria-expanded={historyId === plan.id} onClick={() => { setReceiptList(undefined); setAttemptList(undefined); setHistoryError(''); setHistoryView('receipts'); setHistoryId(value => value === plan.id ? '' : plan.id); }}>Sync history</Button>
           {capability?.enabled && (sameRevision(plan.sourceUpdatedAt, source.updatedAt) && !sourceReviewNeeded(plan) || storedRun(storageKey(plan.id))) &&
-            <Button size="small" type="primary" disabled={Boolean(busy)} onClick={() => askRun(plan)}>{storedRun(storageKey(plan.id)) ? 'Retry same sync request' : 'Run sandbox sync'}</Button>}
+            <Button size="small" type="primary" disabled={mutationBusy} onClick={() => askRun(plan)}>{storedRun(storageKey(plan.id)) ? 'Retry same sync request' : 'Run sandbox sync'}</Button>}
         </div>
-        {scheduleId === plan.id && capability && <BatchSyncSchedulePanel key={`${plan.id}:${plan.updatedAt}:${source.updatedAt}:${sourceReviewNeeded(plan)}`} plan={plan} source={source} capability={capability} sourceReviewNeeded={sourceReviewNeeded(plan)} />}
+        {scheduleId === plan.id && capability && <BatchSyncSchedulePanel key={`${plan.id}:${plan.updatedAt}:${source.updatedAt}:${sourceReviewNeeded(plan)}`} plan={plan} source={source} capability={capability} sourceReviewNeeded={sourceReviewNeeded(plan)} onStateChange={setScheduleState} />}
         {historyId === plan.id && <section aria-label="Batch sync history">
           <div className="ontology-source-sync__actions" role="group" aria-label="History view">
             <Button size="small" aria-pressed={historyView === 'receipts'} onClick={() => { if (historyView !== 'receipts') { setReceiptList(undefined); setHistoryError(''); setHistoryView('receipts'); } }}>{plan.mode === 'incremental' ? 'Run results' : 'Committed receipts'}</Button>

@@ -9,7 +9,7 @@ const text = value => value == null || typeof value === 'boolean' ? '' : typeof 
 const node = (name, kind = 'database') => ({ id: JSON.stringify(['mysql-source', kind, name]), connectionId: 'mysql-source', connectionName: 'Business MySQL', engine: 'mysql', kind, name, sourceUpdatedAt: '2026-01-01T00:00:00Z' });
 
 async function mount({ overrides = {}, props = {}, paused = false } = {}) {
-  const state = [], effects = []; let cursor = 0, scheduled = [], tree;
+  const state = [], effects = [], callbacks = []; let cursor = 0, scheduled = [], tree;
   const session = { identity: 'user', authenticated: true, locked: false }, requests = [];
   const defaults = {
     fetchCurrentUserContext: async () => ({ user: { is_superuser: true } }),
@@ -18,6 +18,7 @@ async function mount({ overrides = {}, props = {}, paused = false } = {}) {
   };
   const api = Object.fromEntries(Object.entries({ ...defaults, ...overrides }).map(([name, implementation]) => [name, (...args) => { requests.push({ name, args }); return implementation(...args); }]));
   const react = {
+    useCallback(callback, deps) { const i = cursor++; if (!callbacks[i] || deps.some((value, j) => !Object.is(value, callbacks[i].deps[j]))) callbacks[i] = { callback, deps }; return callbacks[i].callback; },
     useState(initial) { const i = cursor++; if (!(i in state)) state[i] = typeof initial === 'function' ? initial() : initial; return [state[i], next => { state[i] = typeof next === 'function' ? next(state[i]) : next; }]; },
     useEffect(effect, deps) { const i = cursor++; if (!effects[i] || deps.some((value, j) => !Object.is(value, effects[i].deps[j]))) scheduled.push([i, effect, deps]); },
   };
@@ -41,6 +42,7 @@ async function mount({ overrides = {}, props = {}, paused = false } = {}) {
     async settle() { for (let i = 0; i < 3; i++) { await new Promise(resolve => setImmediate(resolve)); render(); } },
     select(value) { nodes(tree).find(item => item.type === 'NativeSelect').props.onChange({ target: { value } }); render(); },
     search(value) { nodes(tree).find(item => item.type === 'input' && item.props['aria-label'] === 'Search source storage scopes').props.onChange({ target: { value } }); render(); nodes(tree).find(item => item.type === 'form').props.onSubmit({ preventDefault() {} }); render(); },
+    reportState(value) { this.plan().props.onStateChange(value); render(); },
     unmount() { effects.forEach(effect => effect?.cleanup?.()); },
   };
   render(); await ui.settle(); return ui;
@@ -86,4 +88,20 @@ test('source scope search reaches resources outside the initial catalog', async 
   ui.search('database-151'); await ui.settle();
   assert.equal(ui.requests.filter(item => item.name === 'fetchDataSourceNodes').at(-1).args[2], 'database-151');
   assert.equal(ui.plan().props.sourceNode.name, 'database-151'); ui.unmount();
+});
+
+test('unsaved and busy transfer setup locks source selection and catalog refresh', async () => {
+  const activity = [];
+  const ui = await mount({ props: { onStateChange: state => activity.push(state) } });
+  const original = ui.plan().props.sourceNode.id;
+  ui.reportState({ busy: false, dirty: true });
+  assert.equal(ui.nodes().find(item => item.type === 'NativeSelect').props.disabled, true);
+  ui.select(node('finance').id); assert.equal(ui.plan().props.sourceNode.id, original);
+  assert.match(ui.text(), /Save or cancel the open draft/);
+  assert.deepEqual(activity.at(-1), { busy: false, dirty: true });
+  ui.reportState({ busy: true, dirty: false });
+  assert.match(ui.text(), /being saved or processed/);
+  ui.reportState({ busy: false, dirty: false });
+  ui.select(node('finance').id); assert.equal(ui.plan().props.sourceNode.name, 'finance');
+  ui.unmount();
 });

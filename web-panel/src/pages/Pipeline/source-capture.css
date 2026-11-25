@@ -1,0 +1,43 @@
+.source-capture { color: var(--ontology-text); }
+.source-capture .source-capture__heading { gap: 16px; align-items: flex-start; }
+.source-capture .source-capture__heading > div { min-width: 0; }
+.source-capture .source-capture__heading h3 { margin: 3px 0 5px; font-size: 17px; }
+.source-capture .source-capture__heading p { margin: 0; color: var(--ontology-muted); }
+.source-capture .source-capture__eyebrow { color: var(--ontology-muted); font-size: 10px; letter-spacing: .05em; text-transform: uppercase; }
+.source-capture .source-capture__intro { margin: 12px 0 18px; max-width: 1040px; color: var(--ontology-muted); line-height: 1.6; }
+.source-capture .source-capture__route { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 16px; padding: 12px 14px; border: 1px solid var(--ontology-border); border-radius: 4px; background: var(--ontology-bg); }
+.source-capture .source-capture__route > span { color: var(--ontology-muted); }
+.source-capture .source-capture__steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 0 0 18px; padding: 0; list-style: none; }
+.source-capture .source-capture__steps li { display: flex; align-items: flex-start; gap: 9px; min-width: 0; }
+.source-capture .source-capture__steps li > span { display: grid; place-items: center; flex: none; width: 23px; height: 23px; border: 1px solid var(--ontology-control-border); border-radius: 50%; color: var(--ontology-text); font-size: 11px; }
+.source-capture .source-capture__steps strong { display: block; font-size: 12px; font-weight: 600; }
+.source-capture .source-capture__steps p { margin: 3px 0 0; color: var(--ontology-muted); font-size: 11px; line-height: 1.5; }
+.source-capture .source-capture__layout { display: grid; grid-template-columns: minmax(240px, .8fr) minmax(0, 1.6fr); align-items: start; gap: 14px; }
+.source-capture .source-capture__panel { min-width: 0; padding: 16px; border: 1px solid var(--ontology-border); border-radius: 5px; background: var(--ontology-bg); }
+.source-capture .source-capture__panel h4 { margin: 0 0 12px; color: var(--ontology-text); font-size: 13px; }
+.source-capture .source-capture__panel > p { color: var(--ontology-muted); line-height: 1.6; }
+.source-capture .source-capture__panel > p:last-child { margin-bottom: 0; }
+.source-capture .source-capture__prepare { grid-column: 1; grid-row: 1; }
+.source-capture .source-capture__configure { grid-column: 2; grid-row: 1 / span 2; }
+.source-capture .source-capture__output { grid-column: 1; grid-row: 2; }
+.source-capture .source-capture__configure form { gap: 10px; max-width: none; }
+.source-capture .source-capture__configure form > .ui-btn { justify-self: start; margin-top: 5px; }
+.source-capture .source-capture__help { margin: -3px 0 4px; color: var(--ontology-muted); font-size: 11px; line-height: 1.6; }
+.source-capture .source-capture__status { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; margin: 12px 0; }
+.source-capture .source-capture__status strong { color: var(--ontology-text); }
+.source-capture .source-capture__facts { display: grid; gap: 12px; margin: 0 0 14px; }
+.source-capture .source-capture__facts > div { min-width: 0; }
+.source-capture .source-capture__facts dt { margin: 0 0 3px; color: var(--ontology-muted); font-size: 11px; }
+.source-capture .source-capture__facts dd { margin: 0; overflow-wrap: anywhere; }
+.source-capture .source-capture__tasks { display: grid; gap: 7px; margin: 0 0 14px; padding: 0; list-style: none; }
+.source-capture .source-capture__tasks li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 8px; font-size: 11px; overflow-wrap: anywhere; }
+.source-capture .source-capture__controls { gap: 7px; }
+.source-capture .source-capture__note { margin-top: 15px; padding-top: 12px; border-top: 1px solid var(--ontology-border); color: var(--ontology-muted); font-size: 11px; line-height: 1.6; }
+.source-capture .source-capture__note strong { color: var(--ontology-text); font-weight: 600; }
+.source-capture .source-capture__note p { margin: 5px 0 0; }
+.source-capture [role="alert"] { color: var(--ui-error, #e89fa7); }
+@media (max-width: 760px) {
+  .source-capture .source-capture__steps { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .source-capture .source-capture__layout { grid-template-columns: minmax(0, 1fr); }
+  .source-capture :is(.source-capture__prepare, .source-capture__configure, .source-capture__output) { grid-column: auto; grid-row: auto; }
+}

@@ -2,13 +2,14 @@ import React, { useEffect, useState } from 'react';
 import { Button, Input, NativeSelect } from '@/components/ui';
 import { controlSourceCdc, createSourceCdc, fetchSourceCdc } from '../../services/api';
 import type { DataSource, SourceCdcStatus } from '../../services/api';
+import './source-capture.css';
 
 function errorMessage(error: unknown): string {
   const detail = (error as { response?: { data?: { detail?: unknown; message?: unknown } } }).response?.data;
   return typeof detail?.detail === 'string' ? detail.detail : typeof detail?.message === 'string' ? detail.message : 'CDC operation failed. Refresh and try again.';
 }
 
-export default function SourceCdc({ source, onBusyChange }: { source: DataSource; onBusyChange?: (busy: boolean) => void }) {
+export default function SourceCdc({ source, onBusyChange, onDirtyChange }: { source: DataSource; onBusyChange?: (busy: boolean) => void; onDirtyChange?: (dirty: boolean) => void }) {
   const [status, setStatus] = useState<SourceCdcStatus>();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -23,7 +24,14 @@ export default function SourceCdc({ source, onBusyChange }: { source: DataSource
   const [milvusEtcd, setMilvusEtcd] = useState('');
   const [milvusRoot, setMilvusRoot] = useState('by-dev');
   const [milvusChannels, setMilvusChannels] = useState('');
+  const [savedDraft, setSavedDraft] = useState('');
+  const draftKey = JSON.stringify([tables, snapshot, publication, serverId, oracleDatabase, oraclePdb, milvusKafka, milvusEtcd, milvusRoot, milvusChannels]);
+  const configured = Boolean(status?.selection);
+  const changed = savedDraft ? draftKey !== savedDraft : Boolean(tables || snapshot !== 'initial' || publication || serverId || oracleDatabase || oraclePdb || milvusKafka || milvusEtcd || milvusRoot !== 'by-dev' || milvusChannels);
+  const dirty = !configured && changed;
   useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
+  useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -56,41 +64,48 @@ export default function SourceCdc({ source, onBusyChange }: { source: DataSource
             etcdRoot: milvusRoot, pchannels: milvusChannels.split(',').map(value => value.trim()).filter(Boolean),
           } } : {}),
         }, source.updatedAt);
+        setSavedDraft(draftKey);
       } else await controlSourceCdc(source.id, action, source.updatedAt);
       setStatus(undefined); setRevision(value => value + 1);
     } catch (failure) { setError(errorMessage(failure)); }
     finally { setBusy(false); onBusyChange?.(false); }
   };
 
-  const configured = Boolean(status?.selection);
-  return <section className="ontology-source-cdc" aria-label="Continuous CDC">
-    <header><h3>Continuous CDC</h3><Button size="small" disabled={busy} onClick={() => setRevision(value => value + 1)}>Refresh CDC</Button></header>
-    <p>Capture changes continuously into dedicated Kafka topics using Debezium events. Delivery may repeat events after recovery; consumers must apply changes idempotently.</p>
+  return <section className="ontology-source-cdc source-capture" aria-label="Continuous CDC">
+    <header className="source-capture__heading"><div><span className="source-capture__eyebrow">Database changes</span><h3>Continuous CDC</h3><p>Keep a stream of changes from selected source tables or collections.</p></div><Button size="small" disabled={busy} onClick={() => setRevision(value => value + 1)}>Refresh CDC</Button></header>
+    <div className="source-capture__route" aria-label="CDC output path"><span>Source tables / collections</span><span aria-hidden="true">→</span><strong>Kafka topics</strong><span aria-hidden="true">→</span><span>Downstream consumers</span></div>
+    <p className="source-capture__intro">This captures Debezium events into Kafka; it does not write tables into a destination database. Configure downstream consumption separately. Recovery can repeat events, so consumers must apply changes idempotently.</p>
+    <ol className="source-capture__steps" aria-label="Continuous capture steps">
+      <li><span>1</span><div><strong>Prepare the source</strong><p>Check log access, permissions and the connector plugin.</p></div></li>
+      <li><span>2</span><div><strong>Choose scope and starting data</strong><p>Select tables and decide whether to include existing rows.</p></div></li>
+      <li><span>3</span><div><strong>Check status and output</strong><p>Inspect tasks and verify events in the Kafka topics.</p></div></li>
+    </ol>
     {error && <p role="alert">{error}</p>}
     {!status && !error && <p role="status">Loading CDC status…</p>}
-    {status && <>
-      <p>{status.prerequisite}</p>
+    {status && <div className="source-capture__layout">
+      <section className="source-capture__panel source-capture__prepare" aria-label="Capture prerequisites">
+      <h4>1. Check prerequisites</h4>
+      <p>{status.prerequisite || 'Ask the source administrator to prepare log-based capture permissions and source log retention.'}</p>
+      <p className="source-capture__status">Connector plugin: <strong>{status.pluginAvailable ? 'Installed' : 'Missing'}</strong></p>
       {!status.pluginAvailable && <p role="alert">The required source connector is not installed on Kafka Connect. Install it before starting capture.</p>}
-      <p role="status">Connector: <strong>{status.state}</strong>{status.tasks.map(task => ` · ${task.connector ? `${task.connector} / ` : ''}Task ${task.id}: ${task.state}`).join('')}</p>
-      {status.sourceChanged && <p role="alert">The saved connection differs from this capture. Remove the task and configure it again.</p>}
+      </section>
+      <section className="source-capture__panel source-capture__configure" aria-label="Capture scope and starting data">
+      <h4>2. Choose capture scope</h4>
       {configured ? <>
-        <dl><dt>Tables / collections</dt><dd>{status.selection?.tables.join(', ')}</dd><dt>Topic prefix</dt><dd><code>{status.topicPrefix}</code></dd>
-          {status.selection?.milvus && <><dt>Physical channels</dt><dd>{status.selection.milvus.pchannels.join(', ')}</dd></>}
-          {status.slot && <><dt>Replication slot</dt><dd><code>{status.slot}</code></dd></>}</dl>
-        <div className="ontology-source-cdc__actions">
-          <Button disabled={busy} onClick={() => void act('pause')}>Pause capture</Button>
-          <Button disabled={busy || status.sourceChanged} onClick={() => void act('resume')}>Resume capture</Button>
-          <Button disabled={busy || status.sourceChanged} onClick={() => void act('restart')}>Restart failed tasks</Button>
-          <Button danger disabled={busy} onClick={() => void act('remove')}>Remove CDC</Button>
-        </div>
-        <p>Pausing retains the source position. Ensure WAL, binlog or oplog retention covers the pause. Remove CDC before editing this connection. PostgreSQL slots remain after removal and must be dropped by a database administrator when no longer needed.</p>
+        <dl className="source-capture__facts"><div><dt>Tables / collections</dt><dd>{status.selection?.tables.join(', ')}</dd></div>
+          <div><dt>Initial data</dt><dd>{status.selection?.snapshot === 'initial' ? 'Existing rows, then new changes' : 'New changes only'}</dd></div>
+          {status.selection?.milvus && <div><dt>Physical channels</dt><dd>{status.selection.milvus.pchannels.join(', ')}</dd></div>}</dl>
+        <p>The selected scope is fixed for this capture. To change it, remove the capture and create a new one.</p>
       </> : <form onSubmit={event => { event.preventDefault(); void act('create'); }}>
         <label>Tables / collections<Input required value={tables} onChange={event => setTables(event.target.value)} placeholder={source.engine === 'mongodb' || source.engine === 'mysql' ? `${source.config.database}.example` : 'schema.table'} /></label>
-        <p>Enter explicit qualified names separated by commas. Letters, digits, underscores and dollar signs are supported.</p>
+        <p className="source-capture__help">Enter explicit qualified names separated by commas, for example <code>{source.engine === 'mongodb' || source.engine === 'mysql' || source.engine === 'milvus' ? `${source.config.database}.records` : 'public.records'}</code>. Letters, digits, underscores and dollar signs are supported.</p>
+        {['mysql', 'mongodb', 'milvus'].includes(source.engine) && <p className="source-capture__help">This capture is limited to the saved database <code>{source.config.database}</code>. Other storage nodes discovered in Syncs are not included.</p>}
         <label>Initial data<NativeSelect value={snapshot} onChange={event => setSnapshot(event.target.value as 'initial' | 'no_data')}>
           <option value="initial">Snapshot existing data, then capture changes</option><option value="no_data">Capture new changes only</option>
         </NativeSelect></label>
+        <p className="source-capture__help">{snapshot === 'initial' ? 'Use a snapshot to include rows already in the source, then keep capturing new changes.' : 'Existing rows are skipped. Use this when historical data has already been loaded and only new changes are needed.'}</p>
         {source.engine === 'postgresql' && <label>Existing publication<Input required value={publication} onChange={event => setPublication(event.target.value)} /></label>}
+        {source.engine === 'postgresql' && <p className="source-capture__help">Use a publication already prepared by your database administrator for these tables.</p>}
         {source.engine === 'mysql' && <label>Unique replication server ID<Input required type="number" min={1} max={4294967295} value={serverId} onChange={event => setServerId(event.target.value)} /></label>}
         {source.engine === 'oracle' && <>
           <label>Database name (CDB / non-CDB)<Input required value={oracleDatabase} onChange={event => setOracleDatabase(event.target.value)} /></label>
@@ -105,6 +120,25 @@ export default function SourceCdc({ source, onBusyChange }: { source: DataSource
         </>}
         <Button type="primary" htmlType="submit" disabled={busy || !status.pluginAvailable}>Start continuous capture</Button>
       </form>}
-    </>}
+      </section>
+      <section className="source-capture__panel source-capture__output" aria-label="Capture status and output">
+        <h4>3. Check status and output</h4>
+        <p className="source-capture__status" role="status">Connector: <strong>{status.state}</strong></p>
+        {!!status.tasks.length && <ul className="source-capture__tasks">{status.tasks.map(task => <li key={`${task.connector || ''}:${task.id}`}><span>{task.connector ? `${task.connector} / ` : ''}Task {task.id}</span><strong>{task.state}</strong></li>)}</ul>}
+        {status.sourceChanged && <p role="alert">The saved connection differs from this capture. Remove the task and configure it again.</p>}
+        {configured ? <>
+          <dl className="source-capture__facts"><div><dt>Kafka topic prefix</dt><dd><code>{status.topicPrefix}</code></dd></div>
+            {status.slot && <div><dt>Replication slot</dt><dd><code>{status.slot}</code></dd></div>}</dl>
+          <p>Check connector and task states, then inspect events under this topic prefix. A running connector alone does not verify downstream database writes.</p>
+          <div className="ontology-source-cdc__actions source-capture__controls">
+            <Button disabled={busy} onClick={() => void act('pause')}>Pause capture</Button>
+            <Button disabled={busy || status.sourceChanged} onClick={() => void act('resume')}>Resume capture</Button>
+            <Button disabled={busy || status.sourceChanged} onClick={() => void act('restart')}>Restart failed tasks</Button>
+            <Button danger disabled={busy} onClick={() => void act('remove')}>Remove CDC</Button>
+          </div>
+          <div className="source-capture__note"><strong>Pause or remove?</strong><p>Pause retains the source position for resuming. Ensure WAL, binlog or oplog retention covers the pause.</p><p>Remove deletes the capture task, while existing Kafka messages and PostgreSQL replication slots remain. A new capture uses a new topic namespace. An administrator must drop unused PostgreSQL slots.</p></div>
+        </> : <p>No capture is configured yet. Start capture after completing steps 1 and 2; its task state and Kafka topic prefix will appear here.</p>}
+      </section>
+    </div>}
   </section>;
 }

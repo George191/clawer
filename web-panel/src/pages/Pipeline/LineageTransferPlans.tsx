@@ -26,7 +26,7 @@ function errorMessage(error: unknown) {
 const emptyDraft = (schema: string, node?: StorageNode): TransferPlanInput => ({
   name: '', sourceSchema: schema, sourceTable: node?.kind === 'index' ? node.name : '', targetSchema: '', targetTable: '',
   ...(node ? { sourceNode: { connectionId: node.connectionId, kind: node.kind, name: node.name }, sourceUpdatedAt: node.sourceUpdatedAt } : {}),
-  writeMode: 'append', trigger: 'manual', scheduleTime: null,
+  writeMode: 'append', trigger: 'manual', scheduleTime: null, incrementalCursor: null,
 });
 
 function validateDraft(draft: TransferPlanInput, weeklyAvailable: boolean, monthlyAvailable: boolean) {
@@ -113,7 +113,7 @@ function UtcTime({ value }: { value: string }) {
   return <time dateTime={value}>{new Date(value).toLocaleString(undefined, { timeZone: 'UTC', timeZoneName: 'short' })}</time>;
 }
 
-function TransferSchedulePanel({ plan, maxRows }: { plan: TransferPlan; maxRows: number }) {
+function TransferSchedulePanel({ plan, maxRows, onBusyChange }: { plan: TransferPlan; maxRows: number; onBusyChange?: (busy: boolean) => void }) {
   const [schedule, setSchedule] = useState<TransferSchedule>();
   const [jobs, setJobs] = useState<TransferScheduleJob[]>();
   const [scheduleError, setScheduleError] = useState('');
@@ -122,6 +122,10 @@ function TransferSchedulePanel({ plan, maxRows }: { plan: TransferPlan; maxRows:
   const [revision, setRevision] = useState(0);
   const [confirm, setConfirm] = useState<'arm' | 'pause'>();
   const [submitting, setSubmitting] = useState(false);
+  const busyCallback = useRef(onBusyChange);
+  busyCallback.current = onBusyChange;
+  useEffect(() => { busyCallback.current?.(submitting); }, [submitting]);
+  useEffect(() => () => busyCallback.current?.(false), []);
   const requestPending = useRef(false);
   const active = useRef(false);
   const identity = useRef(getSessionState().identity).current;
@@ -307,7 +311,7 @@ function TablePicker({ label, schema, table, setTable, sourceNode, sourceUpdated
   </div>;
 }
 
-export default function LineageTransferPlans({ schema, schemas, selectedSchedule, selectedUpstream, sourceNode }: { schema: string; schemas: string[]; selectedSchedule?: string; selectedUpstream?: boolean; sourceNode?: StorageNode }) {
+export default function LineageTransferPlans({ schema, schemas, selectedSchedule, selectedUpstream, sourceNode, onStateChange }: { schema: string; schemas: string[]; selectedSchedule?: string; selectedUpstream?: boolean; sourceNode?: StorageNode; onStateChange?: (state: { busy: boolean; dirty: boolean }) => void }) {
   const titleId = useId();
   const [plans, setPlans] = useState<TransferPlan[]>();
   const [loadError, setLoadError] = useState('');
@@ -325,6 +329,7 @@ export default function LineageTransferPlans({ schema, schemas, selectedSchedule
   const [previewLoading, setPreviewLoading] = useState(false);
   const [deletePlan, setDeletePlan] = useState<TransferPlan>();
   const [deleting, setDeleting] = useState(false);
+  const [scheduleBusy, setScheduleBusy] = useState(false);
   const [deleteError, setDeleteError] = useState('');
   const previewRequest = useRef<AbortController>();
   const [capabilities, setCapabilities] = useState<TransferRunCapabilities>();
@@ -345,6 +350,13 @@ export default function LineageTransferPlans({ schema, schemas, selectedSchedule
   const runPending = useRef(false);
   const preflightRequest = useRef<AbortController>();
   const sessionIdentity = useRef(getSessionState().identity).current;
+  const draftBaseline = useRef('');
+  const stateCallback = useRef(onStateChange);
+  stateCallback.current = onStateChange;
+  const dirty = Boolean(draft && JSON.stringify(draft) !== draftBaseline.current);
+  const mutationBusy = saving || deleting || Boolean(runningPlan) || scheduleBusy;
+  useEffect(() => { stateCallback.current?.({ busy: mutationBusy, dirty }); }, [mutationBusy, dirty]);
+  useEffect(() => () => stateCallback.current?.({ busy: false, dirty: false }), []);
   const isCurrent = () => {
     const session = getSessionState();
     return active.current && session.authenticated && !session.locked && session.identity === sessionIdentity;
@@ -462,6 +474,7 @@ export default function LineageTransferPlans({ schema, schemas, selectedSchedule
     resetPreflight();
     resetSourcePreview();
     setDraft(undefined);
+    draftBaseline.current = '';
   };
   const change = (patch: Partial<TransferPlanInput>) => {
     resetPreflight();
@@ -473,15 +486,17 @@ export default function LineageTransferPlans({ schema, schemas, selectedSchedule
     setNotice('');
     setSaveError('');
     setEditingId(plan?.id);
-    setDraft(plan ? {
+    const next = plan ? {
       name: plan.name, sourceSchema: plan.sourceSchema, sourceTable: plan.sourceTable,
       sourceNode: plan.sourceNode, sourceUpdatedAt: plan.sourceUpdatedAt,
       targetSchema: plan.targetSchema, targetTable: plan.targetTable, writeMode: plan.writeMode,
-      incrementalCursor: plan.incrementalCursor,
-      trigger: plan.trigger, scheduleTime: plan.scheduleTime,
+      incrementalCursor: plan.incrementalCursor ?? null,
+      trigger: plan.trigger, scheduleTime: plan.scheduleTime ?? null,
       scheduleWeekdayUtc: plan.trigger === 'weekly' ? plan.scheduleWeekdayUtc : undefined,
       scheduleDayOfMonthUtc: plan.trigger === 'monthly' ? plan.scheduleDayOfMonthUtc : undefined,
-    } : emptyDraft(schema, sourceNode));
+    } : emptyDraft(schema, sourceNode);
+    draftBaseline.current = JSON.stringify(next);
+    setDraft(next);
     resetSourcePreview();
   };
   const submit = async (event: FormEvent<HTMLFormElement>) => {
@@ -650,7 +665,7 @@ export default function LineageTransferPlans({ schema, schemas, selectedSchedule
           </div>
           {!plan.sourceNode && scheduleFor === plan.id && capabilities && (plan.trigger === 'upstream' || (selectedUpstream && selectedSchedule === plan.id)
             ? <LineageUpstreamTrigger key={`${plan.id}:${plan.updatedAt}`} plan={plan} maxRows={capabilities.maxRows} formatError={errorMessage} />
-            : <TransferSchedulePanel key={`${plan.id}:${plan.updatedAt}`} plan={plan} maxRows={capabilities.maxRows} />)}
+            : <TransferSchedulePanel key={`${plan.id}:${plan.updatedAt}`} plan={plan} maxRows={capabilities.maxRows} onBusyChange={setScheduleBusy} />)}
           {runError?.planId === plan.id && <p role="alert" className="flow-transfer-error">{runError.message}</p>}
           {runReceipt?.planId === plan.id && !(historyFor === plan.id && historyView === 'receipts' && history?.some(receipt => receipt.id === runReceipt.id)) && <div role="status"><TransferReceipts receipts={[runReceipt]} /></div>}
           {historyFor === plan.id && <section aria-label="Sandbox run history">

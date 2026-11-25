@@ -21,6 +21,7 @@ async function mount(component, saved, api, extraProps = {}) {
     if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx, Fragment: 'Fragment' };
     if (name === '@/components/ui') return { Button: 'Button', Checkbox: 'Checkbox', Input: 'Input', NativeSelect: 'NativeSelect' };
     if (name === '../../services/api') return Object.fromEntries(Object.entries(api).map(([key, value]) => [key, (...args) => { calls.push({ key, args }); return value(...args); }]));
+    if (name.endsWith('.css')) return {};
     throw new Error('Unexpected dependency ' + name);
   };
   const code = ts.transpileModule(readFileSync(new URL(`../src/pages/Pipeline/${component}.tsx`, import.meta.url), 'utf8'), {
@@ -39,6 +40,8 @@ async function mount(component, saved, api, extraProps = {}) {
     nodes: () => nodes(tree), text: () => text(tree),
     button: label => nodes(tree).find(node => node.type === 'Button' && text(node.props.children) === label),
     fill(label, value) { const parent = nodes(tree).find(node => node.type === 'label' && text(node).startsWith(label)); assert.ok(parent, 'Missing field ' + label); nodes(parent).find(node => node.type === 'Input').props.onChange({ target: { value } }); render(); },
+    select(label, value) { const parent = nodes(tree).find(node => node.type === 'label' && text(node).startsWith(label)); assert.ok(parent, 'Missing select ' + label); nodes(parent).find(node => node.type === 'NativeSelect').props.onChange({ target: { value } }); render(); },
+    check(label, checked) { const checkbox = nodes(tree).find(node => node.type === 'Checkbox' && text(node) === label); assert.ok(checkbox, 'Missing checkbox ' + label); checkbox.props.onChange({ target: { checked } }); render(); },
     submit() { nodes(tree).find(node => node.type === 'form').props.onSubmit({ preventDefault() {} }); render(); },
     async settle() { for (let i = 0; i < 4; i++) { await new Promise(resolve => setImmediate(resolve)); render(); } },
     close() { for (const effect of effects) effect?.cleanup?.(); },
@@ -135,5 +138,115 @@ test('missing Milvus plugin disables start despite valid saved database connecti
   });
   assert.ok(ui.button('Start continuous capture').props.disabled);
   assert.ok(ui.text().includes('not installed on Kafka Connect'));
+  ui.close();
+});
+
+test('CDC setup explains prerequisites, Kafka output and the selected historical-data mode', async () => {
+  const ui = await mount('SourceCdc', source('postgresql'), {
+    fetchSourceCdc: async () => ({ state: 'unconfigured', pluginAvailable: true, tasks: [], selection: null,
+      prerequisite: 'Enable logical WAL and prepare a publication.' }),
+    createSourceCdc: async () => ({}),
+  });
+  const steps = ui.nodes().find(node => node.type === 'ol' && node.props['aria-label'] === 'Continuous capture steps');
+  assert.equal(nodes(steps).filter(node => node.type === 'li').length, 3);
+  assert.match(ui.text(), /does not write tables into a destination database/);
+  assert.match(ui.text(), /include rows already in the source/);
+  ui.select('Initial data', 'no_data');
+  assert.match(ui.text(), /Existing rows are skipped/);
+  ui.fill('Tables / collections', 'public.records, public.users');
+  ui.fill('Existing publication', 'prepared_publication'); ui.submit(); await ui.settle();
+  assert.deepEqual(ui.calls.find(call => call.key === 'createSourceCdc').args, [
+    'source-id', { tables: ['public.records', 'public.users'], snapshot: 'no_data', publication: 'prepared_publication' },
+    source('postgresql').updatedAt,
+  ]);
+  ui.close();
+});
+
+test('configured CDC groups task state, Kafka output and controls and distinguishes pause from removal', async () => {
+  const ui = await mount('SourceCdc', source('postgresql'), {
+    fetchSourceCdc: async () => ({ state: 'RUNNING', pluginAvailable: true, sourceChanged: false,
+      tasks: [{ id: 0, state: 'RUNNING' }], selection: { tables: ['public.records'], snapshot: 'initial' },
+      topicPrefix: 'spider-cdc-source-generation', slot: 'replication_slot' }),
+    controlSourceCdc: async () => ({}),
+  });
+  const output = ui.nodes().find(node => node.type === 'section' && node.props['aria-label'] === 'Capture status and output');
+  assert.match(text(output), /Task 0RUNNING/);
+  assert.match(text(output), /spider-cdc-source-generation/);
+  assert.match(text(output), /Pause retains the source position/);
+  assert.match(text(output), /existing Kafka messages and PostgreSQL replication slots remain/);
+  assert.match(text(output), /does not verify downstream database writes/);
+  ui.button('Pause capture').props.onClick(); await ui.settle();
+  assert.deepEqual(ui.calls.find(call => call.key === 'controlSourceCdc').args,
+    ['source-id', 'pause', source('postgresql').updatedAt]);
+  ui.close();
+});
+
+test('DMDRS setup separates external preparation, output binding and independently verified health', async () => {
+  const ui = await mount('SourceDamengCdc', source('dameng'), {
+    fetchSourceDamengCdc: async () => ({ state: 'bound', schemaReady: true,
+      binding: { topic: 'dameng-output', tables: ['PUBLIC.ITEMS'], sourceChanged: false } }),
+  });
+  const steps = ui.nodes().find(node => node.type === 'ol' && node.props['aria-label'] === 'DMDRS binding steps');
+  assert.equal(nodes(steps).filter(node => node.type === 'li').length, 3);
+  assert.match(ui.text(), /does not start DMDRS/);
+  assert.match(ui.text(), /Choose the historical snapshot and log starting position in DMDRS/);
+  assert.match(ui.text(), /upstream DMDRS task and its Kafka output continue running/);
+  assert.equal(ui.button('Start continuous capture'), undefined);
+  assert.equal(ui.button('Pause capture'), undefined);
+  ui.close();
+});
+
+test('object events explain target preparation, key filters and delivery checks without promising a snapshot', async () => {
+  const ui = await mount('SourceObjectEvents', source('s3'), {
+    fetchSourceObjectEvents: async () => ({ state: 'unconfigured', configurationHash: 'a'.repeat(64), notification: null }),
+  });
+  const steps = ui.nodes().find(node => node.type === 'ol' && node.props['aria-label'] === 'Object notification steps');
+  assert.equal(nodes(steps).filter(node => node.type === 'li').length, 3);
+  assert.match(ui.text(), /Existing objects are not sent/);
+  assert.match(ui.text(), /Leave both empty for all object keys/);
+  assert.match(ui.text(), /Events during the disabled period cannot be replayed/);
+  assert.match(ui.text(), /This page does not perform that test/);
+  assert.equal(ui.nodes().some(node => node.type === 'NativeSelect'), false);
+  ui.close();
+});
+
+test('capture forms report actual unsaved edits, clear after successful save and release on unmount', async () => {
+  for (const [component, engine, fetchName, createName, status, field, value] of [
+    ['SourceCdc', 'postgresql', 'fetchSourceCdc', 'createSourceCdc', { state: 'unconfigured', pluginAvailable: true, tasks: [], selection: null }, 'Tables / collections', 'public.records'],
+    ['SourceDamengCdc', 'dameng', 'fetchSourceDamengCdc', 'bindSourceDamengCdc', { state: 'unconfigured', schemaReady: true, binding: null }, 'Existing DMDRS Kafka output topic', 'dameng-output'],
+    ['SourceObjectEvents', 's3', 'fetchSourceObjectEvents', 'createSourceObjectEvents', { state: 'unconfigured', configurationHash: 'a'.repeat(64), notification: null }, 'Existing MinIO Kafka target ARN', 'arn:minio:sqs::events:kafka'],
+  ]) {
+    const changes = [];
+    const ui = await mount(component, source(engine), { [fetchName]: async () => status, [createName]: async () => ({}) },
+      { onDirtyChange: value => changes.push(value) });
+    assert.equal(changes.at(-1), false, `${component} defaults must be clean`);
+    ui.fill(field, value); assert.equal(changes.at(-1), true);
+    ui.submit(); await ui.settle(); assert.equal(changes.at(-1), false, `${component} save must establish a new baseline`);
+    ui.fill(field, value + '-changed'); assert.equal(changes.at(-1), true);
+    ui.close(); assert.equal(changes.at(-1), false, `${component} unmount must release its dirty state`);
+  }
+});
+
+test('default initial snapshot is clean and failed capture saves retain unsaved protection', async () => {
+  const changes = [];
+  const ui = await mount('SourceCdc', source('postgresql'), {
+    fetchSourceCdc: async () => ({ state: 'unconfigured', pluginAvailable: true, tasks: [], selection: null }),
+    createSourceCdc: async () => { throw new Error('Save rejected'); },
+  }, { onDirtyChange: value => changes.push(value) });
+  assert.equal(changes.at(-1), false);
+  ui.select('Initial data', 'no_data'); assert.equal(changes.at(-1), true);
+  ui.select('Initial data', 'initial'); assert.equal(changes.at(-1), false);
+  ui.fill('Tables / collections', 'public.records'); ui.submit(); await ui.settle();
+  assert.equal(changes.at(-1), true);
+  ui.close();
+});
+
+test('restoring the same object event set clears unsaved state regardless of checkbox order', async () => {
+  const changes = [];
+  const ui = await mount('SourceObjectEvents', source('s3'), {
+    fetchSourceObjectEvents: async () => ({ state: 'unconfigured', configurationHash: 'a'.repeat(64), notification: null }),
+  }, { onDirtyChange: value => changes.push(value) });
+  ui.check('Object created or overwritten', false); assert.equal(changes.at(-1), true);
+  ui.check('Object created or overwritten', true); assert.equal(changes.at(-1), false);
   ui.close();
 });

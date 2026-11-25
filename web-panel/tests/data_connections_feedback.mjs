@@ -77,7 +77,7 @@ async function mount({ sources = [], selected = '', query = '', overrides = {}, 
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
   }).outputText;
   const exports = {};
-  vm.runInThisContext('(function(require,exports,window){' + code + '\n})')(require, exports, { addEventListener() {}, removeEventListener() {} });
+  vm.runInThisContext('(function(require,exports,window,document){' + code + '\n})')(require, exports, { addEventListener() {}, removeEventListener() {} }, { getElementById: id => ({ focus() { store.focused = id; } }) });
   const render = () => {
     if (!mounted) return tree;
     cursor = 0; scheduled.length = 0; errorHooks.length = 0; tree = exports.default(props);
@@ -246,7 +246,7 @@ test('catalog table selection opens batch sync configuration with the selected t
   const selection = { schema: 'public', table: 'events' };
   catalog.props.onSetUpSync(selection); ui.render();
   assert.equal(ui.nodes().find(node => node.type === 'SourceBatchSyncs').props.selection, selection);
-  assert.equal(ui.button('Syncs').props['aria-pressed'], true); ui.unmount();
+  assert.equal(ui.button('Syncs').props['aria-selected'], true); ui.unmount();
 });
 
 test('existing schedule links select the sync section inside the details dialog', async () => {
@@ -254,7 +254,70 @@ test('existing schedule links select the sync section inside the details dialog'
   const ui = await mount({ sources: [saved], selected: saved.id, query: 'batchSync=scheduled-plan' });
   assert.ok(ui.details());
   assert.equal(ui.nodes().find(node => node.type === 'SourceBatchSyncs').props.selectedSchedule, 'scheduled-plan');
-  assert.equal(ui.button('Syncs').props['aria-pressed'], true); ui.unmount();
+  assert.equal(ui.button('Syncs').props['aria-selected'], true); ui.unmount();
+});
+
+test('unsaved sync setup requires confirmation before changing tabs or closing details', async () => {
+  const saved = source('mysql');
+  const ui = await mount({ sources: [saved], selected: saved.id, query: 'sourcePanel=sync' });
+  ui.nodes().find(node => node.type === 'SourceNodeSyncs').props.onStateChange({ busy: false, dirty: true }); ui.render();
+  ui.click('Overview');
+  assert.equal(ui.button('Syncs').props['aria-selected'], true);
+  assert.equal(ui.confirmation().props.title, 'Discard unsaved setup?');
+  ui.confirmation().props.onCancel(); ui.render();
+  assert.equal(ui.button('Syncs').props['aria-selected'], true);
+  ui.details().props.onCancel(); ui.render(); assert.ok(ui.confirmation());
+  ui.confirmation().props.onCancel(); ui.render();
+  ui.click('Overview'); await ui.confirmation().props.onOk(); await ui.settle();
+  assert.equal(ui.button('Overview').props['aria-selected'], true); ui.unmount();
+});
+
+test('sync mutations block closing and tab changes until the child request settles', async () => {
+  const saved = source('mysql');
+  const ui = await mount({ sources: [saved], selected: saved.id, query: 'sourcePanel=sync' });
+  const report = ui.nodes().find(node => node.type === 'SourceNodeSyncs').props.onStateChange;
+  report({ busy: true, dirty: true }); ui.render();
+  assert.equal(ui.details().props.closable, false); assert.equal(ui.details().props.keyboard, false);
+  assert.equal(ui.button('Overview').props.disabled, true);
+  ui.details().props.onCancel(); ui.render(); assert.equal(ui.confirmation(), undefined);
+  assert.equal(ui.params().get('sourceId'), saved.id);
+  report({ busy: false, dirty: false }); ui.render(); ui.click('Overview');
+  assert.equal(ui.button('Overview').props['aria-selected'], true); ui.unmount();
+});
+
+test('unfinished CDC settings are retained when a tab change is cancelled', async () => {
+  const saved = source('mysql'); const ui = await mount({ sources: [saved], selected: saved.id });
+  ui.click('Continuous CDC');
+  ui.nodes().find(node => node.type === 'SourceCdc').props.onDirtyChange(true); ui.render();
+  ui.click('Syncs'); assert.ok(ui.confirmation());
+  ui.confirmation().props.onCancel(); ui.render();
+  assert.equal(ui.button('Continuous CDC').props['aria-selected'], true); ui.unmount();
+});
+
+test('connection pause cannot discard an unfinished sync setup', async () => {
+  const saved = source('postgresql', { pauseAvailable: true });
+  const ui = await mount({ sources: [saved], selected: saved.id, query: 'sourcePanel=sync' });
+  ui.nodes().find(node => node.type === 'SourceNodeSyncs').props.onStateChange({ busy: false, dirty: true }); ui.render();
+  assert.equal(ui.button('Pause connection').props.disabled, true);
+  ui.button('Pause connection').props.onClick(); ui.render();
+  assert.equal(ui.confirmation(), undefined); assert.equal(ui.calls('setDataSourcePaused').length, 0);
+  ui.unmount();
+});
+
+test('source detail tabs expose the active panel and support arrow, Home and End keys', async () => {
+  const saved = source('postgresql', { catalogAvailable: true });
+  const ui = await mount({ sources: [saved], selected: saved.id, overrides: {
+    fetchDataConnectorTypes: async () => types.map(item => ({ ...item, catalogAvailable: item.engine === 'postgresql' })),
+  } });
+  const key = value => { ui.nodes().find(node => node.props.role === 'tablist').props.onKeyDown({ key: value, preventDefault() {} }); ui.render(); };
+  key('ArrowRight'); assert.equal(ui.button('Source catalog').props['aria-selected'], true);
+  assert.ok(ui.store.focused.endsWith('-tab-catalog'));
+  key('End'); assert.equal(ui.button('Continuous CDC').props['aria-selected'], true);
+  key('ArrowLeft'); assert.equal(ui.button('Syncs').props['aria-selected'], true);
+  key('Home'); assert.equal(ui.button('Overview').props['aria-selected'], true);
+  const activeTab = ui.button('Overview');
+  assert.equal(ui.nodes().find(node => node.props.role === 'tabpanel').props['aria-labelledby'], activeTab.props.id);
+  ui.unmount();
 });
 
 test('repeated invalid connection submissions each show a toast without calling a probe or adding an error row', async () => {

@@ -161,3 +161,55 @@ test('deleting an external transfer draft uses its reviewed revision and preserv
   confirmation().props.onOk(); await ui.settle();
   assert.equal(confirmation().props.open, false); assert.equal(ui.button('Delete draft'), undefined); assert.match(ui.text(), /Transfer draft deleted/); ui.unmount();
 });
+
+test('draft state callbacks ignore pristine drafts and report edits, reverts, cancellation and unmount', async () => {
+  const states = [];
+  const ui = await mount({ props: { onStateChange: state => states.push(state) } });
+  assert.deepEqual(states.at(-1), { busy: false, dirty: false });
+  ui.click('New plan'); assert.deepEqual(states.at(-1), { busy: false, dirty: false });
+  ui.fill('Plan name', 'Unsaved edit'); assert.deepEqual(states.at(-1), { busy: false, dirty: true });
+  ui.fill('Plan name', ''); assert.deepEqual(states.at(-1), { busy: false, dirty: false });
+  ui.fill('Write mode', 'upsert'); assert.equal(states.at(-1).dirty, true);
+  ui.fill('Write mode', 'append'); assert.equal(states.at(-1).dirty, false);
+  ui.fill('Intended trigger', 'scheduled'); assert.equal(states.at(-1).dirty, true);
+  ui.fill('Intended trigger', 'manual'); assert.equal(states.at(-1).dirty, false);
+  ui.chooseSource('source_a'); assert.equal(states.at(-1).dirty, true);
+  ui.chooseSource(''); assert.equal(states.at(-1).dirty, false);
+  ui.chooseSource('source_a');
+  ui.click('Cancel'); assert.deepEqual(states.at(-1), { busy: false, dirty: false });
+  ui.click('New plan'); ui.fill('Plan name', 'Discard on close'); ui.unmount();
+  assert.deepEqual(states.at(-1), { busy: false, dirty: false });
+});
+
+test('saving reports mutation busy, keeps dirty on failure, and clears it only after success', async () => {
+  const states = [], first = deferred(); let attempts = 0;
+  const ui = await mount({ props: { onStateChange: state => states.push(state) }, overrides: { saveTransferPlan: async draft => { if (!attempts++) return first.promise; return { ...draft, id: 'saved-plan', updatedAt: '2026-01-01T00:00:00Z' }; } } });
+  ui.click('New plan'); ui.fill('Plan name', 'Source transfer'); ui.chooseSource('source_a'); ui.fill('Destination schema', 'ts_rds'); ui.chooseTarget('target_rows');
+  const saving = ui.submit(); assert.deepEqual(states.at(-1), { busy: true, dirty: true });
+  first.resolve(Promise.reject(new Error('Save rejected'))); await saving; await ui.settle();
+  assert.deepEqual(states.at(-1), { busy: false, dirty: true });
+  await ui.submit(); await ui.settle(); assert.deepEqual(states.at(-1), { busy: false, dirty: false }); ui.unmount();
+});
+
+test('editing a saved draft starts clean and delete mutations report busy', async () => {
+  const states = [], deleting = deferred(), node = sourceNode();
+  const plan = { id: 'saved-plan', name: 'Existing draft', sourceSchema: node.name, sourceTable: 'source_a', sourceNode: node, sourceUpdatedAt: node.sourceUpdatedAt, targetSchema: 'ts_rds', targetTable: 'target_rows', trigger: 'manual', writeMode: 'append', updatedAt: node.sourceUpdatedAt };
+  const ui = await mount({ props: { onStateChange: state => states.push(state) }, overrides: { fetchTransferPlans: async () => [plan], deleteTransferPlan: () => deleting.promise } });
+  ui.click('Edit'); assert.deepEqual(states.at(-1), { busy: false, dirty: false });
+  ui.fill('Write mode', 'upsert'); assert.equal(states.at(-1).dirty, true);
+  ui.fill('Write mode', 'append'); assert.equal(states.at(-1).dirty, false);
+  ui.fill('Plan name', 'Changed'); assert.equal(states.at(-1).dirty, true);
+  ui.fill('Plan name', plan.name); assert.equal(states.at(-1).dirty, false); ui.click('Cancel');
+  ui.click('Delete draft'); const confirmation = ui.nodes().find(item => item.type === 'Modal' && item.props.title === 'Delete transfer draft?'); confirmation.props.onOk(); await ui.settle();
+  assert.deepEqual(states.at(-1), { busy: true, dirty: false }); deleting.resolve({ deleted: true }); await ui.settle();
+  assert.deepEqual(states.at(-1), { busy: false, dirty: false }); ui.unmount();
+});
+
+test('internal sandbox execution reports busy until its request settles', async () => {
+  const states = [], request = deferred();
+  const plan = { id: 'internal-plan', name: 'Internal sandbox draft', sourceSchema: 'ts_transfer_sandbox', sourceTable: 'source_a', targetSchema: 'ts_transfer_sandbox', targetTable: 'target_rows', trigger: 'manual', writeMode: 'append', updatedAt: '2026-01-01T00:00:00Z' };
+  const ui = await mount({ props: { sourceNode: undefined, schema: 'ts_transfer_sandbox', onStateChange: state => states.push(state) }, overrides: { fetchTransferPlans: async () => [plan], runSandboxTransfer: () => request.promise } });
+  ui.click('Run sandbox transfer'); ui.nodes().find(item => item.type === 'Modal' && item.props.title === 'Run sandbox transfer?').props.onOk(); await ui.settle();
+  assert.deepEqual(states.at(-1), { busy: true, dirty: false }); request.resolve({ planId: plan.id, rowsAffected: 1 }); await ui.settle();
+  assert.deepEqual(states.at(-1), { busy: false, dirty: false }); ui.unmount();
+});
