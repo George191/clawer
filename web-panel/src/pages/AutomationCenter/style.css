@@ -269,7 +269,7 @@
 .automation-inspector-section h3 small { color:var(--ontology-muted); font-size:10px; font-weight:400; }
 .automation-inspector-section > .ui-select { width:100%; margin-bottom:8px; }
 .automation-logs .workspace-dock-log-list { display:flex; flex-direction:column; gap:6px; margin-top:10px; overflow:auto; overscroll-behavior:contain; }
-.automation-logs .workspace-dock-log-row { display:block; color:#C4CBDA; font-size:12px; line-height:1.5; }
+.automation-logs .workspace-dock-log-row { display:block; color:#C4CBDA; font-size:10px; line-height:1.5; }
 .automation-logs .workspace-dock-log-row code { display:block; color:inherit; font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace; font-size:inherit; letter-spacing:normal; font-variant-numeric:tabular-nums; white-space:pre-wrap; word-break:break-word; }
 .automation-logs .workspace-dock-log-bracket { color:rgba(255,255,255,.38); }
 .automation-logs .workspace-dock-log-time { color:#7DD3FC; }
