@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from time import perf_counter
 from typing import Any
+from uuid import UUID
 
 from anyio import fail_after
 from fastapi import HTTPException
@@ -47,7 +48,14 @@ from app.web.services.snapshot_intent_scope import SNAPSHOT_INTENT_PRIVATE_SCHEM
 from app.web.services.synthetic_governance import PROTECTED_SYNTHETIC_SCHEMA
 
 RESERVED_BATCH_TARGET = (BATCH_TARGET_SCHEMA, INCREMENTAL_TARGET)
-ROW_VERSION_SQL = "encode(sha256(pg_catalog.record_send(t)), 'hex')"
+
+
+def row_version_sql(connection_id: str, revision: datetime) -> str:
+    """Tie the edit token to the saved connection that supplied the row."""
+    identity = str(UUID(connection_id))
+    stamp = revision.astimezone(timezone.utc).strftime("%Y%m%d%H%M%S%f")
+    return (f"'{identity}:' || encode(sha256(convert_to('{identity}/{stamp}', 'UTF8')"
+            " || pg_catalog.record_send(t)), 'hex')")
 
 
 async def allows_physical_delete(schema: str, table: str, *, connection_id: str | None = None) -> bool:
@@ -356,8 +364,11 @@ class EtlLayers:
         if connection["engine"] != "postgresql":
             raise HTTPException(409, f'This operation requires PostgreSQL. The layer uses {connection["engine"]}.')
         pg = get_layer_pg_client(layers[0])
+        expected = str(connection["id"]), connection["updated_at"]
+        if pg.connection_id is not None and (pg.connection_id, pg.revision) != expected:
+            await pg.close()
         await pg.connect(max_retries=1)
-        if pg.connection_id != str(connection["id"]):
+        if (pg.connection_id, pg.revision) != expected:
             raise HTTPException(409, "The layer data connection changed. Reload the schema and try again.")
         return pg, layers
 
@@ -380,12 +391,15 @@ class EtlLayers:
                     pg, layers = await self.scoped_postgres(schema, table, connection_id=connection_id)
                 else:
                     pg, layers = self._pg or get_business_pg_client(), None
+                selected = (pg.connection_id, pg.revision) if layers is not None else None
                 token = catalog_logical_layers.set(layers)
                 try:
                     await pg.connect(max_retries=1)
                     async with pg.session() as session:
                         if layers is not None:
-                            session.info["etl_connection_id"] = pg.connection_id
+                            if selected != (pg.connection_id, pg.revision):
+                                raise HTTPException(409, "The layer data connection changed. Reload the schema and try again.")
+                            session.info["etl_connection_id"], session.info["etl_connection_revision"] = selected
                         mode = "ISOLATION LEVEL REPEATABLE READ READ ONLY" if repeatable_read else "READ ONLY"
                         await session.execute(text(f"SET TRANSACTION {mode}"))
                         await session.execute(text("SET LOCAL statement_timeout = '10s'" if query_timeout else "SET LOCAL statement_timeout = 0"))
@@ -1507,7 +1521,9 @@ class EtlLayers:
             if primary_key and scope is None and payload.get("withIdentity"):
                 extras["rowIdentities"] = row_identity_sql(primary_key)
             if editable:
-                extras["rowVersions"] = ROW_VERSION_SQL
+                extras["rowVersions"] = row_version_sql(
+                    session.info["etl_connection_id"], session.info["etl_connection_revision"],
+                )
             projection = ", ".join(["t.*", *extras.values()])
             result = await session.execute(text(f"SELECT {projection} FROM {target} t{predicate}{ordering} LIMIT :limit OFFSET :offset"), params)
             edit_metadata = {}

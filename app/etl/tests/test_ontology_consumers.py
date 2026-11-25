@@ -333,13 +333,22 @@ class CdcOntologyConsumerTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("TABLES IN SCHEMA", publication)
         self.assertIn('ALTER TABLE "OddWarehouse"."DailyRollup" REPLICA IDENTITY FULL', statements)
 
-    async def test_publication_cutover_refuses_to_exclude_topics_with_retained_backlog(self):
-        pg = self.fake_catalog(publication={**self.publication, "schemas": ["LegacyCatalog"]})
-        guard = AsyncMock(side_effect=cdc.SetupError("Drain outstanding topic"))
-        with patch.object(cdc, "_check_removed_topics", guard), self.assertRaisesRegex(cdc.SetupError, "Drain"):
+    async def test_prepare_refuses_to_narrow_existing_publication(self):
+        unregistered = {**self.covered, "relname": "Removed"}
+        for schemas, published in [(["LegacyCatalog"], []), ([], [unregistered])]:
+            pg = self.fake_catalog(publication={**self.publication, "schemas": schemas}, published=published)
+            with self.assertRaisesRegex(cdc.SetupError, "requires a coordinated CDC cutover"):
+                await cdc.prepare_database(pg)
+            self.assertFalse(any(sql.startswith("ALTER") for sql, _ in pg.calls))
+            self.assertEqual(pg.events, ["begin", "rollback"])
+
+    async def test_prepare_preserves_historical_topics_with_retained_backlog(self):
+        pg = self.fake_catalog(publication=self.publication, published=[self.covered])
+        guard = AsyncMock(side_effect=cdc.SetupError("Unverified CDC backlog"))
+        with patch.object(cdc, "check_unrouted_raw_topics", guard), self.assertRaisesRegex(cdc.SetupError, "backlog"):
             await cdc.prepare_database(pg)
         guard.assert_awaited_once()
-        self.assertFalse(any(sql.startswith("ALTER PUBLICATION") for sql, _ in pg.calls))
+        self.assertFalse(any(sql.startswith("ALTER") for sql, _ in pg.calls))
         self.assertEqual(pg.events, ["begin", "rollback"])
 
     async def test_cutover_reads_offsets_only_for_removed_raw_topics(self):
@@ -348,16 +357,15 @@ class CdcOntologyConsumerTests(unittest.IsolatedAsyncioTestCase):
         admin, reader = AsyncMock(), AsyncMock()
         admin.list_topics.return_value = [retained, removed.topic, "fixture-pg.transaction"]
         admin.describe_topics.return_value = [{"topic": removed.topic, "partitions": [{"partition": 0}]}]
-        reader.beginning_offsets.return_value = {removed: 10}
         reader.end_offsets.return_value = {removed: 20}
         with patch.object(cdc, "AIOKafkaAdminClient", return_value=admin), \
              patch.object(cdc, "AIOKafkaConsumer", return_value=reader), patch.object(cdc.settings, "kafka_brokers", "broker"):
             for position in (None, 15):
                 admin.list_consumer_group_offsets.return_value = {} if position is None else {removed: OffsetAndMetadata(position, "")}
                 with self.assertRaisesRegex(cdc.SetupError, removed.topic):
-                    await cdc._check_removed_topics(IDENTITY, self.objects)
+                    await cdc.check_unrouted_raw_topics(IDENTITY, self.objects)
             admin.list_consumer_group_offsets.return_value = {removed: OffsetAndMetadata(20, "")}
-            await cdc._check_removed_topics(IDENTITY, self.objects)
+            self.assertEqual(await cdc.check_unrouted_raw_topics(IDENTITY, self.objects), {removed.topic})
         admin.describe_topics.assert_awaited_with([removed.topic])
         admin.list_consumer_group_offsets.assert_awaited_with("fixture-pg-relay")
         reader.getmany.assert_not_awaited()
@@ -374,24 +382,45 @@ class CdcOntologyConsumerTests(unittest.IsolatedAsyncioTestCase):
                 additions = [sql for sql, _ in pg.calls if "ADD TABLE" in sql]
                 self.assertEqual(len(additions), int(registered and not covered))
 
-    async def test_relay_selection_ignores_unpublished_binding_and_published_unregistered_table(self):
+    async def test_existing_schema_publication_requires_coverage_and_never_auto_enrolls(self):
+        publication = {**self.publication, "schemas": ["OddWarehouse"]}
+        covered_pg = self.fake_catalog(publication=publication, published=[self.covered])
+        await cdc.ensure_table_publication(covered_pg, "OddWarehouse", "DailyRollup")
+        uncovered_pg = self.fake_catalog(publication=publication)
+        with self.assertRaisesRegex(cdc.SetupError, "must be enrolled with the existing schema publication"):
+            await cdc.ensure_table_publication(uncovered_pg, "OddWarehouse", "DailyRollup")
+        self.assertFalse(any(sql.startswith("ALTER") for pg in (covered_pg, uncovered_pg) for sql, _ in pg.calls))
+
+    async def test_relay_routes_only_full_published_registered_tables_in_mixed_publication(self):
         self.objects[("OddWarehouse", "Unpublished")] = ("ods", "another_type")
         external = {"nspname": "OddWarehouse", "relname": "other", "full_table": True}
-        pg = self.fake_catalog(publication=self.publication, published=[self.covered, external])
+        publication = {**self.publication, "schemas": ["OddWarehouse"]}
+        pg = self.fake_catalog(publication=publication, published=[self.covered, external])
         self.assertEqual(await cdc.published_cdc_objects(pg, IDENTITY),
                          {("OddWarehouse", "DailyRollup"): ("ods", "fixture")})
+        restricted = self.fake_catalog(publication=publication, published=[{**self.covered, "full_table": False}])
+        with self.assertRaisesRegex(cdc.SetupError, "must include full tables"):
+            await cdc.published_cdc_objects(restricted, IDENTITY)
 
     async def test_relay_subscribes_only_to_exact_published_topics_and_refreshes(self):
         worker = postgres_worker.PostgresSyncWorker(Pg(), IDENTITY)
         worker._consumer = Mock()
+        old_topic = "fixture-pg.LegacyCatalog.RetiredRows"
         published = AsyncMock(side_effect=[self.objects, {}])
-        with patch.object(postgres_worker, "published_cdc_objects", published):
+        check = AsyncMock(side_effect=[{old_topic}, set()])
+        with patch.object(postgres_worker, "published_cdc_objects", published), \
+             patch.object(postgres_worker, "check_unrouted_raw_topics", check):
             await worker._refresh_subscription()
             first = re.compile(worker._consumer.subscribe.call_args.kwargs["pattern"])
             self.assertTrue(first.fullmatch("fixture-pg.OddWarehouse.DailyRollup"))
             self.assertIsNone(first.fullmatch("fixture-pg.oddwarehouse.DailyRollup"))
             self.assertIsNone(first.fullmatch("fixture-pg.OddWarehouse.another_table"))
             self.assertIsNone(first.fullmatch("second-pg.OddWarehouse.DailyRollup"))
+            self.assertTrue(first.fullmatch(old_topic))
+            worker._producer = Mock()
+            with self.assertRaisesRegex(cdc.SetupError, "no registered ETL route"):
+                await worker._publish_batch(TopicPartition(old_topic, 0), [])
+            worker._producer.transaction.assert_not_called()
             await worker._refresh_subscription()
             empty = re.compile(worker._consumer.subscribe.call_args.kwargs["pattern"])
             self.assertIsNone(empty.fullmatch("fixture-pg.OddWarehouse.DailyRollup"))
@@ -405,6 +434,22 @@ class CdcOntologyConsumerTests(unittest.IsolatedAsyncioTestCase):
             ]
             pg.fetch_all = AsyncMock(side_effect=[[self.table], published, []])
             if len(published) == 1:
+                await cdc.check_database(pg)
+            else:
+                with self.assertRaisesRegex(cdc.SetupError, "differ from registered"):
+                    await cdc.check_database(pg)
+            pg.execute.assert_not_awaited()
+
+    async def test_readonly_preflight_accepts_schema_publication_only_with_full_registered_parents(self):
+        publication = {**self.publication, "schemas": ["OddWarehouse"]}
+        external = {**self.covered, "relname": "Retired"}
+        for published in ([self.covered, external], [external], [{**self.covered, "full_table": False}]):
+            pg = Pg()
+            pg.fetch_one.side_effect = [
+                {"version": 160000, "wal_level": "logical", "replication": True}, publication, None,
+            ]
+            pg.fetch_all = AsyncMock(side_effect=[[self.table], published, []])
+            if len(published) == 2:
                 await cdc.check_database(pg)
             else:
                 with self.assertRaisesRegex(cdc.SetupError, "differ from registered"):

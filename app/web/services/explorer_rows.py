@@ -9,7 +9,7 @@ from sqlalchemy import text
 from app.etl.schema.catalog_metadata import catalog_parameters
 
 from app.web.services.etl_layers import (
-    INDEX_SANDBOX_SCHEMA, INDEX_SANDBOX_TABLE, ROW_VERSION_SQL, _LINEAGE_METADATA_JOIN,
+    INDEX_SANDBOX_SCHEMA, INDEX_SANDBOX_TABLE, row_version_sql, _LINEAGE_METADATA_JOIN,
     _OBJECT_TABLE_SQL, _object_schema, _required_indexed_preview_tables, _required_preview_family,
     allows_physical_delete, get_etl_layers, quote_identifier, quote_schema_identifier, require_ordinary_table, row_identity_sql,
 )
@@ -150,7 +150,7 @@ async def row_by_key(layer, table, key, *, editable):
         asset = await _asset(session, schema, table)
         projection = "to_jsonb(t)::text, " + row_identity_sql(asset["primary"])
         if editable:
-            projection += ", " + ROW_VERSION_SQL
+            projection += ", " + row_version_sql(session.info["etl_connection_id"], session.info["etl_connection_revision"])
         record = await _source(session, asset, key, projection)
         # Preserve SQL decimal scale and bigint precision at the JavaScript boundary.
         row = json.loads(record[0], parse_float=str, parse_int=_lossless_number)

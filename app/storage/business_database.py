@@ -54,7 +54,7 @@ async def layer_connection_info(*, pg: PostgresClient | None = None) -> dict[str
     with fail_after(12):
         await pg.connect(max_retries=1)
         rows = await pg.fetch_all("""
-            SELECT b.layer, s.id::text AS id, s.name, s.engine, s.config->>'database' AS database
+            SELECT b.layer, s.id::text AS id, s.name, s.engine, s.updated_at, s.config->>'database' AS database
             FROM app.etl_layer_connections b
             JOIN app.ontology_data_connections s ON s.id=b.connection_id
             WHERE s.paused_at IS NULL ORDER BY b.layer

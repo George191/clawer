@@ -20,6 +20,8 @@ from app.logger import get_logger, setup_service_logging
 from app.storage.business_database import BusinessPostgresClient, LayerBindingChanged, layer_binding_lease
 from app.storage.postgres_client import get_pg_client
 from app.syncer.postgres_cdc import (
+    SetupError,
+    check_unrouted_raw_topics,
     internal_cdc_clients,
     postgres_cdc_identity,
     published_cdc_objects,
@@ -42,7 +44,7 @@ class PostgresSyncWorker:
         self._batch_size = batch_size
         self._pg = pg
         self._identity = identity
-        self._topics = {}
+        self._topics = None
         self.group_id = f"{self._identity['prefix']}-relay"
         self._consumer = None
         self._producer = None
@@ -50,7 +52,10 @@ class PostgresSyncWorker:
 
     async def _publish_batch(self, partition, messages) -> None:
         """Publish all derived outputs and the partition offset atomically."""
-        schema, table, layer, data_type = self._topics[partition.topic]
+        route = self._topics.get(partition.topic)
+        if route is None:
+            raise SetupError("Raw topic has no registered ETL route")
+        schema, table, layer, data_type = route
         async with self._producer.transaction():
             for message in messages:
                 event = committed_row(message.value, identity=self._identity, schema_name=schema,
@@ -70,10 +75,13 @@ class PostgresSyncWorker:
                   for (schema, table), (layer, data_type) in objects.items()}
         if topics == self._topics:
             return
-        self._topics = topics
-        alternatives = "|".join(re.escape(topic) for topic in sorted(topics))
+        # Keep existing raw topics assigned even without a route so later
+        # records on them cannot disappear from the relay's view.
+        unrouted = await check_unrouted_raw_topics(self._identity, objects)
+        alternatives = "|".join(re.escape(topic) for topic in sorted(topics.keys() | unrouted))
         pattern = rf"^(?:{alternatives})\Z" if alternatives else r"(?!)"
         self._consumer.subscribe(pattern=consumer_subscription_pattern(pattern))
+        self._topics = topics
 
     async def run(self, bindings) -> None:
         """Consume bounded batches; source messages remain durable during failures."""
@@ -101,7 +109,7 @@ class PostgresSyncWorker:
                     continue
                 batches = await self._consumer.getmany(timeout_ms=1000, max_records=self._batch_size)
                 for partition, messages in batches.items():
-                    if not messages or partition.topic not in self._topics:
+                    if not messages:
                         continue
                     try:
                         async with layer_binding_lease(CDC_LAYERS, expected=bindings):

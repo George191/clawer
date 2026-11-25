@@ -67,12 +67,14 @@ FROM pg_publication p WHERE p.pubname::text COLLATE "C"=:name
 """
 
 _PUBLISHED_SQL = """
-SELECT n.nspname,c.relname,r.prattrs IS NULL AND r.prqual IS NULL AS full_table
-FROM pg_publication_rel r
-JOIN pg_publication p ON p.oid=r.prpubid
-JOIN pg_class c ON c.oid=r.prrelid
-JOIN pg_namespace n ON n.oid=c.relnamespace
-WHERE p.pubname::text COLLATE "C"=:name
+SELECT n.nspname,c.relname,
+       pt.rowfilter IS NULL AND r.prattrs IS NULL AND r.prqual IS NULL AS full_table
+FROM pg_publication_tables pt
+JOIN pg_publication p ON p.pubname=pt.pubname
+JOIN pg_namespace n ON n.nspname=pt.schemaname
+JOIN pg_class c ON c.relnamespace=n.oid AND c.relname=pt.tablename
+LEFT JOIN pg_publication_rel r ON r.prpubid=p.oid AND r.prrelid=c.oid
+WHERE pt.pubname::text COLLATE "C"=:name
 """
 
 _ROW_IMAGES_SQL = """
@@ -127,23 +129,24 @@ def _publication_tables(physical):
                      for key in sorted(physical))
 
 
-def _table_publication(publication):
-    return (publication and publication["pubviaroot"] and publication["publishes_changes"]
-            and not publication["puballtables"] and not publication["schemas"])
+def _check_publication(publication):
+    if not publication or not publication["pubviaroot"] or not publication["publishes_changes"] or publication["puballtables"]:
+        raise SetupError("Prepare an internal CDC publication with full change capture via parent tables")
 
 
 async def published_cdc_objects(pg: BusinessPostgresClient, identity: dict[str, str]) -> dict[tuple[str, str], tuple[str, str]]:
-    """Resolve registered ETL bindings explicitly selected by the internal publication."""
+    """Resolve registered ETL bindings covered by the internal publication."""
     if pg.connection_id != identity["connection_id"]:
         raise SetupError("The ETL connection changed while resolving the CDC publication")
     objects = await registered_cdc_objects(connection_id=identity["connection_id"])
     params = {"name": identity["publication"]}
     async with pg.session() as session:
         publication = (await session.execute(text(_PUBLICATION_SQL), params)).mappings().first()
-        if not _table_publication(publication):
-            raise SetupError("Prepare the internal CDC publication with explicit parent tables first")
+        _check_publication(publication)
         published = (await session.execute(text(_PUBLISHED_SQL), params)).mappings().all()
-        selected = {key: objects[key] for row in published if row["full_table"] and (key := _table_key(row)) in objects}
+        if any(not row["full_table"] for row in published):
+            raise SetupError("The internal CDC publication must include full tables")
+        selected = {key: objects[key] for row in published if (key := _table_key(row)) in objects}
         rows = (await session.execute(text(_PHYSICAL_SQL), _table_parameters(selected))).mappings().all()
     return {key: selected[key] for key in _physical_objects(rows)}
 
@@ -162,11 +165,12 @@ async def ensure_table_publication(pg: BusinessPostgresClient, schema: str, tabl
         if target not in registry or target not in physical:
             raise SetupError("CDC table must be an active registered current ETL parent")
         publication = (await session.execute(text(_PUBLICATION_SQL), params)).mappings().first()
-        if not _table_publication(publication):
-            raise SetupError("Prepare the internal CDC publication with explicit parent tables first")
+        _check_publication(publication)
         published = (await session.execute(text(_PUBLISHED_SQL), params)).mappings().all()
         existing = next((row for row in published if _table_key(row) == target), None)
         if existing is None:
+            if publication["schemas"]:
+                raise SetupError("New ETL tables must be enrolled with the existing schema publication and connector")
             await session.execute(text(f"ALTER PUBLICATION {_identifier(name)} ADD TABLE {_publication_tables(physical)}"))
         elif not existing["full_table"]:
             raise SetupError("The internal CDC publication must include full tables")
@@ -179,12 +183,12 @@ def _missing_lineage(objects, physical):
                 yield key, column
 
 
-async def _check_removed_topics(identity: dict[str, str], physical) -> None:
-    """Gate explicit preparation on the retained backlog outside the new publication."""
+async def check_unrouted_raw_topics(identity: dict[str, str], objects) -> set[str]:
+    """Find existing raw topics without a route and verify their committed boundaries."""
     if not settings.kafka_brokers:
-        raise SetupError("Configure Kafka access before narrowing an existing CDC publication")
+        raise SetupError("Configure Kafka access to verify existing CDC topic boundaries")
     name = identity["prefix"]
-    retained = {f"{name}.{schema}.{table}" for schema, table in physical}
+    retained = {f"{name}.{schema}.{table}" for schema, table in objects}
     admin = AIOKafkaAdminClient(**build_admin_client_kwargs(request_timeout_ms=8000))
     reader = AIOKafkaConsumer(**build_consumer_kwargs(group_id=None, request_timeout_ms=8000))
     try:
@@ -194,25 +198,26 @@ async def _check_removed_topics(identity: dict[str, str], physical) -> None:
             raw_topic = re.compile(rf"{re.escape(name)}\..+\.[^.]+")
             removed = [topic for topic in await admin.list_topics() if raw_topic.fullmatch(topic) and topic not in retained]
             if not removed:
-                return
+                return set()
             descriptions = await admin.describe_topics(removed)
-            if {item["topic"] for item in descriptions if item["partitions"] and not item.get("error_code")} != set(removed):
-                raise SetupError("Cannot verify all removed CDC topic partitions before narrowing the publication")
+            if {item["topic"] for item in descriptions if item["partitions"] and not item.get("error_code")
+                and all(not part.get("error_code") for part in item["partitions"])} != set(removed):
+                raise SetupError("Cannot verify all unrouted CDC topic partitions")
             partitions = [TopicPartition(item["topic"], part["partition"])
                           for item in descriptions for part in item["partitions"]]
             await reader.start()
-            starts, ends, committed = await asyncio.gather(
-                reader.beginning_offsets(partitions), reader.end_offsets(partitions),
-                admin.list_consumer_group_offsets(f"{name}-relay"),
+            ends, committed = await asyncio.gather(
+                reader.end_offsets(partitions), admin.list_consumer_group_offsets(f"{name}-relay"),
             )
             pending = sorted({part.topic for part in partitions
-                              if ends[part] > max(starts[part], committed[part].offset if part in committed else -1)})
+                              if ends[part] != (max(0, committed[part].offset) if part in committed else 0)})
             if pending:
-                raise SetupError(f"Drain CDC backlog before removing {len(pending)} raw topic(s): {', '.join(pending[:10])}")
+                raise SetupError(f"Unverified CDC backlog for {len(pending)} unrouted raw topic(s): {', '.join(pending[:10])}")
+            return set(removed)
     except SetupError:
         raise
     except Exception:
-        raise SetupError("Cannot verify removed CDC topic offsets before narrowing the publication") from None
+        raise SetupError("Cannot verify unrouted CDC topic offsets") from None
     finally:
         await asyncio.gather(reader.stop(), admin.close(), return_exceptions=True)
 
@@ -307,9 +312,13 @@ async def prepare_database(pg: BusinessPostgresClient) -> None:
         if publication and publication["puballtables"]:
             raise SetupError("The internal CDC publication cannot be a FOR ALL TABLES publication")
         if publication:
-            # Renames preserve publication membership via relation OID, so even
-            # matching catalog membership does not prove the old raw topics drained.
-            await _check_removed_topics(identity, physical)
+            if publication["schemas"]:
+                raise SetupError("Changing schema publication coverage requires a coordinated CDC cutover")
+            existing = (await session.execute(text(_PUBLISHED_SQL), params)).mappings().all()
+            if {_table_key(row) for row in existing} - physical.keys():
+                raise SetupError("Removing published tables requires a coordinated CDC cutover")
+            # Relation OIDs survive renames, so check historical topics as well as membership.
+            await check_unrouted_raw_topics(identity, physical)
         for key, column in _missing_lineage(objects, physical):
             await session.execute(text(
                 f"ALTER TABLE {_table_list([key])} ADD COLUMN {_identifier(column)} TEXT"
@@ -317,15 +326,6 @@ async def prepare_database(pg: BusinessPostgresClient) -> None:
         if publication:
             if physical:
                 await session.execute(text(f"ALTER PUBLICATION {publication_name} SET TABLE {_publication_tables(physical)}"))
-            else:
-                existing = (await session.execute(text(_PUBLISHED_SQL), params)).mappings().all()
-                if existing:
-                    await session.execute(text(
-                        f"ALTER PUBLICATION {publication_name} DROP TABLE {_table_list(map(_table_key, existing))}"
-                    ))
-                if publication["schemas"]:
-                    schemas = ", ".join(sql_identifier(schema, schema=True) for schema in publication["schemas"])
-                    await session.execute(text(f"ALTER PUBLICATION {publication_name} DROP TABLES IN SCHEMA {schemas}"))
             await session.execute(text(
                 f"ALTER PUBLICATION {publication_name} SET (publish_via_partition_root=true, publish='insert, update, delete, truncate')"
             ))
@@ -357,12 +357,14 @@ async def check_database(
     if server["wal_level"] != "logical" or (require_replication and not server["replication"]):
         raise SetupError("Postgres CDC requires wal_level=logical and a replication-enabled account")
     params = {"name": identity["publication"]}
-    if not _table_publication(await pg.fetch_one(_PUBLICATION_SQL, params)):
-        raise SetupError("Prepare the internal CDC publication with explicit parent tables first")
+    publication = await pg.fetch_one(_PUBLICATION_SQL, params)
+    _check_publication(publication)
     objects = await registered_cdc_objects(connection_id=identity["connection_id"])
     physical = _physical_objects(await pg.fetch_all(_PHYSICAL_SQL, _table_parameters(objects)))
     published = await pg.fetch_all(_PUBLISHED_SQL, params)
-    if any(not row["full_table"] for row in published) or {_table_key(row) for row in published} != physical.keys():
+    covered = {_table_key(row) for row in published}
+    if (any(not row["full_table"] for row in published) or physical.keys() - covered
+            or (not publication["schemas"] and covered != physical.keys())):
         raise SetupError("CDC publication tables differ from registered current ETL parents")
     rows = await pg.fetch_all(_ROW_IMAGES_SQL, {"parents": [row["oid"] for row in physical.values()]})
     if any(not row["full_identity"] or not row["can_select"] for row in rows):
@@ -417,6 +419,10 @@ async def _run(args: argparse.Namespace) -> list[tuple[str, dict[str, str], bool
             slot_exists = await check_database(pg, require_replication=not args.prepare)
             identity = await postgres_cdc_identity(pg)
             mode = "no_data" if args.check or args.prepare else args.snapshot_mode
+            if not (args.check or args.prepare):
+                publication = await pg.fetch_one(_PUBLICATION_SQL, {"name": identity["publication"]})
+                if publication["schemas"]:
+                    raise SetupError("Keep the existing connector configuration for schema publications. Use --check.")
             snapshot_tables = await published_cdc_objects(pg, identity) if mode == "initial" else ()
             config = connector_config(pg, identity, snapshot_mode=mode, snapshot_tables=snapshot_tables)
             configs.append((identity["connector"], config, slot_exists))

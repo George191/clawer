@@ -33,7 +33,7 @@ from app.web.services.etl_layers import (
     INDEX_SANDBOX_SCHEMA,
     INDEX_SANDBOX_TABLE,
     RESERVED_BATCH_TARGET,
-    ROW_VERSION_SQL,
+    row_version_sql,
     allows_physical_delete,
     get_etl_layers,
     is_ordinary_schema,
@@ -696,42 +696,59 @@ class EtlWorkspace:
                 imported = len(list(rows.mappings()))
             return {"ids": await self._favorite_ids(session, user_id), "imported": imported, "skipped": skipped}
 
+    @asynccontextmanager
+    async def _row_write_sessions(self, schema: str, table: str, connection_id: str):
+        # The business commit must finish before a concurrent layer rebind can proceed.
+        async with self._session() as session:
+            await session.execute(text("SET LOCAL lock_timeout='2s'"))
+            matches = (await session.execute(text("""
+                SELECT s.updated_at FROM app.ontology_objects o
+                JOIN app.etl_layer_connections b ON b.layer = o.layer
+                JOIN app.ontology_data_connections s ON s.id = b.connection_id
+                WHERE s.paused_at IS NULL AND o.is_active AND o.schema_name = :schema AND o.table_name = :table
+                  AND b.connection_id = CAST(:connection_id AS uuid)
+                FOR SHARE OF o, b, s
+            """), {"schema": schema, "table": table, "connection_id": connection_id})).scalars().all()
+            if len(matches) != 1:
+                raise HTTPException(409, "The row's data connection changed. Reload the preview before saving.")
+            async with self._session(business=True, schema=schema, table=table, connection_id=connection_id) as catalog:
+                yield session, catalog, matches[0]
+
     async def _write_row(self, layer: str, table: str, payload: dict[str, Any], delete: bool) -> dict[str, Any]:
         schema = resolve_schema(layer)
         require_ordinary_table(schema, table)
         if (schema, table) == (INDEX_SANDBOX_SCHEMA, INDEX_SANDBOX_TABLE):
             raise HTTPException(404, "Table does not exist in this schema")
-        connection_id = await self._layers.selected_connection_id(schema, table)
-        if delete and not await allows_physical_delete(schema, table, connection_id=connection_id):
-            raise HTTPException(409, "CDC current tables require business soft deletion; physical deletion propagation is unavailable")
-        qualified = f"{quote_schema_identifier(schema)}.{quote_identifier(table)}"
-        columns = await self._layers.columns(schema, table, connection_id=connection_id, include_hidden=True)
-        primary = [column["name"] for column in columns if column.get("primary")]
-        key = payload.get("key")
-        if not primary:
-            raise HTTPException(409, "Rows without a primary key cannot be edited or deleted")
-        if not isinstance(key, dict) or set(key) != set(primary) or any(value is None for value in key.values()):
-            _bad("The complete primary key is required")
-        changes = payload.get("changes", payload.get("values"))
         version = payload.get("expectedVersion")
-        if not isinstance(version, str) or not re.fullmatch(r"[0-9a-f]{64}", version):
-            raise HTTPException(428, "Reload the row before editing or deleting it")
-        known = {column["name"] for column in columns}
-        if not delete and (not isinstance(changes, dict) or not changes or set(changes) - known):
-            _bad("Provide changes for known columns")
-        # json_populate_record converts JSON strings to native dates, UUIDs, arrays and JSON values.
-        predicate = " AND ".join(f"t.{quote_identifier(name)} = k.{quote_identifier(name)}" for name in primary)
-        predicate += f" AND {ROW_VERSION_SQL} = :version"
-        source = f"jsonb_populate_record(NULL::{qualified}, CAST(:key AS jsonb)) AS k"
-        if delete:
-            sql = f"DELETE FROM {qualified} AS t USING {source} WHERE {predicate} RETURNING to_jsonb(t) AS row"
-        else:
-            assignments = ", ".join(f"{quote_identifier(name)} = v.{quote_identifier(name)}" for name in changes)
-            sql = f"UPDATE {qualified} AS t SET {assignments} FROM {source}, jsonb_populate_record(NULL::{qualified}, CAST(:changes AS jsonb)) AS v WHERE {predicate} RETURNING to_jsonb(t) AS row"
-        async with self._session() as session, self._session(
-            business=True, schema=schema, table=table, connection_id=connection_id,
-        ) as catalog_session:
-            await session.execute(text("SET LOCAL lock_timeout='2s'"))
+        token_pattern = r"([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}):[0-9a-f]{64}"
+        match = re.fullmatch(token_pattern, version) if isinstance(version, str) else None
+        if not match:
+            raise HTTPException(428, "Reload the row to obtain its current data connection and version")
+        connection_id = match[1]
+        async with self._row_write_sessions(schema, table, connection_id) as (session, catalog_session, revision):
+            if delete and not await allows_physical_delete(schema, table, connection_id=connection_id):
+                raise HTTPException(409, "CDC current tables require business soft deletion; physical deletion propagation is unavailable")
+            qualified = f"{quote_schema_identifier(schema)}.{quote_identifier(table)}"
+            columns = await self._layers.columns(schema, table, connection_id=connection_id, include_hidden=True)
+            primary = [column["name"] for column in columns if column.get("primary")]
+            key = payload.get("key")
+            if not primary:
+                raise HTTPException(409, "Rows without a primary key cannot be edited or deleted")
+            if not isinstance(key, dict) or set(key) != set(primary) or any(value is None for value in key.values()):
+                _bad("The complete primary key is required")
+            changes = payload.get("changes", payload.get("values"))
+            known = {column["name"] for column in columns}
+            if not delete and (not isinstance(changes, dict) or not changes or set(changes) - known):
+                _bad("Provide changes for known columns")
+            # json_populate_record converts JSON strings to native dates, UUIDs, arrays and JSON values.
+            predicate = " AND ".join(f"t.{quote_identifier(name)} = k.{quote_identifier(name)}" for name in primary)
+            predicate += f" AND ({row_version_sql(connection_id, revision)}) = :version"
+            source = f"jsonb_populate_record(NULL::{qualified}, CAST(:key AS jsonb)) AS k"
+            if delete:
+                sql = f"DELETE FROM {qualified} AS t USING {source} WHERE {predicate} RETURNING to_jsonb(t) AS row"
+            else:
+                assignments = ", ".join(f"{quote_identifier(name)} = v.{quote_identifier(name)}" for name in changes)
+                sql = f"UPDATE {qualified} AS t SET {assignments} FROM {source}, jsonb_populate_record(NULL::{qualified}, CAST(:changes AS jsonb)) AS v WHERE {predicate} RETURNING to_jsonb(t) AS row"
             await catalog_session.execute(text("SET LOCAL lock_timeout='2s'"))
             if delete or set(changes).intersection(primary):
                 from app.web.services.ontology_object_links import protect_linked_row
