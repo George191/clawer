@@ -8,7 +8,7 @@
 - metrics.py: 监控指标
 
 数据流:
-    ts_rds.rds_<table> → EsSyncWorker → Elasticsearch index
+    已注册的 RDS 对象 → EsSyncWorker → Elasticsearch index
 
 增量同步:
     通过 updated_at 水位线跟踪同步进度，每次只同步新增/修改的记录。

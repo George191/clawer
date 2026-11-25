@@ -11,12 +11,12 @@ from app.etl.schema.catalog_metadata import catalog_parameters
 from app.web.services.etl_layers import (
     INDEX_SANDBOX_SCHEMA, INDEX_SANDBOX_TABLE, ROW_VERSION_SQL, _LINEAGE_METADATA_JOIN,
     _OBJECT_TABLE_SQL, _object_schema, _required_indexed_preview_tables, _required_preview_family,
-    allows_physical_delete, get_etl_layers, quote_identifier, require_ordinary_table, row_identity_sql,
+    allows_physical_delete, get_etl_layers, quote_identifier, quote_schema_identifier, require_ordinary_table, row_identity_sql,
 )
 
 
 def _name(schema, table):
-    return f"{quote_identifier(schema)}.{quote_identifier(table)}"
+    return f"{quote_schema_identifier(schema)}.{quote_identifier(table)}"
 
 
 async def _asset(session, schema, table):
@@ -145,7 +145,7 @@ async def _limits(session):
 
 async def row_by_key(layer, table, key, *, editable):
     schema = _object_schema(layer)
-    async with get_etl_layers().session(repeatable_read=True) as session:
+    async with get_etl_layers().session(repeatable_read=True, schema=schema, table=table) as session:
         await _limits(session)
         asset = await _asset(session, schema, table)
         projection = "to_jsonb(t)::text, " + row_identity_sql(asset["primary"])
@@ -171,7 +171,7 @@ async def row_by_key(layer, table, key, *, editable):
                   "columnTypes": {k: v["type"] for k, v in asset["columns"].items()},
                   "columnNullable": {k: v["nullable"] for k, v in asset["columns"].items()}}
         if editable:
-            result.update(rowVersion=record[2], rowActions={"edit": True, "delete": allows_physical_delete(schema)})
+            result.update(rowVersion=record[2], rowActions={"edit": True, "delete": await allows_physical_delete(schema, table)})
         return result
 
 

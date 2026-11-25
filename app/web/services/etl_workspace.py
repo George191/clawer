@@ -18,8 +18,9 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
+from app.etl.schema.catalog_metadata import catalog_logical_layers
 from app.etl.schema.object_relations import relation_mapping, validate_definition
-from app.etl.schema.ontology import resource_group, sync_object_metadata
+from app.etl.schema.ontology import sync_object_metadata
 from app.storage.postgres_client import get_pg_client
 from app.storage.business_database import BusinessDatabaseNotConfigured, get_business_pg_client
 from app.web.api.models.push_inbox_apply import PUSH_APPLY_SCHEMA
@@ -29,11 +30,16 @@ from app.web.services.snapshot_intent_scope import SNAPSHOT_INTENT_PRIVATE_SCHEM
 from app.web.core.config import settings as web_settings
 from app.web.services.etl_layers import (
     EtlLayers,
-    LAYERS,
+    INDEX_SANDBOX_SCHEMA,
+    INDEX_SANDBOX_TABLE,
     RESERVED_BATCH_TARGET,
     ROW_VERSION_SQL,
     allows_physical_delete,
     get_etl_layers,
+    is_ordinary_schema,
+    ordinary_schema_sql,
+    quote_schema_identifier,
+    ordinary_table_sql,
     require_ordinary_table,
     reserved_batch_target_exists,
 )
@@ -162,7 +168,7 @@ def build_table_statements(schema: str, payload: dict[str, Any]) -> list[str]:
     if "foreignKeys" in payload:
         _bad("Physical foreign keys are not supported; define ontology relations instead")
     table = payload.get("name", "")
-    qualified = f"{quote_identifier(schema)}.{quote_identifier(table)}"
+    qualified = f"{quote_schema_identifier(schema)}.{quote_identifier(table)}"
     options = payload.get("options") or {}
     if not isinstance(options, dict) or any(value for key, value in options.items() if key != "comment"):
         _bad("MySQL table options are not supported by PostgreSQL")
@@ -234,7 +240,7 @@ def build_table_statements(schema: str, payload: dict[str, Any]) -> list[str]:
         columns = ", ".join(map(quote_identifier, fields_in_index))
         statements.append(f"CREATE {'UNIQUE ' if index.get('unique') else ''}INDEX {name} ON {qualified} USING {method} ({columns})")
         if index.get("comment"):
-            comments.append(f"COMMENT ON INDEX {quote_identifier(schema)}.{name} IS {_literal(index['comment'])}")
+            comments.append(f"COMMENT ON INDEX {quote_schema_identifier(schema)}.{name} IS {_literal(index['comment'])}")
     description = payload.get("description") or options.get("comment")
     if description:
         comments.append(f"COMMENT ON TABLE {qualified} IS {_literal(description)}")
@@ -286,7 +292,7 @@ CREATE TABLE IF NOT EXISTS app.flow_publications (
     created_at timestamptz NOT NULL DEFAULT now()
 )
 """
-_PIPELINE_SCHEMAS = {"ts_meta", *(schema for layer in LAYERS for schema in (f"ts_{layer}", f"ts_{layer}_hist"))}
+_PIPELINE_LAYERS = ("rds", "ods", "task", "dwd", "dws", "dim", "ads")
 
 
 class EtlWorkspace:
@@ -296,14 +302,24 @@ class EtlWorkspace:
         self._layers = get_etl_layers()
 
     @asynccontextmanager
-    async def _session(self, *, business=False):
+    async def _session(self, *, business=False, schema=None, table=None, connection_id=None, logical_layer=None):
         try:
             with fail_after(12):
-                pg = self._business_pg if business else self._pg
-                await pg.connect(max_retries=1)
-                async with pg.session() as session:
-                    await session.execute(text("SET LOCAL statement_timeout = '10s'"))
-                    yield session
+                if business and (schema is not None or logical_layer is not None or connection_id is not None):
+                    pg, layers = await self._layers.scoped_postgres(
+                        schema, table, connection_id=connection_id, logical_layer=logical_layer,
+                    )
+                else:
+                    pg, layers = (self._business_pg if business else self._pg), None
+                token = catalog_logical_layers.set(layers) if business else None
+                try:
+                    await pg.connect(max_retries=1)
+                    async with pg.session() as session:
+                        await session.execute(text("SET LOCAL statement_timeout = '10s'"))
+                        yield session
+                finally:
+                    if token is not None:
+                        catalog_logical_layers.reset(token)
         except HTTPException:
             raise
         except BusinessDatabaseNotConfigured as error:
@@ -333,20 +349,35 @@ class EtlWorkspace:
         if result.scalar_one_or_none() is None:
             raise HTTPException(404, "Schema not found")
 
+    @staticmethod
+    async def _require_schema_write_scope(session, schema: str) -> None:
+        layers = catalog_logical_layers.get()
+        if layers is None:
+            return
+        conflict = await session.scalar(text("""SELECT EXISTS (
+            SELECT 1 FROM app.ontology_objects WHERE schema_name = :schema
+              AND NOT (layer = ANY(CAST(:layers AS text[])))
+        )"""), {"schema": schema, "layers": list(layers)})
+        if conflict:
+            raise HTTPException(409, "The schema name is recorded on another connection; its references are ambiguous")
+
     async def connections(self) -> list[dict[str, Any]]:
-        async with self._session(business=True) as catalog_session:
-            database = (await catalog_session.execute(text("SELECT current_database()"))).scalar_one()
-            schemas = list((await catalog_session.execute(text(
-                "SELECT nspname FROM pg_namespace WHERE left(nspname,3)='ts_' AND nspname<>:reserved ORDER BY nspname"
-            ), {"reserved": PUSH_APPLY_SCHEMA})).scalars())
+        database = await self._layers.database_name()
         async with self._session() as session:
             if await self._exists(session, "flow_connections"):
                 result = await session.execute(text('SELECT id, name, database_name AS database, schemas FROM app.flow_connections WHERE database_name=:database ORDER BY name'), {"database": database})
                 rows = [dict(row) for row in result.mappings()]
+                requested = sorted({schema for row in rows for schema in row["schemas"] if is_ordinary_schema(schema)})
+                async with self._session(business=True) as catalog_session:
+                    result = await catalog_session.execute(text(f"""SELECT nspname FROM pg_namespace n
+                        WHERE nspname = ANY(CAST(:schemas AS text[])) AND {ordinary_schema_sql()}
+                    """), {"schemas": requested})
+                    accessible = set(result.scalars())
                 for row in rows:
-                    row["schemas"] = [schema for schema in row["schemas"] if schema not in (PUSH_APPLY_SCHEMA, HANDOFF_PRIVATE_SCHEMA, SNAPSHOT_INTENT_PRIVATE_SCHEMA, BATCH_RANGE_SOURCE_SCHEMA)]
+                    row["schemas"] = [schema for schema in row["schemas"] if schema in accessible]
                 return rows
-            return [{"id": "warehouse", "name": "Business database", "database": database, "schemas": schemas}]
+        schemas = [row["schemaName"] for row in await self._layers.layers()]
+        return [{"id": "warehouse", "name": "Business database", "database": database, "schemas": schemas}]
 
     async def save_connection(self, payload: dict[str, Any], connection_id: str | None = None) -> dict[str, Any]:
         name = str(payload.get("name", "")).strip()
@@ -358,13 +389,16 @@ class EtlWorkspace:
         if len(schemas) != len(set(schemas)):
             _bad("Schemas must be a list of distinct names")
         schemas = [resolve_schema(schema) for schema in schemas]
-        async with self._session() as session, self._session(business=True) as catalog_session:
+        connection, _ = await self._layers.connection_scope()
+        async with self._session() as session, self._session(
+            business=True, connection_id=str(connection["id"]),
+        ) as catalog_session:
             result = await catalog_session.execute(text("SELECT current_database()"))
             database = result.scalar_one()
             if payload.get("database") != database:
                 _bad("Select the business database through Data Connections")
             for schema in schemas:
-                await catalog_session.execute(text(f"CREATE SCHEMA IF NOT EXISTS {quote_identifier(schema)}"))
+                await catalog_session.execute(text(f"CREATE SCHEMA IF NOT EXISTS {quote_schema_identifier(schema)}"))
             await session.execute(text(_CONNECTION_DDL))
             identifier = connection_id or str(uuid.uuid4())
             if connection_id and connection_id != "configured":
@@ -395,16 +429,18 @@ class EtlWorkspace:
     async def rename_schema(self, layer: str, payload: dict[str, Any]) -> dict[str, Any]:
         schema = resolve_schema(layer)
         target = resolve_schema(payload.get("name") or schema)
-        if target != schema and schema in _PIPELINE_SCHEMAS:
-            raise HTTPException(409, "Pipeline schemas cannot be renamed; set an alias instead")
         if not any(key in payload for key in ("name", "alias")):
             _bad("Provide a schema name or alias")
         alias = payload.get("alias")
         if alias is not None and (not isinstance(alias, str) or len(alias) > 200):
             _bad("Schema alias must be a string of at most 200 characters")
-        async with self._session() as session, self._session(business=True) as catalog_session:
+        async with self._session() as session, self._session(business=True, schema=schema) as catalog_session:
             await self._schema_exists(catalog_session, schema)
             if target != schema:
+                await self._require_schema_write_scope(session, schema)
+                await self._require_schema_write_scope(session, target)
+                if await self._pipeline_schema(session, schema):
+                    raise HTTPException(409, "Pipeline schemas cannot be renamed; set an alias instead")
                 if schema == RESERVED_BATCH_TARGET[0] and await reserved_batch_target_exists(catalog_session):
                     raise HTTPException(409, "The schema contains a reserved synthetic batch target")
                 managed = await session.execute(text("""
@@ -413,15 +449,11 @@ class EtlWorkspace:
                 """), {"schema": schema})
                 if managed.scalar_one_or_none() is not None:
                     raise HTTPException(409, "Schemas with managed object DDL cannot be renamed; set an alias instead")
-                await catalog_session.execute(text(f"ALTER SCHEMA {quote_identifier(schema)} RENAME TO {quote_identifier(target)}"))
-                target_layer = target[3:].removesuffix("_hist")
+                await catalog_session.execute(text(f"ALTER SCHEMA {quote_schema_identifier(schema)} RENAME TO {quote_schema_identifier(target)}"))
                 await session.execute(text("""
-                    UPDATE app.ontology_objects SET schema_name = :target, layer = :layer,
-                        table_role = :table_role, resource_group = :resource_group,
+                    UPDATE app.ontology_objects SET schema_name = :target,
                         updated_at = now() WHERE schema_name = :schema
-                """), {"schema": schema, "target": target, "layer": target_layer,
-                    "table_role": "history" if target.endswith("_hist") else "current",
-                    "resource_group": resource_group(target_layer)})
+                """), {"schema": schema, "target": target})
                 for side in ("source", "target"):
                     await session.execute(text(f"""
                         UPDATE app.ontology_object_relations SET {side}_schema = :target,
@@ -439,18 +471,19 @@ class EtlWorkspace:
                         ) WHERE schemas @> CAST(:old AS jsonb)
                     """), {"schema": schema, "target": target, "old": _json([schema])})
             if alias is not None:
-                await catalog_session.execute(text(f"COMMENT ON SCHEMA {quote_identifier(target)} IS {_literal(alias)}".replace(":", r"\:")))
+                await catalog_session.execute(text(f"COMMENT ON SCHEMA {quote_schema_identifier(target)} IS {_literal(alias)}".replace(":", r"\:")))
         return {"key": target, "name": target, "alias": alias}
 
     async def delete_schema(self, layer: str) -> dict[str, Any]:
         schema = resolve_schema(layer)
-        if schema in _PIPELINE_SCHEMAS:
-            raise HTTPException(409, "Pipeline schemas cannot be deleted")
-        async with self._session() as session, self._session(business=True) as catalog_session:
+        async with self._session() as session, self._session(business=True, schema=schema) as catalog_session:
             await self._schema_exists(catalog_session, schema)
+            await self._require_schema_write_scope(session, schema)
+            if await self._pipeline_schema(session, schema):
+                raise HTTPException(409, "Pipeline schemas cannot be deleted")
             if schema == RESERVED_BATCH_TARGET[0] and await reserved_batch_target_exists(catalog_session):
                 raise HTTPException(409, "The schema contains a reserved synthetic batch target")
-            await catalog_session.execute(text(f"DROP SCHEMA {quote_identifier(schema)} RESTRICT"))
+            await catalog_session.execute(text(f"DROP SCHEMA {quote_schema_identifier(schema)} RESTRICT"))
             await session.execute(text("DELETE FROM app.ontology_object_relations WHERE source_schema = :schema OR target_schema = :schema"), {"schema": schema})
             await session.execute(text("DELETE FROM app.ontology_objects WHERE schema_name = :schema"), {"schema": schema})
             if await self._exists(session, "flow_publications"):
@@ -461,29 +494,67 @@ class EtlWorkspace:
                 await session.execute(text("UPDATE app.flow_connections SET schemas = schemas - :schema"), {"schema": schema})
         return {"deleted": True, "name": schema}
 
+    @staticmethod
+    async def _pipeline_schema(session, schema: str) -> bool:
+        result = await session.execute(text("""SELECT EXISTS (
+            SELECT 1 FROM app.ontology_objects
+            WHERE schema_name = :schema AND is_active AND layer = ANY(CAST(:layers AS text[]))
+        )"""), {"schema": schema, "layers": _PIPELINE_LAYERS})
+        return bool(result.scalar_one())
+
     async def create_table(self, layer: str, payload: dict[str, Any]) -> dict[str, Any]:
         schema = resolve_schema(layer)
         require_ordinary_table(schema, payload.get("name"))
+        if (schema, payload.get("name")) == (INDEX_SANDBOX_SCHEMA, INDEX_SANDBOX_TABLE):
+            raise HTTPException(404, "Table does not exist in this schema")
         data_type = payload.get("dataType")
         if not isinstance(data_type, str) or not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", data_type):
             _bad("Data type must be a lowercase identifier of 1 to 63 characters")
+        logical_layer = payload.get("logicalLayer", "other")
+        if not isinstance(logical_layer, str) or not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", logical_layer):
+            _bad("Logical layer must be a lowercase identifier")
+        table_role = payload.get("tableRole", "current")
+        if table_role not in ("current", "history"):
+            _bad("Table role must be current or history")
+        connection_id = payload.get("connectionId")
+        if connection_id is not None:
+            try:
+                connection_id = str(uuid.UUID(connection_id))
+            except (AttributeError, TypeError, ValueError):
+                _bad("Select a valid data connection")
         statements = build_table_statements(schema, payload)
         relations = table_relations(schema, payload)
-        async with self._session() as session, self._session(business=True) as catalog_session:
-            await self._schema_exists(catalog_session, schema)
-            for statement in statements:
-                await catalog_session.execute(text(statement.replace(":", r"\:")))
-            await sync_object_metadata(session, schema, payload["name"], catalog_session=catalog_session,
-                data_type=data_type, data_type_source="registration",
-                provenance="flow:create_table", description=payload.get("description") or (payload.get("options") or {}).get("comment"),
-                ddl_sql=";\n".join(statements) + ";\n")
-            if relations:
-                await self._create_relations(session, relations, catalog_session=catalog_session)
-        return await self._layers.get_table(schema, payload["name"])
+        connection, _ = await self._layers.connection_scope(connection_id=connection_id, logical_layer=logical_layer)
+        connection_id = str(connection["id"])
+        async with self._session() as session:
+            binding = await session.scalar(text("""SELECT connection_id::text FROM app.etl_layer_connections
+                WHERE layer = :layer FOR SHARE
+            """), {"layer": logical_layer})
+            if binding != connection_id:
+                raise HTTPException(409, "The layer data connection changed. Reload the schema and try again.")
+            async with self._session(business=True, logical_layer=logical_layer, connection_id=connection_id) as catalog_session:
+                await self._schema_exists(catalog_session, schema)
+                for statement in statements:
+                    await catalog_session.execute(text(statement.replace(":", r"\:")))
+                await sync_object_metadata(session, schema, payload["name"], catalog_session=catalog_session,
+                    layer=logical_layer, table_role=table_role, data_type=data_type, data_type_source="registration",
+                    provenance="flow:create_table", description=payload.get("description") or (payload.get("options") or {}).get("comment"),
+                    ddl_sql=";\n".join(statements) + ";\n")
+                if relations:
+                    await self._create_relations(session, relations, catalog_session=catalog_session)
+        return await self._layers.get_table(schema, payload["name"], connection_id=connection_id)
 
     async def _create_relations(self, session, rows: list[dict[str, Any]], *, catalog_session) -> None:
         await session.execute(text("SELECT pg_advisory_xact_lock(hashtext('app.ontology_object_relations'))"))
         targets: dict[tuple[str, str], set[str]] = {}
+        endpoints = {(row[f"{side}_schema"], row[f"{side}_table"])
+                     for row in rows for side in ("source", "target")}
+        for schema, table in endpoints:
+            count = await session.scalar(text("""SELECT count(*) FROM app.ontology_objects
+                WHERE schema_name = :schema AND table_name = :table AND is_active
+            """), {"schema": schema, "table": table})
+            if count > 1:
+                raise HTTPException(409, "The selected relationship endpoint has conflicting Ontology objects")
         for row in rows:
             target = (row["target_schema"], row["target_table"])
             require_ordinary_table(*target)
@@ -492,13 +563,13 @@ class EtlWorkspace:
                     FROM app.ontology_objects o
                     JOIN app.ontology_object_properties p ON p.object_id = o.id
                     WHERE o.is_active AND o.schema_name = :schema AND o.table_name = :table
-                """), {"schema": target[0], "table": target[1]})
+                      AND (CAST(:layers AS text[]) IS NULL OR o.layer = ANY(CAST(:layers AS text[])))
+                """), {"schema": target[0], "table": target[1], "layers": catalog_logical_layers.get()})
                 registered = {item["name"] for item in result.mappings()}
-                physical = await catalog_session.execute(text("""SELECT a.attname AS name
+                physical = await catalog_session.execute(text(f"""SELECT a.attname AS name
                     FROM pg_namespace n JOIN pg_class c ON c.relnamespace=n.oid
                     JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped
-                    WHERE n.nspname=:schema AND c.relname=:table AND c.relkind IN ('r','p')
-                      AND NOT c.relispartition AND NOT EXISTS(SELECT 1 FROM pg_inherits i WHERE i.inhrelid=c.oid)
+                    WHERE n.nspname=:schema AND c.relname=:table AND {ordinary_table_sql()}
                 """), {"schema": target[0], "table": target[1]})
                 targets[target] = registered & {item["name"] for item in physical.mappings()}
             if not targets[target] or not set(row["target_fields"]).issubset(targets[target]):
@@ -529,62 +600,42 @@ class EtlWorkspace:
     async def set_object_visibility(self, layer: str, table: str, visibility: str, actor: str) -> dict[str, Any]:
         schema = resolve_schema(layer)
         quote_identifier(table)
-        if schema in {"ts_meta", "ts_meta_hist"}:
-            raise HTTPException(404, "Schema not found")
         if visibility not in {"normal", "prominent", "hidden"}:
             _bad("Invalid object type visibility")
         async with self._session() as session:
             await EtlLayers._require_ontology(session)
-            metadata = await self._ontology_object(session, schema, table, "flow:visibility")
+            metadata = await self._ontology_object(session, schema, table)
             await session.execute(text("""UPDATE app.ontology_objects
                 SET visibility = :visibility, updated_by = :actor, updated_at = now()
                 WHERE id = :id"""), {"visibility": visibility, "actor": actor, "id": metadata["id"]})
         return {"schema": schema, "table": table, "visibility": visibility}
 
-    async def _ontology_object(self, session, schema: str, table: str, provenance: str, *, allow_missing=False, catalog_session=None):
-        if catalog_session is None:
-            async with self._layers.session() as catalog_session:
-                return await self._ontology_object(session, schema, table, provenance,
-                    allow_missing=allow_missing, catalog_session=catalog_session)
-        identity = {"schema": schema, "table": table}
+    async def _ontology_object(self, session, schema: str, table: str, *, allow_missing=False):
         require_ordinary_table(schema, table)
-        physical = (await catalog_session.execute(text("""SELECT c.oid
-                FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-                WHERE n.nspname = :schema AND c.relname = :table AND c.relkind IN ('r','p')
-                  AND NOT c.relispartition
-                  AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = c.oid)
-        """), identity)).mappings().first()
-        if not physical:
+        records = (await session.execute(text("""SELECT id FROM app.ontology_objects
+            WHERE schema_name = :schema AND table_name = :table AND is_active FOR UPDATE
+        """), {"schema": schema, "table": table})).mappings().all()
+        if not records:
             if allow_missing:
                 return None
             raise HTTPException(404, "Table does not exist in this schema")
-        metadata = (await session.execute(text("""SELECT id, is_active FROM app.ontology_objects
-            WHERE schema_name = :schema AND table_name = :table FOR UPDATE"""), identity)).mappings().first()
-        if not metadata or not metadata["is_active"]:
-            try:
-                metadata = await sync_object_metadata(
-                    session, schema, table, catalog_session=catalog_session, provenance=provenance,
-                )
-            except ValueError as error:
-                raise HTTPException(404, "Table does not exist in this schema") from error
-            await session.execute(text("UPDATE app.ontology_objects SET is_active = TRUE WHERE id = :id"),
-                                  {"id": metadata["id"]})
-        return metadata
+        if len(records) != 1:
+            raise HTTPException(409, "The selected physical table has conflicting Ontology objects")
+        return records[0]
 
     @staticmethod
     def _favorite_identity(layer: str, table: str) -> str:
         schema = resolve_schema(layer)
         require_ordinary_table(schema, table)
         quote_identifier(table)
-        if schema in {"ts_meta", "ts_meta_hist"}:
-            raise HTTPException(404, "Schema not found")
         return schema
 
     @staticmethod
     async def _favorite_ids(session, user_id: str) -> list[str]:
         rows = await session.execute(text("""SELECT o.schema_name || '.' || o.table_name AS id
             FROM app.ontology_object_favorites f JOIN app.ontology_objects o ON o.id = f.object_id
-            WHERE f.user_id = CAST(:user_id AS uuid) AND o.schema_name NOT IN (:push_schema, :handoff_schema, :intent_schema)
+            WHERE f.user_id = CAST(:user_id AS uuid) AND o.is_active
+              AND o.schema_name NOT IN (:push_schema, :handoff_schema, :intent_schema)
               AND NOT (o.schema_name = :batch_schema AND o.table_name IN (:batch_target, :batch_range_target))
             ORDER BY o.schema_name, o.table_name"""),
             {"user_id": user_id, "batch_schema": RESERVED_BATCH_TARGET[0], "batch_target": RESERVED_BATCH_TARGET[1],
@@ -601,16 +652,15 @@ class EtlWorkspace:
         schema = self._favorite_identity(layer, table)
         async with self._session() as session:
             await EtlLayers._require_ontology(session)
+            metadata = await self._ontology_object(session, schema, table, allow_missing=not favorite)
             if favorite:
-                metadata = await self._ontology_object(session, schema, table, "flow:favorite")
                 await session.execute(text("""INSERT INTO app.ontology_object_favorites (user_id, object_id)
                     VALUES (CAST(:user_id AS uuid), :object_id) ON CONFLICT (user_id, object_id) DO NOTHING"""),
                     {"user_id": user_id, "object_id": metadata["id"]})
-            else:
+            elif metadata:
                 await session.execute(text("""DELETE FROM app.ontology_object_favorites
-                    WHERE user_id = CAST(:user_id AS uuid) AND object_id IN (
-                        SELECT id FROM app.ontology_objects WHERE schema_name = :schema AND table_name = :table)"""),
-                    {"user_id": user_id, "schema": schema, "table": table})
+                    WHERE user_id = CAST(:user_id AS uuid) AND object_id = :object_id"""),
+                    {"user_id": user_id, "object_id": metadata["id"]})
         return {"id": f"{schema}.{table}", "favorite": favorite}
 
     async def import_object_favorites(self, ids: list[str], user_id: str) -> dict[str, Any]:
@@ -618,9 +668,9 @@ class EtlWorkspace:
         if len(ids) > 200:
             _bad("At most 200 favorite identifiers are supported")
         for identifier in sorted(set(ids)):
-            parts = identifier.split(".")
+            parts = identifier.rsplit(".", 1)
             try:
-                if len(parts) != 2 or not parts[0].startswith("ts_"):
+                if len(parts) != 2:
                     _bad("Invalid favorite object identifier")
                 schema = self._favorite_identity(*parts)
             except HTTPException:
@@ -631,7 +681,7 @@ class EtlWorkspace:
             object_ids = []
             skipped = 0
             for schema, table in identities:
-                metadata = await self._ontology_object(session, schema, table, "flow:favorite", allow_missing=True)
+                metadata = await self._ontology_object(session, schema, table, allow_missing=True)
                 if metadata:
                     object_ids.append(metadata["id"])
                 else:
@@ -649,10 +699,13 @@ class EtlWorkspace:
     async def _write_row(self, layer: str, table: str, payload: dict[str, Any], delete: bool) -> dict[str, Any]:
         schema = resolve_schema(layer)
         require_ordinary_table(schema, table)
-        if delete and not allows_physical_delete(schema):
+        if (schema, table) == (INDEX_SANDBOX_SCHEMA, INDEX_SANDBOX_TABLE):
+            raise HTTPException(404, "Table does not exist in this schema")
+        connection_id = await self._layers.selected_connection_id(schema, table)
+        if delete and not await allows_physical_delete(schema, table, connection_id=connection_id):
             raise HTTPException(409, "CDC current tables require business soft deletion; physical deletion propagation is unavailable")
-        qualified = f"{quote_identifier(schema)}.{quote_identifier(table)}"
-        columns = await self._layers.columns(schema, table)
+        qualified = f"{quote_schema_identifier(schema)}.{quote_identifier(table)}"
+        columns = await self._layers.columns(schema, table, connection_id=connection_id, include_hidden=True)
         primary = [column["name"] for column in columns if column.get("primary")]
         key = payload.get("key")
         if not primary:
@@ -675,7 +728,9 @@ class EtlWorkspace:
         else:
             assignments = ", ".join(f"{quote_identifier(name)} = v.{quote_identifier(name)}" for name in changes)
             sql = f"UPDATE {qualified} AS t SET {assignments} FROM {source}, jsonb_populate_record(NULL::{qualified}, CAST(:changes AS jsonb)) AS v WHERE {predicate} RETURNING to_jsonb(t) AS row"
-        async with self._session() as session, self._session(business=True) as catalog_session:
+        async with self._session() as session, self._session(
+            business=True, schema=schema, table=table, connection_id=connection_id,
+        ) as catalog_session:
             await session.execute(text("SET LOCAL lock_timeout='2s'"))
             await catalog_session.execute(text("SET LOCAL lock_timeout='2s'"))
             if delete or set(changes).intersection(primary):

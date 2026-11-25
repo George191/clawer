@@ -49,15 +49,36 @@ def test_change_requires_exact_database_and_table_and_returns_only_event_coordin
 @pytest.mark.asyncio
 async def test_orbital_counterpart_visibility_checked_before_cached_reference():
     layers = Mock()
-    layers.runtime_table = AsyncMock(side_effect=[{"schemaName": "ts_ods"}, HTTPException(404)])
+    layers.runtime_table = AsyncMock(side_effect=[{
+        "schemaName": "orbital_events", "tableRole": "current", "dataType": "orbital", "layer": "ods",
+        "connectionId": "downstream",
+    }, HTTPException(404)])
+    peer = {"schema_name": "incoming", "table_name": "ephemerides"}
+    client = SimpleNamespace(resolve=AsyncMock(), connection_id="upstream")
     with (patch.object(etl_capture, "get_etl_layers", return_value=layers),
+          patch.object(etl_capture, "get_layer_pg_client", return_value=client),
+          patch.object(etl_capture, "get_registered_object", AsyncMock(return_value=peer)),
           patch.object(etl_capture, "_CAPTURE", MonitorSnapshots(30, 1, 1)),
           patch.object(etl_capture, "_ORBITAL") as references):
-        result = await etl_capture.capture("ts_ods", "ods_orbital", include_hidden=False)
+        result = await etl_capture.capture("orbital_events", "fleet_updates", include_hidden=False, connection_id="downstream")
     assert result["state"] == "outside_capture" and "recordLink" not in result
     references.read.assert_not_called()
-    assert layers.runtime_table.await_args.args == ("ts_rds", "rds_orbital")
-    assert layers.runtime_table.await_args.kwargs == {"include_hidden": False}
+    assert layers.runtime_table.await_args.args == ("incoming", "ephemerides")
+    assert layers.runtime_table.await_args.kwargs == {"include_hidden": False, "connection_id": "upstream"}
+
+
+@pytest.mark.asyncio
+async def test_capture_monitor_skips_registered_objects_that_are_outside_actual_publication():
+    pg = SimpleNamespace(connect=AsyncMock())
+    identity = {"database": "project", "connection_id": "selected", "prefix": "capture"}
+    with (patch.object(etl_capture, "postgres_cdc_identity", AsyncMock(return_value=identity)),
+          patch.object(etl_capture, "published_cdc_objects", AsyncMock(return_value={
+              ("custom_schema", "selected_table"): ("ods", "selected_type"),
+          })),
+          patch.object(etl_capture, "_latest", AsyncMock()) as latest):
+        status = await etl_capture._selected_capture(pg, "custom_schema", "unselected_table", "ods", "unselected_type")
+    assert status["state"] == "outside_capture"
+    latest.assert_not_awaited()
 
 
 @pytest.mark.asyncio

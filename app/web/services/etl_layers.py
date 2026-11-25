@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from collections import deque
@@ -17,15 +18,20 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
 from app.config.settings import settings as etl_settings
-from app.etl.cdc import cdc_schemas
 
 from app.etl.schema.object_relations import (
     ObjectRelationsNotInitialized,
     read_object_relations,
 )
+from app.etl.schema.registry import get_registered_object
 from app.storage.postgres_client import PostgresClient, get_pg_client
-from app.storage.business_database import BusinessDatabaseNotConfigured, get_business_pg_client
-from app.etl.schema.catalog_metadata import OBJECT_RELATION, PROPERTY_RECORDS, RELATION_RECORDS, catalog_parameters
+from app.storage.business_database import (
+    BusinessDatabaseNotConfigured, get_business_pg_client, get_layer_pg_client, layer_connection_info,
+)
+from app.etl.schema.layout import PG_SCHEMA_PATTERN, is_schema_identifier
+from app.etl.schema.catalog_metadata import (
+    OBJECT_RELATION, PROPERTY_RECORDS, RELATION_RECORDS, catalog_logical_layers, catalog_parameters,
+)
 from app.web.api.models.batch_syncs import INCREMENTAL_TARGET, TARGET_SCHEMA as BATCH_TARGET_SCHEMA
 from app.web.api.models.etl import PREVIEW_ROWS_MAX_LIMIT, PREVIEW_ROWS_MAX_OFFSET, RowPreviewPolicy
 from app.web.core.config import settings
@@ -44,8 +50,12 @@ RESERVED_BATCH_TARGET = (BATCH_TARGET_SCHEMA, INCREMENTAL_TARGET)
 ROW_VERSION_SQL = "encode(sha256(pg_catalog.record_send(t)), 'hex')"
 
 
-def allows_physical_delete(schema: str) -> bool:
-    return etl_settings.etl_output_mode != "debezium" or schema not in cdc_schemas()
+async def allows_physical_delete(schema: str, table: str, *, connection_id: str | None = None) -> bool:
+    if etl_settings.etl_output_mode != "debezium":
+        return True
+    from app.syncer.postgres_cdc import registered_cdc_objects
+
+    return (schema, table) not in await registered_cdc_objects(connection_id=connection_id)
 
 
 def row_identity_sql(primary_key: list[str]) -> str:
@@ -69,11 +79,40 @@ _PUSH_INBOX_MARKER = "app.ontology_push_inbox_state"
 _PUSH_APPLY_REGCLASS = f"{PUSH_APPLY_SCHEMA}.{PUSH_APPLY_TARGET}"
 _PUSH_APPLY_BINDING = "app.ontology_push_inbox_apply_binding"
 _PUSH_APPLY_RECEIPTS = "app.ontology_push_inbox_apply_receipts"
+_PROTECTED_SCHEMAS = frozenset({
+    "app", "information_schema", "ts_meta", "ts_meta_hist", "batch_sync_identity", "batch_sync_stream",
+    PROTECTED_SYNTHETIC_SCHEMA, PUSH_APPLY_SCHEMA, HANDOFF_PRIVATE_SCHEMA,
+    SNAPSHOT_INTENT_PRIVATE_SCHEMA, BATCH_RANGE_SOURCE_SCHEMA,
+})
+_PROTECTED_TABLES = (RESERVED_BATCH_TARGET, RESERVED_BATCH_RANGE_TARGET)
+_PG_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,62}")
+
+
+def is_ordinary_schema(schema: str | None) -> bool:
+    return bool(is_schema_identifier(schema)
+                and not schema.startswith("pg_") and schema not in _PROTECTED_SCHEMAS)
+
+
+def ordinary_schema_sql(namespace: str = "n") -> str:
+    protected = ", ".join(f"'{name}'" for name in sorted(_PROTECTED_SCHEMAS))
+    return (f"{namespace}.nspname ~ '^{PG_SCHEMA_PATTERN}$' "
+            f"AND left({namespace}.nspname, 3) <> 'pg_' "
+            f"AND {namespace}.nspname NOT IN ({protected}) "
+            f"AND has_schema_privilege({namespace}.oid, 'USAGE')")
+
+
+def ordinary_table_sql(namespace: str = "n", relation: str = "c") -> str:
+    return f"""{ordinary_schema_sql(namespace)}
+        AND NOT ({namespace}.nspname = '{BATCH_TARGET_SCHEMA}'
+                 AND {relation}.relname IN ('{INCREMENTAL_TARGET}', '{BATCH_RANGE_TARGET}'))
+        AND {relation}.relname ~ '^{_PG_IDENTIFIER.pattern}$'
+        AND {relation}.relkind IN ('r','p') AND NOT {relation}.relispartition
+        AND NOT EXISTS (SELECT 1 FROM pg_inherits child WHERE child.inhrelid = {relation}.oid)
+        AND has_table_privilege({relation}.oid, 'SELECT')"""
 
 
 def require_ordinary_table(schema: str, table: str) -> None:
-    if (schema in (PUSH_APPLY_SCHEMA, HANDOFF_PRIVATE_SCHEMA, SNAPSHOT_INTENT_PRIVATE_SCHEMA, BATCH_RANGE_SOURCE_SCHEMA)
-        or (schema, table) in (RESERVED_BATCH_TARGET, RESERVED_BATCH_RANGE_TARGET)):
+    if not is_ordinary_schema(schema) or (schema, table) in _PROTECTED_TABLES:
         raise HTTPException(404, "Table does not exist in this schema")
 
 
@@ -83,24 +122,15 @@ async def reserved_batch_target_exists(session) -> bool:
                                      {"name": _RESERVED_BATCH_REGCLASS, "range_name": _RESERVED_BATCH_RANGE_REGCLASS}))
 
 
-LAYERS = ("rds", "ods", "task", "dwd", "dws", "dim", "ads")
-WAREHOUSE_SCHEMAS = frozenset(f"ts_{layer}" for layer in LAYERS)
 _OBJECT_GROUPS = ("ingestion", "processing", "serving", "other")
 _OBJECT_GROUP_SQL = "COALESCE(o.resource_group, 'other')"
-_OBJECT_METADATA_JOIN = f"""LEFT JOIN {OBJECT_RELATION} o
+_OBJECT_METADATA_JOIN = f"""JOIN {OBJECT_RELATION} o
     ON o.schema_name = n.nspname AND o.table_name = c.relname AND o.is_active"""
 _OBJECT_DESCRIPTION_SQL = "COALESCE(NULLIF(obj_description(c.oid, 'pg_class'), ''), o.description, '')"
-_OBJECT_TABLE_SQL = f"""n.nspname ~ '^ts_[a-z0-9_]+$' AND n.nspname <> 'ts_meta'
-    AND n.nspname <> 'ts_meta_hist' AND n.nspname NOT IN ('{PROTECTED_SYNTHETIC_SCHEMA}', '{PUSH_APPLY_SCHEMA}')
-    AND NOT (n.nspname = '{BATCH_TARGET_SCHEMA}' AND c.relname IN ('{INCREMENTAL_TARGET}', '{BATCH_RANGE_TARGET}'))
-    AND c.relname ~ '^[a-z_][a-z0-9_]{{0,62}}$' AND c.relkind IN ('r','p')
-    AND NOT c.relispartition
-    AND NOT EXISTS (SELECT 1 FROM pg_inherits child WHERE child.inhrelid = c.oid)"""
-_LINEAGE_METADATA_JOIN = f"""LEFT JOIN {OBJECT_RELATION} o
-    ON o.schema_name = n.nspname AND o.table_name = c.relname"""
-_LINEAGE_VISIBLE_SQL = f"""{_OBJECT_TABLE_SQL} AND COALESCE(o.is_active, true)
-    AND COALESCE(o.visibility, 'normal') <> 'hidden'
-    AND right(n.nspname::text, 5) <> '_hist'
+_OBJECT_TABLE_SQL = ordinary_table_sql()
+_LINEAGE_METADATA_JOIN = _OBJECT_METADATA_JOIN
+_LINEAGE_VISIBLE_SQL = f"""{_OBJECT_TABLE_SQL} AND o.visibility <> 'hidden'
+    AND o.table_role = 'current'
     AND NOT (n.nspname = :index_schema AND c.relname = :index_table)"""
 _LINEAGE_SCOPE = {"index_schema": INDEX_SANDBOX_SCHEMA, "index_table": INDEX_SANDBOX_TABLE}
 _LINEAGE_REGISTRY_PRESENT = text("SELECT pg_catalog.to_regclass('app.ontology_object_relations') IS NOT NULL")
@@ -112,11 +142,7 @@ LineageKey = tuple[str, str]
 _TRANSFER_ENDPOINT_WHERE = f"""{_OBJECT_TABLE_SQL} AND COALESCE(o.visibility, 'normal') <> 'hidden' AND (
     (n.nspname = :source_schema AND c.relname = :source_table) OR
     (n.nspname = :target_schema AND c.relname = :target_table))"""
-_FINANCIAL_ODS = ("ts_ods", "ods_financial_fact")
-_LATEST_FILED_SQL = (
-    "SELECT filed FROM ts_ods.ods_financial_fact "
-    "WHERE filed IS NOT NULL ORDER BY filed DESC LIMIT 1"
-)
+_FINANCIAL_DATA_TYPE = "financial_fact"
 
 
 def _bounded_filed_plan(explained: Any) -> bool:
@@ -163,23 +189,21 @@ def _bounded_filed_plan(explained: Any) -> bool:
 
 
 def quote_identifier(name: str) -> str:
-    if not isinstance(name, str) or not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", name):
+    if not isinstance(name, str) or not _PG_IDENTIFIER.fullmatch(name):
         raise HTTPException(400, "Invalid PostgreSQL identifier")
     return f'"{name}"'
 
 
-def resolve_schema(layer: str, table_role: str = "current") -> str:
-    if table_role not in {"current", "history"}:
-        raise HTTPException(400, "Unsupported table role")
-    if layer in (HANDOFF_PRIVATE_SCHEMA, SNAPSHOT_INTENT_PRIVATE_SCHEMA, BATCH_RANGE_SOURCE_SCHEMA):
+def quote_schema_identifier(name: str) -> str:
+    if not is_schema_identifier(name):
+        raise HTTPException(400, "Invalid PostgreSQL schema name")
+    return f'"{name}"'
+
+
+def resolve_schema(schema: str) -> str:
+    quote_schema_identifier(schema)
+    if not is_ordinary_schema(schema):
         raise HTTPException(404, "Schema not found")
-    schema = layer if layer.startswith("ts_") else f"ts_{layer}"
-    quote_identifier(schema)
-    if schema in (PROTECTED_SYNTHETIC_SCHEMA, PUSH_APPLY_SCHEMA):
-        raise HTTPException(404, "Schema not found")
-    if table_role == "history" and not schema.endswith("_hist"):
-        schema += "_hist"
-    quote_identifier(schema)
     return schema
 
 
@@ -189,10 +213,8 @@ def _required_indexed_preview_tables() -> frozenset[tuple[str, str]]:
 
 def ontology_source_predicate() -> tuple[str, dict]:
     """The chooser and binding verifier must agree on which ordinary roots can be read directly."""
-    predicate = """c.relkind IN ('r','p') AND NOT c.relispartition
-        AND c.relname ~ '^[a-z_][a-z0-9_]{0,62}$'
-        AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = c.oid)
-        AND has_table_privilege(current_user, c.oid, 'SELECT')"""
+    predicate = f"""{_OBJECT_TABLE_SQL} AND o.table_role = 'current' AND o.visibility <> 'hidden'
+        AND NOT (n.nspname = '{INDEX_SANDBOX_SCHEMA}' AND c.relname = '{INDEX_SANDBOX_TABLE}')"""
     restricted = _required_indexed_preview_tables()
     if not restricted:
         return predicate, {}
@@ -202,7 +224,7 @@ def ontology_source_predicate() -> tuple[str, dict]:
             SELECT to_regclass(name)::oid FROM unnest(CAST(:index_only_tables AS text[])) names(name)
             UNION SELECT i.inhparent FROM pg_inherits i JOIN index_only r ON r.oid = i.inhrelid
         ) SELECT oid FROM index_only WHERE oid IS NOT NULL)"""
-    return predicate, {"index_only_tables": [f'{quote_identifier(s)}.{quote_identifier(t)}' for s, t in sorted(restricted)]}
+    return predicate, {"index_only_tables": [f'{quote_schema_identifier(s)}.{quote_identifier(t)}' for s, t in sorted(restricted)]}
 
 
 def requires_indexed_projection(schema: str, table: str) -> bool:
@@ -266,13 +288,11 @@ async def _required_preview_family(session, schema, table, enrolled) -> bool:
 
 
 def _object_schema(layer: str) -> str:
-    schema = resolve_schema(layer)
-    if schema in {"ts_meta", "ts_meta_hist"}:
-        raise HTTPException(404, "Schema not found")
-    return schema
+    return resolve_schema(layer)
 
 
 def _object_summary(row: dict[str, Any]) -> dict[str, Any]:
+    count = row.get("object_count")
     return {
         "id": f'{row["schema"]}.{row["name"]}', "schema": row["schema"],
         "table": row["name"], "name": row["name"], "displayName": row["name"],
@@ -280,7 +300,8 @@ def _object_summary(row: dict[str, Any]) -> dict[str, Any]:
         "dataTypeSource": row.get("data_type_source") or "not_configured",
         "descriptionSource": row.get("description_source") or "not_configured",
         "resourceGroup": row.get("resource_group") or "other",
-        "objectCount": int(row["object_count"]), "objectCountEstimated": True,
+        "objectCount": int(count) if count is not None else None,
+        "objectCountEstimated": count is not None, "objectCountAvailable": count is not None,
         "propertiesCount": int(row["properties_count"]), "status": "available",
         "titleProperty": None, "visibility": row["visibility"],
     }
@@ -288,23 +309,89 @@ def _object_summary(row: dict[str, Any]) -> dict[str, Any]:
 
 class EtlLayers:
     def __init__(self, pg: PostgresClient | None = None, *, metadata_pg: PostgresClient | None = None) -> None:
-        self._pg = pg if pg is not None else get_business_pg_client()
+        self._pg = pg
         self._metadata_pg = metadata_pg if metadata_pg is not None else get_pg_client()
+
+    async def connection_scope(
+        self, schema: str | None = None, table: str | None = None, *,
+        connection_id: str | None = None, logical_layer: str | None = None,
+    ) -> tuple[dict, tuple[str, ...]]:
+        if schema is not None:
+            resolve_schema(schema)
+            if table is not None:
+                quote_identifier(table)
+                require_ordinary_table(schema, table)
+        bindings = await layer_connection_info(pg=self._metadata_pg)
+        rows = []
+        if logical_layer is not None:
+            candidates = {logical_layer}
+        elif schema is not None:
+            rows = await self._metadata_pg.fetch_all("""SELECT layer FROM app.ontology_objects
+                WHERE is_active AND schema_name = :schema AND
+                    (CAST(:table AS text) IS NULL OR table_name = :table)
+            """, {"schema": schema, "table": table})
+            candidates = {row["layer"] for row in rows}
+            if not candidates:
+                raise HTTPException(404, "Registered object or schema not found")
+        else:
+            candidates = set(bindings)
+        eligible = {layer: bindings[layer] for layer in sorted(candidates)
+                    if layer in bindings and (connection_id is None or str(bindings[layer]["id"]) == connection_id)}
+        connections = {str(binding["id"]): binding for binding in eligible.values()}
+        if len(connections) > 1:
+            raise HTTPException(409, "Select a data connection for this operation")
+        if not connections:
+            raise HTTPException(409, "The Ontology layer does not have a matching data connection")
+        if connection_id is None and eligible.keys() != candidates:
+            raise HTTPException(409, "Some Ontology layers in this scope have no data connection")
+        if table is not None and sum(row["layer"] in eligible for row in rows) != 1:
+            raise HTTPException(409, "The selected physical table has conflicting Ontology objects")
+        identity, connection = next(iter(connections.items()))
+        return connection, tuple(sorted(layer for layer, binding in bindings.items() if str(binding["id"]) == identity))
+
+    async def scoped_postgres(self, schema=None, table=None, *, connection_id=None, logical_layer=None):
+        if self._pg is not None:
+            return self._pg, None
+        connection, layers = await self.connection_scope(schema, table, connection_id=connection_id, logical_layer=logical_layer)
+        if connection["engine"] != "postgresql":
+            raise HTTPException(409, f'This operation requires PostgreSQL. The layer uses {connection["engine"]}.')
+        pg = get_layer_pg_client(layers[0])
+        await pg.connect(max_retries=1)
+        if pg.connection_id != str(connection["id"]):
+            raise HTTPException(409, "The layer data connection changed. Reload the schema and try again.")
+        return pg, layers
+
+    async def selected_connection_id(self, schema, table, connection_id=None):
+        if self._pg is not None:
+            return connection_id
+        connection, _ = await self.connection_scope(schema, table, connection_id=connection_id)
+        return str(connection["id"])
 
     async def _catalog_parameters(self, params=None, *, relations=False, object_id=None):
         async with self._metadata_pg.session() as session:
             return await catalog_parameters(params, session=session, relations=relations, object_id=object_id)
 
     @asynccontextmanager
-    async def session(self, *, repeatable_read: bool = False, query_timeout: bool = True):
+    async def session(self, *, repeatable_read: bool = False, query_timeout: bool = True,
+                      schema: str | None = None, table: str | None = None, connection_id: str | None = None):
         try:
             with fail_after(12 if query_timeout else None):
-                await self._pg.connect(max_retries=1)
-                async with self._pg.session() as session:
-                    mode = "ISOLATION LEVEL REPEATABLE READ READ ONLY" if repeatable_read else "READ ONLY"
-                    await session.execute(text(f"SET TRANSACTION {mode}"))
-                    await session.execute(text("SET LOCAL statement_timeout = '10s'" if query_timeout else "SET LOCAL statement_timeout = 0"))
-                    yield session
+                if schema is not None or connection_id is not None:
+                    pg, layers = await self.scoped_postgres(schema, table, connection_id=connection_id)
+                else:
+                    pg, layers = self._pg or get_business_pg_client(), None
+                token = catalog_logical_layers.set(layers)
+                try:
+                    await pg.connect(max_retries=1)
+                    async with pg.session() as session:
+                        if layers is not None:
+                            session.info["etl_connection_id"] = pg.connection_id
+                        mode = "ISOLATION LEVEL REPEATABLE READ READ ONLY" if repeatable_read else "READ ONLY"
+                        await session.execute(text(f"SET TRANSACTION {mode}"))
+                        await session.execute(text("SET LOCAL statement_timeout = '10s'" if query_timeout else "SET LOCAL statement_timeout = 0"))
+                        yield session
+                finally:
+                    catalog_logical_layers.reset(token)
         except HTTPException:
             raise
         except BusinessDatabaseNotConfigured as exc:
@@ -323,39 +410,200 @@ class EtlLayers:
             return (await session.execute(text("SELECT current_database()"))).scalar_one()
 
     async def layers(self) -> list[dict[str, Any]]:
-        async with self.session() as session:
-            result = await session.execute(text(r"""
-                SELECT n.nspname AS schema, count(c.oid) AS tables,
-                       obj_description(n.oid, 'pg_namespace') AS alias,
-                       current_database() AS database
-                FROM pg_namespace n LEFT JOIN pg_class c
-                  ON c.relnamespace = n.oid AND c.relkind IN ('r','p')
-                     AND NOT c.relispartition
-                     AND NOT (n.nspname = :batch_schema AND c.relname IN (:batch_target, :batch_range_target))
-                WHERE n.nspname LIKE 'ts\_%' ESCAPE '\' AND n.nspname NOT IN (:restricted, :push_schema)
-                GROUP BY n.oid, n.nspname ORDER BY n.nspname
-            """), {"restricted": PROTECTED_SYNTHETIC_SCHEMA, "push_schema": PUSH_APPLY_SCHEMA,
-                    "batch_schema": BATCH_TARGET_SCHEMA, "batch_target": INCREMENTAL_TARGET, "batch_range_target": BATCH_RANGE_TARGET})
-            found = {row["schema"]: dict(row) for row in result.mappings()}
-        schemas = list(dict.fromkeys([*(f"ts_{layer}" for layer in LAYERS), *found]))
-        return [{
-            "key": schema[3:] if schema[3:] in LAYERS else schema,
-            "label": schema[3:].upper(), "schemaName": schema,
-            "alias": found.get(schema, {}).get("alias") or "",
-            "database": found.get(schema, {}).get("database", ""),
-            "icon": "database", "status": "running" if schema in found else "stopped",
-            "ontologySource": schema in WAREHOUSE_SCHEMAS and schema in found,
-            "rateIn": 0, "rateOut": 0, "lag": 0,
-            "metricsAvailable": False, "tables": found.get(schema, {}).get("tables", 0),
-        } for schema in schemas]
+        objects, relations = await self._registered_catalog(relations=True)
+        schemas: dict[tuple[str, str], dict] = {}
+        endpoints: dict[tuple[str, str], tuple[str, str]] = {}
+        ambiguous: set[tuple[str, str]] = set()
+        upstream: dict[tuple[str, str], set[tuple[str, str]]] = {}
+        indexed_only = _required_indexed_preview_tables() | {(INDEX_SANDBOX_SCHEMA, INDEX_SANDBOX_TABLE)}
+        for row in objects:
+            schema, table = row["schema_name"], row["table_name"]
+            key = (row["connectionId"], schema)
+            item = schemas.setdefault(key, {
+                "key": schema, "label": schema, "schemaName": schema,
+                "connectionId": row["connectionId"], "engine": row["engine"],
+                "alias": "", "database": row["database"],
+                "logicalLayers": set(), "icon": "database", "status": "registered",
+                "ontologySource": False, "rateIn": 0, "rateOut": 0, "lag": 0,
+                "metricsAvailable": False, "tables": 0,
+            })
+            item["tables"] += 1
+            item["logicalLayers"].add(row["layer"])
+            if row["table_role"] == "current" and (schema, table) != (INDEX_SANDBOX_SCHEMA, INDEX_SANDBOX_TABLE):
+                if (schema, table) in endpoints:
+                    ambiguous.add((schema, table))
+                endpoints[schema, table] = key
+                item["ontologySource"] |= row["engine"] == "postgresql" and (schema, table) not in indexed_only
+        for relation in relations:
+            source_address = (relation["source_schema"], relation["source_table"])
+            target_address = (relation["target_schema"], relation["target_table"])
+            if source_address in ambiguous or target_address in ambiguous:
+                continue
+            source = endpoints.get(source_address)
+            target = endpoints.get(target_address)
+            if source is not None and target is not None and source != target:
+                upstream.setdefault(target, set()).add(source)
+        alias_groups: dict[str, list[str]] = {}
+        for (identity, schema), item in schemas.items():
+            if item["engine"] == "postgresql":
+                alias_groups.setdefault(identity, []).append(schema)
+        await asyncio.gather(*(self._schema_aliases(identity, names, schemas)
+                               for identity, names in alias_groups.items()))
+        return [
+            {**item, "logicalLayers": sorted(item["logicalLayers"]),
+             "upstreamSchemas": sorted({source[1] for source in upstream.get(key, ())}),
+             "upstreamSchemaRefs": [{"connectionId": source[0], "schemaName": source[1]}
+                                    for source in sorted(upstream.get(key, ()))],
+             } for key, item in sorted(schemas.items(), key=lambda entry: (entry[0][1], entry[0][0]))
+        ]
 
-    async def tables(self, layer: str, table_role: str = "current") -> list[dict[str, Any]]:
-        schema = resolve_schema(layer, table_role)
-        eligibility, scope = ontology_source_predicate() if schema in WAREHOUSE_SCHEMAS else ("FALSE", {})
-        async with self.session() as session:
+    async def _schema_aliases(self, identity, names, schemas) -> None:
+        try:
+            async with self.session(connection_id=identity) as session:
+                result = await session.execute(text(f"""SELECT n.nspname AS name,
+                    obj_description(n.oid, 'pg_namespace') AS alias
+                    FROM pg_namespace n
+                    WHERE n.nspname = ANY(CAST(:schemas AS text[])) AND {ordinary_schema_sql()}
+                """), {"schemas": names})
+                for row in result.mappings():
+                    schemas[identity, row["name"]]["alias"] = row["alias"] or ""
+        except HTTPException as error:
+            if error.status_code not in {400, 409, 503}:
+                raise
+
+    async def _page_counts(self, rows: list[dict]) -> dict[int, int]:
+        groups: dict[str, list[dict]] = {}
+        for row in rows:
+            if row["engine"] == "postgresql":
+                groups.setdefault(row["connectionId"], []).append(row)
+        batches = await asyncio.gather(*(self._connection_counts(connection, objects)
+                                         for connection, objects in groups.items()))
+        return {object_id: count for batch in batches for object_id, count in batch.items()}
+
+    async def _connection_counts(self, connection, objects) -> dict[int, int]:
+        try:
+            async with self.session(connection_id=connection) as session:
+                scoped = catalog_logical_layers.get()
+                selected = json.dumps([{"id": row["id"], "schema": row["schema_name"], "table_name": row["table_name"]}
+                                       for row in objects if scoped is None or row["layer"] in scoped])
+                result = await session.execute(text(f"""
+                    WITH RECURSIVE roots AS (
+                        SELECT target.id, c.oid
+                        FROM jsonb_to_recordset(CAST(:selected AS jsonb)) AS target(id bigint, schema text, table_name text)
+                        JOIN pg_namespace n ON n.nspname=target.schema
+                        JOIN pg_class c ON c.relnamespace=n.oid AND c.relname=target.table_name
+                        WHERE {_OBJECT_TABLE_SQL}
+                    ), descendants(id, oid) AS (
+                        SELECT id, oid FROM roots
+                        UNION
+                        SELECT descendants.id, i.inhrelid FROM descendants JOIN pg_inherits i ON i.inhparent=descendants.oid
+                    ), bounded AS MATERIALIZED (
+                        SELECT id, oid FROM descendants LIMIT 16001
+                    )
+                    SELECT id, sum(CASE WHEN c.relkind='p' THEN 0 ELSE
+                        GREATEST(0, pg_stat_get_live_tuples(c.oid)) END) AS rows
+                    FROM bounded JOIN pg_class c ON c.oid=bounded.oid
+                    WHERE (SELECT count(*) FROM bounded) <= 16000 GROUP BY id
+                """), {"selected": selected})
+                return {row["id"]: int(row["rows"]) for row in result.mappings()}
+        except HTTPException as error:
+            if error.status_code not in {400, 409, 503}:
+                raise
+            return {}
+
+    async def _registered_catalog(self, *, include_hidden=False, relations=False):
+        bindings = await layer_connection_info(pg=self._metadata_pg)
+        async with self._metadata_pg.session() as session:
+            await self._require_ontology(session)
+            rows = await session.execute(text("""SELECT o.id, o.layer, o.table_role, o.schema_name,
+                o.table_name, o.data_type, o.data_type_source, o.description, o.description_source, o.visibility,
+                o.resource_group, (SELECT count(*) FROM app.ontology_object_properties p WHERE p.object_id = o.id)
+                AS properties_count FROM app.ontology_objects o WHERE o.is_active
+                  AND (:include_hidden OR o.visibility <> 'hidden')
+                ORDER BY (o.visibility <> 'prominent'), o.schema_name, o.table_name
+            """), {"include_hidden": include_hidden})
+            objects = [
+                {**row, "connectionId": str(bindings[row["layer"]]["id"]), "engine": bindings[row["layer"]]["engine"],
+                 "database": bindings[row["layer"]].get("database") or bindings[row["layer"]]["name"]}
+                for row in rows.mappings()
+                if row["layer"] in bindings and is_ordinary_schema(row["schema_name"])
+                and _PG_IDENTIFIER.fullmatch(row["table_name"])
+                and (row["schema_name"], row["table_name"]) not in _PROTECTED_TABLES
+            ]
+            records = []
+            if relations and await session.scalar(_LINEAGE_REGISTRY_PRESENT):
+                query = await session.execute(text("""SELECT source_schema, source_table, target_schema, target_table
+                    FROM app.ontology_object_relations WHERE enabled"""))
+                records = [dict(row) for row in query.mappings()]
+        return objects, records
+
+    async def _external_object(self, schema, table, *, include_hidden=False, connection_id=None):
+        if self._pg is not None:
+            return None
+        connection, _ = await self.connection_scope(schema, table, connection_id=connection_id)
+        if connection["engine"] == "postgresql":
+            return None
+        objects, _ = await self._registered_catalog(include_hidden=include_hidden)
+        row = next((row for row in objects if row["connectionId"] == str(connection["id"])
+                    and (row["schema_name"], row["table_name"]) == (schema, table)), None)
+        if row is None:
+            raise HTTPException(404, "Table does not exist in this schema")
+        return row
+
+    async def _registered_columns(self, object_id: int) -> list[dict]:
+        return await self._metadata_pg.fetch_all("""SELECT name, sql_type AS type, comment, is_nullable AS nullable,
+            is_primary_key AS primary, primary_key_position AS "primaryPosition", ordinal_position AS "ordinalPosition"
+            FROM app.ontology_object_properties WHERE object_id = :id ORDER BY ordinal_position
+        """, {"id": object_id})
+
+    async def _external_data(self, asset, payload, *, started):
+        from app.web.services.data_connections import get_data_connections
+        from app.web.services.storage_nodes import StorageNodes, _KINDS
+
+        if any(payload.get(option) for option in ("offset", "partition", "forEditing", "search", "filters", "sorts")):
+            raise HTTPException(422, "This connection supports bounded read-only previews from the first row")
+        try:
+            limit = int(payload.get("limit", 50))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Invalid preview limit") from None
+        if not 1 <= limit <= 500:
+            raise HTTPException(400, "Invalid preview limit")
+        preview = await StorageNodes(get_data_connections()).preview(
+            asset["connectionId"], _KINDS[asset["engine"]], asset["schema_name"], asset["table_name"], limit=limit,
+        )
+        columns = await self._registered_columns(asset["id"])
+        return {"columns": preview.columns, "rows": preview.rows, "rowCount": len(preview.rows),
+                "hasMore": preview.hasMore, "canPageFurther": False, "stableOrder": False,
+                "total": len(preview.rows), "totalEstimated": preview.hasMore,
+                "primaryKey": [], "columnTypes": {row["name"]: row["type"] for row in columns},
+                "columnNullable": {row["name"]: row["nullable"] for row in columns},
+                "elapsed": round(perf_counter() - started, 4)}
+
+    async def tables(self, layer: str, table_role: str | None = None, *, include_hidden: bool = False,
+                     connection_id: str | None = None) -> list[dict[str, Any]]:
+        schema = resolve_schema(layer)
+        if table_role not in {None, "current", "history"}:
+            raise HTTPException(400, "Unsupported table role")
+        connection = None
+        if self._pg is None:
+            connection, _ = await self.connection_scope(schema, connection_id=connection_id)
+            connection_id = str(connection["id"])
+            if connection["engine"] != "postgresql":
+                objects, _ = await self._registered_catalog(include_hidden=include_hidden)
+                return [
+                    {"name": row["table_name"], "schemaName": schema, "dataType": row["data_type"] or "",
+                     "layer": row["layer"], "tableRole": row["table_role"], "ontologySource": False,
+                     "partitioned": False, "rowCount": None, "rowCountAvailable": False, "rowCountEstimated": False,
+                     "size": "", "updatedAt": "", "description": row["description"] or "",
+                     "registryId": str(row["id"]), "connectionId": connection_id, "engine": connection["engine"]}
+                    for row in objects if row["schema_name"] == schema and row["connectionId"] == connection_id
+                    and (table_role is None or row["table_role"] == table_role)
+                ]
+        eligibility, scope = ontology_source_predicate()
+        async with self.session(schema=schema, connection_id=connection_id) as session:
             result = await session.execute(text(f"""
                 SELECT c.relname AS name, c.relkind = 'p' OR storage.has_children AS partitioned,
-                       o.data_type, {_OBJECT_DESCRIPTION_SQL} AS description,
+                       o.id, o.layer, o.table_role, o.data_type, {_OBJECT_DESCRIPTION_SQL} AS description,
                        storage.rows, storage.size, ({eligibility}) AS ontology_source
                 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
                 {_OBJECT_METADATA_JOIN}
@@ -372,17 +620,18 @@ class EtlLayers:
                            bool_or(d.relid <> c.oid) AS has_children
                     FROM descendants d JOIN pg_class physical ON physical.oid = d.relid
                 ) storage
-                WHERE n.nspname = :schema AND c.relkind IN ('r','p')
-                  AND NOT c.relispartition
-                  AND NOT (n.nspname = :batch_schema AND c.relname IN (:batch_target, :batch_range_target))
+                WHERE n.nspname = :schema AND {_OBJECT_TABLE_SQL}
+                  AND (:include_hidden OR o.visibility <> 'hidden')
+                  AND (CAST(:table_role AS text) IS NULL OR o.table_role = :table_role)
                 ORDER BY c.relname
-            """), await self._catalog_parameters({"schema": schema, "batch_schema": BATCH_TARGET_SCHEMA, "batch_target": INCREMENTAL_TARGET, "batch_range_target": BATCH_RANGE_TARGET, **scope}))
+            """), await self._catalog_parameters({"schema": schema, "table_role": table_role, "include_hidden": include_hidden, **scope}))
             rows = result.mappings().all()
         return [{"name": row["name"], "schemaName": schema, "dataType": row["data_type"] or "",
-                 "tableRole": "history" if schema.endswith("_hist") else "current", "ontologySource": row["ontology_source"],
+                 "layer": row["layer"], "tableRole": row["table_role"], "ontologySource": row["ontology_source"],
                  "partitioned": row["partitioned"], "rowCount": int(row["rows"]),
                  "size": row["size"], "updatedAt": "", "description": row["description"] or "",
-                 "rowCountEstimated": True} for row in rows]
+                 "rowCountEstimated": True, "rowCountAvailable": True, "registryId": str(row["id"]), "connectionId": connection_id,
+                 "engine": "postgresql"} for row in rows]
 
     @staticmethod
     async def _require_ontology(session) -> None:
@@ -434,70 +683,71 @@ class EtlLayers:
 
     async def object_types(self, schema: str | None = None, search: str = "", group: str = "",
                            limit: int = 100, offset: int = 0, ids: str | None = None, *,
-                           include_hidden: bool = False, favorite_user_id: str | None = None) -> dict[str, Any]:
+                           include_hidden: bool = False, favorite_user_id: str | None = None,
+                           connection_id: str | None = None) -> dict[str, Any]:
         if not 1 <= limit <= 500 or not 0 <= offset <= 1_000_000:
             raise HTTPException(400, "Pagination is outside supported bounds")
         if group and group not in _OBJECT_GROUPS:
             raise HTTPException(400, "Unknown object type group")
         if len(search) > 1000:
             raise HTTPException(400, "Search is too long")
-        params: dict[str, Any] = {"search": search.strip(), "limit": limit, "offset": offset}
-        where = _OBJECT_TABLE_SQL + f""" AND position(lower(:search) in lower(
-            n.nspname || '.' || c.relname || ' ' || {_OBJECT_DESCRIPTION_SQL})) > 0"""
-        if not include_hidden:
-            where += " AND COALESCE(o.visibility, 'normal') <> 'hidden'"
         if schema:
-            params["schema"] = _object_schema(schema)
+            schema = _object_schema(schema)
+        favorite_ids = None
         if favorite_user_id is not None:
-            favorites = await self._metadata_pg.fetch_all("""SELECT favorite.schema_name || '.' || favorite.table_name AS name
-                FROM app.ontology_object_favorites f JOIN app.ontology_objects favorite ON favorite.id=f.object_id
-                WHERE f.user_id=CAST(:user_id AS uuid)""", {"user_id": favorite_user_id})
-            params["favorite_ids"] = [row["name"] for row in favorites]
-            where += " AND n.nspname || '.' || c.relname = ANY(CAST(:favorite_ids AS text[]))"
+            favorites = await self._metadata_pg.fetch_all("""SELECT object_id FROM app.ontology_object_favorites
+                WHERE user_id=CAST(:user_id AS uuid)""", {"user_id": favorite_user_id})
+            favorite_ids = {row["object_id"] for row in favorites}
+        requested = None
         if ids:
-            identifiers = list(dict.fromkeys(ids.split(",")))
+            identifiers = set(ids.split(","))
             if len(identifiers) > 200:
                 raise HTTPException(400, "At most 200 object type identifiers are supported")
+            requested = set()
             for identifier in identifiers:
-                parts = identifier.split(".")
-                if len(parts) != 2 or not parts[0].startswith("ts_"):
+                parts = identifier.rsplit(".", 1)
+                if len(parts) != 2:
                     raise HTTPException(400, "Invalid object type identifier")
                 _object_schema(parts[0])
                 quote_identifier(parts[1])
-            params["ids"] = identifiers
-            where += " AND n.nspname || '.' || c.relname = ANY(CAST(:ids AS text[]))"
-        facet_where = where
-        if schema:
-            where += " AND n.nspname = :schema"
-        async with self.session() as session:
-            await self._require_metadata()
-            counts = await session.execute(text(f"""
-                SELECT n.nspname AS schema, {_OBJECT_GROUP_SQL} AS resource_group, count(*) AS count
-                FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-                {_OBJECT_METADATA_JOIN}
-                WHERE {facet_where} GROUP BY n.nspname, {_OBJECT_GROUP_SQL} ORDER BY n.nspname
-            """), await self._catalog_parameters(params))
-            schema_counts: dict[str, int] = {}
-            group_counts = dict.fromkeys(_OBJECT_GROUPS, 0)
-            group_schema_counts: dict[str, dict[str, int]] = {key: {} for key in _OBJECT_GROUPS}
-            for row in counts.mappings():
-                group_schema_counts[row["resource_group"]][row["schema"]] = int(row["count"])
-                if schema and row["schema"] != params["schema"]:
-                    continue
-                schema_counts[row["schema"]] = schema_counts.get(row["schema"], 0) + int(row["count"])
-                group_counts[row["resource_group"]] += int(row["count"])
-            total = group_counts[group] if group else sum(schema_counts.values())
-            if group:
-                where += f" AND ({_OBJECT_GROUP_SQL}) = :group"
-                params["group"] = group
-            rows = await self._object_rows(session, where, params) if offset < total else []
-        return {"items": [_object_summary(row) for row in rows], "total": total,
+                requested.add(tuple(parts))
+        objects, _ = await self._registered_catalog(include_hidden=include_hidden)
+        schema_counts: dict[str, int] = {}
+        group_counts = dict.fromkeys(_OBJECT_GROUPS, 0)
+        group_schema_counts: dict[str, dict[str, int]] = {key: {} for key in _OBJECT_GROUPS}
+        selected = []
+        needle = search.strip().lower()
+        for row in objects:
+            address = row["schema_name"], row["table_name"]
+            description = row["description"] or ""
+            if ((connection_id is not None and row["connectionId"] != connection_id)
+                or (requested is not None and address not in requested)
+                or (favorite_ids is not None and row["id"] not in favorite_ids)
+                or needle not in f"{address[0]}.{address[1]} {description}".lower()):
+                continue
+            row_group = row["resource_group"] or "other"
+            group_schemas = group_schema_counts[row_group]
+            group_schemas[address[0]] = group_schemas.get(address[0], 0) + 1
+            if schema and schema != address[0]:
+                continue
+            schema_counts[address[0]] = schema_counts.get(address[0], 0) + 1
+            group_counts[row_group] += 1
+            if not group or row_group == group:
+                selected.append(row)
+        page = selected[offset:offset + limit]
+        counts = await self._page_counts(page)
+        return {"items": [
+                    {**_object_summary({**row, "schema": row["schema_name"], "name": row["table_name"],
+                                       "object_count": counts.get(row["id"])}),
+                     "registryId": str(row["id"]), "connectionId": row["connectionId"], "engine": row["engine"],
+                     "layer": row["layer"], "tableRole": row["table_role"]} for row in page
+                ], "total": len(selected),
                 "limit": limit, "offset": offset, "schemaCounts": schema_counts,
                 "groupCounts": group_counts, "groupSchemaCounts": group_schema_counts}
 
     async def _lineage_table_oid(self, session, key: LineageKey) -> int:
         schema, table = key
-        if not re.fullmatch(r"ts_[a-z0-9_]{1,60}", schema) or not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", table):
+        if not is_ordinary_schema(schema) or not _PG_IDENTIFIER.fullmatch(table):
             raise HTTPException(404, "Table does not exist in this schema")
         oid = await session.scalar(text(f"""
             SELECT c.oid FROM pg_catalog.pg_namespace n
@@ -563,7 +813,7 @@ class EtlLayers:
 
     async def lineage_neighbors(self, schema: str, table: str, direction: LineageDirection) -> LineageNeighbors:
         key = schema, table
-        async with self.session(repeatable_read=True) as session:
+        async with self.session(repeatable_read=True, schema=schema, table=table) as session:
             await session.execute(text("SET LOCAL statement_timeout = '1000ms'"))
             oid = await self._lineage_table_oid(session, key)
             registry_present = await self._relation_registry_present()
@@ -573,7 +823,7 @@ class EtlLayers:
     async def lineage_path_targets(self, schema: str, table: str, search: str) -> LineagePathTargets:
         """List only eligible destination identities, not generic catalog metadata or totals."""
         limit = 20
-        async with self.session(repeatable_read=True) as session:
+        async with self.session(repeatable_read=True, schema=schema, table=table) as session:
             await session.execute(text("SET LOCAL statement_timeout = '1000ms'"))
             oid = await self._lineage_table_oid(session, (schema, table))
             result = await session.execute(text(f"""
@@ -591,7 +841,7 @@ class EtlLayers:
 
     async def lineage_path(self, schema: str, table: str, target_schema: str, target_table: str) -> LineagePath:
         start, end = (schema, table), (target_schema, target_table)
-        async with self.session(repeatable_read=True) as session:
+        async with self.session(repeatable_read=True, schema=schema, table=table) as session:
             await session.execute(text("SET LOCAL statement_timeout = '1000ms'"))
             endpoints_verified = False
             try:
@@ -660,7 +910,7 @@ class EtlLayers:
         endpoints_verified = False
         try:
             with fail_after(3):
-                async with self.session(repeatable_read=True) as session:
+                async with self.session(repeatable_read=True, schema=left[0], table=left[1]) as session:
                     await session.execute(text("SET LOCAL statement_timeout = '1000ms'"))
                     try:
                         roots = await self._lineage_table_oid(session, left), await self._lineage_table_oid(session, right)
@@ -752,27 +1002,15 @@ class EtlLayers:
             JOIN pg_namespace sn ON sn.oid = sc.relnamespace
             JOIN pg_class tc ON tc.oid = con.confrelid
             JOIN pg_namespace tn ON tn.oid = tc.relnamespace
-            LEFT JOIN {OBJECT_RELATION} so ON so.schema_name = sn.nspname
+            JOIN {OBJECT_RELATION} so ON so.schema_name = sn.nspname
                 AND so.table_name = sc.relname AND so.is_active
-            LEFT JOIN {OBJECT_RELATION} target_object ON target_object.schema_name = tn.nspname
+            JOIN {OBJECT_RELATION} target_object ON target_object.schema_name = tn.nspname
                 AND target_object.table_name = tc.relname AND target_object.is_active
             WHERE con.contype = 'f' AND con.conparentid = 0
               AND (sc.oid = CAST(:oid AS oid) OR tc.oid = CAST(:oid AS oid))
-              AND sn.nspname ~ '^ts_[a-z0-9_]+$' AND sn.nspname <> 'ts_meta'
-              AND sn.nspname <> 'ts_meta_hist' AND sn.nspname NOT IN (:restricted, :push_schema)
-              AND tn.nspname ~ '^ts_[a-z0-9_]+$' AND tn.nspname <> 'ts_meta'
-              AND tn.nspname <> 'ts_meta_hist' AND tn.nspname NOT IN (:restricted, :push_schema)
-              AND NOT (sn.nspname = :batch_schema AND sc.relname IN (:batch_target, :batch_range_target))
-              AND NOT (tn.nspname = :batch_schema AND tc.relname IN (:batch_target, :batch_range_target))
-              AND sc.relname ~ '^[a-z_][a-z0-9_]{{0,62}}$'
-              AND tc.relname ~ '^[a-z_][a-z0-9_]{{0,62}}$'
-              AND sc.relkind IN ('r','p') AND tc.relkind IN ('r','p')
-              AND NOT sc.relispartition AND NOT tc.relispartition
-              AND NOT EXISTS (SELECT 1 FROM pg_inherits child WHERE child.inhrelid = sc.oid)
-              AND NOT EXISTS (SELECT 1 FROM pg_inherits child WHERE child.inhrelid = tc.oid)
+              AND {ordinary_table_sql("sn", "sc")} AND {ordinary_table_sql("tn", "tc")}
             ORDER BY sn.nspname, sc.relname, con.conname, con.oid
-        """), await self._catalog_parameters({"oid": oid, "restricted": PROTECTED_SYNTHETIC_SCHEMA, "push_schema": PUSH_APPLY_SCHEMA,
-                "batch_schema": BATCH_TARGET_SCHEMA, "batch_target": INCREMENTAL_TARGET, "batch_range_target": BATCH_RANGE_TARGET}))
+        """), await self._catalog_parameters({"oid": oid}))
         foreign_keys = [dict(item) for item in result.mappings()]
         try:
             async with self._metadata_pg.session() as metadata_session:
@@ -781,11 +1019,24 @@ class EtlLayers:
             raise HTTPException(503, str(exc)) from exc
         return foreign_keys, logical
 
-    async def preview(self, layer: str, table: str, *, include_hidden: bool = False) -> dict[str, Any]:
+    async def preview(self, layer: str, table: str, *, include_hidden: bool = False,
+                      connection_id: str | None = None) -> dict[str, Any]:
         schema = _object_schema(layer)
         require_ordinary_table(schema, table)
         quote_identifier(table)
-        async with self.session() as session:
+        connection_id = await self.selected_connection_id(schema, table, connection_id)
+        external = await self._external_object(schema, table, include_hidden=include_hidden, connection_id=connection_id)
+        if external:
+            columns = await self._registered_columns(external["id"])
+            primary = sorted((column for column in columns if column["primary"]), key=lambda column: column["primaryPosition"])
+            return {**_object_summary({**external, "schema": schema, "name": table}),
+                    "registryId": str(external["id"]), "connectionId": external["connectionId"], "engine": external["engine"],
+                    "primaryKey": [column["name"] for column in primary],
+                    "properties": [{"name": column["name"], "displayName": column["name"],
+                                    "type": column["type"], "nullable": column["nullable"],
+                                    "primaryKey": column["primary"], "comment": column["comment"] or ""} for column in columns],
+                    "linkedObjectTypes": []}
+        async with self.session(schema=schema, table=table, connection_id=connection_id) as session:
             await self._require_metadata()
             visible = "" if include_hidden else " AND COALESCE(o.visibility, 'normal') <> 'hidden'"
             rows = await self._object_rows(session, _OBJECT_TABLE_SQL + visible +
@@ -825,13 +1076,12 @@ class EtlLayers:
             else:
                 columns = None
         if columns is None:
-            columns = await self.columns(schema, table) if row["properties_count"] else []
+            columns = await self.columns(schema, table, connection_id=connection_id, include_hidden=include_hidden) if row["properties_count"] else []
         linked: dict[str, dict[str, Any]] = {}
         for collection, relations in (("relationships", logical),):
             for relation in relations:
-                if any(not relation[f"{side}_schema"].startswith("ts_") or
-                       relation[f"{side}_schema"] in {"ts_meta", "ts_meta_hist", PROTECTED_SYNTHETIC_SCHEMA, PUSH_APPLY_SCHEMA, HANDOFF_PRIVATE_SCHEMA, SNAPSHOT_INTENT_PRIVATE_SCHEMA} or
-                       (relation[f"{side}_schema"], relation[f"{side}_table"]) in (RESERVED_BATCH_TARGET, RESERVED_BATCH_RANGE_TARGET)
+                if any(not is_ordinary_schema(relation[f"{side}_schema"]) or
+                       (relation[f"{side}_schema"], relation[f"{side}_table"]) in _PROTECTED_TABLES
                        for side in ("source", "target")):
                     continue
                 for direction, side, peer in (("outgoing", "source", "target"), ("incoming", "target", "source")):
@@ -858,29 +1108,28 @@ class EtlLayers:
                             provenance=relation["provenance"])
                     item[collection].append(entry)
         primary = sorted((column for column in columns if column["primary"]), key=lambda column: column["primaryPosition"])
-        return {**_object_summary(row), "primaryKey": [column["name"] for column in primary],
+        return {**_object_summary(row), "registryId": str(row["object_id"]) if row.get("object_id") is not None else None,
+                "connectionId": connection_id,
+                "engine": "postgresql", "primaryKey": [column["name"] for column in primary],
                 "properties": [{"name": column["name"], "displayName": column["name"],
                     "type": column["type"], "nullable": column["nullable"],
                     "primaryKey": column["primary"], "comment": column["comment"] or ""} for column in columns],
                 "linkedObjectTypes": [linked[key] for key in sorted(linked)]}
 
-    async def get_table(self, layer: str, table: str) -> dict[str, Any]:
-        require_ordinary_table(resolve_schema(layer), table)
-        quote_identifier(table)
-        tables = await self.tables(layer)
-        found = next((item for item in tables if item["name"] == table), None)
-        if found is None:
-            raise HTTPException(404, "Table does not exist in this schema")
-        return found
+    async def get_table(self, layer: str, table: str, *, connection_id: str | None = None) -> dict[str, Any]:
+        return await self.runtime_table(layer, table, include_hidden=True, connection_id=connection_id)
 
-    async def runtime_table(self, layer: str, table: str, *, include_hidden: bool) -> dict[str, Any]:
+    async def runtime_table(self, layer: str, table: str, *, include_hidden: bool,
+                            connection_id: str | None = None) -> dict[str, Any]:
         """Resolve one visible parent without scanning sizes of every table in its schema."""
         schema = _object_schema(layer)
         require_ordinary_table(schema, table)
         quote_identifier(table)
-        async with self.session() as session:
+        connection_id = await self.selected_connection_id(schema, table, connection_id)
+        async with self.session(schema=schema, table=table, connection_id=connection_id) as session:
             row = (await session.execute(text(f"""
-                SELECT n.nspname AS "schemaName", c.relname AS name
+                SELECT n.nspname AS "schemaName", c.relname AS name,
+                       o.id::text AS "registryId", o.layer, o.table_role AS "tableRole", o.data_type AS "dataType"
                 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
                 {_OBJECT_METADATA_JOIN}
                 WHERE {_OBJECT_TABLE_SQL} AND c.relname = :table AND n.nspname = :schema
@@ -888,11 +1137,11 @@ class EtlLayers:
             """), await self._catalog_parameters({"table": table, "schema": schema, "include_hidden": include_hidden}))).mappings().first()
         if row is None:
             raise HTTPException(404, "Table does not exist in this schema")
-        return dict(row)
+        return {**row, "connectionId": connection_id, "engine": "postgresql"}
 
     async def transfer_endpoints(self, source: tuple[str, str], target: tuple[str, str]) -> dict[tuple[str, str], bool]:
         """Return eligible visible tables and whether they have a valid primary key."""
-        async with self.session() as session:
+        async with self.session(schema=target[0], table=target[1]) as session:
             await session.execute(text("SET LOCAL statement_timeout = '2s'"))
             await self._require_metadata()
             result = await session.execute(text(f"""
@@ -910,7 +1159,7 @@ class EtlLayers:
         self, source: tuple[str, str], target: tuple[str, str],
     ) -> dict[tuple[str, str], dict[str, Any]]:
         """Read the metadata for both visible endpoints in one catalog snapshot."""
-        async with self.session() as session:
+        async with self.session(schema=target[0], table=target[1]) as session:
             await session.execute(text("SET LOCAL statement_timeout = '2s'"))
             return await self.transfer_endpoint_columns_in_session(session, source, target)
 
@@ -953,19 +1202,32 @@ class EtlLayers:
                 endpoint["columns"][row["name"]] = row
         return endpoints
 
-    async def evidence(self, layer: str, table: str, *, include_hidden: bool = False) -> dict[str, Any]:
+    async def evidence(self, layer: str, table: str, *, include_hidden: bool = False,
+                       connection_id: str | None = None) -> dict[str, Any]:
         schema = _object_schema(layer)
         require_ordinary_table(schema, table)
         quote_identifier(table)
-        is_financial = (schema, table) == _FINANCIAL_ODS
+        connection_id = await self.selected_connection_id(schema, table, connection_id)
+        external = await self._external_object(schema, table, include_hidden=include_hidden, connection_id=connection_id)
+        if external:
+            columns = await self._registered_columns(external["id"])
+            return {
+                "observedAt": datetime.now(timezone.utc).isoformat(), "latestFiledDate": None,
+                "observation": "metadata_only", "tableRole": external["table_role"], "connectionId": connection_id,
+                "quality": {"source": "ontology_registry", "columnCount": len(columns),
+                            "primaryKeyColumnCount": sum(column["primary"] for column in columns),
+                            "notNullColumnCount": sum(not column["nullable"] for column in columns)},
+                "history": {"status": "unavailable"}, "lineage": {"status": "unavailable"},
+            }
         filed = None
-        observation = "safe_plan_unavailable" if is_financial else "metadata_only"
-        async with self.session() as session:
+        observation = "metadata_only"
+        async with self.session(schema=schema, table=table, connection_id=connection_id) as session:
             await session.execute(text("SET LOCAL statement_timeout = '2s'"))
             await self._require_metadata()
             target = (await session.execute(text(f"""
                 SELECT attributes.column_count, attributes.primary_key_column_count,
-                       attributes.not_null_column_count, attributes.filed_is_date
+                       attributes.not_null_column_count, attributes.filed_is_date,
+                       o.layer, o.table_role, o.data_type
                 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
                 {_OBJECT_METADATA_JOIN}
                 CROSS JOIN LATERAL (
@@ -983,15 +1245,37 @@ class EtlLayers:
             """), await self._catalog_parameters({"schema": schema, "table": table, "include_hidden": include_hidden}))).mappings().first()
             if target is None:
                 raise HTTPException(404, "Evidence is not available for this table")
-            if is_financial and target["filed_is_date"]:
-                plan = (await session.execute(text("EXPLAIN (FORMAT JSON) " + _LATEST_FILED_SQL))).scalar_one()
-                if _bounded_filed_plan(plan):
-                    filed = (await session.execute(text(_LATEST_FILED_SQL))).scalar_one_or_none()
-                    observation = "observed" if filed is not None else "no_filed_date"
+            is_financial = (target["layer"], target["table_role"], target["data_type"]) == (
+                "ods", "current", _FINANCIAL_DATA_TYPE,
+            )
+            if is_financial:
+                observation = "safe_plan_unavailable"
+                if target["filed_is_date"]:
+                    relation = f"{quote_schema_identifier(schema)}.{quote_identifier(table)}"
+                    latest_filed_sql = f"SELECT filed FROM {relation} WHERE filed IS NOT NULL ORDER BY filed DESC LIMIT 1"
+                    plan = (await session.execute(text("EXPLAIN (FORMAT JSON) " + latest_filed_sql))).scalar_one()
+                    if _bounded_filed_plan(plan):
+                        filed = (await session.execute(text(latest_filed_sql))).scalar_one_or_none()
+                        observation = "observed" if filed is not None else "no_filed_date"
+        lineage = {"status": "unavailable"}
+        if is_financial:
+            rds = await get_registered_object(self._metadata_pg, "rds", _FINANCIAL_DATA_TYPE)
+            if rds and is_ordinary_schema(rds["schema_name"]):
+                try:
+                    await self.runtime_table(rds["schema_name"], rds["table_name"], include_hidden=include_hidden)
+                except HTTPException as error:
+                    if error.status_code != 404:
+                        raise
+                else:
+                    lineage = {"status": "declared", "mongoCollection": "financial_fact_sec_edgar",
+                               "rdsTable": f'{rds["schema_name"]}.{rds["table_name"]}',
+                               "odsTable": f"{schema}.{table}"}
         return {
             "observedAt": datetime.now(timezone.utc).isoformat(),
             "latestFiledDate": filed.isoformat() if filed is not None else None,
             "observation": observation,
+            "tableRole": target["table_role"],
+            "connectionId": connection_id,
             "quality": {
                 "source": "postgres_catalog",
                 "columnCount": target["column_count"],
@@ -999,20 +1283,19 @@ class EtlLayers:
                 "notNullColumnCount": target["not_null_column_count"],
             },
             "history": {"status": "unavailable"},
-            "lineage": {
-                "status": "declared",
-                "mongoCollection": "financial_fact_sec_edgar",
-                "rdsTable": "ts_rds.rds_financial_fact",
-                "odsTable": "ts_ods.ods_financial_fact",
-            } if is_financial else {"status": "unavailable"},
+            "lineage": lineage,
         }
 
-    async def columns(self, layer: str, table: str) -> list[dict[str, Any]]:
+    async def columns(self, layer: str, table: str, *, connection_id: str | None = None,
+                      include_hidden: bool = False) -> list[dict[str, Any]]:
         schema = resolve_schema(layer)
         require_ordinary_table(schema, table)
         quote_identifier(table)
-        async with self.session() as session:
-            result = await session.execute(text("""
+        external = await self._external_object(schema, table, connection_id=connection_id, include_hidden=include_hidden)
+        if external:
+            return await self._registered_columns(external["id"])
+        async with self.session(schema=schema, table=table, connection_id=connection_id) as session:
+            result = await session.execute(text(f"""
                 SELECT a.attname AS name, format_type(a.atttypid, a.atttypmod) AS type,
                        col_description(c.oid, a.attnum) AS comment,
                        a.attnum AS "ordinalPosition",
@@ -1022,21 +1305,23 @@ class EtlLayers:
                             THEN array_position(i.indkey::smallint[], a.attnum) + 1 END AS "primaryPosition"
                 FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
                 JOIN pg_namespace n ON n.oid = c.relnamespace
+                {_OBJECT_METADATA_JOIN}
                 LEFT JOIN pg_index i ON i.indrelid = c.oid AND i.indisprimary
-                WHERE n.nspname = :schema AND c.relname = :table
-                  AND c.relkind IN ('r','p') AND a.attnum > 0 AND NOT a.attisdropped
+                WHERE n.nspname = :schema AND c.relname = :table AND {_OBJECT_TABLE_SQL}
+                  AND a.attnum > 0 AND NOT a.attisdropped AND (:include_hidden OR o.visibility <> 'hidden')
                 ORDER BY a.attnum
-            """), {"schema": schema, "table": table})
+            """), await self._catalog_parameters({"schema": schema, "table": table, "include_hidden": include_hidden}))
             columns = [dict(row) for row in result.mappings()]
         if not columns:
             raise HTTPException(404, "Table does not exist in this schema")
         return columns
 
-    async def partitions(self, layer: str, table: str) -> list[dict[str, Any]]:
+    async def partitions(self, layer: str, table: str, *, connection_id: str | None = None,
+                         include_hidden: bool = False) -> list[dict[str, Any]]:
         schema = resolve_schema(layer)
         require_ordinary_table(schema, table)
-        await self.columns(schema, table)
-        async with self.session() as session:
+        await self.columns(schema, table, connection_id=connection_id, include_hidden=include_hidden)
+        async with self.session(schema=schema, table=table, connection_id=connection_id) as session:
             result = await session.execute(text("""
                 WITH RECURSIVE descendants(relid) AS (
                     SELECT to_regclass(:qualified)
@@ -1052,15 +1337,20 @@ class EtlLayers:
                 WHERE t.relid <> to_regclass(:qualified)
                   AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhparent = t.relid)
                 ORDER BY c.relname
-            """), {"qualified": f'{quote_identifier(schema)}.{quote_identifier(table)}'})
+            """), {"qualified": f'{quote_schema_identifier(schema)}.{quote_identifier(table)}'})
             return [dict(row) for row in result.mappings()]
 
-    async def row_preview_policy(self, layer: str, table: str) -> RowPreviewPolicy:
+    async def row_preview_policy(self, layer: str, table: str, *, connection_id: str | None = None) -> RowPreviewPolicy:
         schema = _object_schema(layer)
         require_ordinary_table(schema, table)
         quote_identifier(table)
         enrolled = _required_indexed_preview_tables()
-        async with self.session(repeatable_read=True) as session:
+        external = await self._external_object(schema, table, connection_id=connection_id)
+        if external:
+            if (schema, table) in enrolled:
+                raise HTTPException(409, "This object's indexed preview requires PostgreSQL")
+            return RowPreviewPolicy(mode="classic")
+        async with self.session(repeatable_read=True, schema=schema, table=table, connection_id=connection_id) as session:
             await session.execute(text("SET LOCAL statement_timeout='750ms'"))
             visible = await session.scalar(text(f"""
                 SELECT EXISTS (
@@ -1082,7 +1372,8 @@ class EtlLayers:
 
     async def data(self, layer: str, table: str, payload: dict[str, Any] | None = None,
                    scope: dict[str, Any] | None = None, *, preview_rows: bool = False,
-                   row_keys: list[dict[str, str]] | None = None) -> dict[str, Any]:
+                   row_keys: list[dict[str, str]] | None = None, connection_id: str | None = None,
+                   include_hidden: bool = False) -> dict[str, Any]:
         started = perf_counter()
         payload = payload or {}
         schema = resolve_schema(layer)
@@ -1093,11 +1384,17 @@ class EtlLayers:
             raise _indexed_preview_required(projection=requires_indexed_projection(schema, table))
         if (schema, table) == (INDEX_SANDBOX_SCHEMA, INDEX_SANDBOX_TABLE):
             raise HTTPException(403, "Use the dedicated index-checked preview for this synthetic table")
-        columns = await self.columns(schema, table)
+        connection_id = await self.selected_connection_id(schema, table, connection_id)
+        external = await self._external_object(schema, table, connection_id=connection_id, include_hidden=include_hidden)
+        if external:
+            if scope is not None or row_keys is not None:
+                raise HTTPException(422, "This connection supports only bounded read-only previews")
+            return await self._external_data(external, payload, started=started)
+        columns = await self.columns(schema, table, connection_id=connection_id, include_hidden=include_hidden)
         primary_columns = sorted((column for column in columns if column["primary"]),
                                  key=lambda column: column["primaryPosition"])
         names = {column["name"] for column in columns}
-        qualified = f'{quote_identifier(schema)}.{quote_identifier(table)}'
+        qualified = f'{quote_schema_identifier(schema)}.{quote_identifier(table)}'
         target = qualified
         target_schema, target_table = schema, table
         # Published partitions are an additional restriction, never replaceable by callers.
@@ -1106,14 +1403,14 @@ class EtlLayers:
             raise HTTPException(400, "Partition is outside the published data range")
         if selected_partitions:
             selected = selected_partitions.pop()
-            parts = await self.partitions(schema, table)
+            parts = await self.partitions(schema, table, connection_id=connection_id, include_hidden=include_hidden)
             part = next((item for item in parts if item["name"] == selected), None)
             if part is None:
                 raise HTTPException(400, "Partition does not belong to this table")
             target_schema, target_table = part["schema"], part["name"]
             if (target_schema, target_table) in enrolled:
                 raise _indexed_preview_required(projection=requires_indexed_projection(target_schema, target_table))
-            target = f'{quote_identifier(target_schema)}.{quote_identifier(target_table)}'
+            target = f'{quote_schema_identifier(target_schema)}.{quote_identifier(target_table)}'
         try:
             limit = int(payload.get("limit", 50))
             offset = int(payload.get("offset", 0))
@@ -1165,7 +1462,8 @@ class EtlLayers:
         if paged:
             order.extend(f't.{quote_identifier(field)} asc' for field in primary_key if field not in sorted_fields)
         ordering = " ORDER BY " + ", ".join(order) if order else ""
-        async with self.session(repeatable_read=bool(enrolled), query_timeout=not preview_rows) as session:
+        async with self.session(schema=schema, table=table, connection_id=connection_id,
+                                repeatable_read=bool(enrolled), query_timeout=not preview_rows) as session:
             if enrolled:
                 # The app-level safeguard checks the actual selected relation
                 # (plus its stable catalog family) in the business transaction.
@@ -1220,7 +1518,7 @@ class EtlLayers:
                 for index, name in enumerate(extras, start=len(fields)):
                     edit_metadata[name] = [record[index] for record in records[:limit]]
                 if editable:
-                    edit_metadata["rowActions"] = {"edit": True, "delete": allows_physical_delete(schema)}
+                    edit_metadata["rowActions"] = {"edit": True, "delete": await allows_physical_delete(schema, table, connection_id=connection_id)}
             else:
                 rows = [dict(row) for row in result.mappings()]
             if scope is None and payload.get("withIdentity"):
@@ -1246,13 +1544,16 @@ class EtlLayers:
                 "columnNullable": {column["name"]: column["nullable"] for column in columns},
                 "elapsed": round(perf_counter() - started, 4)}
 
-    async def query(self, sql: str) -> dict[str, Any]:
+    async def query(self, sql: str, *, connection_id: str | None = None) -> dict[str, Any]:
         sql = sql.strip().removesuffix(";").strip()
         if not re.match(r"^(SELECT|WITH)\b", sql, re.IGNORECASE) or ";" in sql:
             raise HTTPException(400, "Only a single read-only SELECT query is supported")
+        if self._pg is None:
+            connection, _ = await self.connection_scope(connection_id=connection_id)
+            connection_id = str(connection["id"])
         started = perf_counter()
         # Observe the protection gate and execute the caller's SELECT in the same snapshot.
-        async with self.session(repeatable_read=True) as session, self._metadata_pg.session() as metadata_session:
+        async with self.session(repeatable_read=True, connection_id=connection_id) as session, self._metadata_pg.session() as metadata_session:
             # Raw SQL is not a relation sandbox: views and database functions can hide references.
             # Migration-only empty metadata must not disable the ordinary workspace.
             fixture, marked_history_column, push_marker, push_receipts, push_binding, push_apply_receipts, batch_receipts = (

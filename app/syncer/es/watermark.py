@@ -4,7 +4,7 @@
 记录上次同步的 (watermark, record_id, data_source, data_type) 稳定游标。
 
 设计原则:
-- 水位线存储在 PostgreSQL（与源数据同库），事务一致性
+- 水位线存储在系统 PostgreSQL，确认 ES 写入后前进
 - 幂等更新：重复同步同一批次不会回退水位线
 - 启动时自动建表（幂等）
 """
@@ -61,8 +61,8 @@ class WatermarkStore:
     用法:
         store = WatermarkStore()
         await store.ensure_table()
-        watermark = await store.get("es_syncer", "ts_rds.rds_patent")
-        await store.update("es_syncer", "ts_rds.rds_patent", new_watermark, count=100)
+        watermark = await store.get("es_syncer", "warehouse.patents")
+        await store.update("es_syncer", "warehouse.patents", "spider_patent", new_watermark, sync_count=100)
     """
 
     def __init__(self, pg: PostgresClient | None = None) -> None:

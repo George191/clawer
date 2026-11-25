@@ -35,9 +35,9 @@ const policyPrincipals = (d: SemanticDefinition): Principal[] => [
 const securityTabs = ['Object access', 'Record access', 'Property access', 'Test access'] as const;
 const opt = (values: readonly string[]) => values.map(value => ({ value, label: value }));
 const path = (schema: string, table: string) => [schema, table].filter(Boolean).join('.');
-const emptyDefinition = (schema = '', allowedSource = true, upstreamConnectionId?: string): SemanticDefinition => ({
+const emptyDefinition = (schema = '', allowedSource = true, upstreamConnectionId?: string, connectionId?: string): SemanticDefinition => ({
   id: '', name: '', pluralName: '', description: '', icon: '', color: '#ffffff', iconColor: '#000000', groups: [], projectId: '',
-  source: allowedSource ? { mode: 'existing', schema, table: '', upstreamConnectionId } : { mode: 'none' }, ...initialProperties(allowedSource), actions: [],
+  source: allowedSource ? { mode: 'existing', schema, table: '', connectionId, upstreamConnectionId } : { mode: 'none' }, ...initialProperties(allowedSource), actions: [],
   security: { mode: allowedSource ? 'inherit' : 'explicit', objectReaders: [], fieldReaders: {} },
 });
 function problem(failure: unknown, fallback: string) {
@@ -55,15 +55,20 @@ function IssueList({ title, issues }: { title: string; issues: OntologyIssue[] }
 const Heading = ({ title, detail }: { title: string; detail: string }) => <header className="flow-create-heading"><h3 tabIndex={-1}>{title}</h3><p>{detail}</p></header>;
 
 type Props = {
-  allowedSource: boolean; schemas: LayerNode[]; initialSchema?: string; initialUpstreamConnectionId?: string;
+  allowedSource: boolean; schemas: LayerNode[]; initialSchema?: string; initialConnectionId?: string; initialUpstreamConnectionId?: string;
   warehouse?: WarehouseConnection; warehouseFailed: boolean; onRetryWarehouse: () => void;
   onCancel: () => void; onPublished: (definition: PublishedOntologyType) => void;
 };
-export default function SemanticObjectWizard({ allowedSource, schemas, initialSchema, initialUpstreamConnectionId, warehouse, warehouseFailed, onRetryWarehouse, onCancel, onPublished }: Props) {
-  const sourceSchemas = schemas.filter(schema => schema.ontologySource);
-  const warehouseId = warehouse?.id;
-  const startingSchema = sourceSchemas.some(schema => (schema.schemaName || schema.key) === initialSchema) ? initialSchema : '';
-  const initial = useRef(emptyDefinition(startingSchema, allowedSource, initialUpstreamConnectionId));
+export default function SemanticObjectWizard({ allowedSource, schemas, initialSchema, initialConnectionId, initialUpstreamConnectionId, warehouse, warehouseFailed, onRetryWarehouse, onCancel, onPublished }: Props) {
+  const sourceScopes = schemas.flatMap(node => {
+    if (!node.ontologySource || !node.connectionId || node.engine !== 'postgresql') return [];
+    const schema = node.schemaName || node.key;
+    return [{ key: JSON.stringify([node.connectionId, schema]), schema, connectionId: node.connectionId,
+      label: [node.database || node.connectionId, node.alias, schema].filter(Boolean).join(' · ') }];
+  });
+  const startingScopes = sourceScopes.filter(scope => scope.schema === initialSchema && (!initialConnectionId || scope.connectionId === initialConnectionId));
+  const startingScope = startingScopes.length === 1 ? startingScopes[0] : undefined;
+  const initial = useRef(emptyDefinition(startingScope?.schema, allowedSource, initialUpstreamConnectionId, startingScope?.connectionId));
   const [definition, setDefinition] = useState(initial.current);
   const [connectionChosen, setConnectionChosen] = useState(!!initial.current.source.upstreamConnectionId);
   const [connectionAvailable, setConnectionAvailable] = useState(false);
@@ -100,7 +105,14 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
   const existing = definition.source.mode === 'existing';
   const steps = existing ? allSteps.filter(label => label !== 'Actions') : allSteps;
   const currentStep = steps[step];
-  const sourceKey = existing && definition.source.schema && definition.source.table ? path(definition.source.schema, definition.source.table) : '';
+  const storageScope = existing ? sourceScopes.find(scope => scope.schema === definition.source.schema &&
+    scope.connectionId === definition.source.connectionId) : undefined;
+  const storageKey = storageScope?.key || '';
+  const storageConnectionId = storageScope?.connectionId;
+  const storageSchema = storageScope?.schema;
+  const storageTable = definition.source.table;
+  const sourcePath = storageSchema && storageTable ? path(storageSchema, storageTable) : '';
+  const sourceKey = storageKey && storageTable ? JSON.stringify([storageKey, storageTable]) : '';
   const preview = sourceKey && sourcePreview.key === sourceKey ? sourcePreview.data : undefined;
   const dirty = JSON.stringify(saved?.definition ?? initial.current) !== JSON.stringify(definition);
   const selectedProject = projects.data?.find(item => item.id === definition.projectId);
@@ -181,20 +193,22 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
   }, [definition.projectId, identity, principalQuery, retry]);
   useEffect(() => {
     let alive = true;
-    const key = connectionChosen ? definition.source.schema || '' : '';
-    setTables({ key, loading: existing && !!key && !!warehouseId });
-    if (existing && key && warehouseId) fetchLayerTables(key, 'current', undefined, warehouseId).then(data => { if (alive && current()) setTables({ key, data: data.filter(table => table.ontologySource) }); }, failure => { if (alive && current()) setTables({ key, error: problem(failure, 'Unable to load tables.') }); });
+    setTables({ key: storageKey, loading: !!storageKey });
+    if (storageSchema && storageConnectionId) fetchLayerTables(storageSchema, 'current', undefined, undefined, storageConnectionId).then(
+      data => { if (alive && current()) setTables({ key: storageKey, data: data.filter(table => table.ontologySource) }); },
+      failure => { if (alive && current()) setTables({ key: storageKey, error: problem(failure, 'Unable to load tables.') }); },
+    );
     return () => { alive = false; };
-  }, [connectionChosen, definition.source.schema, existing, identity, retry, warehouseId]);
+  }, [storageKey, storageSchema, storageConnectionId, identity, retry]);
   useEffect(() => {
     let alive = true;
-    setSourcePreview({ key: sourceKey, loading: !!sourceKey && !!warehouseId });
-    if (sourceKey && warehouseId && definition.source.schema && definition.source.table) fetchEtlObjectPreview(definition.source.schema, definition.source.table, true, warehouseId).then(
+    setSourcePreview({ key: sourceKey, loading: !!sourceKey });
+    if (sourceKey && storageSchema && storageTable && storageConnectionId) fetchEtlObjectPreview(storageSchema, storageTable, true, undefined, storageConnectionId).then(
       data => { if (alive && current()) setSourcePreview({ key: sourceKey, data }); },
       () => { if (alive && current()) setSourcePreview({ key: sourceKey, error: 'Unable to load source columns.' }); },
     );
     return () => { alive = false; };
-  }, [sourceKey, identity, retry, warehouseId]);
+  }, [sourceKey, storageSchema, storageTable, storageConnectionId, identity, retry]);
 
   const guards = (action: () => void) => {
     if (outstanding.current || discard.current) return;
@@ -282,8 +296,8 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
   const propertyOptions = definition.properties.filter(item => idPattern.test(item.id)).map(item => ({ value: item.id, label: item.name ? item.name + ' · ' + item.id : item.id }));
   const unrestrictedProperties = propertyOptions.filter(({value}) => !definition.primaryKey.includes(value) && !Object.prototype.hasOwnProperty.call(definition.security.fieldReaders, value));
   function stepError(label: typeof allSteps[number]) {
-    if (label === 'Datasource' && existing && !connectionChosen) return 'Select a data connection.';
-    if (label === 'Datasource' && existing && !connectionAvailable) return 'Choose an available connection or refresh the connection list.';
+    if (label === 'Datasource' && existing && !storageScope) return 'Select the backing connection and schema.';
+    if (label === 'Datasource' && existing && warehouse && definition.source.upstreamConnectionId && !connectionAvailable) return 'Choose an available upstream connection or refresh the connection list.';
     if (label === 'Datasource' && existing && (!sourceKey || !preview)) return 'Choose the backing dataset and load its columns.';
     if (label === 'Metadata' && (!idPattern.test(definition.id) || !definition.name.trim() || !definition.pluralName.trim())) return 'Enter a valid API ID and singular and plural display names.';
     if (label === 'Properties') return propertyIssue(definition, preview || undefined)?.message || '';
@@ -360,7 +374,7 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
     return { kind: kind as Principal['kind'], id };
   });
   const userOptions = (principals.data || []).filter(principal => principal.kind === 'user').map(principal => ({ value: principal.id, label: principalLabel(principal) }));
-  const schemaOptions = sourceSchemas.map(schema => ({ value: schema.schemaName || schema.key, label: schema.alias ? schema.alias + ' · ' + (schema.schemaName || schema.key) : schema.schemaName || schema.key }));
+  const schemaOptions = sourceScopes.map(scope => ({ value: scope.key, label: scope.label }));
   const retries = () => setRetry(value => value + 1);
   const projectInput = <div>
     <label className="flow-create-field"><span>Ontology project</span><Select {...selectStyle} aria-label="Destination project" showSearch options={projectOptions} value={definition.projectId || undefined} loading={projects.loading} disabled={busy || projects.loading} placeholder="Select a project" onChange={projectChange} /></label>
@@ -405,25 +419,27 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
               <AppstoreOutlined aria-hidden="true" /><span><strong>No backing datasource</strong><small>Start with an empty set of records. Enable a Create action if users should add objects after publication.</small></span><CheckOutlined aria-hidden="true" />
             </label>
             <label className="flow-create-source-option">
-              <input type="radio" name="semantic-source" checked={existing} disabled={busy || !allowedSource} onChange={() => sourceChange({ mode: 'existing', schema: startingSchema, table: '' })} />
-              <TableOutlined aria-hidden="true" /><span><strong>Existing dataset</strong><small>Choose a backing warehouse table and identify its upstream connection. Each row becomes a read-only object.</small></span><CheckOutlined aria-hidden="true" />
+              <input type="radio" name="semantic-source" checked={existing} disabled={busy || !allowedSource} onChange={() => sourceChange({ mode: 'existing', schema: startingScope?.schema || '', connectionId: startingScope?.connectionId, table: '' })} />
+              <TableOutlined aria-hidden="true" /><span><strong>Existing dataset</strong><small>Choose a backing warehouse table. Each row becomes a read-only object.</small></span><CheckOutlined aria-hidden="true" />
             </label>
           </fieldset>
           {!allowedSource && <p className="flow-create-help">A platform administrator is required to bind a warehouse table.</p>}
-          {existing && allowedSource && !warehouse && (warehouseFailed
-            ? <p className="flow-create-error" role="alert">Unable to read the warehouse connection.<Button size="small" onClick={onRetryWarehouse}>Retry</Button></p>
-            : <p className="flow-create-help" role="status">Loading warehouse connection…</p>)}
+          {existing && allowedSource && <div className="flow-create-grid">
+            <label className="flow-create-field"><span>Backing connection and schema</span><Select {...selectStyle} aria-label="Backing connection and schema" value={storageKey || undefined} options={schemaOptions} disabled={busy} placeholder="Select a schema" onChange={(key: string) => {
+              const scope = sourceScopes.find(item => item.key === key);
+              if (scope && key !== storageKey) sourceChange({ ...definition.source, schema: scope.schema, connectionId: scope.connectionId, table: '' });
+            }} /></label>
+            <label className="flow-create-field"><span>Backing table</span><Select {...selectStyle} aria-label="Backing table" showSearch value={storageKey && storageTable || undefined} disabled={busy || tables.loading || !storageKey || tables.key !== storageKey} options={opt((tables.key === storageKey ? tables.data : [])?.map(item => item.name) || [])} placeholder="Select a table" onChange={(table: string) => { if (table !== storageTable) sourceChange({ ...definition.source, table }); }} /></label>
+          </div>}
+          {existing && allowedSource && !warehouse && warehouseFailed && definition.source.upstreamConnectionId &&
+            <p className="flow-create-error" role="alert">Unable to load the upstream connection selector.<Button size="small" onClick={onRetryWarehouse}>Retry</Button></p>}
           {existing && allowedSource && warehouse && <OntologySourceConnection disabled={busy} onAvailabilityChange={setConnectionAvailable} warehouse={warehouse}
             value={connectionChosen ? definition.source.upstreamConnectionId || warehouse.id : undefined} onChange={id => {
               if (connectionChosen && id === (definition.source.upstreamConnectionId || warehouse.id)) return;
               setConnectionChosen(true);
-              sourceChange({ mode: 'existing', schema: id === warehouse.id ? startingSchema : '', table: '',
-                upstreamConnectionId: id === warehouse.id ? undefined : id });
+              set({ source: { ...definition.source, upstreamConnectionId: id === warehouse.id ? undefined : id } });
             }}>
-            <div className="flow-create-grid">
-              <label className="flow-create-field"><span>Warehouse schema</span><Select {...selectStyle} aria-label="Warehouse schema" value={definition.source.schema || undefined} options={schemaOptions} disabled={busy} placeholder="Select a schema" onChange={(schema: string) => { if (schema !== definition.source.schema) sourceChange({ ...definition.source, schema, table: '' }); }} /></label>
-              <label className="flow-create-field"><span>Backing table</span><Select {...selectStyle} aria-label="Backing table" showSearch value={definition.source.table || undefined} disabled={busy || tables.loading || !definition.source.schema || tables.key !== definition.source.schema} options={opt((tables.key === definition.source.schema ? tables.data : [])?.map(item => item.name) || [])} placeholder="Select a table" onChange={(table: string) => { if (table !== definition.source.table) sourceChange({ ...definition.source, table }); }} /></label>
-            </div>
+            {null}
           </OntologySourceConnection>}
           {(tables.error || sourcePreview.error) && <p className="flow-create-error" role="alert">{tables.error || sourcePreview.error}<Button size="small" icon={<ReloadOutlined />} onClick={retries}>Retry</Button></p>}
           {(tables.loading || sourcePreview.loading) && <p role="status" className="flow-create-help">Reading source metadata…</p>}
@@ -503,7 +519,7 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
             <dl className="flow-security-facts">
               <dt>Project</dt><dd>{selectedProject?.name || selectedProject?.teamName}</dd>
               <dt>Policy</dt><dd>{existing ? 'Inherit source access' : 'Selected project readers'}</dd>
-              {existing && <><dt>Data source</dt><dd>{sourceKey}</dd><dt>Eligible readers</dt><dd>Project members with platform administrator access</dd></>}
+              {existing && <><dt>Data source</dt><dd>{sourcePath}</dd><dt>Eligible readers</dt><dd>Project members with platform administrator access</dd></>}
             </dl>
             <p className="flow-create-help">{existing ? 'Record and property rules can further restrict what these readers see.' : 'Select project users, teams or organizations to grant access.'}</p>
             {definition.security.mode === 'explicit' && <label className="flow-create-field"><span>Object readers</span><Select {...selectStyle} aria-label="Object readers" mode="multiple" onSearch={setPrincipalQuery} options={principalOptions} loading={principals.loading} value={definition.security.objectReaders.map(principalKey)} onChange={(keys: string[]) => set({ security: { ...definition.security, objectReaders: principalList(keys) } })} placeholder="Choose who can read objects" /></label>}
@@ -543,7 +559,7 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
           <dl className="flow-create-summary">
             <dt>Object type</dt><dd>{definition.name} · {definition.id}</dd><dt>Ontology project</dt><dd>{selectedProject?.name || definition.projectId}</dd>
             {selectedProject && <><dt>Team</dt><dd>{selectedProject.teamName}</dd></>}
-            <dt>Records after publication</dt><dd>{existing ? `Read-only rows from ${sourceKey}` : 'Records are managed in the ontology. Publishing the definition creates zero records.'}</dd><dt>Primary key</dt><dd>{definition.primaryKey.join(', ')}</dd>
+            <dt>Records after publication</dt><dd>{existing ? `Read-only rows from ${sourcePath}` : 'Records are managed in the ontology. Publishing the definition creates zero records.'}</dd><dt>Primary key</dt><dd>{definition.primaryKey.join(', ')}</dd>
             <dt>Title property</dt><dd>{definition.titleKey}</dd><dt>Actions</dt><dd>{definition.actions.map(action => action.kind).join(', ') || 'None'}</dd>
             <dt>Who can read this type</dt><dd>{existing ? 'Project members with platform administrator access' : definition.security.objectReaders.map(reader => principalOptions.find(option => option.value === principalKey(reader))?.label || 'Name unavailable').join(', ')}</dd>
             <dt>Additional restrictions</dt><dd>{definition.security.markings?.length || 0} security markings · {definition.security.recordRules?.length || 0} record rules · {Object.keys(definition.security.fieldReaders).length} property restrictions</dd>

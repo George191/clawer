@@ -54,7 +54,7 @@ function Workspace({ source, kind, scope, identity, onStateChange }: Props & { i
         setSelectedId(match?.id || '');
       } else setNodeError(errorText(sourceResult.reason));
       if (targetResult.status === 'fulfilled') {
-        setSchemas(targetResult.value.map(layer => layer.schemaName || (layer.key.startsWith('ts_') ? layer.key : `ts_${layer.key}`)).filter(schema => /^ts_[a-z0-9_]{1,60}$/.test(schema) && !['ts_meta', 'ts_meta_hist'].includes(schema)));
+        setSchemas(targetResult.value.filter(layer => layer.engine === 'postgresql').map(layer => layer.key));
       } else setTargetError(errorText(targetResult.reason));
     }).catch(() => { if (current()) setAccess('error'); });
     return () => request.abort();

@@ -28,13 +28,22 @@ class ConnectState(ProbeState):
 class WalSlot(CdcModel):
     name: str
     active: bool
+    connection_id: str | None = None
     retained_bytes: int | None = None
     unconfirmed_bytes: int | None = None
+
+
+class PostgresTargetState(ProbeState):
+    connection_id: str
+    database: str
+    wal_level: str | None = None
+    expected_slot: str
 
 
 class PostgresState(ProbeState):
     wal_level: str | None = None
     expected_slot: str | None = None
+    targets: list[PostgresTargetState] = Field(default_factory=list)
     slots: list[WalSlot] = Field(default_factory=list)
 
 

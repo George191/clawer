@@ -21,7 +21,7 @@ const canCancel = (item: ScheduleItem, job: ScheduleJob): job is TransferSchedul
 const itemKey = (item: ScheduleItem) => `${item.kind}:${item.planId}`;
 const managePath = (item: ScheduleItem) => item.kind === 'batch'
   ? `/ontology/connections?${new URLSearchParams({ sourceId: item.connectionId, batchSync: item.planId })}`
-  : `/ontology/lineage?${new URLSearchParams({ schema: item.kind === 'upstream' ? item.sourceSchema : 'ts_transfer_sandbox', transferPlan: item.planId,
+  : `/ontology/lineage?${new URLSearchParams({ schema: item.sourceSchema, transferPlan: item.planId,
     ...(item.kind === 'upstream' ? { scheduleKind: 'upstream' } : {}) })}`;
 
 const configured = (item: ScheduleItem) => item.kind === 'transfer' ? item.enabled : item.configuredEnabled;
@@ -172,7 +172,7 @@ function TransferSchedulesWorkspace({ keyword, filter, identity }: Props & { ide
                   {job.receiptId && ('events' in job ? <span>Child receipt: <code>{job.receiptId}</code></span> : <code title={job.state === 'no_new_data' ? 'No new data record' : 'Committed receipt'}>{job.receiptId}</code>)}
                   {item.kind === 'transfer' && 'slot' in job && isCommittedMonthlyJob(job) &&
                     <MonthlyCommittedRun key={JSON.stringify([version, item.planId, job.id, job.slot, job.scheduleDayOfMonthUtc, job.receiptId])}
-                      planId={item.planId} job={job} identity={identity} disabled={cancelBusy || Boolean(confirmation)} />}
+                      planId={item.planId} sourceSchema={item.sourceSchema} targetSchema={item.targetSchema} job={job} identity={identity} disabled={cancelBusy || Boolean(confirmation)} />}
                   {item.kind === 'transfer' && canCancel(item, job) && <Button size="small" danger disabled={cancelBusy || Boolean(confirmation)}
                     onClick={() => { setCancelNotice(undefined); setConfirmation({ schedule: item, job }); }}>Cancel waiting job</Button>}
                 </li>;

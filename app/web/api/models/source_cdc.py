@@ -1,8 +1,18 @@
 """Configuration for one continuous capture task per saved source."""
 
+import re
 from typing import Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
+
+_IDENTIFIER = r"[A-Za-z_][A-Za-z0-9_$]*"
+
+
+def _qualified_names(values: list[str], *, dotted_namespace: bool = False) -> list[str]:
+    separator = r"(?:\." + _IDENTIFIER + r")+" if dotted_namespace else rf"\.{_IDENTIFIER}"
+    if len(set(values)) != len(values) or any(not re.fullmatch(_IDENTIFIER + separator, name) for name in values):
+        raise ValueError("Use unique explicit schema.table or database.collection names")
+    return values
 
 
 class MilvusCapture(BaseModel):
@@ -45,14 +55,7 @@ class SourceCdcCreate(BaseModel):
     @field_validator("tables")
     @classmethod
     def qualified_names(cls, values: list[str]) -> list[str]:
-        import re
-
-        if len(set(values)) != len(values) or any(
-            not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_$]*\.[A-Za-z_][A-Za-z0-9_$]*", name)
-            for name in values
-        ):
-            raise ValueError("Use unique explicit schema.table or database.collection names")
-        return values
+        return _qualified_names(values, dotted_namespace=True)
 
 
 class SourceCdcAction(BaseModel):
@@ -90,7 +93,7 @@ class DamengCdcBind(BaseModel):
     topic: str = Field(min_length=1, max_length=249, pattern=r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$")
     tables: list[str] = Field(min_length=1, max_length=100)
 
-    _tables = field_validator("tables")(SourceCdcCreate.qualified_names.__func__)
+    _tables = field_validator("tables")(_qualified_names)
 
 
 class DamengCdcRemove(BaseModel):

@@ -4,8 +4,6 @@ import { fetchTableExportLineage, type TableExportLineage, type TableExportLinea
 import useExplorerErrorToast from './useExplorerErrorToast';
 import './table-evidence.css';
 
-export const TABLE_EXPORT_SOURCE = { schema: 'ts_table_export_sandbox', table: 'records' } as const;
-export const tableExportLineagePath = `/ontology/lineage?${new URLSearchParams(TABLE_EXPORT_SOURCE)}`;
 const manageExportPath = '/ontology/connections?tableExport=1';
 const stateLabels = {
   enabled: 'Configured · execution enabled', inactive: 'Configured · execution disabled',
@@ -52,7 +50,7 @@ export default function TableExportEvidence({ mode, version }: { mode: 'explorer
             : <p>No positive receiver-confirmed receipt for the current review. Configuration, attempts and zero-row receipts do not establish an observed edge.</p>}
         </>}
         <div className="flow-table-export-links">
-          {mode === 'explorer' && <Link className="flow-evidence-lineage-link" to={tableExportLineagePath}>Open table export in Lineage</Link>}
+          {mode === 'explorer' && record && <Link className="flow-evidence-lineage-link" to={`/ontology/lineage?${new URLSearchParams({schema: record.source.schema, table: record.source.table})}`}>Open table export in Lineage</Link>}
           <Link className="flow-evidence-lineage-link" to={manageExportPath}>Manage table export</Link>
         </div>
       </section>

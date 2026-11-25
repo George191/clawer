@@ -28,12 +28,12 @@ function Time({ value, empty }: { value?: string | null; empty: string }) {
   return value && Number.isFinite(Date.parse(value)) ? <time dateTime={value}>{utc(value)}</time> : <>{empty}</>;
 }
 
-export default function ExplorerMinimumRowHealth({ version }: { version: number }) {
+export default function ExplorerMinimumRowHealth({ schema, table, version }: { schema: string; table: string; version: number }) {
   const identity = useSandboxIdentity();
-  return identity ? <Workspace key={`${identity}:${version}`} identity={identity} /> : null;
+  return identity ? <Workspace key={JSON.stringify([identity, schema, table, version])} identity={identity} schema={schema} table={table} /> : null;
 }
 
-function Workspace({ identity }: { identity: string }) {
+function Workspace({ identity, schema, table }: { identity: string; schema: string; table: string }) {
   const title = useId();
   const [status, setStatus] = useState<MinimumRowHealth>();
   const [threshold, setThreshold] = useState('');
@@ -57,13 +57,13 @@ function Workspace({ identity }: { identity: string }) {
   useEffect(() => {
     const read = new AbortController();
     setLoading(true); setReadFailed(false);
-    void fetchMinimumRowHealth(read.signal).then(result => {
+    void fetchMinimumRowHealth(schema, table, read.signal).then(result => {
       if (!live(read.signal)) return;
       setStatus(result); setThreshold(result.minimumRows == null ? '' : String(result.minimumRows));
     }).catch(() => { if (live(read.signal)) { setStatus(undefined); setReadFailed(true); } })
       .finally(() => { if (live(read.signal)) setLoading(false); });
     return () => read.abort();
-  }, [identity, revision]);
+  }, [identity, revision, schema, table]);
 
   const expiry = status?.validUntil ? Date.parse(status.validUntil) : NaN;
   useEffect(() => {
@@ -104,7 +104,7 @@ function Workspace({ identity }: { identity: string }) {
   const applyReview = async () => {
     if (!review) return;
     await operations(async () => {
-      const updated = await reviewMinimumRowHealth(review);
+      const updated = await reviewMinimumRowHealth(schema, table, review);
       if (live()) { setStatus(updated); setThreshold(updated.minimumRows == null ? '' : String(updated.minimumRows)); }
     }, 'The review could not be confirmed. Check the refreshed minimum row policy before retrying.');
     if (live()) setReview(undefined);
@@ -112,7 +112,7 @@ function Workspace({ identity }: { identity: string }) {
   const acknowledge = async (incident: AssetQualityIncident) => {
     if (!activeIncident || incident.id !== activeIncident.id || incident.generation !== status.policyGeneration) return;
     await operations(async () => {
-      const updated = await acknowledgeMinimumRowHealthIncident(incident.id, status.generation);
+      const updated = await acknowledgeMinimumRowHealthIncident(schema, table, incident.id, status.generation);
       if (live()) setStatus(value => value && { ...value, incident: updated });
     }, 'Acknowledgment could not be confirmed. Check the refreshed warning before retrying.');
   };
@@ -141,7 +141,7 @@ function Workspace({ identity }: { identity: string }) {
     }} generation={status.policyGeneration ?? undefined} busy={working || loading} onAcknowledge={acknowledge} />}
     <Modal open={Boolean(review)} destroyOnHidden className="flow-surface-modal" title="Review minimum row check?"
       onCancel={() => { if (!working) setReview(undefined); }} onOk={applyReview} confirmLoading={working} okText="Confirm minimum row check">
-      {review && <><p>Review a minimum of <strong>{review.minimumRows.toLocaleString()} rows</strong> for the fixed fixture <code>ts_transfer_sandbox.field_freshness_fixture</code>.</p>
+      {review && <><p>Review a minimum of <strong>{review.minimumRows.toLocaleString()} rows</strong> for the fixed fixture <code>{schema}.{table}</code>.</p>
         <p>The review uses the current transfer freshness policy, generation {review.policyGeneration}. It does not read rows, start a sync, or write data.</p></>}
     </Modal>
   </section>;

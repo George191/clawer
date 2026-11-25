@@ -72,10 +72,10 @@ class TableDefinitionTests(unittest.TestCase):
     def test_invalid_relation_shapes_sources_targets_and_cardinalities_are_rejected(self):
         invalid = [None, {}, [None], [{**RELATION, "sourceSchema": "ts_override"}],
             [{**RELATION, "sourceFields": ["unknown"]}], [{**RELATION, "targetSchema": "ts_meta"}],
-            [{**RELATION, "targetSchema": "ts_meta_hist"}], [{**RELATION, "targetSchema": "public"}],
+            [{**RELATION, "targetSchema": "ts_meta_hist"}], [{**RELATION, "targetSchema": "information_schema"}],
             [{**RELATION, "targetFields": []}], [{**RELATION, "targetFields": ["cik", "year"]}],
             [{**RELATION, "sourceFields": ["cik", "cik"], "targetFields": ["id", "cik"]}],
-            [{**RELATION, "name": "Invalid"}], [{**RELATION, "cardinality": "invalid"}],
+            [{**RELATION, "name": "bad\nname"}], [{**RELATION, "cardinality": "invalid"}],
             [{**RELATION, "description": "x" * 4001}], [RELATION] * 201]
         for relations in invalid:
             with self.subTest(relations=relations), self.assertRaises(HTTPException) as error:

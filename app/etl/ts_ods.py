@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import AsyncExitStack
 import inspect
 import json
 import re
@@ -13,23 +14,19 @@ from sqlalchemy.exc import InterfaceError, OperationalError
 from app.adapters.runtime import get_source_module
 from app.config.settings import settings
 from app.etl.base import ETLBase, extract_meta
+from app.etl.mongo_source import MongoOdsSource, mongo_ods_input
 from app.etl.normalizers import get_normalizer
 from app.etl.normalizers.base import safe_date, safe_datetime, safe_str
-from app.etl.orbital_history import ensure_history_schema, event_lineage, write_orbital_output
+from app.etl.orbital_history import event_lineage, write_orbital_output
 from app.etl.schema.catalogs import (
     CATALOG_ODS_COLUMNS,
     current_insert_sql,
-    current_table_ddl,
     ods_columns,
     validate_table_name,
 )
-from app.etl.schema.registry import (
-    ensure_ontology_tables,
-    get_registered_ddl,
-    save_registered_ddl,
-)
 from app.etl.source_fences import POSITION_COLUMNS, source_revision_current
 from app.logger import get_logger
+from app.storage.business_database import get_layer_pg_client, selected_layer_connection
 
 logger = get_logger(__name__)
 _ODS_WRITE_MAX_ATTEMPTS = 3
@@ -40,6 +37,7 @@ _ODS_BATCH_MAX_BYTES = 4 * 1024 * 1024
 
 class TsOds(ETLBase):
     _layer = "ods"
+    _source_layers = ("rds",)
     _consumer_pattern = rf"^{re.escape(settings.etl_rds_topic)}-[a-z][a-z0-9_]*$"
     _consumer_group = settings.etl_ods_consumer_group
     _producer_topic = settings.etl_ods_topic
@@ -48,20 +46,40 @@ class TsOds(ETLBase):
     def __init__(self, table_name: str = "") -> None:
         super().__init__(table_name)
         self._columns: dict[str, dict[str, str]] = {}
+        self._mongo_source: MongoOdsSource | None = None
         if table_name:
             validate_table_name(table_name)
             self._consumer_topics = [f"{settings.etl_rds_topic}-{table_name}"]
             self._consumer_pattern = ""
 
-    async def _on_init_schema(self) -> None:
-        await self._pg.execute("CREATE SCHEMA IF NOT EXISTS ts_ods")
-        await self._pg.execute("CREATE EXTENSION IF NOT EXISTS postgis")
-        await ensure_ontology_tables(self._metadata_pg)
-        for table in CATALOG_ODS_COLUMNS:
-            if not self._table_name or table == self._table_name:
-                await self._ensure_registered_table(table, "current", create_partitions=False)
-                if table == "orbital":
-                    await ensure_history_schema(self._pg)
+    async def _initialize_target(self) -> None:
+        await self._configure_source()
+        await super()._initialize_target()
+
+    async def _configure_source(self) -> None:
+        source = await selected_layer_connection("rds", engine=None)
+        if source["engine"] == "mongodb":
+            if settings.etl_output_mode != "debezium":
+                raise ValueError("MongoDB RDS to ODS requires PostgreSQL Debezium output")
+            self._mongo_source = MongoOdsSource(self._metadata_pg, source)
+            await self._mongo_source.connect()
+            source_types = await self._mongo_source.data_types()
+            if self._table_name:
+                source_types = [kind for kind in source_types if kind == self._table_name]
+            if not source_types or "orbital" in source_types:
+                raise ValueError("MongoDB RDS to ODS requires registered non-orbital source types")
+            self._consumer_topics = [f"{settings.kafka_topic}-{kind}" for kind in source_types]
+            self._consumer_pattern = ""
+        elif source["engine"] != "postgresql":
+            raise ValueError("ODS requires a PostgreSQL or canonical MongoDB RDS source")
+
+    async def stop(self) -> None:
+        try:
+            await super().stop()
+        finally:
+            if self._mongo_source is not None:
+                self._mongo_source.close()
+                self._mongo_source = None
 
     async def _ensure_type(self, table: str, fields: dict[str, str] | None) -> None:
         validate_table_name(table)
@@ -79,22 +97,14 @@ class TsOds(ETLBase):
             if self._columns[table] != columns:
                 raise ValueError(f"Conflicting ODS schema for {table}; schema changes require review")
             return
-        ddl = current_table_ddl("ods", table, columns)
-        existing = await get_registered_ddl(self._metadata_pg, "ods", table, "current")
-        if existing and table not in CATALOG_ODS_COLUMNS and existing.strip() != ddl.strip():
-            raise ValueError(f"ODS schema change requires review: {table}")
-        if not existing or table not in CATALOG_ODS_COLUMNS:
-            await save_registered_ddl(
-                self._metadata_pg, layer="ods", table=table, ddl_sql=ddl, updated_by="system:ods", allow_update=False,
-            )
         await self._ensure_registered_table(table, "current")
-        if table == "orbital":
-            await ensure_history_schema(self._pg)
         self._columns[table] = dict(columns)
 
     async def _dispatch(self, message: dict[str, Any]) -> bool:
-        table = message.get("data_type")
         try:
+            if self._mongo_source is not None:
+                message = mongo_ods_input(message)
+            table = message.get("data_type")
             validate_table_name(table)
         except ValueError:
             logger.exception("%s Invalid business data_type", self._log_prefix)
@@ -104,7 +114,7 @@ class TsOds(ETLBase):
         return await self._process_ods_record(message, table)
 
     async def _dispatch_batch(self, messages, owner, partition):
-        if not 2 <= len(messages) <= _ODS_BATCH_MAX_ROWS:
+        if self._mongo_source is not None or not 2 <= len(messages) <= _ODS_BATCH_MAX_ROWS:
             return None
         try:
             inputs = [message.value for message in messages]
@@ -183,17 +193,19 @@ class TsOds(ETLBase):
                 f"(CAST(:record_id_{index} AS text), CAST(:data_source_{index} AS text), CAST(:data_type_{index} AS text))"
                 for index in range(len(ordered))
             )
+            source_ref = await self._upstream_ref("rds", table)
             source_sql = (
                 "SELECT src.record_id, src.data_source, src.data_type, src.raw_data->'_meta' AS meta, "
                 "src.kafka_topic,src.kafka_partition,src.kafka_offset "
-                f"FROM ts_rds.rds_{table} AS src JOIN (VALUES " + values + ") "
+                f"FROM {source_ref} AS src JOIN (VALUES " + values + ") "
                 "AS incoming(record_id, data_source, data_type) "
                 "USING (record_id, data_source, data_type) "
                 "ORDER BY src.record_id, src.data_source, src.data_type FOR SHARE OF src"
             )
             results = {}
-            async with self._pg.session() as session:
-                rows = (await session.execute(text(source_sql), parameters)).mappings().all()
+            async with AsyncExitStack() as sessions:
+                source_session = await sessions.enter_async_context(get_layer_pg_client("rds").session())
+                rows = (await source_session.execute(text(source_sql), parameters)).mappings().all()
                 current = {identity(row): row for row in rows}
                 if len(current) != len(identities) or current.keys() != set(identities):
                     raise ValueError("ODS batch source RDS row is missing")
@@ -204,6 +216,7 @@ class TsOds(ETLBase):
                 if not self._batch_owned(owner, partition):
                     raise RuntimeError("ODS batch assignment changed before commit")
                 if eligible:
+                    session = await sessions.enter_async_context(self._pg.session())
                     eligible.sort(key=identity)
                     groups = {}
                     for payload in eligible:
@@ -213,7 +226,8 @@ class TsOds(ETLBase):
                         columns = {name: self._columns[output_table][name] for name in names}
                         for start in range(0, len(payloads), _ODS_BATCH_MAX_ROWS):
                             batch = payloads[start:start + _ODS_BATCH_MAX_ROWS]
-                            sql = current_insert_sql("ods", output_table, columns, row_count=len(batch))
+                            sql = current_insert_sql("ods", output_table, columns,
+                                                     table_ref=self._table_fqn(output_table), row_count=len(batch))
                             parameters = ({f"{key}_{index}": value for index, payload in enumerate(batch) for key, value in payload.items()}
                                           if len(batch) > 1 else batch[0])
                             rows = (await session.execute(text(sql), parameters)).mappings().all()
@@ -241,19 +255,19 @@ class TsOds(ETLBase):
             return False
         return True
 
-    async def _source_is_current(self, session, source: dict[str, Any]) -> bool:
+    async def _source_is_current(self, session, source: dict[str, Any], table_ref: str) -> bool:
         source_table = source["data_type"]
         validate_table_name(source_table)
         if source_table == "orbital":
             row = (await session.execute(text(
-                "SELECT raw_data = CAST(:raw_data AS jsonb) AS identical FROM ts_rds.rds_orbital "
+                f"SELECT raw_data = CAST(:raw_data AS jsonb) AS identical FROM {table_ref} "
                 "WHERE record_id=:record_id AND data_source=:data_source AND data_type=:data_type FOR SHARE"
             ), {**source, "raw_data": json.dumps(source["raw_data"], ensure_ascii=False, default=str)})).mappings().first()
             if row is None or not row["identical"]:
                 raise ValueError("ODS orbital input differs from its immutable RDS event")
             return True
         source_row = (await session.execute(text(
-            f"SELECT raw_data->'_meta' AS meta,kafka_topic,kafka_partition,kafka_offset FROM ts_rds.rds_{source_table} "
+            f"SELECT raw_data->'_meta' AS meta,kafka_topic,kafka_partition,kafka_offset FROM {table_ref} "
             "WHERE record_id=:record_id AND data_source=:data_source "
             "AND data_type=:data_type FOR SHARE"
         ), {name: source[name] for name in ("record_id", "data_source", "data_type")})).mappings().first()
@@ -307,26 +321,44 @@ class TsOds(ETLBase):
         order = sorted(range(len(prepared)), key=lambda i: (
             prepared[i]["data_type"], str(prepared[i]["record_id"]), prepared[i]["data_source"],
         ))
-        statements = [text(current_insert_sql(
-            "ods", payload["data_type"],
-            {name: self._columns[payload["data_type"]][name] for name in payload},
-        )) for payload in prepared]
+        mongo = self._mongo_source
+        source_ref = None if mongo is not None else await self._upstream_ref("rds", source["data_type"])
+        if mongo is not None:
+            keys = {(row["record_id"], row["data_source"], row["data_type"]) for row in prepared}
+            if len(keys) != len(prepared):
+                raise ValueError("MongoDB RDS normalizers must produce distinct ODS identities")
+            source_lock = "mongo-ods:" + json.dumps([source[key] for key in ("record_id", "data_source", "data_type")])
         for attempt in range(_ODS_WRITE_MAX_ATTEMPTS):
             failed_payload = None
             try:
                 results: dict[int, dict[str, Any]] = {}
-                async with self._pg.session() as session:
-                    if not await self._source_is_current(session, source):
-                        return []
+                async with AsyncExitStack() as sessions:
+                    if mongo is not None:
+                        session = await sessions.enter_async_context(self._pg.locked_transaction(source_lock))
+                        if not await mongo.is_current(source):
+                            return []
+                    else:
+                        source_session = await sessions.enter_async_context(get_layer_pg_client("rds").session())
+                        if not await self._source_is_current(source_session, source, source_ref):
+                            return []
+                        session = await sessions.enter_async_context(self._pg.session())
                     for index in order:
                         failed_payload = prepared[index]
+                        data_type = failed_payload["data_type"]
+                        table_ref = self._table_fqn(data_type)
                         if source["data_type"] == "orbital":
-                            row = await write_orbital_output(session, failed_payload, self._columns["orbital"])
+                            row = await write_orbital_output(session, failed_payload, self._columns["orbital"],
+                                                             table_ref=table_ref)
                             if row is not None:
                                 results[index] = row
                             continue
-                        row = (await session.execute(statements[index], failed_payload)).mappings().first()
+                        columns = {name: self._columns[data_type][name] for name in failed_payload}
+                        sql = current_insert_sql("ods", data_type, columns, table_ref=table_ref,
+                                                 skip_unchanged=mongo is not None)
+                        row = (await session.execute(text(sql), failed_payload)).mappings().first()
                         if row is None:
+                            if mongo is not None:
+                                continue
                             raise ValueError("ODS upsert returned no record")
                         results[index] = dict(row)
                 return [(results[index], payload) for index, payload in enumerate(prepared) if index in results]
@@ -338,8 +370,6 @@ class TsOds(ETLBase):
                 if failed_payload is not None and self._is_recoverable_table_error(exc):
                     table = failed_payload["data_type"]
                     await self._recover_registered_table(table)
-                    if table == "orbital":
-                        await ensure_history_schema(self._pg)
                     await self._ensure_partitions_for_payload(table, failed_payload)
                     continue
                 if not isinstance(exc, InterfaceError | OperationalError):

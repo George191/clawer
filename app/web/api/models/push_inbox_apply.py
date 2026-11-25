@@ -49,6 +49,7 @@ class PushApplyResult(BaseModel):
 
 
 class PushApplyStatus(BaseModel):
+    target: str = f"{PUSH_APPLY_SCHEMA}.{PUSH_APPLY_TARGET}"
     state: Literal["disabled", "unconfigured", "unreviewed", "ready", "blocked"]
     available: bool
     canReplay: bool = False

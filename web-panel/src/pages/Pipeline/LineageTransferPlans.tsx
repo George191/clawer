@@ -29,25 +29,25 @@ const emptyDraft = (schema: string, node?: StorageNode): TransferPlanInput => ({
   writeMode: 'append', trigger: 'manual', scheduleTime: null, incrementalCursor: null,
 });
 
-function validateDraft(draft: TransferPlanInput, weeklyAvailable: boolean, monthlyAvailable: boolean) {
+function validateDraft(draft: TransferPlanInput, capabilities?: TransferRunCapabilities | null) {
   if (!draft.name.trim() || !draft.sourceTable || !draft.targetTable) return 'Enter a name and select both tables.';
   if (!draft.sourceNode && draft.sourceSchema === draft.targetSchema && draft.sourceTable === draft.targetTable) return 'The source and destination must be different tables.';
   if (draft.trigger === 'scheduled' && !draft.scheduleTime) return 'Enter the daily time in UTC.';
   if (draft.trigger === 'weekly') {
-    if (!weeklyAvailable) return 'Weekly scheduling is unavailable in this environment.';
-    if (draft.writeMode !== 'upsert' || draft.sourceSchema !== 'ts_transfer_sandbox' || draft.targetSchema !== 'ts_transfer_sandbox')
+    if (!capabilities?.weeklyUpsert) return 'Weekly scheduling is unavailable in this environment.';
+    if (draft.writeMode !== 'upsert' || draft.sourceSchema !== capabilities?.sourceSchema || draft.targetSchema !== capabilities?.targetSchema)
       return 'Weekly UTC requires Upsert between two transfer sandbox tables.';
     if (!isoWeekdayName(draft.scheduleWeekdayUtc) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(draft.scheduleTime ?? ''))
       return 'Select a weekday and enter the weekly time in UTC.';
   }
   if (draft.trigger === 'monthly') {
-    if (!monthlyAvailable) return 'Monthly scheduling is unavailable in this environment.';
-    if (draft.writeMode !== 'upsert' || draft.sourceSchema !== 'ts_transfer_sandbox' || draft.targetSchema !== 'ts_transfer_sandbox')
+    if (!capabilities?.monthlyUpsert) return 'Monthly scheduling is unavailable in this environment.';
+    if (draft.writeMode !== 'upsert' || draft.sourceSchema !== capabilities?.sourceSchema || draft.targetSchema !== capabilities?.targetSchema)
       return 'Monthly UTC requires Upsert between two transfer sandbox tables.';
     if (!isUtcMonthDay(draft.scheduleDayOfMonthUtc) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(draft.scheduleTime ?? ''))
       return 'Select a day from 1 through 28 and enter the monthly time in UTC.';
   }
-  if (draft.trigger === 'upstream' && (draft.writeMode !== 'upsert' || draft.sourceSchema !== 'ts_transfer_sandbox' || draft.targetSchema !== 'ts_transfer_sandbox')) {
+  if (draft.trigger === 'upstream' && (draft.writeMode !== 'upsert' || draft.sourceSchema !== capabilities?.sourceSchema || draft.targetSchema !== capabilities?.targetSchema)) {
     return 'On upstream commit requires Upsert between two transfer sandbox tables.';
   }
   return '';
@@ -502,7 +502,7 @@ export default function LineageTransferPlans({ schema, schemas, selectedSchedule
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!draft || pending.current || !isCurrent()) return;
-    const validation = validateDraft(draft, capabilities?.weeklyUpsert === true, capabilities?.monthlyUpsert === true);
+    const validation = validateDraft(draft, capabilities);
     if (validation) {
       setSaveError(validation);
       return;
@@ -527,7 +527,7 @@ export default function LineageTransferPlans({ schema, schemas, selectedSchedule
   const checkCompatibility = async () => {
     if (!draft || preflightRequest.current || pending.current || !isCurrent()) return;
     resetPreflight();
-    const validation = validateDraft(draft, capabilities?.weeklyUpsert === true, capabilities?.monthlyUpsert === true);
+    const validation = validateDraft(draft, capabilities);
     if (validation) {
       setPreflightError(validation);
       return;

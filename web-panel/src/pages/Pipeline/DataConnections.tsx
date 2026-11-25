@@ -7,6 +7,7 @@ import type { DataConnectionDependencies, DataConnectorEngine, DataConnectorType
 import { ontologyCatalogHref } from '../../services/explorerNavigation';
 import { getSessionState } from '../../services/session';
 import ConnectorMark from './ConnectorMark';
+import LayerConnectionBindingForm from './LayerConnectionBindingForm';
 import HostingProviderIcon from './HostingProviderIcon';
 import SourceBatchSyncs from './SourceBatchSyncs';
 import SourceNodeSyncs from './SourceNodeSyncs';
@@ -613,6 +614,7 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
         </div>
         <div className="ontology-connections-detail__body" role="tabpanel" id={`${feedbackKey}-panel`} aria-labelledby={`${feedbackKey}-tab-${sourcePanel}`}>
         {sourcePanel === 'overview' && <>
+          {!sourcePaused && <LayerConnectionBindingForm key={viewedSource.id} source={viewedSource} />}
         <div className="source-detail-start"><h3>What would you like to do?</h3><div>
           {catalogAvailable && <button type="button" disabled={pending || captureBusy} onClick={() => openSourcePanel('catalog')}><FolderOutlined /><strong>Explore the source</strong><span>Browse schemas, tables and fields.</span></button>}
           <button type="button" disabled={pending || captureBusy} onClick={() => openSourcePanel('sync')}><TableOutlined /><strong>Configure a sync</strong><span>Preview source data and review a transfer draft or sandbox batch sync.</span></button>

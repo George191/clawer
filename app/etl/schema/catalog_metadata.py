@@ -1,11 +1,13 @@
 """Pass system metadata as query parameters when inspecting a business database."""
 
 import json
+from contextvars import ContextVar
 
 from sqlalchemy import text
 
 from app.storage.postgres_client import get_pg_client
 
+catalog_logical_layers: ContextVar[tuple[str, ...] | None] = ContextVar("catalog_logical_layers", default=None)
 
 OBJECT_RECORDS = """jsonb_to_recordset(CAST(:object_metadata AS jsonb)) AS o(
     id bigint, layer text, table_role text, schema_name text, table_name text, is_active boolean, data_type text,
@@ -27,14 +29,22 @@ async def catalog_parameters(params=None, *, session=None, relations=False, obje
     if session is None:
         async with get_pg_client().session() as opened:
             return await catalog_parameters(params, session=opened, relations=relations, object_id=object_id)
+    layers = catalog_logical_layers.get()
     rows = (await session.execute(text("""SELECT id, layer, table_role, schema_name, table_name, is_active,
         data_type, data_type_source, description, description_source, visibility, resource_group
-        FROM app.ontology_objects"""))).mappings()
+        FROM app.ontology_objects
+        WHERE CAST(:layers AS text[]) IS NULL OR layer = ANY(CAST(:layers AS text[]))
+    """), {"layers": list(layers) if layers is not None else None})).mappings()
     result = {**(params or {}), "object_metadata": json.dumps([dict(row) for row in rows])}
     if relations:
-        rows = (await session.execute(text("""SELECT name, source_schema, source_table, source_fields,
-            target_schema, target_table, target_fields, enabled, relationship_kind, cardinality,
-            description, provenance FROM app.ontology_object_relations WHERE enabled"""))).mappings()
+        rows = (await session.execute(text("""SELECT r.name, r.source_schema, r.source_table, r.source_fields,
+            r.target_schema, r.target_table, r.target_fields, r.enabled, r.relationship_kind, r.cardinality,
+            r.description, r.provenance FROM app.ontology_object_relations r WHERE r.enabled
+              AND (SELECT count(*) FROM app.ontology_objects o WHERE o.is_active
+                   AND o.schema_name = r.source_schema AND o.table_name = r.source_table) = 1
+              AND (SELECT count(*) FROM app.ontology_objects o WHERE o.is_active
+                   AND o.schema_name = r.target_schema AND o.table_name = r.target_table) = 1
+        """))).mappings()
         result["relation_metadata"] = json.dumps([dict(row) for row in rows])
     if object_id is not None:
         rows = (await session.execute(text("""SELECT object_id, name, sql_type, ordinal_position,

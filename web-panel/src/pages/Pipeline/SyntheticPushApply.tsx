@@ -6,7 +6,6 @@ import { getSessionState } from '../../services/session';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const POSITION = /^(0|[1-9][0-9]{0,18})$/;
-const TARGET = 'ts_push_inbox_sandbox.applied_fixture';
 const position = (value?: string | null): value is string => value != null && POSITION.test(value);
 type Preview = Omit<PushApplyRequest, 'requestId'> & { maxEvents: number; through: string | null };
 type Decision = { kind: 'review' } | { kind: 'apply' | 'retry'; preview: Preview };
@@ -136,7 +135,7 @@ export default function SyntheticPushApply({ identity, version }: { identity: st
     <header><div><h4 id={heading}>Manual Push apply</h4><p>Explicit review and a bounded one-time application to a fixed synthetic target. This is not CDC or a schedule.</p></div></header>
     <div className="ontology-source-sync__body">
       <p role="status"><strong>{historical ? 'Reviewed target unavailable or replaced' : ready ? 'Fixed target reviewed' : 'Fixed target not reviewed'}</strong></p>
-      <p>Fixed target: <code>{TARGET}</code></p>
+      <p>Fixed target: <code>{status?.target}</code></p>
       {notice && <p role={notice.error ? 'alert' : 'status'}>{notice.text}</p>}
       <dl className="ontology-connections-summary">
         <div><dt>Accepted through</dt><dd>{status.acceptedThrough ?? 'Not verified'}</dd></div>
@@ -164,7 +163,7 @@ export default function SyntheticPushApply({ identity, version }: { identity: st
       onCancel={() => { if (!busy) setDecision(undefined); }} onOk={submit}
       title={decision?.kind === 'review' ? 'Review fixed Push target?' : decision?.kind === 'retry' ? 'Retry original Push apply?' : 'Apply accepted Push events?'}
       okText={decision?.kind === 'review' ? 'Confirm target review' : decision?.kind === 'retry' ? 'Retry same request' : 'Confirm apply'}>
-      {decision?.kind === 'review' ? <p>Review the existing synthetic target <code>{TARGET}</code> for this inbox. This does not create or replace a target, and no accepted events are applied.</p>
+      {decision?.kind === 'review' ? <p>Review the existing synthetic target <code>{status?.target}</code> for this inbox. This does not create or replace a target, and no accepted events are applied.</p>
         : decision && <>
           {decision.kind === 'retry' && <p>Use the original request ID, generation, checkpoint, and accepted limit. A confirmed portion is not applied twice.</p>}
           <p>Reviewed generation: {decision.preview.expectedGeneration} · Maximum events: {decision.preview.maxEvents}</p>

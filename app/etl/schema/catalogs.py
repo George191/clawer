@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from typing import TypedDict
 
+from app.etl.schema.layout import qualified_table_name
+
 
 class _TableDefinition(TypedDict):
     columns: dict[str, str]
@@ -788,15 +790,16 @@ def table_columns(layer: str, table: str) -> dict[str, str]:
 
 
 def current_table_ddl(
-    layer: str, logical_table: str, columns: dict[str, str] | None = None,
+    layer: str, logical_table: str, columns: dict[str, str] | None = None, *,
+    schema_name: str, table_name: str,
 ) -> str:
-    """Render built-in and published tables using the same keys and layout."""
+    """Render a declared data type using its explicitly selected PostgreSQL identity."""
     validate_table_name(logical_table)
     if layer not in {"rds", "ods"}:
         raise ValueError(f"Unsupported current-table layer: {layer}")
     definition = TABLE_DEFINITIONS[layer].get(logical_table, {})
     columns = columns or table_columns(layer, logical_table)
-    table_ref = f"ts_{layer}.{layer}_{logical_table}"
+    table_ref = qualified_table_name(schema_name, table_name)
     body = [f'    "{name}" {sql_type}' for name, sql_type in columns.items()]
     body.append(f"    PRIMARY KEY ({', '.join(definition.get('primary_key', RECORD_IDENTITY_COLUMNS))})")
     ddl = (f"CREATE TABLE IF NOT EXISTS {table_ref} (\n" + ",\n".join(body)
@@ -805,8 +808,8 @@ def current_table_ddl(
         ddl += f" PARTITION BY HASH ({', '.join(RECORD_IDENTITY_COLUMNS)})"
     ddl += ";"
     indexes = definition.get("indexes", (
-        (f"idx_{layer}_{logical_table}_data_source", "data_source", None, "btree"),
-        (f"idx_{layer}_{logical_table}_updated_at", "updated_at DESC", None, "btree"),
+        (f"idx_{table_name}_data_source", "data_source", None, "btree"),
+        (f"idx_{table_name}_updated_at", "updated_at DESC", None, "btree"),
     ))
     for name, expression, predicate, method in indexes:
         ddl += (f"\nCREATE INDEX IF NOT EXISTS {name} ON {table_ref} USING {method} ({expression})"
@@ -814,10 +817,10 @@ def current_table_ddl(
     if definition.get("storage") == "timescale":
         # Existing native partitions require a verified standalone shadow migration.
         ddl = (
-            "DO $$ BEGIN IF to_regclass('ts_ods.ods_orbital') IS NOT NULL AND NOT EXISTS ("
-            "SELECT 1 FROM timescaledb_information.hypertables WHERE hypertable_schema='ts_ods' "
-            "AND hypertable_name='ods_orbital') THEN RAISE EXCEPTION "
-            "'Existing ods_orbital requires standalone Timescale migration'; END IF; END $$;\n"
+            f"DO $$ BEGIN IF to_regclass('{table_ref}') IS NOT NULL AND NOT EXISTS ("
+            f"SELECT 1 FROM timescaledb_information.hypertables WHERE hypertable_schema='{schema_name}' "
+            f"AND hypertable_name='{table_name}') THEN RAISE EXCEPTION "
+            "'Existing orbital table requires standalone Timescale migration'; END IF; END $$;\n"
             + ddl
             + f"\nSELECT create_hypertable('{table_ref}', "
               "by_range('source_observed_at', INTERVAL '1 month'), if_not_exists => TRUE);"
@@ -830,7 +833,8 @@ def current_table_ddl(
 
 
 def current_insert_sql(
-    layer: str, table: str, columns: dict[str, str], *, row_count: int = 1, replay_equal: bool = False,
+    layer: str, table: str, columns: dict[str, str], *, table_ref: str,
+    row_count: int = 1, replay_equal: bool = False, skip_unchanged: bool = False,
 ) -> str:
     validate_table_name(table)
     if layer not in {"rds", "ods"}:
@@ -857,16 +861,16 @@ def current_insert_sql(
         for column in columns
         if column not in {*RECORD_IDENTITY_COLUMNS, "created_at"}
     )
-    alias = " AS target" if layer == "rds" else ""
+    alias = " AS target" if layer == "rds" or skip_unchanged else ""
     guard = ""
     if table == "orbital" and layer == "rds":
         return (
-            f"INSERT INTO ts_rds.rds_orbital ({names}) VALUES {', '.join(rows)}\n"
+            f"INSERT INTO {table_ref} ({names}) VALUES {', '.join(rows)}\n"
             "ON CONFLICT (record_id, data_source, data_type) DO NOTHING RETURNING *"
         )
     if table == "orbital" and layer == "ods":
         return (
-            f"INSERT INTO ts_ods.ods_orbital ({names}) VALUES {', '.join(rows)}\n"
+            f"INSERT INTO {table_ref} ({names}) VALUES {', '.join(rows)}\n"
             "ON CONFLICT (source_observed_at, source_event_id, etl_version) DO NOTHING RETURNING *"
         )
     elif layer == "rds":
@@ -883,8 +887,15 @@ def current_insert_sql(
             "target.kafka_partition = EXCLUDED.kafka_partition AND "
             f"target.kafka_offset {offset_operator} EXCLUDED.kafka_offset)\n"
         )
+    elif skip_unchanged:
+        changed = " OR ".join(
+            f'target."{column}" IS DISTINCT FROM EXCLUDED."{column}"'
+            for column in columns
+            if column not in {*RECORD_IDENTITY_COLUMNS, "created_at", "updated_at"}
+        )
+        guard = f"WHERE {changed or 'FALSE'}\n"
     return (
-        f"INSERT INTO ts_{layer}.{layer}_{table}{alias} ({names}) VALUES {', '.join(rows)}\n"
+        f"INSERT INTO {table_ref}{alias} ({names}) VALUES {', '.join(rows)}\n"
         f"ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET {updates}\n"
         f"{guard}"
         "RETURNING *"

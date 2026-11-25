@@ -43,7 +43,7 @@ def include_name(name, type_, parent_names):
     # Ontology owns these table definitions and its explicit metadata migration.
     if type_ == "table" and parent_names.get("schema_name") in {None, "app"}:
         if name in {"ontology_objects", "ontology_object_properties", "ontology_object_relations",
-                    "ontology_data_connections", "etl_business_connection"}:
+                    "ontology_data_connections", "etl_business_connection", "etl_layer_connections"}:
             return False
     if type_ != "schema":
         return True

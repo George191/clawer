@@ -9,7 +9,7 @@
     python -m app.etl.main --layer dws     # 启动 DWS 层
     python -m app.etl.main --layer dim     # 启动 DIM 层
     python -m app.etl.main --layer all     # 启动全部六层
-    python -m app.etl.main --init-schema   # 仅初始化数据库 Schema
+    python -m app.etl.main --init-schema   # 验证注册，按已登记 DDL 初始化表
 
 数据流链路：
     crawl → RDS → ODS → TASK → ADS (应用层)
@@ -31,6 +31,7 @@ from app.etl.ts_ods import TsOds
 from app.etl.ts_rds import TsRds
 from app.etl.ts_task import TsTask
 from app.logger import get_logger, setup_service_logging
+from app.storage.business_database import layer_binding_lease, layer_connection_info
 
 logger = get_logger(__name__)
 
@@ -111,10 +112,14 @@ async def run_init_schema() -> None:
         TsDim(),
     ]
     try:
+        bindings = await layer_connection_info()
         for worker in workers:
+            if bindings.get(worker._layer, {}).get("engine") != "postgresql":
+                continue
             logger.info("Initializing schema for layer=%s", worker._layer)
-            await worker._pg.connect()
-            await worker._on_init_schema()
+            async with layer_binding_lease(worker._binding_layers):
+                await worker._pg.connect()
+                await worker._on_init_schema()
         logger.info("ETL schema initialization complete")
     finally:
         await asyncio.gather(*(worker.stop() for worker in workers), return_exceptions=True)
@@ -125,7 +130,7 @@ async def run_all() -> None:
     _preflight_check()
 
     logger.info("=== ETL All Layers Starting ===")
-    logger.info("  Business database: selected in Data Connections")
+    logger.info("  Business databases: selected per layer in Data Connections")
     logger.info("  RDS: %s → %s-<table>", TsRds._consumer_topics, settings.etl_rds_topic)
     logger.info("  ODS: %s → %s", TsOds._consumer_topics, settings.etl_ods_topic)
     logger.info("  TASK: %s → %s", settings.etl_task_topic, settings.etl_ads_topic)
@@ -142,18 +147,24 @@ async def run_all() -> None:
     dim = TsDim()
 
     try:
-        results = await asyncio.gather(
-            rds.run(),
-            ods.run(),
-            task.run(),
-            dwd.run(),
-            dws.run(),
-            dim.run(),
-            return_exceptions=True,
-        )
-        for result in results:
-            if isinstance(result, Exception):
-                logger.critical("Worker exited with an error: %s", result)
+        candidates = (rds, ods, task, dwd, dws, dim)
+        layers = tuple(worker._layer for worker in candidates)
+        async with layer_binding_lease(layers) as initial:
+            sources = await layer_connection_info()
+            active = [worker for worker in candidates if sources.get(worker._layer, {}).get("engine") == "postgresql"]
+        if not active:
+            raise ValueError("No PostgreSQL ETL worker layers are bound")
+
+        async def monitor_bindings():
+            while True:
+                await asyncio.sleep(10)
+                async with layer_binding_lease(layers, expected=initial):
+                    pass
+
+        async with asyncio.TaskGroup() as workers:
+            workers.create_task(monitor_bindings())
+            for worker in active:
+                workers.create_task(worker.run())
         logger.critical("All workers have exited")
         sys.exit(1)
     finally:

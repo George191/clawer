@@ -3,16 +3,18 @@
 from typing import Annotated, Literal
 from uuid import UUID
 
+from app.etl.schema.layout import PG_SCHEMA_PATTERN
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-_Canonical = Annotated[str, Field(strict=True, pattern=r"^[a-z_][a-z0-9_]{0,62}$")]
+_Canonical = Annotated[str, Field(strict=True, pattern=r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")]
 _ObjectId = Annotated[int, Field(strict=True, ge=1, le=4294967295)]
 
 class IndexedCompoundSampleScope(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     database: _Canonical
-    schema_name: Annotated[str, Field(alias="schema", strict=True, pattern=r"^ts_[a-z0-9_]{1,60}$")]
+    schema_name: Annotated[str, Field(alias="schema", strict=True, max_length=63, pattern=f"^{PG_SCHEMA_PATTERN}$")]
     table: _Canonical
     heapOid: _ObjectId
     heapFilenode: _ObjectId
@@ -29,7 +31,7 @@ class RequiredIndexedPreviewTable(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_name: Annotated[str, Field(alias="schema", strict=True, pattern=r"^ts_[a-z0-9_]{1,60}$")]
+    schema_name: Annotated[str, Field(alias="schema", strict=True, max_length=63, pattern=f"^{PG_SCHEMA_PATTERN}$")]
     table: _Canonical
 
     mode: Literal["indexed_id_required", "indexed_projection_required"] = "indexed_id_required"

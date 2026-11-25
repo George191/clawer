@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import struct
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
@@ -15,9 +16,9 @@ CDC_LAYERS = ("rds", "ods", "task", "dwd", "dws", "dim", "ads")
 UNAVAILABLE_VALUE = "__spider_cdc_unavailable__"
 
 
-def cdc_schemas() -> tuple[str, ...]:
-    """Return current-state schemas, excluding history and application metadata."""
-    return tuple(f"ts_{layer}" for layer in CDC_LAYERS)
+def postgres_table_pattern(qualified_name: str) -> str:
+    """Match one PostgreSQL object even when Debezium enables case-insensitive regexes."""
+    return rf"^(?-i:{re.escape(qualified_name)})$"
 
 
 def layer_topic(layer: str) -> str:
@@ -80,7 +81,10 @@ def decode_value(value: Any, schema: dict[str, Any]) -> Any:
     return value
 
 
-def committed_row(envelope: dict[str, Any]) -> tuple[str, str, dict[str, Any]] | None:
+def committed_row(
+    envelope: dict[str, Any], *, identity: dict[str, str], schema_name: str,
+    table: str, layer: str, data_type: str,
+) -> tuple[str, str, dict[str, Any]] | None:
     """Validate a schema-bearing Debezium event and return its exact committed row."""
     if not isinstance(envelope, dict):
         raise ValueError("Invalid PostgreSQL CDC envelope")
@@ -89,18 +93,21 @@ def committed_row(envelope: dict[str, Any]) -> tuple[str, str, dict[str, Any]] |
         return None
     if not isinstance(payload, dict):
         raise ValueError("Invalid PostgreSQL CDC payload")
+    if payload.get("op") not in {"c", "u", "r", "d", "t"}:
+        return None
+    source = payload.get("source")
+    if not isinstance(source, dict) or (
+        source.get("connector"), source.get("name"), source.get("db"), source.get("schema"), source.get("table")
+    ) != ("postgresql", identity["prefix"], identity["database"], schema_name, table):
+        raise ValueError("CDC event does not match its published ETL object")
+    if type(source.get("lsn")) is not int or source["lsn"] < 0:
+        raise ValueError("CDC source LSN is required for downstream version checks")
     if payload.get("op") == "d":
-        source = payload.get("source") or {}
         schema = envelope.get("schema") or {}
         before_schema = next((field for field in schema.get("fields", [])
                               if field.get("field") == "before"), None)
         before = payload.get("before")
-        if (isinstance(source, dict)
-                and (source.get("schema"), source.get("table")) in {
-                    ("ts_rds", "rds_search_result"), ("ts_ods", "ods_search_result"),
-                }
-                and isinstance(source.get("lsn"), int) and not isinstance(source["lsn"], bool)
-                and source["lsn"] >= 0
+        if (layer in {"rds", "ods"} and data_type == "search_result"
                 and schema.get("type") == "struct" and payload.get("after") is None
                 and isinstance(before_schema, dict) and before_schema.get("type") == "struct"
                 and {"record_id", "data_source", "data_type"}.issubset({
@@ -122,15 +129,6 @@ def committed_row(envelope: dict[str, Any]) -> tuple[str, str, dict[str, Any]] |
         raise ValueError("Physical deletion has no ETL contract; use business soft deletion")
     if payload.get("op") == "t":
         raise ValueError("Physical deletion has no ETL contract; use business soft deletion")
-    if payload.get("op") not in {"c", "u", "r"}:
-        return None
-    source = payload.get("source") or {}
-    schema_name, table = source.get("schema", ""), source.get("table", "")
-    if schema_name not in cdc_schemas():
-        raise ValueError("CDC source is outside current ETL schemas")
-    layer = schema_name.removeprefix("ts_")
-    if not table.startswith(f"{layer}_"):
-        raise ValueError("CDC source table does not match its ETL layer")
     after_schema = next((field for field in envelope.get("schema", {}).get("fields", [])
                          if field.get("field") == "after"), None)
     if after_schema is None or not isinstance(payload.get("after"), dict):
@@ -139,10 +137,8 @@ def committed_row(envelope: dict[str, Any]) -> tuple[str, str, dict[str, Any]] |
     if not all(row.get(field) for field in ("record_id", "data_source", "data_type")):
         raise ValueError("CDC row is missing business identity")
     validate_table_name(row["data_type"])
-    if table != f"{layer}_{row['data_type']}":
-        raise ValueError("CDC requires parent-table publication and matching business type")
-    if not isinstance(source.get("lsn"), int):
-        raise ValueError("CDC source LSN is required for downstream version checks")
+    if row["data_type"] != data_type:
+        raise ValueError("CDC row type does not match its registered ETL object")
     row["_cdc_meta"] = {"lsn": source["lsn"], "schema": schema_name, "table": table}
     return layer, table, row
 

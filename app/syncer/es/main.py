@@ -101,9 +101,9 @@ async def run() -> None:
     config = _build_config(args)
 
     logger.info("=== ES Syncer Service Starting ===")
-    logger.info("  RDS (Postgres): selected business Data Connection")
+    logger.info("  RDS (Postgres): Data Connection bound to the RDS layer")
     logger.info("  Elasticsearch:  %s", redact_connection_userinfo(config.es_url))
-    logger.info("  Tables:         %s", [t.source_table for t in config.tables])
+    logger.info("  RDS data types: %s", [t.table_name for t in config.tables])
     logger.info("  Poll interval:  %ds", config.poll_interval)
     logger.info("  Batch size:     %d", config.batch_size)
     logger.info("=" * 50)

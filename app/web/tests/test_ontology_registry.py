@@ -78,15 +78,15 @@ def test_current_managed_layers_can_back_definitions(schema):
     assert not assess_definition(definition, bound_catalog()).errors
 
 
-@pytest.mark.parametrize("schema", ["ts_meta", "ts_rds_hist", "ts_index_preview_sandbox", "ts_custom"])
-def test_private_history_and_non_layer_schemas_cannot_back_definitions(schema):
+@pytest.mark.parametrize("schema", ["ts_meta", "app", "information_schema", "pg_catalog"])
+def test_protected_schemas_cannot_back_definitions(schema):
     definition = bound_definition(source={"mode": "existing", "schema": schema, "table": "aircraft"})
     assert "source" in {issue.path for issue in assess_definition(definition, bound_catalog()).errors}
 
 
 def test_unsafe_mapping_and_nonempty_nosource():
     bad = bound_definition(source={"mode": "existing", "schema": "public", "table": "secret"})
-    assert {issue.path for issue in assess_definition(bad, bound_catalog()).errors} == {"source"}
+    assert {issue.path for issue in assess_definition(bad, None).errors} == {"source"}
     unbacked = bound_definition(source={"mode": "none"})
     assert {"source", "security"} <= {issue.path for issue in assess_definition(unbacked).errors}
 

@@ -9,10 +9,12 @@ type Property = { id: number; name: string; type: string; length: string; nullab
 type Index = { id: number; name: string; type: string; unique: boolean; fields: string[]; comment: string };
 type Relation = { id: number; name: string; targetId: string; sourceFields: string[]; targetFields: string[]; cardinality: string; description: string };
 type Check = { id: number; name: string; expression: string; comment: string };
-type Draft = { schema: string; name: string; dataType: string; description: string; fields: Property[]; indexes: Index[]; relations: Relation[]; checks: Check[] };
-type Props = { variant?: 'object' | 'storage'; schemas: LayerNode[]; initialSchema?: string; onCancel: () => void; onOpenExisting: (object: EtlObjectPreview) => void; onCreated: (schema: string, table: LayerTable) => void };
+type TableRole = 'current' | 'history';
+type Draft = { scopeKey: string; logicalLayer: string; tableRole: TableRole; name: string; dataType: string; description: string; fields: Property[]; indexes: Index[]; relations: Relation[]; checks: Check[] };
+type Props = { variant?: 'object' | 'storage'; schemas: LayerNode[]; initialSchema?: string; initialConnectionId?: string; onCancel: () => void; onOpenExisting: (object: EtlObjectPreview, connectionId: string) => void; onCreated: (schema: string, table: LayerTable, connectionId: string) => void };
 const steps = ['Datasource', 'Metadata', 'Properties', 'Actions', 'Save location', 'Security'] as const;
-const identifier = /^[a-z_][a-z0-9_]{0,62}$/;
+const identifier = /^[A-Za-z_][A-Za-z0-9_]{0,62}$/;
+const dataTypeIdentifier = /^[a-z_][a-z0-9_]{0,62}$/;
 const fieldTypes = ['TEXT', 'VARCHAR', 'CHAR', 'BIGINT', 'INTEGER', 'SMALLINT', 'BOOLEAN', 'TIMESTAMPTZ', 'TIMESTAMP', 'DATE', 'TIME', 'JSONB', 'JSON', 'UUID', 'NUMERIC', 'DECIMAL', 'REAL', 'DOUBLE PRECISION', 'BYTEA', 'SERIAL', 'BIGSERIAL'];
 const lengthTypes = ['VARCHAR', 'CHAR', 'NUMERIC', 'DECIMAL'];
 const cardinalities = [{ value: 'one_to_one', label: 'One to one' }, { value: 'one_to_many', label: 'One to many' }, { value: 'many_to_one', label: 'Many to one' }, { value: 'many_to_many', label: 'Many to many' }];
@@ -23,21 +25,36 @@ function errorMessage(error: unknown) {
   return typeof detail === 'string' ? detail : 'Unable to create the object type. Your changes are retained. Try again.';
 }
 
-export default function NewObjectType({ variant = 'object', schemas, initialSchema, onCancel, onOpenExisting, onCreated }: Props) {
-  const schemaNames = schemas.map((schema) => schema.schemaName || schema.key);
-  const [draft, setDraft] = useState<Draft>(() => ({ schema: initialSchema && schemaNames.includes(initialSchema) ? initialSchema : '', name: '', dataType: '', description: '', fields: [{ id: 0, name: 'record_id', type: 'TEXT', length: '', nullable: false, primary: true, comment: 'Business record identifier' }], indexes: [], relations: [], checks: [] }));
+export default function NewObjectType({ variant = 'object', schemas, initialSchema, initialConnectionId, onCancel, onOpenExisting, onCreated }: Props) {
+  const scopes = schemas.flatMap(node => {
+    if (!node.connectionId || node.engine !== 'postgresql') return [];
+    const schema = node.schemaName || node.key;
+    return [{ key: JSON.stringify([node.connectionId, schema]), schema, connectionId: node.connectionId,
+      connection: node.database || node.connectionId, alias: node.alias, logicalLayers: node.logicalLayers || [] }];
+  });
+  const [draft, setDraft] = useState<Draft>(() => {
+    const initial = scopes.find(scope => scope.schema === initialSchema && scope.connectionId === initialConnectionId);
+    return { scopeKey: initial?.key || '', logicalLayer: initial?.logicalLayers.length === 1 ? initial.logicalLayers[0] : '',
+      tableRole: 'current', name: '', dataType: '', description: '', fields: [{ id: 0, name: 'record_id', type: 'TEXT', length: '', nullable: false, primary: true, comment: 'Business record identifier' }], indexes: [], relations: [], checks: [] };
+  });
+  const draftScope = scopes.find(scope => scope.key === draft.scopeKey);
+  const draftSchema = draftScope?.schema || '';
+  const draftConnectionId = draftScope?.connectionId;
   const original = useRef(JSON.stringify(draft));
   const nextId = useRef(1);
   const [step, setStep] = useState(0);
   const stepPanel = useRef<HTMLDivElement>(null);
   const previousStep = useRef(step);
   const [sourceMode, setSourceMode] = useState<'new' | 'existing'>('new');
-  const [existingSchema, setExistingSchema] = useState(draft.schema);
-  const activeSchema = sourceMode === 'existing' ? existingSchema : draft.schema;
+  const [existingScopeKey, setExistingScopeKey] = useState(draft.scopeKey);
+  const activeScopeKey = sourceMode === 'existing' ? existingScopeKey : draft.scopeKey;
+  const activeScope = scopes.find(scope => scope.key === activeScopeKey);
+  const activeSchema = activeScope?.schema || '';
+  const activeConnectionId = activeScope?.connectionId;
   const [existingTable, setExistingTable] = useState('');
   const [previewVersion, setPreviewVersion] = useState(0);
   const [existingPreview, setExistingPreview] = useState<{ key: string; data?: EtlObjectPreview; error?: string }>({ key: '' });
-  const sourceKey = sourceMode === 'existing' && existingSchema && existingTable ? JSON.stringify([existingSchema, existingTable, previewVersion]) : '';
+  const sourceKey = sourceMode === 'existing' && activeScope && existingTable ? JSON.stringify([activeScope.key, existingTable, previewVersion]) : '';
   const visiblePreview = sourceKey && existingPreview.key === sourceKey ? existingPreview : undefined;
   const preview = visiblePreview?.data;
   const [error, setError] = useState('');
@@ -48,14 +65,15 @@ export default function NewObjectType({ variant = 'object', schemas, initialSche
   const active = useRef(true);
   const sessionIdentity = useRef(getSessionState().identity).current;
   const [tableVersion, setTableVersion] = useState(0);
-  const [tableState, setTableState] = useState<{ schema: string; loading: boolean; items: LayerTable[]; error: string }>({ schema: '', loading: false, items: [], error: '' });
+  const [tableState, setTableState] = useState<{ scopeKey: string; loading: boolean; items: LayerTable[]; error: string }>({ scopeKey: '', loading: false, items: [], error: '' });
   const [objectVersion, setObjectVersion] = useState(0);
-  const [objectState, setObjectState] = useState<{ loading: boolean; items: EtlObjectType[]; error: string }>({ loading: true, items: [], error: '' });
+  const [objectState, setObjectState] = useState<{ connectionId?: string; loading: boolean; items: EtlObjectType[]; error: string }>({ loading: true, items: [], error: '' });
   const [references, setReferences] = useState<Record<string, { loading: boolean; columns: string[]; error: string }>>({});
   const referenceRequests = useRef(new Map<string, number>());
   const dirty = JSON.stringify(draft) !== original.current;
-  const tablesReady = tableState.schema === activeSchema && !tableState.loading && !tableState.error;
-  const tables = tableState.schema === activeSchema ? tableState.items : [];
+  const tablesReady = !!activeScope && tableState.scopeKey === activeScopeKey && !tableState.loading && !tableState.error;
+  const tables = tableState.scopeKey === activeScopeKey ? tableState.items : [];
+  const referenceObjects = objectState.connectionId === draftConnectionId ? objectState.items : [];
   const current = () => active.current && getSessionState().identity === sessionIdentity;
   const change = (values: Partial<Draft>) => { setDraft((value) => ({ ...value, ...values })); setError(''); };
   useEffect(() => { active.current = true; return () => { active.current = false; discardModal.current?.destroy(); }; }, []);
@@ -67,15 +85,15 @@ export default function NewObjectType({ variant = 'object', schemas, initialSche
   }, [step]);
   useEffect(() => {
     let valid = true;
-    if (sourceKey) {
-      fetchEtlObjectPreview(existingSchema, existingTable, true).then((data) => {
+    if (sourceKey && activeConnectionId) {
+      fetchEtlObjectPreview(activeSchema, existingTable, true, undefined, activeConnectionId).then((data) => {
         if (valid && current()) setExistingPreview({ key: sourceKey, data });
       }).catch(() => {
         if (valid && current()) setExistingPreview({ key: sourceKey, error: 'Unable to load the existing object type.' });
       });
     }
     return () => { valid = false; };
-  }, [sourceKey, existingSchema, existingTable, sessionIdentity]);
+  }, [sourceKey, activeSchema, activeConnectionId, existingTable, sessionIdentity]);
   useEffect(() => {
     if (!dirty && !pending) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
@@ -83,37 +101,38 @@ export default function NewObjectType({ variant = 'object', schemas, initialSche
   }, [dirty, pending]);
   useEffect(() => {
     let valid = true;
-    setTableState({ schema: activeSchema, loading: !!activeSchema, items: [], error: '' });
-    if (activeSchema) fetchLayerTables(activeSchema).then((items) => { if (valid && current()) setTableState({ schema: activeSchema, loading: false, items, error: '' }); }).catch(() => { if (valid && current()) setTableState({ schema: activeSchema, loading: false, items: [], error: 'Unable to load tables in this schema.' }); });
+    setTableState({ scopeKey: activeScopeKey, loading: !!activeConnectionId, items: [], error: '' });
+    if (activeConnectionId) fetchLayerTables(activeSchema, undefined, undefined, undefined, activeConnectionId).then((items) => { if (valid && current()) setTableState({ scopeKey: activeScopeKey, loading: false, items, error: '' }); }).catch(() => { if (valid && current()) setTableState({ scopeKey: activeScopeKey, loading: false, items: [], error: 'Unable to load tables in this schema.' }); });
     return () => { valid = false; };
-  }, [activeSchema, tableVersion, sessionIdentity]);
+  }, [activeScopeKey, activeSchema, activeConnectionId, tableVersion, sessionIdentity]);
   useEffect(() => {
     let valid = true;
-    setObjectState({ loading: true, items: [], error: '' });
+    setObjectState({ connectionId: draftConnectionId, loading: !!draftConnectionId, items: [], error: '' });
+    if (!draftConnectionId) return;
     const load = async () => {
       const items: EtlObjectType[] = [];
       try {
         while (true) {
-          const part = await fetchEtlObjectTypes({ limit: 500, offset: items.length, includeHidden: true });
+          const part = await fetchEtlObjectTypes({ limit: 500, offset: items.length, includeHidden: true, connectionId: draftConnectionId });
           if (!valid || !current()) return;
           items.push(...part.items);
           if (items.length >= part.total) break;
           if (!part.items.length) throw new Error('Object catalog changed while loading');
         }
-        setObjectState({ loading: false, items, error: '' });
-      } catch { if (valid && current()) setObjectState({ loading: false, items: [], error: 'Unable to load ontology object types.' }); }
+        setObjectState({ connectionId: draftConnectionId, loading: false, items, error: '' });
+      } catch { if (valid && current()) setObjectState({ connectionId: draftConnectionId, loading: false, items: [], error: 'Unable to load ontology object types.' }); }
     };
     void load();
     return () => { valid = false; };
-  }, [objectVersion, sessionIdentity]);
+  }, [draftConnectionId, objectVersion, sessionIdentity]);
   const loadReference = async (id: string) => {
-    const object = objectState.items.find((item) => item.id === id);
-    if (!object) return;
+    const object = referenceObjects.find((item) => item.id === id);
+    if (!object || !draftConnectionId) return;
     const request = (referenceRequests.current.get(id) || 0) + 1;
     referenceRequests.current.set(id, request);
     setReferences((value) => ({ ...value, [id]: { loading: true, columns: [], error: '' } }));
     try {
-      const preview = await fetchEtlObjectPreview(object.schema, object.table, true);
+      const preview = await fetchEtlObjectPreview(object.schema, object.table, true, undefined, draftConnectionId);
       if (current() && referenceRequests.current.get(id) === request) setReferences((value) => ({ ...value, [id]: { loading: false, columns: preview.properties.map((property) => property.name), error: '' } }));
     } catch { if (current() && referenceRequests.current.get(id) === request) setReferences((value) => ({ ...value, [id]: { loading: false, columns: [], error: 'Unable to load target object properties.' } })); }
   };
@@ -126,15 +145,16 @@ export default function NewObjectType({ variant = 'object', schemas, initialSche
   const moveProperty = (index: number, direction: number) => { const next = [...draft.fields], target = index + direction; if (target < 0 || target >= next.length) return; [next[index], next[target]] = [next[target], next[index]]; change({ fields: next }); };
   const propertyOptions = options(draft.fields.filter((field) => identifier.test(field.name)).map((field) => field.name));
   const validate = (stage: 'source' | 'metadata' | 'properties') => {
-    if (!draft.schema || !schemaNames.includes(draft.schema)) return 'Choose an available schema.';
+    if (!draftScope) return 'Choose an available schema and connection.';
+    if (!draftScope.logicalLayers.includes(draft.logicalLayer)) return 'Choose a logical layer for this connection.';
     if (!tablesReady) return 'Wait for the schema to load successfully before continuing.';
     if (stage === 'source') return '';
-    if (!identifier.test(draft.name)) return 'Object type ID must use lowercase letters, numbers and underscores, begin with a letter or underscore, and contain at most 63 characters.';
+    if (!identifier.test(draft.name)) return 'Object type ID must use letters, numbers and underscores, begin with a letter or underscore, and contain at most 63 characters.';
     if (tables.some((table) => table.name === draft.name)) return 'An object type with this ID already exists in the selected schema.';
-    if (!identifier.test(draft.dataType)) return 'Data type must begin with a lowercase letter or underscore and use at most 63 lowercase letters, numbers or underscores.';
+    if (!dataTypeIdentifier.test(draft.dataType)) return 'Data type must begin with a lowercase letter or underscore and use at most 63 lowercase letters, numbers or underscores.';
     if (stage === 'metadata') return '';
     if (!draft.fields.length || draft.fields.length > 200) return 'Define between 1 and 200 properties.';
-    if (draft.fields.some((field) => !identifier.test(field.name)) || new Set(draft.fields.map((field) => field.name)).size !== draft.fields.length) return 'Property names must be valid, distinct lowercase identifiers.';
+    if (draft.fields.some((field) => !identifier.test(field.name)) || new Set(draft.fields.map((field) => field.name)).size !== draft.fields.length) return 'Property names must be valid, distinct PostgreSQL identifiers.';
     if (!draft.fields.some((field) => field.primary)) return 'Choose at least one primary key property.';
     if (draft.fields.some((field) => field.length && (!lengthTypes.includes(field.type) || !/^[1-9][0-9]{0,5}$/.test(field.length)))) return 'Property length must be 1–999999 and is supported only for VARCHAR, CHAR, NUMERIC or DECIMAL.';
     const known = new Set(draft.fields.map((field) => field.name));
@@ -143,7 +163,7 @@ export default function NewObjectType({ variant = 'object', schemas, initialSche
     if (draft.indexes.some((item) => new Set(item.fields).size !== item.fields.length || item.type === 'HASH' && item.fields.length !== 1)) return 'Index properties must be distinct. HASH indexes support exactly one property.';
     if (new Set(draft.indexes.map((item) => JSON.stringify([item.type, item.fields, item.unique]))).size !== draft.indexes.length) return 'Duplicate index definitions are not allowed. Choose a different method, ordered properties or uniqueness.';
     if (draft.relations.length && (objectState.loading || objectState.error)) return 'Load the ontology object catalog successfully before saving relations.';
-    if (draft.relations.some((item) => !item.name.trim() || item.name !== item.name.trim() || item.name.length > 128 || /[\u0000-\u001f\u007f]/.test(item.name) || !item.sourceFields.length || new Set(item.sourceFields).size !== item.sourceFields.length || item.sourceFields.some((field) => !known.has(field)) || !objectState.items.some((object) => object.id === item.targetId) || !item.targetFields.length || new Set(item.targetFields).size !== item.targetFields.length || item.sourceFields.length !== item.targetFields.length || !references[item.targetId] || references[item.targetId].loading || references[item.targetId].error || item.targetFields.some((field) => !references[item.targetId].columns.includes(field)))) return 'Each relation needs a name, an ontology object and matching, distinct source and target properties.';
+    if (draft.relations.some((item) => !item.name.trim() || item.name !== item.name.trim() || item.name.length > 128 || /[\u0000-\u001f\u007f]/.test(item.name) || !item.sourceFields.length || new Set(item.sourceFields).size !== item.sourceFields.length || item.sourceFields.some((field) => !known.has(field)) || !referenceObjects.some((object) => object.id === item.targetId) || !item.targetFields.length || new Set(item.targetFields).size !== item.targetFields.length || item.sourceFields.length !== item.targetFields.length || !references[item.targetId] || references[item.targetId].loading || references[item.targetId].error || item.targetFields.some((field) => !references[item.targetId].columns.includes(field)))) return 'Each relation needs a name, an ontology object and matching, distinct source and target properties.';
     if (draft.relations.some((item) => item.description.length > 4000 || !cardinalities.some((value) => value.value === item.cardinality))) return 'Choose a relation cardinality and a description of at most 4000 characters.';
     if (new Set(draft.relations.map((item) => item.name)).size !== draft.relations.length) return 'Relation names must be distinct.';
     const mappings = draft.relations.map((item) => JSON.stringify([item.targetId, item.sourceFields.map((field, index) => [field, item.targetFields[index]]).sort()]));
@@ -160,8 +180,8 @@ export default function NewObjectType({ variant = 'object', schemas, initialSche
     setError(''); setStep((value) => value + 1);
   };
   const openExisting = () => {
-    if (!preview || !current()) return;
-    if (!dirty) { onOpenExisting(preview); return; }
+    if (!preview || !activeConnectionId || !current()) return;
+    if (!dirty) { onOpenExisting(preview, activeConnectionId); return; }
     if (discardModal.current) return;
     discardModal.current = Modal.confirm({
       className: 'flow-surface-modal flow-create-confirmation',
@@ -169,33 +189,53 @@ export default function NewObjectType({ variant = 'object', schemas, initialSche
       content: 'Your new object type draft will be discarded. The existing object type will not be changed.',
       okText: 'Discard and open',
       onCancel: () => { discardModal.current = null; },
-      onOk: () => { discardModal.current = null; if (current()) onOpenExisting(preview); },
+      onOk: () => { discardModal.current = null; if (current()) onOpenExisting(preview, activeConnectionId); },
     });
   };
   const submit = async () => {
     if (sourceMode !== 'new' || submitting.current || completed.current || !current()) return;
     const validation = validate('properties'); if (validation) { setError(validation); return; }
+    if (!draftConnectionId) return;
     const session = getSessionState(); if (!session.authenticated || session.locked) { setError('Sign in and unlock your session before creating this object type.'); return; }
     submitting.current = true; setPending(true); setError('');
     let created: LayerTable;
-    try { created = await createEtlTable(draft.schema, { name: draft.name, dataType: draft.dataType, description: draft.description, fields: draft.fields.map(({ id: _id, ...field }) => field), indexes: draft.indexes.map(({ id: _id, ...index }) => ({ ...index, fields: index.fields.join(',') })), relations: draft.relations.map(({ id: _id, targetId, ...relation }) => { const target = objectState.items.find((object) => object.id === targetId)!; return { ...relation, targetSchema: target.schema, targetTable: target.table }; }), checks: draft.checks.map(({ id: _id, ...check }) => check), options: { comment: draft.description } }); }
+    try {
+      created = await createEtlTable(draftSchema, {
+        connectionId: draftConnectionId, logicalLayer: draft.logicalLayer, tableRole: draft.tableRole,
+        name: draft.name, dataType: draft.dataType, description: draft.description,
+        fields: draft.fields.map(({ id: _id, ...field }) => field),
+        indexes: draft.indexes.map(({ id: _id, ...index }) => ({ ...index, fields: index.fields.join(',') })),
+        relations: draft.relations.map(({ id: _id, targetId, ...relation }) => {
+          const target = referenceObjects.find((object) => object.id === targetId)!;
+          return { ...relation, targetSchema: target.schema, targetTable: target.table };
+        }),
+        checks: draft.checks.map(({ id: _id, ...check }) => check), options: { comment: draft.description },
+      });
+    }
     catch (failure) { submitting.current = false; if (current()) { setPending(false); setError(errorMessage(failure)); } return; }
     completed.current = true;
-    if (current()) onCreated(draft.schema, created);
+    if (current()) onCreated(draftSchema, created, draftConnectionId);
   };
 
-  const schemaOptions = schemas.map((schema) => ({
-    value: schema.schemaName || schema.key,
-    label: schema.alias ? `${schema.alias} · ${schema.schemaName || schema.key}` : schema.schemaName || schema.key,
+  const schemaOptions = scopes.map((scope) => ({
+    value: scope.key,
+    label: [scope.connection, scope.alias, scope.schema].filter(Boolean).join(' · '),
   }));
+  const selectScope = (scopeKey: string) => {
+    if (scopeKey === activeScopeKey) return;
+    if (sourceMode === 'existing') { setExistingTable(''); setExistingScopeKey(scopeKey); return; }
+    const scope = scopes.find(item => item.key === scopeKey);
+    change({ scopeKey, logicalLayer: scope?.logicalLayers.length === 1 ? scope.logicalLayers[0] : '', relations: [] });
+    setReferences({});
+  };
   const existing = sourceMode === 'existing';
-  const qualifiedName = `${draft.schema}.${draft.name}`;
-  const sourcePending = !!activeSchema && (tableState.loading || tableState.schema !== activeSchema);
+  const qualifiedName = `${draftSchema}.${draft.name}`;
+  const sourcePending = !!activeScope && (tableState.loading || tableState.scopeKey !== activeScopeKey);
   return <Modal open centered className="flow-surface-modal flow-create-modal flow-create-object" title={variant === 'storage' ? 'Create a storage table' : 'Create a new object type'} width={1160} onCancel={close} maskClosable={!pending} closable={!pending} keyboard={!pending} footer={<>
     <Button disabled={pending} onClick={close}>Cancel</Button>
     {step > 0 && <Button disabled={pending} onClick={() => { setStep((value) => value - 1); setError(''); }}>Back</Button>}
     {existing ? <Button type="primary" disabled={!preview} onClick={openExisting}>{variant === 'storage' ? 'Open existing table' : 'Open existing object type'}</Button> : step < steps.length - 1
-      ? <Button type="primary" onClick={next} disabled={!draft.schema || !tablesReady}>Next</Button>
+      ? <Button type="primary" onClick={next} disabled={!draftScope || !tablesReady}>Next</Button>
       : <Button type="primary" loading={pending} onClick={() => void submit()}>{variant === 'storage' ? 'Create storage table' : 'Create object type'}</Button>}
   </>}>
     <div className="flow-create-layout">
@@ -215,12 +255,15 @@ export default function NewObjectType({ variant = 'object', schemas, initialSche
             <label className="flow-create-source-option"><input type="radio" name="object-datasource" checked={!existing} onChange={() => { setSourceMode('new'); setError(''); }} /><span><strong>Create a backing table</strong><small>Define a new object type and its PostgreSQL storage.</small></span></label>
           </fieldset>
           <div className="flow-create-grid">
-            <label className="flow-create-field"><span>Schema</span><Select {...selectStyle} aria-label="Object type schema" placeholder="Select a schema" value={activeSchema || undefined} options={schemaOptions} onChange={(schema: string) => { if (schema !== activeSchema) { if (existing) { setExistingTable(''); setExistingSchema(schema); } else change({ schema }); } }} /></label>
+            <label className="flow-create-field"><span>Connection and schema</span><Select {...selectStyle} aria-label="Object type connection and schema" placeholder="Select a schema" value={activeScopeKey || undefined} options={schemaOptions} onChange={selectScope} /></label>
             {existing ? <label className="flow-create-field"><span>Existing table</span><Select {...selectStyle} aria-label="Existing table" showSearch disabled={!activeSchema || !tablesReady} placeholder={sourcePending ? 'Loading tables…' : 'Select a table'} value={existingTable || undefined} options={options(tables.map((table) => table.name))} onChange={(table: string) => { setExistingTable(table); setPreviewVersion((version) => version + 1); }} /></label>
-              : <div className="flow-create-field"><span>Connection type</span><div className="flow-create-value">PostgreSQL</div></div>}
+              : <>
+                <label className="flow-create-field"><span>Logical layer</span><Select {...selectStyle} aria-label="Logical layer" placeholder="Select a layer" value={draft.logicalLayer || undefined} options={options(draftScope?.logicalLayers || [])} onChange={(logicalLayer: string) => change({ logicalLayer })} /></label>
+                <label className="flow-create-field"><span>Table role</span><Select {...selectStyle} aria-label="Table role" value={draft.tableRole} options={[{ value: 'current', label: 'Current' }, { value: 'history', label: 'History' }]} onChange={(tableRole: TableRole) => change({ tableRole })} /></label>
+              </>}
           </div>
           {activeSchema && <p className="flow-create-help" role="status">{sourcePending ? 'Loading schema…' : tablesReady ? `${tables.length} existing tables in ${activeSchema}` : ''}</p>}
-          {tableState.schema === activeSchema && tableState.error && <div className="flow-create-error" role="alert">{tableState.error}<Button size="small" onClick={() => setTableVersion((value) => value + 1)} icon={<ReloadOutlined />}>Retry</Button></div>}
+          {tableState.scopeKey === activeScopeKey && tableState.error && <div className="flow-create-error" role="alert">{tableState.error}<Button size="small" onClick={() => setTableVersion((value) => value + 1)} icon={<ReloadOutlined />}>Retry</Button></div>}
           {existing && <div className="flow-create-notice">Existing tables already appear as object types. Opening one does not create a table, copy data, or change property mappings.</div>}
           {existing && sourceKey && !visiblePreview && <p role="status" className="flow-create-help">Loading object type properties…</p>}
           {visiblePreview?.error && <div className="flow-create-error" role="alert">{visiblePreview.error}<Button size="small" onClick={() => setPreviewVersion((value) => value + 1)}>Retry</Button></div>}
@@ -263,8 +306,8 @@ export default function NewObjectType({ variant = 'object', schemas, initialSche
             {draft.relations.map((relation, position) => <div className="flow-create-grid" key={relation.id}>
               <label className="flow-create-field"><span>Relation name</span><Input aria-label={`Relation ${position + 1} name`} placeholder="e.g. 承担企业" maxLength={128} value={relation.name} onChange={(event) => change({ relations: draft.relations.map((item) => item.id === relation.id ? { ...item, name: event.target.value } : item) })} /></label>
               <label className="flow-create-field"><span>Cardinality</span><Select {...selectStyle} aria-label={`Relation ${position + 1} cardinality`} value={relation.cardinality} options={cardinalities} onChange={(cardinality: string) => change({ relations: draft.relations.map((item) => item.id === relation.id ? { ...item, cardinality } : item) })} /></label>
-              <label className="flow-create-field"><span>Source object type</span><Input aria-label={`Relation ${position + 1} source object`} readOnly value={`${draft.schema}.${draft.name || 'new_object_type'}`} /></label>
-              <label className="flow-create-field"><span>Target object type</span><Select {...selectStyle} aria-label={`Relation ${position + 1} target object`} showSearch optionFilterProp="searchText" disabled={objectState.loading || !!objectState.error} placeholder={objectState.loading ? 'Loading object types…' : 'Select an ontology object type'} value={relation.targetId || undefined} options={objectState.items.map((object) => ({ value: object.id, label: `${object.displayName} · ${object.id}`, searchText: `${object.displayName} ${object.id}` }))} onChange={(targetId: string) => { change({ relations: draft.relations.map((item) => item.id === relation.id ? { ...item, targetId, targetFields: [] } : item) }); void loadReference(targetId); }} /></label>
+              <label className="flow-create-field"><span>Source object type</span><Input aria-label={`Relation ${position + 1} source object`} readOnly value={`${draftSchema}.${draft.name || 'new_object_type'}`} /></label>
+              <label className="flow-create-field"><span>Target object type</span><Select {...selectStyle} aria-label={`Relation ${position + 1} target object`} showSearch optionFilterProp="searchText" disabled={objectState.loading || !!objectState.error} placeholder={objectState.loading ? 'Loading object types…' : 'Select an ontology object type'} value={relation.targetId || undefined} options={referenceObjects.map((object) => ({ value: object.id, label: `${object.displayName} · ${object.id}`, searchText: `${object.displayName} ${object.id}` }))} onChange={(targetId: string) => { change({ relations: draft.relations.map((item) => item.id === relation.id ? { ...item, targetId, targetFields: [] } : item) }); void loadReference(targetId); }} /></label>
               <label className="flow-create-field"><span>Source properties</span><Select {...selectStyle} aria-label={`Relation ${position + 1} source properties`} mode="multiple" value={relation.sourceFields} options={propertyOptions} onChange={(sourceFields: string[]) => change({ relations: draft.relations.map((item) => item.id === relation.id ? { ...item, sourceFields } : item) })} /></label>
               <label className="flow-create-field"><span>Target properties</span><Select {...selectStyle} aria-label={`Relation ${position + 1} target properties`} mode="multiple" disabled={!relation.targetId || !references[relation.targetId] || references[relation.targetId].loading || !!references[relation.targetId].error} value={relation.targetFields} options={options(references[relation.targetId]?.columns || [])} onChange={(targetFields: string[]) => change({ relations: draft.relations.map((item) => item.id === relation.id ? { ...item, targetFields } : item) })} /></label>
               {relation.targetId && references[relation.targetId]?.error && <div className="flow-create-error" role="alert">{references[relation.targetId].error}<Button size="small" onClick={() => void loadReference(relation.targetId)}>Retry properties</Button></div>}
@@ -282,7 +325,7 @@ export default function NewObjectType({ variant = 'object', schemas, initialSche
         {step === 4 && <section className="flow-create-section">
           <header className="flow-create-heading"><h3 tabIndex={-1}>Choose where to save</h3><p>The destination comes from the datasource step. To change the schema, return to Datasource.</p></header>
           <dl className="flow-create-summary">
-            <dt>Connection</dt><dd>PostgreSQL</dd><dt>Schema</dt><dd>{draft.schema}</dd><dt>Backing table</dt><dd>{qualifiedName}</dd>
+            <dt>Connection</dt><dd>{draftScope?.connection}</dd><dt>Schema</dt><dd>{draftSchema}</dd><dt>Logical layer</dt><dd>{draft.logicalLayer}</dd><dt>Table role</dt><dd>{draft.tableRole}</dd><dt>Backing table</dt><dd>{qualifiedName}</dd>
           </dl>
         </section>}
         {step === 5 && <section className="flow-create-section">

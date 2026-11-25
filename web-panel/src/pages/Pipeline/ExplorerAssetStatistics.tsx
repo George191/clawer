@@ -30,7 +30,7 @@ function StatisticsFacts({ sample, uncollected = false }: { sample: CollectedSta
 
 export default function ExplorerAssetStatistics({ schema, table, version }: { schema: string; table: string; version: number }) {
     const identity = useSandboxIdentity();
-    return identity && schema === 'ts_transfer_sandbox'
+    return identity
         ? <CollectedStatistics key={`${identity}:${schema}:${table}:${version}`} schema={schema} table={table} />
         : null;
 }

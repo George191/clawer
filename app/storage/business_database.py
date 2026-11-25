@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 import ssl
+from contextlib import asynccontextmanager
 
 from cryptography.fernet import InvalidToken
 from anyio import fail_after
+from sqlalchemy import text
 from sqlalchemy.engine import URL, make_url
 
 from app.storage.connection_credentials import connection_cipher
@@ -17,6 +19,68 @@ from app.config.settings import settings
 
 class BusinessDatabaseNotConfigured(ValueError):
     pass
+
+
+class LayerBindingChanged(RuntimeError):
+    pass
+
+
+@asynccontextmanager
+async def layer_binding_lease(layers, *, expected=None, pg=None):
+    """Hold the layers stable through a business write and its Kafka acknowledgement."""
+    metadata = pg if pg is not None else get_pg_client()
+    layers = sorted(set(layers))
+    async with metadata.session() as session:
+        # A separate READ COMMITTED statement sees the binder's commit after a lock wait.
+        await session.execute(text("""SELECT pg_advisory_xact_lock_shared(hashtextextended('etl-layer:' || layer,0))
+            FROM unnest(CAST(:layers AS text[])) AS selected(layer) ORDER BY layer"""), {"layers": layers})
+        rows = (await session.execute(text("""SELECT b.layer, s.id::text AS id, s.updated_at
+            FROM app.etl_layer_connections b JOIN app.ontology_data_connections s ON s.id=b.connection_id
+            WHERE b.layer=ANY(CAST(:layers AS text[])) AND s.paused_at IS NULL"""),
+            {"layers": layers})).mappings()
+        current = {row["layer"]: (row["id"], row["updated_at"]) for row in rows}
+        if expected is not None and current != expected:
+            raise LayerBindingChanged("ETL layer bindings changed. Restart the worker to load the selected sources.")
+        if expected is None:
+            for layer in layers:
+                client = _layer_clients.get(layer)
+                if client and client.connection_id and (client.connection_id, client.revision) != current.get(layer):
+                    await client.close()
+        yield current
+
+
+async def layer_connection_info(*, pg: PostgresClient | None = None) -> dict[str, dict]:
+    pg = pg if pg is not None else get_pg_client()
+    with fail_after(12):
+        await pg.connect(max_retries=1)
+        rows = await pg.fetch_all("""
+            SELECT b.layer, s.id::text AS id, s.name, s.engine, s.config->>'database' AS database
+            FROM app.etl_layer_connections b
+            JOIN app.ontology_data_connections s ON s.id=b.connection_id
+            WHERE s.paused_at IS NULL ORDER BY b.layer
+        """)
+    return {row["layer"]: dict(row) for row in rows}
+
+
+async def selected_layer_connections() -> dict[str, str]:
+    return {layer: item["id"] for layer, item in (await layer_connection_info()).items()}
+
+
+async def selected_layer_connection(layer: str, *, engine: str | None = "postgresql") -> dict:
+    pg = get_pg_client()
+    with fail_after(12):
+        await pg.connect(max_retries=1)
+        row = await pg.fetch_one("""
+            SELECT s.id, s.name, s.engine, s.config, s.credentials_ciphertext, s.paused_at, s.updated_at
+            FROM app.etl_layer_connections b
+            JOIN app.ontology_data_connections s ON s.id=b.connection_id
+            WHERE b.layer=:layer AND s.paused_at IS NULL
+        """, {"layer": layer})
+    if row is None:
+        raise BusinessDatabaseNotConfigured(f"No active Data Connection is bound to layer {layer}")
+    if engine is not None and row["engine"] != engine:
+        raise BusinessDatabaseNotConfigured(f"The {layer} layer uses {row['engine']}; this operation requires {engine}")
+    return row
 
 
 async def selected_business_connection() -> dict:
@@ -57,19 +121,28 @@ def business_connection_options(row: dict) -> tuple[str, dict]:
 
 
 class BusinessPostgresClient(PostgresClient):
-    def __init__(self) -> None:
+    def __init__(self, layer: str | None = None) -> None:
         super().__init__(schema=None)
+        self.layer = layer
         self.connection_id: str | None = None
+        self.revision = None
         self._connection_lock = asyncio.Lock()
+
+    @property
+    def connection_url(self) -> str:
+        if not self._url:
+            raise BusinessDatabaseNotConfigured("Resolve the selected Data Connection before accessing its URL")
+        return self._url
 
     @property
     def sslmode(self) -> str:
         return "verify-full" if self._connect_args.get("ssl") else "disable"
 
     async def _resolve(self) -> None:
-        row = await selected_business_connection()
+        row = await selected_layer_connection(self.layer) if self.layer is not None else await selected_business_connection()
         self._url, self._connect_args = business_connection_options(row)
         self.connection_id = str(row["id"])
+        self.revision = row.get("updated_at")
 
     async def resolve(self) -> None:
         async with self._connection_lock:
@@ -89,6 +162,13 @@ class BusinessPostgresClient(PostgresClient):
 
 
 _business_client: BusinessPostgresClient | None = None
+_layer_clients: dict[str, BusinessPostgresClient] = {}
+
+
+def get_layer_pg_client(layer: str) -> BusinessPostgresClient:
+    if layer not in _layer_clients:
+        _layer_clients[layer] = BusinessPostgresClient(layer=layer)
+    return _layer_clients[layer]
 
 
 def get_business_pg_client() -> BusinessPostgresClient:

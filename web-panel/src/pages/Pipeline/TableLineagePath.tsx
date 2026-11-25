@@ -1,17 +1,16 @@
+import { isPhysicalSchema } from '../../services/explorerNavigation';
 import { useEffect, useRef, useState } from 'react';
 import { NativeSelect } from '@/components/ui';
 import type { FormEvent } from 'react';
 import { fetchTableLineageCommonDownstream, fetchTableLineageCommonUpstream, fetchTableLineagePath, fetchTableLineageTargets } from '../../services/api';
 import type { TableLineageCommonUpstream, TableLineageIdentity, TableLineagePathEdge, TableLineagePathResult, TableLineageReferenceKind } from '../../services/api';
-import { INDEX_PREVIEW_SCHEMA, INDEX_PREVIEW_TABLE } from './SandboxIndexPreview';
 
 const CATALOG_LIMIT = 20;
 const kinds: Record<TableLineageReferenceKind, string> = { object_relation: 'Declared object relation', foreign_key: 'Foreign key' };
 const name = ({ schema, table }: TableLineageIdentity) => `${schema}.${table}`;
 const code = (error: unknown) => (error as { response?: { status?: number } })?.response?.status;
 const ordinary = ({ schema, table }: TableLineageIdentity) =>
-  /^ts_[a-z0-9_]{1,60}$/.test(schema) && /^[a-z_][a-z0-9_]{0,62}$/.test(table) && !schema.endsWith('_hist') &&
-  !(schema === INDEX_PREVIEW_SCHEMA && table === INDEX_PREVIEW_TABLE);
+  isPhysicalSchema(schema) && /^[a-z_][a-z0-9_]{0,62}$/i.test(table);
 
 function hasWitness(edges: TableLineagePathEdge[], source: TableLineageIdentity, target: TableLineageIdentity) {
   return edges.length >= 1 && edges.length <= 4 && name(edges[0].from) === name(source) &&

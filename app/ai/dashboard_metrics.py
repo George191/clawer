@@ -20,11 +20,6 @@ from app.logger import get_logger
 
 logger = get_logger(__name__)
 
-# ── ETL 层定义 ─────────────────────────────────────────────
-_ETL_LAYERS: list[str] = [
-    "ts_rds", "ts_ods", "ts_task", "ts_dwd", "ts_dws", "ts_dim",
-]
-
 # 滑动窗口长度（秒）
 _RATE_WINDOW_SECONDS: float = 5.0
 
@@ -114,9 +109,9 @@ class DashboardMetricsEngine:
         engine = DashboardMetricsEngine()
 
         # 记录心跳 / 消息
-        engine.record_heartbeat("ts_rds")
-        engine.increment_messages("ts_ods", 10)
-        engine.increment_errors("ts_ods")
+        engine.record_heartbeat("rds")
+        engine.increment_messages("ods", 10)
+        engine.increment_errors("ods")
 
         # 获取快照
         metrics = engine.get_metrics()
@@ -140,9 +135,7 @@ class DashboardMetricsEngine:
         self._total_errors: dict[str, int] = defaultdict(int)
 
         # ── 滑动窗口 ──
-        self._windows: dict[str, _SlidingWindow] = {
-            layer: _SlidingWindow() for layer in _ETL_LAYERS
-        }
+        self._windows: dict[str, _SlidingWindow] = defaultdict(_SlidingWindow)
 
         # ── Kafka lag ──
         self._kafka_lag: dict[str, int] = {}
@@ -170,18 +163,14 @@ class DashboardMetricsEngine:
         """增加 ETL 层的消息处理计数。
 
         Args:
-            layer: layer 名，支持 ``ts_rds`` 或 ``rds`` 两种写法
+            layer: 上报指标的逻辑层名称
             count: 新增消息数
         """
-        layer = self._normalize_layer(layer)
-        window = self._windows.get(layer)
-        if window is not None:
-            window.record(count)
+        self._windows[layer].record(count)
         self._total_processed[layer] += count
 
     def increment_errors(self, layer: str, count: int = 1) -> None:
         """增加 ETL 层的错误计数。"""
-        layer = self._normalize_layer(layer)
         self._total_errors[layer] += count
 
     def set_kafka_lag(self, lag: dict[str, int]) -> None:
@@ -213,7 +202,7 @@ class DashboardMetricsEngine:
         ts = datetime.now(timezone.utc).isoformat()
         layers: dict[str, LayerMetric] = {}
 
-        for layer in _ETL_LAYERS:
+        for layer in sorted(self._heartbeats.keys() | self._windows.keys() | self._total_errors.keys()):
             last_hb = self._heartbeats.get(layer)
             window = self._windows.get(layer)
             errors = self._total_errors.get(layer, 0)
@@ -470,17 +459,6 @@ class DashboardMetricsEngine:
     # ════════════════════════════════════════════════════════
     #  内部工具
     # ════════════════════════════════════════════════════════
-
-    @staticmethod
-    def _normalize_layer(layer: str) -> str:
-        """统一 layer 名：'rds' → 'ts_rds'。"""
-        if layer.startswith("ts_"):
-            return layer
-        ts_layer = f"ts_{layer}"
-        if ts_layer in _ETL_LAYERS:
-            return ts_layer
-        return layer
-
 
 # =====================================================================
 #  序列化辅助

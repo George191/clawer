@@ -1,38 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import date, datetime, timezone
+import re
 from typing import Literal
 
-from app.etl.schema.catalogs import RECORD_IDENTITY_COLUMNS, TABLE_DEFINITIONS
-
 TableRole = Literal["current", "history"]
-PartitionType = Literal["none", "range", "hash"]
-PartitionGranularity = Literal["month", "year"]
-
-DEFAULT_HASH_PARTITION_COUNT = 32
-RDS_CURRENT_HASH_PARTITION_COLUMN = ", ".join(RECORD_IDENTITY_COLUMNS)
-
-
-@dataclass(frozen=True)
-class TableLayout:
-    layer: str
-    logical_table: str
-    table_role: TableRole
-    schema_name: str
-    table_name: str
-    partition_type: PartitionType = "none"
-    partition_column: str | None = None
-    partition_granularity: PartitionGranularity | None = None
-    partition_count: int | None = None
-
-    @property
-    def is_partitioned(self) -> bool:
-        if self.partition_type == "range":
-            return self.partition_column is not None and self.partition_granularity is not None
-        if self.partition_type == "hash":
-            return self.partition_column is not None and self.partition_count is not None
-        return False
+_IDENTIFIER_PATTERN = r"[A-Za-z_][A-Za-z0-9_]*"
+PG_SCHEMA_PATTERN = rf"{_IDENTIFIER_PATTERN}(?:\.{_IDENTIFIER_PATTERN})*"
 
 
 def normalize_table_role(table_role: str | None) -> TableRole:
@@ -42,59 +16,21 @@ def normalize_table_role(table_role: str | None) -> TableRole:
     return role  # type: ignore[return-value]
 
 
-def schema_name_for(layer: str, table_role: str | None = None) -> str:
-    role = normalize_table_role(table_role)
-    return f"ts_{layer}" if role == "current" else f"ts_{layer}_hist"
+def is_schema_identifier(value: str) -> bool:
+    return isinstance(value, str) and len(value) <= 63 and re.fullmatch(PG_SCHEMA_PATTERN, value) is not None
 
 
-def physical_table_name(layer: str, logical_table: str) -> str:
-    return f"{layer}_{logical_table}"
-
-
-def logical_table_name(layer: str, table_name: str) -> str:
-    prefix = f"{layer}_"
-    return table_name[len(prefix):] if table_name.startswith(prefix) else table_name
-
-
-def infer_table_role(layer: str, schema_name: str | None) -> TableRole:
-    if schema_name == schema_name_for(layer, "history"):
-        return "history"
-    return "current"
-
-
-def default_table_layout(
-    layer: str,
-    logical_table: str,
-    table_role: str | None = None,
-) -> TableLayout:
-    role = normalize_table_role(table_role)
-    partition_type: PartitionType = "none"
-    partition_column: str | None = None
-    partition_granularity: PartitionGranularity | None = None
-    partition_count: int | None = None
-
-    definition = TABLE_DEFINITIONS.get(layer, {}).get(logical_table)
-    if role == "current" and (definition or layer in {"rds", "ods"}) and (
-        not definition or definition.get("storage") != "timescale"
-    ):
-        partition_type = "hash"
-        partition_column = (
-            ", ".join(definition["partition_columns"])
-            if definition else RDS_CURRENT_HASH_PARTITION_COLUMN
-        )
-        partition_count = DEFAULT_HASH_PARTITION_COUNT
-
-    return TableLayout(
-        layer=layer,
-        logical_table=logical_table,
-        table_role=role,
-        schema_name=schema_name_for(layer, role),
-        table_name=physical_table_name(layer, logical_table),
-        partition_type=partition_type,
-        partition_column=partition_column,
-        partition_granularity=partition_granularity,
-        partition_count=partition_count,
+def sql_identifier(value: str, *, schema: bool = False) -> str:
+    valid = is_schema_identifier(value) if schema else (
+        isinstance(value, str) and len(value) <= 63 and re.fullmatch(_IDENTIFIER_PATTERN, value) is not None
     )
+    if not valid:
+        raise ValueError(f"Invalid Ontology PostgreSQL identifier: {value!r}")
+    return f'"{value}"'
+
+
+def qualified_table_name(schema_name: str, table_name: str) -> str:
+    return f"{sql_identifier(schema_name, schema=True)}.{sql_identifier(table_name)}"
 
 
 def partition_bounds(

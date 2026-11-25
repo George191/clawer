@@ -5,6 +5,8 @@ import re
 from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
+from app.etl.schema.layout import PG_SCHEMA_PATTERN, is_schema_identifier
+
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, model_validator
 from sqlalchemy import BigInteger, CheckConstraint, Column, DateTime, Index, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
@@ -12,8 +14,8 @@ from sqlmodel import Field as DbField, SQLModel
 
 from app.web.api.models.storage_nodes import StorageNodeRef
 
-WarehouseSchema = Annotated[str, Field(pattern=r"^ts_[a-z0-9_]+$", max_length=63)]
-TableName = Annotated[str, Field(pattern=r"^[a-z_][a-z0-9_]{0,62}$")]
+WarehouseSchema = Annotated[str, Field(max_length=63, pattern=f"^{PG_SCHEMA_PATTERN}$")]
+TableName = Annotated[str, Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")]
 DailyUtcTime = Annotated[str, Field(pattern=r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]$")]
 SourceName = Annotated[str, StringConstraints(strip_whitespace=False, min_length=1, max_length=255, pattern=r"^[^\x00-\x1f\x7f]+$")]
 
@@ -42,7 +44,7 @@ class TransferPlanPayload(BaseModel):
         if self.sourceNode is not None:
             if self.sourceSchema != self.sourceNode.name:
                 raise ValueError("Source schema must match the selected source node")
-        elif not re.fullmatch(r"ts_[a-z0-9_]{1,60}", self.sourceSchema) or not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", self.sourceTable):
+        elif not is_schema_identifier(self.sourceSchema) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,62}", self.sourceTable):
             raise ValueError("Internal sources require a warehouse schema and table name")
         if self.sourceNode is None and (self.sourceSchema, self.sourceTable) == (self.targetSchema, self.targetTable):
             raise ValueError("Source and target tables must be different")

@@ -34,7 +34,7 @@ def _item(row, schema, table):
 
 async def read_relationship_types(layer, table, *, can_manage=False):
     schema = _object_schema(layer)
-    async with get_etl_layers().session(repeatable_read=True) as catalog_session, get_pg_client().session() as session:
+    async with get_etl_layers().session(repeatable_read=True, schema=schema, table=table) as catalog_session, get_pg_client().session() as session:
         await _prepare(session, schema, table, catalog_session=catalog_session)
         rows = (await session.execute(text(f"""SELECT {_FIELDS} FROM app.ontology_object_relations
             WHERE {_SCOPE} ORDER BY name, id"""), {"schema": schema, "table": table})).mappings().all()
@@ -46,7 +46,9 @@ async def create_relationship_type(layer, table, payload, user):
         raise HTTPException(403, "Physical object management permission is required")
     schema = _object_schema(layer)
     target_schema = _object_schema(payload.target.schema)
-    async with get_etl_workspace()._session() as session, get_etl_workspace()._session(business=True) as catalog_session:
+    async with get_etl_workspace()._session() as session, get_etl_workspace()._session(
+        business=True, schema=schema, table=table,
+    ) as catalog_session:
         source = await _prepare(session, schema, table, catalog_session=catalog_session)
         target = await _asset(catalog_session, target_schema, payload.target.table)
         for asset in (source, target):
@@ -76,7 +78,9 @@ async def update_relationship_type(layer, table, relation_id, payload, user):
     if int(relation_id) > 2**63 - 1:
         raise HTTPException(422, "Relationship identifier is too large")
     schema = _object_schema(layer)
-    async with get_etl_workspace()._session() as session, get_etl_workspace()._session(business=True) as catalog_session:
+    async with get_etl_workspace()._session() as session, get_etl_workspace()._session(
+        business=True, schema=schema, table=table,
+    ) as catalog_session:
         await _prepare(session, schema, table, catalog_session=catalog_session)
         await session.execute(text("SELECT pg_advisory_xact_lock(hashtext('app.ontology_object_relations'))"))
         params = {"id": int(relation_id), "schema": schema, "table": table}

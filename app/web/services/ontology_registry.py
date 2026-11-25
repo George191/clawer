@@ -25,12 +25,15 @@ from app.web.api.models.ontology_registry import (
 )
 from app.web.api.models.user import RoleTypes
 from app.web.api.utils.models import StatusTypes
-from app.web.services.etl_layers import WAREHOUSE_SCHEMAS, get_etl_layers, ontology_source_predicate, quote_identifier
+from app.web.services.etl_layers import (
+    _OBJECT_METADATA_JOIN, get_etl_layers, is_ordinary_schema, ontology_source_predicate, quote_identifier,
+    quote_schema_identifier,
+)
 from app.web.services.ontology_markings import allowed_ids, covers
 from app.web.services.ontology_registry_policy import AccessContext, Principal, definition_policy_errors, visibility
 
 IDENTIFIER = re.compile(r"^[a-z][a-z0-9_-]{0,62}$")
-COLUMN = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
+COLUMN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
 SQL_TYPES: dict[str, str] = {
     "text": "string", "varchar": "string", "bpchar": "string", "uuid": "string",
     "int2": "integer", "int4": "integer", "int8": "integer",
@@ -174,6 +177,7 @@ class WarehouseTable:
     oid: int
     columns: dict[str, Column]
     unique_keys: tuple[tuple[str, ...], ...]
+    connection_id: str | None = None
 
 
 def assess_definition(
@@ -227,7 +231,7 @@ def assess_definition(
     mode = definition.source.mode
     if mode == "existing":
         selected = definition.source
-        if selected.schema_name not in WAREHOUSE_SCHEMAS or not COLUMN.fullmatch(selected.table or ""):
+        if not is_ordinary_schema(selected.schema_name) or not COLUMN.fullmatch(selected.table or ""):
             error("source", "Choose an available table in a current warehouse layer")
         elif source is None:
             error("source", "Selected warehouse table is unavailable")
@@ -248,7 +252,8 @@ def assess_definition(
             keys = tuple(properties[key].sourceColumn for key in definition.primaryKey if key in properties)
             if not any(len(keys) == len(candidate) and set(keys) == set(candidate) for candidate in source.unique_keys):
                 error("primaryKey", "Select the columns of a non-null database primary or unique key")
-    elif definition.source.upstreamConnectionId or definition.source.schema_name or definition.source.table or any(item.sourceColumn for item in definition.properties):
+    elif (definition.source.connectionId or definition.source.upstreamConnectionId or definition.source.schema_name
+          or definition.source.table or any(item.sourceColumn for item in definition.properties)):
         error("source", "Objects without a source cannot have warehouse column mappings")
 
     for issue in definition_policy_errors(
@@ -265,12 +270,13 @@ def assess_definition(
 
 
 async def _warehouse_table(session: AsyncSession, source: Source) -> WarehouseTable | None:
-    if source.schema_name not in WAREHOUSE_SCHEMAS or not COLUMN.fullmatch(source.table or ""):
+    if not is_ordinary_schema(source.schema_name) or not COLUMN.fullmatch(source.table or ""):
         return None
     eligibility, scope = ontology_source_predicate()
-    params = {"schema": source.schema_name, "table": source.table, **scope}
+    params = await get_etl_layers()._catalog_parameters({"schema": source.schema_name, "table": source.table, **scope})
     oid = await session.scalar(text(f"""
         SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        {_OBJECT_METADATA_JOIN}
         WHERE n.nspname = :schema AND c.relname = :table
           AND ({eligibility})
         """), params)
@@ -298,19 +304,24 @@ async def _warehouse_table(session: AsyncSession, source: Source) -> WarehouseTa
     unique_keys = tuple(tuple(key) for key in keys if key and all(
         item in columns and not columns[item].nullable for item in key
     ))
-    return WarehouseTable(int(oid), columns, unique_keys)
+    return WarehouseTable(int(oid), columns, unique_keys, getattr(session, "info", {}).get("etl_connection_id"))
 
 
-async def warehouse_table(source: Source) -> WarehouseTable | None:
-    if source.mode != "existing" or source.schema_name not in WAREHOUSE_SCHEMAS:
+async def warehouse_table(source: Source, *, connection_id: str | None = None) -> WarehouseTable | None:
+    if source.mode != "existing" or not is_ordinary_schema(source.schema_name) or not COLUMN.fullmatch(source.table or ""):
         return None
-    async with get_etl_layers().session() as session:
+    selected_id = str(source.connectionId) if source.connectionId else None
+    if selected_id is not None and connection_id is not None and selected_id != connection_id:
+        raise HTTPException(409, "The selected connection does not match the saved warehouse binding")
+    async with get_etl_layers().session(
+        schema=source.schema_name, table=source.table, connection_id=connection_id or selected_id,
+    ) as session:
         return await _warehouse_table(session, source)
 
 
 def source_signature(definition: Definition, table: WarehouseTable) -> dict[str, Any]:
     columns = sorted({prop.sourceColumn for prop in definition.properties if prop.sourceColumn})
-    return {
+    result = {
         "columns": {
             name: [table.columns[name].sql_type, table.columns[name].nullable, table.columns[name].kind]
             for name in columns
@@ -320,9 +331,18 @@ def source_signature(definition: Definition, table: WarehouseTable) -> dict[str,
             for key in definition.primaryKey
         ],
     }
+    if table.connection_id is not None:
+        result["connectionId"] = table.connection_id
+    return result
+
+
+def source_connection_id(row: OntologyDefinitionRow) -> str | None:
+    return (row.source_signature or {}).get("connectionId")
 
 
 def ensure_source_identity(row: OntologyDefinitionRow, definition: Definition, table: WarehouseTable | None) -> None:
+    if table and table.connection_id is not None and source_connection_id(row) is None:
+        raise HTTPException(409, "The published warehouse source connection must be verified before reading")
     try:
         signature = source_signature(definition, table) if table is not None else None
     except KeyError:
@@ -338,14 +358,16 @@ async def read_bound_records(row: OntologyDefinitionRow, columns: list[str], lim
     definition = Definition.model_validate(row.published_definition)
     assert definition.source.mode == "existing"
     source = definition.source
-    if source.schema_name not in WAREHOUSE_SCHEMAS or not COLUMN.fullmatch(source.table or ""):
+    if not is_ordinary_schema(source.schema_name) or not COLUMN.fullmatch(source.table or ""):
         raise HTTPException(409, "Invalid warehouse binding")
     allowed = set(columns)
     props = [item for item in definition.properties if item.id in allowed]
     if any(not IDENTIFIER.fullmatch(item.id) or not COLUMN.fullmatch(item.sourceColumn or "") for item in props):
         raise HTTPException(409, "Invalid published property mapping")
-    async with get_etl_layers().session() as session:
-        relation = f"{quote_identifier(source.schema_name)}.{quote_identifier(source.table)}"
+    async with get_etl_layers().session(
+        schema=source.schema_name, table=source.table, connection_id=source_connection_id(row),
+    ) as session:
+        relation = f"{quote_schema_identifier(source.schema_name)}.{quote_identifier(source.table)}"
         # Prevent concurrent rename/drop between verifying its identity and reading rows.
         # Only PostgreSQL identifiers from the published schema/table are interpolated.
         try:

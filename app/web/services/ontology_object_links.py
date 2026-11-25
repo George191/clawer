@@ -42,7 +42,7 @@ def _choice(relation, direction, peer):
 
 async def read_row_links(layer, table, query, *, can_manage=False):
     schema = _object_schema(layer)
-    async with get_etl_layers().session(repeatable_read=True) as catalog_session, get_pg_client().session() as session:
+    async with get_etl_layers().session(repeatable_read=True, schema=schema, table=table) as catalog_session, get_pg_client().session() as session:
         await _prepare(session, catalog_session)
         source = await _asset(catalog_session, schema, table)
         key = await _key(catalog_session, source, query.key)
@@ -98,7 +98,9 @@ async def mutate_row_link(layer, table, payload, user, *, link_id=None):
     from app.web.services.etl_workspace import get_etl_workspace
 
     schema = _object_schema(layer)
-    async with get_etl_workspace()._session() as session, get_etl_workspace()._session(business=True) as catalog_session:
+    async with get_etl_workspace()._session() as session, get_etl_workspace()._session(
+        business=True, schema=schema, table=table,
+    ) as catalog_session:
         await _prepare(session, catalog_session)
         relation = (await session.execute(text("""SELECT * FROM app.ontology_object_relations
             WHERE id=:id AND enabled FOR UPDATE"""), {"id": int(payload.relationId)})).mappings().first()

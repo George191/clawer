@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 import importlib
 import json
+import re
 import ssl
 from time import monotonic
 from typing import Any
@@ -24,7 +25,7 @@ from app.storage.postgres_client import get_pg_client
 from app.storage.connection_credentials import connection_cipher
 from app.storage.business_database import (
     BusinessDatabaseNotConfigured, business_connection_options, get_business_pg_client,
-    selected_business_connection,
+    selected_business_connection, get_layer_pg_client,
 )
 from app.web.api.models.batch_syncs import INCREMENTAL_TARGET, TARGET_SCHEMA as BATCH_TARGET_SCHEMA
 from app.web.services.source_cdc import CONNECTORS as CDC_CONNECTORS, require_unconfigured
@@ -365,7 +366,7 @@ class DataConnections:
     def warehouse(self, connection_id: str) -> EtlLayers:
         if connection_id != WAREHOUSE_CONNECTION_ID:
             raise HTTPException(404, "Warehouse connection not found")
-        return EtlLayers(pg=get_business_pg_client(), metadata_pg=self._pg)
+        return EtlLayers(metadata_pg=self._pg)
 
     async def describe_warehouse(self) -> dict[str, str]:
         try:
@@ -402,9 +403,62 @@ class DataConnections:
         await get_business_pg_client().close()
         return await self.describe_warehouse()
 
+    async def sandbox_connection_id(self) -> str | None:
+        async with self._session() as session:
+            return await session.scalar(text("SELECT connection_id::text FROM app.etl_business_connection WHERE singleton"))
+
+    @staticmethod
+    def layer_binding(row):
+        binding = dict(row)
+        engine, layer = binding["engine"], binding["layer"]
+        if engine == "postgresql" and layer in {"rds", "ods", "task", "dwd"}:
+            mode = "postgres_worker"
+        elif engine == "mongodb" and layer == "rds":
+            mode = "mongo_source"
+        else:
+            mode = "catalog_only"
+        return {**binding, "executionMode": mode}
+
+    async def layer_bindings(self):
+        async with self._session() as session:
+            rows = (await session.execute(text("""WITH layers AS (
+                SELECT layer FROM app.ontology_objects WHERE is_active AND layer <> ''
+                UNION SELECT layer FROM app.etl_layer_connections
+            ) SELECT l.layer, s.id::text AS "connectionId", s.name, s.engine
+              FROM layers l LEFT JOIN app.etl_layer_connections b ON b.layer=l.layer
+              LEFT JOIN app.ontology_data_connections s ON s.id=b.connection_id ORDER BY l.layer"""))).mappings()
+            return [self.layer_binding(row) for row in rows]
+
+    async def bind_layer(self, layer, payload):
+        if not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", layer):
+            raise HTTPException(422, "Invalid logical layer")
+        async with self._session() as session:
+            locked = await session.scalar(text("SELECT pg_try_advisory_xact_lock(hashtextextended(:name,0))"),
+                                          {"name": f"etl-layer:{layer}"})
+            if not locked:
+                raise HTTPException(409, "The layer is in use. Finish the active batch before changing its connection.")
+            previous = await session.scalar(text(
+                "SELECT connection_id FROM app.etl_layer_connections WHERE layer=:layer FOR UPDATE"
+            ), {"layer": layer})
+            if previous != payload.previousConnectionId:
+                raise HTTPException(409, "The layer binding changed. Reload and review the current connection.")
+            row = await self._stored(str(payload.connectionId), session=session, lock=" FOR SHARE")
+            if row["updated_at"] != payload.expectedUpdatedAt or row["paused_at"] is not None:
+                raise HTTPException(409, "The saved connection changed or was paused. Reload before binding.")
+            if row["engine"] == "postgresql":
+                try:
+                    business_connection_options(row)
+                except BusinessDatabaseNotConfigured as exc:
+                    raise HTTPException(422, str(exc)) from None
+            await session.execute(text("""INSERT INTO app.etl_layer_connections(layer,connection_id)
+                VALUES (:layer,:id) ON CONFLICT (layer) DO UPDATE SET connection_id=EXCLUDED.connection_id"""),
+                {"layer": layer, "id": payload.connectionId})
+        await get_layer_pg_client(layer).close()
+        return self.layer_binding({"layer": layer, "connectionId": str(payload.connectionId), "engine": row["engine"], "name": row["name"]})
+
     @staticmethod
     async def _require_not_business_connection(session, connection_id):
-        if await session.scalar(text("SELECT EXISTS(SELECT 1 FROM app.etl_business_connection WHERE connection_id=:id)"),
+        if await session.scalar(text("SELECT EXISTS(SELECT 1 FROM app.etl_business_connection WHERE connection_id=:id UNION ALL SELECT 1 FROM app.etl_layer_connections WHERE connection_id=:id)"),
                                 {"id": uuid.UUID(str(connection_id))}):
             raise HTTPException(409, "This connection is selected for ETL; select another business database before changing, pausing or deleting it")
 
@@ -834,7 +888,8 @@ class DataConnections:
         """))).mappings().one()
         dependencies = []
         if installed["business"] and await session.scalar(text("""SELECT EXISTS (
-            SELECT 1 FROM app.etl_business_connection WHERE connection_id=:id)
+            SELECT 1 FROM app.etl_business_connection WHERE connection_id=:id UNION ALL
+            SELECT 1 FROM app.etl_layer_connections WHERE connection_id=:id)
         """), params):
             dependencies.append({"type": "business_database", "id": connection_id, "name": stored["name"],
                 "message": "This connection is used by the running warehouse and Workers. Reassign that runtime before disconnecting."})

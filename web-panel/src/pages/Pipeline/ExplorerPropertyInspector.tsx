@@ -8,7 +8,6 @@ import type { ExplorerMappedProperty as Property, ExplorerPropertyMapping as Map
 import { canonColumn } from './ColumnLineageReferences';
 import ExplorerColumnPlannerStatistic from './ExplorerColumnPlannerStatistic';
 import { columnPresentations } from './ExplorerResultLayout';
-import { INDEX_PREVIEW_SCHEMA, INDEX_PREVIEW_TABLE } from './SandboxIndexPreview';
 
 const tabs = ['General','Display','Interaction','Details','Advanced'] as const;
 export const businessTypes = ['string','integer','number','boolean','date','datetime','json'] as const;
@@ -50,8 +49,7 @@ export default function ExplorerPropertyInspector({mapping,property:p,columns,ed
     const col = columns.find(c => c.name === p.sourceColumn);
     const locked = !editable || bound;
     const canReference = col && canonColumn(col.name) && canonColumn(mapping.table) &&
-        /^ts_[a-z0-9_]{1,60}$/.test(mapping.schema) && mapping.schema !== 'ts_meta' && !mapping.schema.endsWith('_hist') &&
-        (mapping.schema !== INDEX_PREVIEW_SCHEMA || mapping.table !== INDEX_PREVIEW_TABLE);
+        canonColumn(mapping.schema);
     const field = (text: string, value: string, values: readonly string[], disabled: boolean, change: (v: string) => void) =>
         <label>{text}<NativeSelect aria-label={text} value={value} disabled={disabled} onChange={e => change(e.target.value)}>
             {values.map(v => <option key={v} value={v}>{readable(v)}</option>)}

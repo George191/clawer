@@ -157,9 +157,18 @@ async def migrate(pg, *, catalog_pg, apply: bool = False) -> dict:
             await session.execute(text("ALTER TABLE app.object_relations RENAME TO ontology_object_relations"))
         for statement in OBJECT_RELATIONS_DDL_STATEMENTS:
             await session.execute(text(statement))
+        existing_identities = {(row["schema_name"], row["table_name"]) for row in before["registered"]}
         for table in before["tables"]:
+            schema = table["schema"]
+            classification = {}
+            if (schema, table["name"]) not in existing_identities:
+                # Import the legacy deployment layout once for previously unregistered tables.
+                legacy_layer = schema.removeprefix("ts_")
+                role = "history" if legacy_layer.endswith("_hist") else "current"
+                classification = {"layer": legacy_layer.removesuffix("_hist"), "table_role": role}
             await sync_object_metadata(
-                session, table["schema"], table["name"], catalog_session=catalog_session, provenance="pg_catalog",
+                session, schema, table["name"], catalog_session=catalog_session, provenance="pg_catalog",
+                **classification,
             )
         after = await snapshot(session, catalog_session=catalog_session)
         by_id = {row["id"]: row for row in after["registered"]}
