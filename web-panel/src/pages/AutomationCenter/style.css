@@ -276,3 +276,13 @@
 .automation-logs .is-ok code { color:var(--ui-success); }
 @media(max-width:1000px) { .automation-runs-body.has-detail { flex-direction:column; overflow:auto; } .automation-run-inspector { width:100%; max-width:none; min-height:360px; flex:none; } .automation-run-list { min-height:280px; } }
 @media(max-width:700px) { .automation-sidebar { width:100%; } .automation-run-stats button { flex-direction:column; align-items:flex-start; padding:10px; } .automation-node-editor { grid-template-columns:1fr; } .automation-node-preview { display:none; } }
+.automation-workflow-modal .ui-modal-content { display:flex; flex-direction:column; max-height:calc(100dvh - 64px); overflow:hidden; border-radius:3px; }
+.automation-workflow-modal .ui-modal-header,.automation-workflow-modal .ui-modal-footer { flex:none; }
+.automation-workflow-modal .ui-modal-body { min-height:0; overflow:auto; }
+.automation-workflow-modal .automation-form { display:grid; grid-template-columns:1fr 1fr; gap:12px 20px; }
+.automation-workflow-modal .ui-form-item { margin-bottom:0; }
+.automation-workflow-modal .ui-form-item:nth-child(3),.automation-workflow-modal .ui-form-item:nth-child(4) { grid-column:1/-1; }
+.automation-node-fields { max-height:350px; overflow:auto; padding-right:8px; }
+.automation-node-preview { align-self:start; }
+.automation-run-actions { display:flex; gap:8px; margin-bottom:14px; }
+@media(max-width:700px) { .automation-workflow-modal .automation-form { grid-template-columns:1fr; } .automation-workflow-modal .ui-form-item { grid-column:1/-1; } }

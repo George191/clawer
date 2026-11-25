@@ -423,7 +423,7 @@ const AutomationCenter: React.FC = () => {
       </main>
     </div>
 
-    {section === 'workflows' && <Modal className="flow-surface-modal" title={editorTitle} open={editorOpen} confirmLoading={mutating} onCancel={() => setEditorOpen(false)} onOk={() => void save()} okText={editing ? 'Save Changes' : 'Create'} width={940} forceRender>
+    {section === 'workflows' && <Modal className="flow-surface-modal automation-workflow-modal" title={editorTitle} open={editorOpen} confirmLoading={mutating} onCancel={() => setEditorOpen(false)} onOk={() => void save()} okText={editing ? 'Save Changes' : 'Create'} width={940} forceRender>
       <Form form={form} layout="vertical" className="automation-form">
         {section === 'workflows' && <><Form.Item name="name" label="Workflow Name" rules={[{ required: true }]}><Input disabled={Boolean(editing)} /></Form.Item><Form.Item name="product_domain" label="Domain" rules={[{ required: true }]}><Select options={Object.entries(domainMeta).map(([value, meta]) => ({ value, label: meta.label }))} /></Form.Item><Form.Item name="description" label="Description"><Input.TextArea rows={2} /></Form.Item><Form.Item name="nodes" label="Execution steps" rules={[{ validator: async (_, nodes) => { if (!Array.isArray(nodes) || !nodes.length || nodes.some(node => !node.name?.trim())) throw new Error('Give every step a name and include at least one step.'); } }]}><WorkflowNodes /></Form.Item><Form.Item name="enabled" label="Enabled" valuePropName="checked"><Switch /></Form.Item></>}
       </Form>
