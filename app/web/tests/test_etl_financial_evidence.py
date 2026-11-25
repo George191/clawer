@@ -98,7 +98,7 @@ class FinancialEvidenceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["lineage"], {"status": "unavailable"})
         self.assertEqual(result["quality"], {"source": "postgres_catalog", "columnCount": 9,
                                              "primaryKeyColumnCount": 2, "notNullColumnCount": 5})
-        self.assertEqual(len(sql.calls), 3)  # Timeout, ontology readiness, catalog observation.
+        self.assertEqual(len(sql.calls), 2)  # Business timeout and physical observation; readiness is checked in the system DB.
         statement, params = sql.calls[-1]
         self.assertIn("FROM pg_class", statement)
         self.assertIn("FROM pg_attribute", statement)
@@ -152,7 +152,7 @@ class FinancialEvidenceRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["lineage"], {"status": "unavailable"})
         self.assertEqual(response.json()["observation"], "metadata_only")
-        self.assertEqual(len(sql.calls), 3)
+        self.assertEqual(len(sql.calls), 2)
         self.assertEqual(removed.status_code, 404)
 
     def test_authentication_failure_prevents_every_evidence_read(self):

@@ -11,7 +11,9 @@ from sqlalchemy.ext.asyncio.engine import AsyncEngine
 from sqlalchemy.ext.asyncio import create_async_engine
 
 dsn: PostgresDsn = settings.SQLALCHEMY_RUNNABLE_DATABASE_URI
-engine: AsyncEngine = create_async_engine(dsn.unicode_string())
+engine: AsyncEngine = create_async_engine(
+    dsn.unicode_string(), connect_args={"server_settings": {"search_path": "app,pg_catalog"}},
+)
 
 
 # make sure all SQLModel models are imported (app.api.models) before initializing DB

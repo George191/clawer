@@ -48,6 +48,7 @@ from app.etl.schema.registry import (
 from app.etl.state.offsets import get_offset_manager
 from app.logger import get_logger
 from app.storage.postgres_client import get_pg_client
+from app.storage.business_database import get_business_pg_client
 
 logger = get_logger(__name__)
 
@@ -93,7 +94,8 @@ class ETLBase:
         self._handlers = self._discover_handlers()
         self._consumer: AIOKafkaConsumer | None = None
         self._producer: AIOKafkaProducer | None = None
-        self._pg = get_pg_client()
+        self._pg = get_business_pg_client()
+        self._metadata_pg = get_pg_client()
         self._running = False
         self._pending_offsets: dict[str, int] = {}
         self._assignment_epoch = 0
@@ -177,14 +179,15 @@ class ETLBase:
         await self._pg.execute(
             f"CREATE SCHEMA IF NOT EXISTS {schema_name_for(self._layer, self._table_role)}"
         )
-        await ensure_ontology_tables(self._pg)
+        await self._pg.execute("CREATE EXTENSION IF NOT EXISTS postgis")
+        await ensure_ontology_tables(self._metadata_pg)
         for table in self._handlers:
-            if await get_registered_ddl(self._pg, self._layer, table, self._table_role):
+            if await get_registered_ddl(self._metadata_pg, self._layer, table, self._table_role):
                 await self._ensure_registered_table(table, self._table_role, create_partitions=False)
 
     async def _ddl_for_table(self, table: str) -> str:
         ddl_from_registry = await get_registered_ddl(
-            self._pg,
+            self._metadata_pg,
             self._layer,
             table,
             self._table_role,
@@ -207,7 +210,7 @@ class ETLBase:
         create_partitions: bool = True,
     ) -> None:
         ddl_record = await get_registered_ddl_record(
-            self._pg,
+            self._metadata_pg,
             self._layer,
             table,
             table_role,
@@ -231,8 +234,9 @@ class ETLBase:
         if not existing or existing["relation"] is None:
             await self._pg.init_schema([ddl_record["ddl_sql"]])
         schema_name, table_name = self._table_fqn(table, table_role).split(".")
-        async with self._pg.session() as session:
-            await sync_object_metadata(session, schema_name, table_name, catalog_session=session)
+        async with self._pg.session() as catalog_session:
+            async with self._metadata_pg.session() as session:
+                await sync_object_metadata(session, schema_name, table_name, catalog_session=catalog_session)
         if table_role == "current" and settings.etl_output_mode == "debezium":
             await self._ensure_cdc_identity(self._table_fqn(table, table_role))
         logger.info(
@@ -277,7 +281,7 @@ class ETLBase:
         role = table_role or self._table_role
         if ddl_record is None:
             ddl_record = await get_registered_ddl_record(
-                self._pg,
+                self._metadata_pg,
                 self._layer,
                 table,
                 role,
@@ -1021,7 +1025,7 @@ class ETLBase:
         await self._close_consumer()
         await self._close_producer()
         try:
-            await self._pg.close()
+            await asyncio.gather(self._pg.close(), self._metadata_pg.close(), return_exceptions=True)
         except Exception:
             pass
         logger.info("%s Stopped", self._log_prefix)

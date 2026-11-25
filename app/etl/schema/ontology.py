@@ -1,4 +1,4 @@
-"""The current ETL object/DDL and property metadata, stored in public Ontology tables."""
+"""The current ETL object/DDL and property metadata, stored in app Ontology tables."""
 
 from __future__ import annotations
 
@@ -11,9 +11,9 @@ from app.etl.schema.catalogs import TABLE_DEFINITIONS
 from app.etl.schema.ddl import ddl_checksum
 from app.etl.schema.layout import logical_table_name, physical_table_name
 
-ONTOLOGY_OBJECTS_TABLE = "public.ontology_objects"
-ONTOLOGY_PROPERTIES_TABLE = "public.ontology_object_properties"
-ONTOLOGY_FAVORITES_TABLE = "public.ontology_object_favorites"
+ONTOLOGY_OBJECTS_TABLE = "app.ontology_objects"
+ONTOLOGY_PROPERTIES_TABLE = "app.ontology_object_properties"
+ONTOLOGY_FAVORITES_TABLE = "app.ontology_object_favorites"
 _EXTRA_OBJECT_COLUMNS = (
     "data_type TEXT NOT NULL DEFAULT ''",
     "data_type_source TEXT NOT NULL DEFAULT 'not_configured'",
@@ -23,15 +23,15 @@ _EXTRA_OBJECT_COLUMNS = (
     "visibility TEXT NOT NULL DEFAULT 'normal' CONSTRAINT ontology_objects_visibility_check CHECK (visibility IN ('normal','prominent','hidden'))",
 )
 ONTOLOGY_OBJECT_COLUMNS_ADD_STATEMENTS = tuple(
-    f"ALTER TABLE public.ontology_objects ADD COLUMN IF NOT EXISTS {column}"
+    f"ALTER TABLE app.ontology_objects ADD COLUMN IF NOT EXISTS {column}"
     for column in _EXTRA_OBJECT_COLUMNS
 )
 ONTOLOGY_OBJECT_DEFAULT_STATEMENTS = (
-    "ALTER TABLE public.ontology_objects ALTER COLUMN ddl_sql SET DEFAULT ''",
-    "ALTER TABLE public.ontology_objects ALTER COLUMN checksum SET DEFAULT ''",
-    "ALTER TABLE public.ontology_objects ALTER COLUMN version SET DEFAULT 0",
+    "ALTER TABLE app.ontology_objects ALTER COLUMN ddl_sql SET DEFAULT ''",
+    "ALTER TABLE app.ontology_objects ALTER COLUMN checksum SET DEFAULT ''",
+    "ALTER TABLE app.ontology_objects ALTER COLUMN version SET DEFAULT 0",
 )
-ONTOLOGY_OBJECTS_DDL = """CREATE TABLE IF NOT EXISTS public.ontology_objects (
+ONTOLOGY_OBJECTS_DDL = """CREATE TABLE IF NOT EXISTS app.ontology_objects (
     id BIGSERIAL PRIMARY KEY,
     layer TEXT NOT NULL,
     table_role TEXT NOT NULL DEFAULT 'current',
@@ -66,8 +66,8 @@ ONTOLOGY_OBJECTS_DDL = """CREATE TABLE IF NOT EXISTS public.ontology_objects (
         OR (partition_type = 'range' AND partition_column IS NOT NULL AND partition_granularity IS NOT NULL AND partition_count IS NULL)
         OR (partition_type = 'hash' AND partition_column IS NOT NULL AND partition_granularity IS NULL AND partition_count > 0))
 )"""
-ONTOLOGY_PROPERTIES_DDL = """CREATE TABLE IF NOT EXISTS public.ontology_object_properties (
-    object_id BIGINT NOT NULL REFERENCES public.ontology_objects(id) ON DELETE CASCADE,
+ONTOLOGY_PROPERTIES_DDL = """CREATE TABLE IF NOT EXISTS app.ontology_object_properties (
+    object_id BIGINT NOT NULL REFERENCES app.ontology_objects(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     sql_type TEXT NOT NULL,
     ordinal_position INTEGER NOT NULL CHECK (ordinal_position > 0),
@@ -85,13 +85,13 @@ ONTOLOGY_PROPERTIES_DDL = """CREATE TABLE IF NOT EXISTS public.ontology_object_p
     UNIQUE (object_id, ordinal_position)
 )"""
 ONTOLOGY_INDEX_DDL_STATEMENTS = (
-    "CREATE UNIQUE INDEX IF NOT EXISTS uq_ontology_objects_identity ON public.ontology_objects (schema_name, table_name)",
-    "CREATE UNIQUE INDEX IF NOT EXISTS uq_ontology_objects_table ON public.ontology_objects (layer, table_role, schema_name, table_name)",
-    "CREATE INDEX IF NOT EXISTS idx_ontology_objects_lookup ON public.ontology_objects (layer, table_role, schema_name, table_name, version DESC)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_ontology_objects_identity ON app.ontology_objects (schema_name, table_name)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_ontology_objects_table ON app.ontology_objects (layer, table_role, schema_name, table_name)",
+    "CREATE INDEX IF NOT EXISTS idx_ontology_objects_lookup ON app.ontology_objects (layer, table_role, schema_name, table_name, version DESC)",
 )
-ONTOLOGY_FAVORITES_DDL = """CREATE TABLE IF NOT EXISTS public.ontology_object_favorites (
+ONTOLOGY_FAVORITES_DDL = """CREATE TABLE IF NOT EXISTS app.ontology_object_favorites (
     user_id UUID NOT NULL,
-    object_id BIGINT NOT NULL REFERENCES public.ontology_objects(id) ON DELETE CASCADE,
+    object_id BIGINT NOT NULL REFERENCES app.ontology_objects(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (user_id, object_id)
 )"""

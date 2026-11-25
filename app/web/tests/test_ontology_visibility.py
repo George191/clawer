@@ -56,9 +56,9 @@ class MigrationPg:
             return Result([self.column] if self.column else [])
         if sql.startswith("SELECT c.relkind"):
             return Result([self.favorite_definition] if self.favorites else [])
-        if sql.startswith("ALTER TABLE public.ontology_objects ADD COLUMN visibility"):
+        if sql.startswith("ALTER TABLE app.ontology_objects ADD COLUMN visibility"):
             self.column = deepcopy(READY)
-        elif sql.startswith("CREATE TABLE IF NOT EXISTS public.ontology_object_favorites"):
+        elif sql.startswith("CREATE TABLE IF NOT EXISTS app.ontology_object_favorites"):
             self.favorites = True
         elif not sql.startswith(("SELECT pg_advisory_xact_lock", "SET ")):
             raise AssertionError("Unexpected visibility migration SQL: " + sql)
@@ -77,7 +77,7 @@ class VisibilityPg(MetadataPg):
             return Result(scalar=1 if any(key[0] == params["schema"] for key in self.catalog) else None)
         if sql.startswith("SELECT to_regclass"):
             return Result(scalar=True)
-        if sql.startswith("UPDATE public.ontology_objects SET visibility"):
+        if sql.startswith("UPDATE app.ontology_objects SET visibility"):
             self.calls.append((sql, deepcopy(params)))
             for value in self.objects.values():
                 if value["id"] == params["id"]:
@@ -85,7 +85,7 @@ class VisibilityPg(MetadataPg):
                     if "is_active = TRUE" in sql:
                         value["is_active"] = True
             return Result()
-        if sql.startswith("UPDATE public.ontology_objects SET is_active = TRUE"):
+        if sql.startswith("UPDATE app.ontology_objects SET is_active = TRUE"):
             for value in self.objects.values():
                 if value["id"] == params["id"]:
                     value["is_active"] = True
@@ -141,6 +141,7 @@ class VisibilityWorkspaceTests(unittest.IsolatedAsyncioTestCase):
     def workspace(self):
         instance = object.__new__(EtlWorkspace)
         instance._pg = VisibilityPg(table="custom_items")
+        instance._layers = SimpleNamespace(session=instance._pg.session)
         return instance
 
     async def test_save_all_states_and_metadata_sync_registration_preserve_visibility(self):
@@ -159,7 +160,7 @@ class VisibilityWorkspaceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pg.objects[("ts_custom", "custom_items")]["visibility"], "hidden")
         self.assertEqual(pg.catalog, original_catalog)
         self.assertFalse(any(sql.startswith(("CREATE", "ALTER", "DROP")) for sql, _ in pg.calls))
-        update = next(sql for sql, _ in pg.calls if sql.startswith("UPDATE public.ontology_objects SET visibility"))
+        update = next(sql for sql, _ in pg.calls if sql.startswith("UPDATE app.ontology_objects SET visibility"))
         self.assertIn("updated_at = now()", update)
 
     async def test_reject_invalid_internal_missing_and_partition_objects(self):
@@ -217,7 +218,7 @@ class VisibilityReadTests(unittest.IsolatedAsyncioTestCase):
         logical_hidden = {**logical(SEEDS[2]), "source_table": "objects", "target_visibility": "hidden"}
         hidden = foreign(target_schema="ts_custom", target_table="secret", target_visibility="hidden")
         for include_hidden in (False, True):
-            instance, _ = service(Result([summary(properties_count=0)]), Result([hidden]), Result(scalar=True), Result([logical_hidden]))
+            instance, _ = service(Result([summary(properties_count=0)]), Result([hidden]), Result([logical_hidden]))
             preview = await instance.preview("ods", "objects", include_hidden=include_hidden)
             linked = preview["linkedObjectTypes"]
             if include_hidden:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import AbstractAsyncContextManager
 from datetime import datetime
 import json
 from typing import Annotated, Any, Literal
@@ -17,8 +18,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.ai_settings import ai_settings
 from app.etl.tasks.extractors.keyword_files import MAX_FILE_SIZE
 from app.web.api.dependencies.common import CurrentActiveSuperuser, SessionDep, get_current_active_superuser, get_current_user
-from app.web.api.dependencies.session import get_db
+from app.web.api.dependencies.session import get_db, get_business_db
 from app.web.api.models.column_planner_statistic import ColumnPlannerStatistic
+from app.web.api.models.data_connections import BusinessDatabaseSelection
 from app.web.api.models.lineage_column_mapping_paths import ColumnMappingPaths
 from app.web.api.models.lineage_neighbors import (
     LineageColumnReferences, LineageCommonDownstream, LineageCommonUpstream, LineageDirection, LineageNeighbors, LineagePath,
@@ -833,6 +835,13 @@ async def layers() -> list[dict[str, Any]]:
 @read.get("/data-connections/warehouse")
 async def warehouse_connection() -> dict[str, str]:
     return await get_data_connections().describe_warehouse()
+
+
+@write.put("/data-connections/warehouse")
+async def select_business_database(
+    payload: BusinessDatabaseSelection, current_user: Any = Depends(get_current_active_superuser),
+) -> dict[str, str]:
+    return await get_data_connections().select_business_database(str(payload.connectionId), payload.expectedUpdatedAt)
 
 
 @read.get("/object-types")
@@ -1702,18 +1711,19 @@ async def object_preview(layer: str, table: str, includeHidden: bool = False,
 @write.get("/{schema}/{table}/indexed-compound-id-sample")
 async def get_indexed_compound_id_sample(
     schema: WarehouseSchema, table: TableName, request: Request, response: Response,
-    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+    session: Annotated[AbstractAsyncContextManager[AsyncSession], Depends(get_business_db, use_cache=False)],
 ) -> IndexedSampleCapability:
     if request.query_params:
         raise HTTPException(422, "Indexed compound ID sample capability accepts no query parameters")
     response.headers["Cache-Control"] = "private, no-store"
-    return await indexed_compound_sample_capability(session, schema, table)
+    async with session as business_session:
+        return await indexed_compound_sample_capability(business_session, schema, table)
 
 
 @write.post("/{schema}/{table}/indexed-compound-id-sample")
 async def post_indexed_compound_id_sample(
     schema: WarehouseSchema, table: TableName, payload: IndexedCompoundSampleRequest, request: Request, response: Response,
-    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+    session: Annotated[AbstractAsyncContextManager[AsyncSession], Depends(get_business_db, use_cache=False)],
 ) -> IndexedSampleResult:
     if request.query_params:
         raise HTTPException(422, "Indexed compound ID sample accepts only its fixed predicate body")
@@ -1723,29 +1733,31 @@ async def post_indexed_compound_id_sample(
         while (await request.receive())["type"] != "http.disconnect":
             pass
 
-    return await run_bounded_index_query(
-        sample_indexed_compound_ids(session, schema, table, payload), wait_for_disconnect(),
-        IndexedSampleResult(state="blocked", reason="query_unavailable"),
-        cancelled_message="Indexed compound ID sample was cancelled",
-    )
+    async with session as business_session:
+        return await run_bounded_index_query(
+            sample_indexed_compound_ids(business_session, schema, table, payload), wait_for_disconnect(),
+            IndexedSampleResult(state="blocked", reason="query_unavailable"),
+            cancelled_message="Indexed compound ID sample was cancelled",
+        )
 
 
 @write.get("/{schema}/{table}/indexed-projection-preview", response_model=IndexedProjectionCapability)
 async def get_indexed_projection_preview(
     schema: WarehouseSchema, table: TableName, request: Request, response: Response,
-    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+    session: Annotated[AbstractAsyncContextManager[AsyncSession], Depends(get_business_db, use_cache=False)],
 ) -> IndexedProjectionCapability | JSONResponse:
     response.headers["Cache-Control"] = "private, no-store"
     if request.query_params:
         return JSONResponse({"detail": "Invalid projection preview request"}, status_code=422,
                             headers={"Cache-Control": "private, no-store"})
-    return await indexed_projection_capability(session, schema, table)
+    async with session as business_session:
+        return await indexed_projection_capability(business_session, schema, table)
 
 
 @write.post("/{schema}/{table}/indexed-projection-preview", response_model=IndexedProjectionResult)
 async def post_indexed_projection_preview(
     schema: WarehouseSchema, table: TableName, request: Request, response: Response,
-    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+    session: Annotated[AbstractAsyncContextManager[AsyncSession], Depends(get_business_db, use_cache=False)],
 ) -> IndexedProjectionResult | JSONResponse:
     response.headers["Cache-Control"] = "private, no-store"
     try:
@@ -1761,28 +1773,30 @@ async def post_indexed_projection_preview(
         while (await request.receive())["type"] != "http.disconnect":
             pass
 
-    return await run_bounded_index_query(
-        preview_indexed_projection(session, schema, table, payload), wait_for_disconnect(),
-        IndexedProjectionResult(state="blocked", reason="query_unavailable"),
-        cancelled_message="Indexed projection preview was cancelled",
-    )
+    async with session as business_session:
+        return await run_bounded_index_query(
+            preview_indexed_projection(business_session, schema, table, payload), wait_for_disconnect(),
+            IndexedProjectionResult(state="blocked", reason="query_unavailable"),
+            cancelled_message="Indexed projection preview was cancelled",
+        )
 
 
 @write.get("/{schema}/{table}/indexed-id-sample")
 async def get_indexed_id_sample(
     schema: WarehouseSchema, table: TableName, request: Request, response: Response,
-    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+    session: Annotated[AbstractAsyncContextManager[AsyncSession], Depends(get_business_db, use_cache=False)],
 ) -> IndexedSampleCapability:
     if request.query_params:
         raise HTTPException(422, "Indexed ID sample capability accepts no query parameters")
     response.headers["Cache-Control"] = "no-store"
-    return await indexed_sample_capability(session, schema, table)
+    async with session as business_session:
+        return await indexed_sample_capability(business_session, schema, table)
 
 
 @write.post("/{schema}/{table}/indexed-id-sample")
 async def post_indexed_id_sample(
     schema: WarehouseSchema, table: TableName, payload: IndexedSampleRequest, request: Request, response: Response,
-    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+    session: Annotated[AbstractAsyncContextManager[AsyncSession], Depends(get_business_db, use_cache=False)],
 ) -> IndexedSampleResult:
     if request.query_params:
         raise HTTPException(422, "Indexed ID sample accepts only exact ID or range bounds in the body")
@@ -1792,22 +1806,24 @@ async def post_indexed_id_sample(
         while (await request.receive())["type"] != "http.disconnect":
             pass
 
-    return await run_bounded_index_query(
-        sample_indexed_ids(session, schema, table, payload), wait_for_disconnect(),
-        IndexedSampleResult(state="blocked", reason="query_unavailable"),
-        cancelled_message="Indexed ID sample was cancelled",
-    )
+    async with session as business_session:
+        return await run_bounded_index_query(
+            sample_indexed_ids(business_session, schema, table, payload), wait_for_disconnect(),
+            IndexedSampleResult(state="blocked", reason="query_unavailable"),
+            cancelled_message="Indexed ID sample was cancelled",
+        )
 
 
 @read.post("/{schema}/{table}/preview-index-coverage")
 async def get_preview_index_coverage(
     schema: WarehouseSchema, table: TableName, payload: PreviewIndexCoverageInput, request: Request, response: Response,
-    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+    session: Annotated[AbstractAsyncContextManager[AsyncSession], Depends(get_business_db, use_cache=False)],
 ) -> PreviewIndexCoverage:
     if request.query_params:
         raise HTTPException(422, "Index coverage accepts only a filter or sort shape in the body")
     response.headers["Cache-Control"] = "no-store"
-    return await preview_index_coverage(session, schema, table, payload)
+    async with session as business_session:
+        return await preview_index_coverage(business_session, schema, table, payload)
 
 
 @write.get("/{schema}/{table}/lineage-observed")
@@ -1826,7 +1842,7 @@ async def table_observed_transfer_lineage(
 )
 async def table_column_planner_statistic(
     schema: str, table: str, request: Request, response: Response,
-    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+    session: Annotated[AbstractAsyncContextManager[AsyncSession], Depends(get_business_db, use_cache=False)],
 ) -> ColumnPlannerStatistic | JSONResponse:
     response.headers["Cache-Control"] = "private, no-store"
     denied = JSONResponse({"detail": "Column planner statistic unavailable"}, status_code=404,
@@ -1834,7 +1850,8 @@ async def table_column_planner_statistic(
     if len(request.query_params.multi_items()) != 1 or "column" not in request.query_params:
         return denied
     try:
-        return await read_column_planner_statistic(session, schema, table, request.query_params["column"])
+        async with session as business_session:
+            return await read_column_planner_statistic(business_session, schema, table, request.query_params["column"])
     except ColumnPlannerStatisticUnavailable:
         return denied
 
@@ -1842,7 +1859,7 @@ async def table_column_planner_statistic(
 @write.get("/{schema}/{table}/lineage-column-mapping-paths", response_model=ColumnMappingPaths)
 async def table_lineage_column_mapping_paths(
     schema: str, table: str, request: Request, response: Response,
-    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+    session: Annotated[AbstractAsyncContextManager[AsyncSession], Depends(get_business_db, use_cache=False)],
 ) -> ColumnMappingPaths | JSONResponse:
     response.headers["Cache-Control"] = "private, no-store"
     denied = JSONResponse({"detail": "Column mapping path unavailable"}, status_code=404,
@@ -1854,7 +1871,8 @@ async def table_lineage_column_mapping_paths(
     if direction not in ("incoming", "outgoing"):
         return denied
     try:
-        return await read_column_mapping_paths(session, schema, table, query["column"], direction)
+        async with session as business_session:
+            return await read_column_mapping_paths(business_session, schema, table, query["column"], direction)
     except ColumnMappingRootUnavailable:
         return denied
 
@@ -1862,12 +1880,13 @@ async def table_lineage_column_mapping_paths(
 @read.get("/{schema}/{table}/lineage-column-references")
 async def table_lineage_column_references(
     schema: WarehouseSchema, table: TableName, column: TableName, direction: LineageDirection,
-    request: Request, response: Response, session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+    request: Request, response: Response, session: Annotated[AbstractAsyncContextManager[AsyncSession], Depends(get_business_db, use_cache=False)],
 ) -> LineageColumnReferences:
     if set(request.query_params) != {"column", "direction"} or len(request.query_params.multi_items()) != 2:
         raise HTTPException(422, "Specify exactly one column and reference direction")
     response.headers["Cache-Control"] = "no-store"
-    return await read_lineage_column_references(session, schema, table, column, direction)
+    async with session as business_session:
+        return await read_lineage_column_references(business_session, schema, table, column, direction)
 
 
 @read.get("/{layer}/{table}/lineage-neighbors")

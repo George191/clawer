@@ -144,10 +144,10 @@ async def publication_app(monkeypatch):
     finally:
         async with engine.begin() as conn:
             if await conn.scalar(
-                text("SELECT to_regclass('public.flow_publications')")
+                text("SELECT to_regclass('app.flow_publications')")
             ):
                 await conn.execute(
-                    text("DELETE FROM public.flow_publications WHERE schema_name=:s"),
+                    text("DELETE FROM app.flow_publications WHERE schema_name=:s"),
                     {"s": schema},
                 )
             await conn.execute(text("DROP SCHEMA IF EXISTS " + schema + " CASCADE"))
@@ -282,7 +282,7 @@ async def test_public_scope_pagination_rotation_and_expiry(publication_app):
     )
     async with engine.begin() as conn:
         raw = await conn.scalar(
-            text("SELECT token FROM public.flow_publications WHERE id=:id"),
+            text("SELECT token FROM app.flow_publications WHERE id=:id"),
             {"id": publication["id"]},
         )
         assert raw.startswith("sha256:") and key not in raw
@@ -296,14 +296,14 @@ async def test_public_scope_pagination_rotation_and_expiry(publication_app):
     old = "pk_live_" + uuid4().hex
     async with engine.begin() as conn:
         await conn.execute(
-            text("UPDATE public.flow_publications SET token=:k WHERE id=:id"),
+            text("UPDATE app.flow_publications SET token=:k WHERE id=:id"),
             {"id": publication["id"], "k": old},
         )
     assert (await client.get("/api/v1/etl/published/" + old)).status_code == 200
     async with engine.begin() as conn:
         await conn.execute(
             text(
-                "UPDATE public.flow_publications SET valid_until=now()-interval '1 second' WHERE id=:id"
+                "UPDATE app.flow_publications SET valid_until=now()-interval '1 second' WHERE id=:id"
             ),
             {"id": publication["id"]},
         )

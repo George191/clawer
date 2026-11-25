@@ -68,7 +68,7 @@ async def test_missing_row_keeps_the_existing_physical_mutation_conflict_contrac
          patch.object(links, "_asset", AsyncMock(return_value={"primary": ["id"]})), \
          patch.object(links, "_key", AsyncMock(side_effect=HTTPException(404, "Record not found"))):
         with pytest.raises(HTTPException) as failure:
-            await links.protect_linked_row(None, "ts_ods", "asset", {"id": "1"})
+            await links.protect_linked_row(None, "ts_ods", "asset", {"id": "1"}, catalog_session=None)
     assert failure.value.status_code == 409
     assert failure.value.detail["code"] == "row_version_conflict"
 
@@ -78,7 +78,7 @@ async def test_hidden_assets_keep_their_visibility_denial_in_the_row_guard():
     with patch.object(links, "_prepare", AsyncMock()), \
          patch.object(links, "_asset", AsyncMock(side_effect=HTTPException(404, "Table unavailable"))):
         with pytest.raises(HTTPException) as failure:
-            await links.protect_linked_row(None, "ts_ods", "asset", {"id": "1"})
+            await links.protect_linked_row(None, "ts_ods", "asset", {"id": "1"}, catalog_session=None)
     assert failure.value.status_code == 404
 
 

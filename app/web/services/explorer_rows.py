@@ -6,6 +6,7 @@ from math import isfinite
 
 from fastapi import HTTPException
 from sqlalchemy import text
+from app.etl.schema.catalog_metadata import catalog_parameters
 
 from app.web.services.etl_layers import (
     INDEX_SANDBOX_SCHEMA, INDEX_SANDBOX_TABLE, ROW_VERSION_SQL, _LINEAGE_METADATA_JOIN,
@@ -31,7 +32,7 @@ async def _asset(session, schema, table):
         WHERE {_OBJECT_TABLE_SQL} AND n.nspname=:schema AND c.relname=:table
           AND COALESCE(o.is_active,true) AND COALESCE(o.visibility,'normal') <> 'hidden'
           AND has_schema_privilege(n.oid,'USAGE') AND has_table_privilege(c.oid,'SELECT')
-    """), {"schema": schema, "table": table})).mappings().first()
+    """), await catalog_parameters({"schema": schema, "table": table}))).mappings().first()
     if not info:
         raise HTTPException(404, "Table not available for record inspection")
     await session.execute(text(f"LOCK TABLE ONLY {qualified} IN ACCESS SHARE MODE NOWAIT"))

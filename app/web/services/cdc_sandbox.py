@@ -127,7 +127,7 @@ def _receipt(row: CdcSandboxReceiptRow, level: int | None = None) -> CdcSandboxR
 
 
 async def _limits(session: AsyncSession) -> None:
-    await session.execute(text("SET LOCAL search_path = pg_catalog, public, pg_temp"))
+    await session.execute(text("SET LOCAL search_path = pg_catalog, app, pg_temp"))
     await session.execute(text("SET LOCAL lock_timeout = '2s'"))
     await session.execute(text("SET LOCAL statement_timeout = '5s'"))
 

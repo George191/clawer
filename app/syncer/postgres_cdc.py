@@ -14,7 +14,9 @@ from sqlalchemy.engine import make_url
 from app.config.settings import settings
 from app.etl.cdc import UNAVAILABLE_VALUE, cdc_schemas
 from app.etl.schema.catalogs import TABLE_DEFINITIONS, lineage_columns
-from app.storage.postgres_client import PostgresClient, _resolved_pg_url
+from app.etl.schema.catalog_metadata import OBJECT_RELATION, catalog_parameters
+from app.storage.postgres_client import PostgresClient
+from app.storage.business_database import business_database_url, get_business_pg_client
 from app.syncer.mongo_cdc import SetupError, register_connector
 
 _LINEAGE_TABLES_SQL = """
@@ -51,9 +53,9 @@ def _connector_tables() -> str:
     return ",".join(patterns)
 
 
-_ODS_CURRENT_SQL = """
+_ODS_CURRENT_SQL = f"""
 SELECT DISTINCT n.nspname,c.relname
-FROM public.ontology_objects r
+FROM {OBJECT_RELATION} r
 JOIN pg_namespace n ON n.nspname=r.schema_name
 JOIN pg_class c ON c.relnamespace=n.oid AND c.relname=r.table_name
 WHERE r.layer='ods' AND r.table_role='current' AND r.is_active
@@ -83,7 +85,7 @@ async def ensure_table_publication(pg: PostgresClient, table_name: str) -> None:
     publication = postgres_cdc_identity()["publication"]
     async with pg.session() as session:
         await session.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:name,0))"), {"name": publication})
-        registered = _ods_whitelist((await session.execute(text(_ODS_CURRENT_SQL))).mappings().all())
+        registered = _ods_whitelist((await session.execute(text(_ODS_CURRENT_SQL), await catalog_parameters())).mappings().all())
         if (schema, table) not in registered:
             raise SetupError("ODS CDC table must be an active registered current parent")
         covered = (await session.execute(text(
@@ -103,7 +105,7 @@ def _missing_lineage(rows):
 
 def postgres_cdc_identity() -> dict[str, str]:
     """Return stable, non-secret connector/slot names shared by monitoring and relay."""
-    database = make_url(_resolved_pg_url()).database
+    database = make_url(business_database_url()).database
     if not database or not settings.kafka_topic:
         raise SetupError("Postgres database and SPIDER_KAFKA_TOPIC are required")
     prefix = f"{settings.kafka_topic}-postgres-cdc"
@@ -118,12 +120,9 @@ def postgres_cdc_identity() -> dict[str, str]:
 def connector_config(*, snapshot_mode: str = "no_data") -> dict[str, str]:
     """Build pgoutput capture with complete row values and precise logical types."""
     identity = postgres_cdc_identity()
-    url = make_url(settings.pg_cdc_url or _resolved_pg_url())
-    target = make_url(_resolved_pg_url())
-    if (url.host, url.port or 5432, url.database) != (target.host, target.port or 5432, target.database):
-        raise SetupError("SPIDER_PG_CDC_URL must point to the same host, port and database as SPIDER_PG_URL")
+    url = make_url(business_database_url())
     if not url.host or not url.username:
-        raise SetupError("SPIDER_PG_URL must specify a host, user and database")
+        raise SetupError("The business Data Connection must specify a host, user and database")
     if snapshot_mode not in {"no_data", "initial"}:
         raise SetupError("Unsupported Postgres CDC snapshot mode")
     config = {
@@ -131,7 +130,7 @@ def connector_config(*, snapshot_mode: str = "no_data") -> dict[str, str]:
         "tasks.max": "1", "database.hostname": url.host,
         "database.port": str(url.port or 5432), "database.user": url.username,
         "database.password": url.password or "", "database.dbname": identity["database"],
-        "database.sslmode": str(url.query.get("sslmode", "prefer")),
+        "database.sslmode": get_business_pg_client().sslmode,
         "topic.prefix": identity["prefix"], "plugin.name": "pgoutput",
         "slot.name": identity["slot"], "slot.drop.on.stop": "false",
         "publication.name": identity["publication"], "publication.autocreate.mode": "disabled",
@@ -179,7 +178,7 @@ async def prepare_database(pg: PostgresClient) -> None:
         exists = (await session.execute(text(
             "SELECT 1 FROM pg_publication WHERE pubname=:name"
         ), {"name": postgres_cdc_identity()["publication"]})).first()
-        ods_tables = _ods_whitelist((await session.execute(text(_ODS_CURRENT_SQL))).mappings().all())
+        ods_tables = _ods_whitelist((await session.execute(text(_ODS_CURRENT_SQL), await catalog_parameters())).mappings().all())
         objects = _publication_objects(ods_tables)
         if exists:
             await session.execute(text(f"ALTER PUBLICATION {publication} SET {objects}"))
@@ -203,13 +202,6 @@ async def prepare_database(pg: PostgresClient) -> None:
                 continue
             name = f"{_identifier(row['nspname'])}.{_identifier(row['relname'])}"
             await session.execute(text(f"ALTER TABLE {name} REPLICA IDENTITY FULL"))
-        if settings.pg_cdc_url:
-            reader = _identifier(make_url(settings.pg_cdc_url).username or "")
-            await session.execute(text(f"GRANT USAGE ON SCHEMA public TO {reader}"))
-            await session.execute(text(
-                "GRANT SELECT (layer,table_role,is_active,schema_name,table_name) "
-                f"ON public.ontology_objects TO {reader}"
-            ))
 
 
 async def check_database(
@@ -231,7 +223,7 @@ async def check_database(
     )
     if not publication or not publication["pubviaroot"] or publication.get("puballtables"):
         raise SetupError("Prepare the CDC publication with publish_via_partition_root=true first")
-    expected = _ods_whitelist(await pg.fetch_all(_ODS_CURRENT_SQL))
+    expected = _ods_whitelist(await pg.fetch_all(_ODS_CURRENT_SQL, await catalog_parameters()))
     missing = await pg.fetch_all(
         "SELECT n.nspname,c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
         "JOIN pg_class root ON root.oid=COALESCE(pg_partition_root(c.oid),c.oid) "
@@ -273,10 +265,13 @@ async def check_database(
         raise SetupError("Postgres CDC slot is not registered; prepare and start Debezium before ETL ingestion")
 
 
-async def _run(args: argparse.Namespace) -> None:
+async def _run(args: argparse.Namespace) -> dict[str, str]:
     # DDL uses the application/owner connection; a replication-only account is
     # never required to own or alter published tables.
-    pg = PostgresClient(url=None if args.prepare else settings.pg_cdc_url or None)
+    business = get_business_pg_client()
+    await business.connect(max_retries=1)
+    config = connector_config(snapshot_mode=args.snapshot_mode)
+    pg = business
     try:
         await pg.connect(max_retries=1)
         if args.prepare:
@@ -286,8 +281,11 @@ async def _run(args: argparse.Namespace) -> None:
                 raise SetupError("Postgres CDC preparation requires PostgreSQL 15 or later")
             await prepare_database(pg)
         await check_database(pg, require_replication=not args.prepare)
+        return config
     finally:
         await pg.close()
+        if pg is not business:
+            await business.close()
 
 
 def main() -> int:
@@ -299,8 +297,7 @@ def main() -> int:
     parser.add_argument("--snapshot-mode", choices=("no_data", "initial"), default="no_data")
     args = parser.parse_args()
     try:
-        config = connector_config(snapshot_mode=args.snapshot_mode)
-        asyncio.run(_run(args))
+        config = asyncio.run(_run(args))
         if not args.check and not args.prepare:
             register_connector(args.connect_url, config, name=postgres_cdc_identity()["connector"])
             print("Postgres CDC connector and task are RUNNING")

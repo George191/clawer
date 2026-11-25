@@ -66,7 +66,7 @@ _POSITIVE_MANUAL_PROOF = """
     AND e.parent_plan_id = r.plan_id AND e.parent_updated_at = r.plan_updated_at AND e.recorded_at = r.recorded_at
     AND e.source_oid > 0 AND e.source_node > 0 AND e.target_oid > 0 AND e.target_node > 0
     AND EXISTS (
-        SELECT 1 FROM public.ontology_transfer_attempts a
+        SELECT 1 FROM app.ontology_transfer_attempts a
         WHERE a.receipt_id = r.id AND a.receipt_id IS NOT NULL
           AND a.scope_trigger = 'manual' AND a.status = 'committed'
           AND a.schedule_job_id IS NULL AND a.upstream_job_id IS NULL
@@ -97,10 +97,10 @@ _POSITIVE_SCHEDULED_PROOF = """
     AND (j.schedule_weekday_utc IS NULL OR (j.schedule_weekday_utc BETWEEN 1 AND 7
         AND j.schedule_weekday_utc = EXTRACT(ISODOW FROM j.slot AT TIME ZONE 'UTC')))
     AND NOT EXISTS (
-        SELECT 1 FROM public.ontology_transfer_upstream_jobs u WHERE u.id=r.request_id AND u.plan_id=r.plan_id
+        SELECT 1 FROM app.ontology_transfer_upstream_jobs u WHERE u.id=r.request_id AND u.plan_id=r.plan_id
     )
     AND EXISTS (
-        SELECT 1 FROM public.ontology_transfer_attempts a
+        SELECT 1 FROM app.ontology_transfer_attempts a
         WHERE a.receipt_id = r.id AND a.receipt_id IS NOT NULL AND a.status = 'committed'
           AND a.scope_trigger IN ('daily_utc', 'week_utc')
           AND a.scope_trigger = CASE WHEN j.schedule_weekday_utc IS NULL THEN 'daily_utc' ELSE 'week_utc' END
@@ -115,7 +115,7 @@ _POSITIVE_SCHEDULED_PROOF = """
 """
 _PROOF_ACTORS = {"daily_actor": SCHEDULED_SYSTEM_ACTOR, "upstream_actor": UPSTREAM_SYSTEM_ACTOR}
 _SCHEDULED_JOIN = """
-    JOIN public.ontology_transfer_schedule_jobs j ON j.id=r.request_id AND j.receipt_id=r.id
+    JOIN app.ontology_transfer_schedule_jobs j ON j.id=r.request_id AND j.receipt_id=r.id
         AND j.plan_id=r.plan_id AND j.plan_updated_at=r.plan_updated_at
 """
 _SCHEDULED_TRIGGER = "CASE WHEN j.schedule_weekday_utc IS NULL THEN 'daily_utc' ELSE 'weekly_utc' END"
@@ -134,21 +134,21 @@ _SCHEDULE_RULE = """
 
 def _capture_branches(where: str, *, current: bool) -> str:
     """Apply the exact same persisted proof to the current graph and protected historical links."""
-    plan = "JOIN public.ontology_transfer_plans p ON p.id = r.plan_id" if current else ""
+    plan = "JOIN app.ontology_transfer_plans p ON p.id = r.plan_id" if current else ""
     manual_only = f"{_CURRENT_PLAN} AND p.trigger = 'manual'" if current else ""
     scheduled_only = f"{_CURRENT_PLAN} {_SCHEDULE_RULE}" if current else ""
     return f"""
         SELECT r.id, r.recorded_at, r.rows_affected, r.source_table, r.target_table,
             e.source_oid, e.source_node, e.target_oid, e.target_node, NULL::text AS trigger, NULL::uuid AS job_id
-        FROM public.ontology_transfer_runs r
-        JOIN public.ontology_transfer_commit_events e ON e.parent_receipt_id=r.id
+        FROM app.ontology_transfer_runs r
+        JOIN app.ontology_transfer_commit_events e ON e.parent_receipt_id=r.id
         {plan}
         WHERE {where} AND {_POSITIVE_MANUAL_PROOF} {manual_only}
         UNION ALL
         SELECT r.id, r.recorded_at, r.rows_affected, r.source_table, r.target_table,
             r.scheduled_source_oid AS source_oid, r.scheduled_source_filenode AS source_node,
             r.target_oid, r.target_filenode AS target_node, {_SCHEDULED_TRIGGER} AS trigger, j.id AS job_id
-        FROM public.ontology_transfer_runs r
+        FROM app.ontology_transfer_runs r
         {_SCHEDULED_JOIN}
         {plan}
         WHERE {where} AND {_POSITIVE_SCHEDULED_PROOF} {scheduled_only}

@@ -172,8 +172,10 @@ npm install
 
 首次启用登录时，在服务器 `.env` 中设置 `FIRST_SUPERUSER`（邮箱）、
 `FIRST_SUPERUSER_PASSWORD` 和 `FIRST_SUPERUSER_PHONE`。这些配置需要初始化后才会成为可登录账号。
-认证、用户、租户表和 Flow 数据分层统一使用 `SPIDER_PG_URL` 指定的数据库，
-连接地址必须在 Web 容器内可达。容器中的 `localhost` 指容器自身，不能沿用开发机的本地转发地址。
+`SPIDER_PG_URL` 只配置系统数据库 `www.astral.io`，系统表位于 `app` schema。
+在 Data Connections 中保存 PostgreSQL 连接并选择 **Use for ETL**，RDS/ODS/TASK/DWD 等 Workers 使用所选业务库读写数据；未选择时明确拒绝启动，不会使用系统库作为业务库。
+切换业务库前先停止 Workers 与旧 PostgreSQL CDC 捕获、排空旧消息；为新业务库准备并注册 CDC 后，再重启 Workers 和 relay。
+连接地址必须在容器内可达。容器中的 `localhost` 指容器自身，不能沿用开发机的本地转发地址。
 构建 Web 镜像后执行一次：
 
 ```bash
@@ -393,7 +395,7 @@ docker compose run --rm --no-deps syncer python -m app.syncer.mongo_cdc --connec
 
 注册采用 `snapshot.mode=no_data`，不全量重发已同步记录，历史待下载/待同步记录由现有扫描补偿处理。确认 connector 正常后，通过现有发布流程重建并重启 crawler、`downloader` 和 `syncer`。从分类型部署切换时，先停止旧的分类型或定向下载器、同步器，再启动通用实例，避免同一范围重复处理。验证新增记录、业务更新、下载回写均能到达原业务 topic，并检查同步 ACK/下载心跳没有产生业务消息循环。暂停并恢复 Connect 后应从内部 offset topic 续接；停机超过 oplog 保留窗口时需检查 connector 状态并恢复采集，期间 Mongo 补偿继续处理当前待处理状态。不要删除内部 topic 来重置正常位点。
 
-PG 首次切换须先暂停 ETL 写入并排空旧发送路径，按以下顺序准备。`--prepare` 会修改 publication、REPLICA IDENTITY 与 lineage 列，须在部署环境审阅执行；`--check` 只读，不能与 `--prepare` 同用。准备阶段使用 `SPIDER_PG_URL` 指定的部署 owner/DBA 身份，须具备表迁移及 schema publication 创建权限；准备完成后恢复普通应用凭据，不要给长期复制账号追加 DDL 管理权限。检查、注册由 `SPIDER_PG_CDC_URL` 指定的独立复制账号执行，ETL 应用账号无需持有复制权限。连接串使用完整 SQLAlchemy asyncpg URL，目标数据库须与应用相同。
+PG 首次切换须先暂停 ETL 写入并排空旧发送路径，按以下顺序准备。`--prepare` 会修改 publication、REPLICA IDENTITY 与 lineage 列；`--check` 只读，不能与 `--prepare` 同用。准备、检查和注册均使用 Data Connections 中选定的 PostgreSQL 业务连接，账号须具有相应的建表、发布及复制权限；`SPIDER_PG_URL` 仅用于读取系统连接注册表。
 
 ```bash
 docker compose build syncer rds-worker ods-worker task-worker
@@ -652,7 +654,7 @@ SPIDER_DB_NAME=spider
 SPIDER_REDIS_URL=redis://localhost:6379/0
 SPIDER_MINIO_ENDPOINT=localhost:9000
 SPIDER_KAFKA_BROKERS=localhost:9092
-SPIDER_PG_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/spider_etl
+SPIDER_PG_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/www.astral.io
 
 SPIDER_MAX_CONCURRENT_TASKS=5
 SPIDER_PAGE_CONCURRENCY=1

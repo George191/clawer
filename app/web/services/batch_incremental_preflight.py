@@ -70,7 +70,7 @@ async def _proof_snapshot(
         await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
         await session.execute(text("SET LOCAL statement_timeout='900ms'"))
         await session.execute(text("SET LOCAL lock_timeout='300ms'"))
-        await session.execute(text("SET LOCAL search_path=pg_catalog,public,pg_temp"))
+        await session.execute(text("SET LOCAL search_path=pg_catalog,app,pg_temp"))
         # Only the exact fixed target is pinned, and no write-style lock is
         # held across the independent source connection/read.
         await session.execute(text(
@@ -97,7 +97,7 @@ async def _proof_snapshot(
         registry = (await session.execute(text(f"""
             SELECT engine,config->>'host' AS host,config::text AS reviewed_config,updated_at,
                    {paused_at_sql('registry')} AS paused_at
-            FROM ONLY public.ontology_data_connections registry WHERE id=:id
+            FROM ONLY app.ontology_data_connections registry WHERE id=:id
         """), {"id": row.connection_id})).mappings().first()
         _validate_source_revision(registry, request.expectedSourceUpdatedAt)
         fingerprint = expected_fingerprint()

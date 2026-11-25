@@ -117,7 +117,7 @@ async def _intake_state(session: AsyncSession):
     return (await session.execute(text("""
         SELECT (pg_catalog.to_jsonb(s)->>'intake_generation')::integer AS generation,
                (pg_catalog.to_jsonb(s)->>'intake_paused_at')::timestamptz AS paused_at
-        FROM public.ontology_push_inbox_state s WHERE s.singleton IS TRUE
+        FROM app.ontology_push_inbox_state s WHERE s.singleton IS TRUE
     """))).one()
 
 
@@ -144,7 +144,7 @@ async def read_push_status(session: AsyncSession) -> PushInboxStatus:
     if not configured():
         return PushInboxStatus(available=False, state="unconfigured")
     await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"))
-    await session.execute(text("SET LOCAL search_path = pg_catalog, public, pg_temp"))
+    await session.execute(text("SET LOCAL search_path = pg_catalog, app, pg_temp"))
     await session.execute(text("SET LOCAL statement_timeout = '1250ms'"))
     state = await _state(session, lock=False)
     if state is None:
@@ -159,7 +159,7 @@ async def change_push_intake(session: AsyncSession, change: PushInboxIntakeChang
     if not configured():
         raise HTTPException(503, "Synthetic inbox unavailable")
     async with session.begin():
-        await session.execute(text("SET LOCAL search_path = pg_catalog, public, pg_temp"))
+        await session.execute(text("SET LOCAL search_path = pg_catalog, app, pg_temp"))
         await session.execute(text("SET LOCAL lock_timeout = '500ms'"))
         await session.execute(text("SET LOCAL statement_timeout = '1250ms'"))
         state = await _state(session, lock=True)
@@ -174,7 +174,7 @@ async def change_push_intake(session: AsyncSession, change: PushInboxIntakeChang
             if generation == MAX_INTAKE_GENERATION:
                 raise HTTPException(409, "Synthetic inbox intake generation limit reached")
             await session.execute(text("""
-                UPDATE public.ontology_push_inbox_state SET intake_generation=intake_generation+1,
+                UPDATE app.ontology_push_inbox_state SET intake_generation=intake_generation+1,
                     intake_paused_at=CASE WHEN :paused THEN pg_catalog.clock_timestamp() ELSE NULL END
                 WHERE singleton IS TRUE
             """), {"paused": change.paused})
@@ -186,7 +186,7 @@ async def accept_push(
 ) -> PushInboxAcceptance:
     """Called only after current signature and timestamp authorization; atomically reserve and publish one acceptance."""
     async with session.begin():
-        await session.execute(text("SET LOCAL search_path = pg_catalog, public, pg_temp"))
+        await session.execute(text("SET LOCAL search_path = pg_catalog, app, pg_temp"))
         await session.execute(text("SET LOCAL lock_timeout = '500ms'"))
         await session.execute(text("SET LOCAL statement_timeout = '1250ms'"))
         state = await _state(session, lock=True)

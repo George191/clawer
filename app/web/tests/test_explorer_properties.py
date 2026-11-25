@@ -65,7 +65,7 @@ async def test_title_mapping_edit_scope_staleness_and_column_changes(props):
     assert (await c.get(endpoint)).status_code == 401
     async with engine.begin() as conn:
         await conn.execute(text("""
-            INSERT INTO public.ontology_objects(layer,schema_name,table_name,data_type)
+            INSERT INTO app.ontology_objects(layer,schema_name,table_name,data_type)
             VALUES ('ods',:schema,'items','patent')
         """), {"schema": schema})
     received = await c.get(endpoint, headers=member)
@@ -128,7 +128,7 @@ async def test_title_mapping_edit_scope_staleness_and_column_changes(props):
     async with engine.begin() as conn:
         await conn.execute(
             text(
-                "UPDATE public.ontology_objects SET visibility='hidden' WHERE schema_name=:s AND table_name='items'"
+                "UPDATE app.ontology_objects SET visibility='hidden' WHERE schema_name=:s AND table_name='items'"
             ),
             {"s": schema},
         )
@@ -137,7 +137,7 @@ async def test_title_mapping_edit_scope_staleness_and_column_changes(props):
     finally:
         async with engine.begin() as conn:
             await conn.execute(
-                text("DELETE FROM public.ontology_objects WHERE schema_name=:s"), {"s": schema}
+                text("DELETE FROM app.ontology_objects WHERE schema_name=:s"), {"s": schema}
             )
 
 

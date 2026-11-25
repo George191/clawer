@@ -1,4 +1,4 @@
-"""External source registry, installed only by the explicit migration tool."""
+"""Saved source registry owned by the system database."""
 
 _ENGINE_CHECK = "CONSTRAINT ck_ontology_source_engine_v2 CHECK (engine IN ({}))"
 _ENGINES_V2 = "'postgresql','mysql','oracle','dameng','elasticsearch','milvus','redis','clickhouse','s3'"
@@ -6,7 +6,7 @@ ENGINE_CHECK = _ENGINE_CHECK.format(_ENGINES_V2)
 ENGINE_CHECK_MONGODB = _ENGINE_CHECK.format(_ENGINES_V2 + ",'mongodb'")
 
 DATA_CONNECTIONS_DDL = f"""
-CREATE TABLE public.ontology_data_connections (
+CREATE TABLE app.ontology_data_connections (
     id UUID PRIMARY KEY,
     name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 200),
     engine TEXT NOT NULL {ENGINE_CHECK_MONGODB},
@@ -22,17 +22,17 @@ CREATE TABLE public.ontology_data_connections (
 """
 
 DATA_CONNECTIONS_ENGINE_DDL = f"""
-ALTER TABLE public.ontology_data_connections
+ALTER TABLE app.ontology_data_connections
   DROP CONSTRAINT ontology_data_connections_engine_check,
   ADD {ENGINE_CHECK}
 """
 
 ENGINE_CHECK_INSTALLED = """SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint
-    WHERE conrelid=to_regclass('public.ontology_data_connections')
+    WHERE conrelid=to_regclass('app.ontology_data_connections')
     AND conname='ck_ontology_source_engine_v2' AND contype='c' AND convalidated)"""
 
 DATA_CONNECTIONS_MONGODB_DDL = f"""
-ALTER TABLE public.ontology_data_connections
+ALTER TABLE app.ontology_data_connections
   DROP CONSTRAINT ck_ontology_source_engine_v2,
   ADD {ENGINE_CHECK_MONGODB}
 """
@@ -40,7 +40,7 @@ ALTER TABLE public.ontology_data_connections
 DATA_CONNECTIONS_MONGODB_ENABLED = """
 SELECT EXISTS (
     SELECT 1 FROM pg_catalog.pg_constraint
-    WHERE conrelid = pg_catalog.to_regclass('public.ontology_data_connections')
+    WHERE conrelid = pg_catalog.to_regclass('app.ontology_data_connections')
       AND conname = 'ck_ontology_source_engine_v2' AND contype = 'c' AND convalidated
       AND pg_catalog.pg_get_constraintdef(oid) LIKE '%''mongodb''::text%'
 )
@@ -48,7 +48,7 @@ SELECT EXISTS (
 
 
 DATA_CONNECTIONS_PAUSE_DDL = """
-ALTER TABLE public.ontology_data_connections
+ALTER TABLE app.ontology_data_connections
   ALTER COLUMN tested_at DROP NOT NULL,
   ADD COLUMN paused_at TIMESTAMPTZ,
   ADD CONSTRAINT ck_ontology_pg_source_pause

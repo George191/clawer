@@ -56,9 +56,9 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute("SET LOCAL lock_timeout='3s'")
-    op.execute(f"LOCK TABLE public.{_WEEKLY}, public.{_INCIDENTS} IN ACCESS EXCLUSIVE MODE")
+    op.execute(f"LOCK TABLE app.{_WEEKLY}, app.{_INCIDENTS} IN ACCESS EXCLUSIVE MODE")
     for table, predicate in ((_WEEKLY, "TRUE"), (_INCIDENTS, "kind='weekly_job'")):
-        if op.get_bind().scalar(sa.text(f"SELECT 1 FROM public.{table} WHERE {predicate} LIMIT 1")):
+        if op.get_bind().scalar(sa.text(f"SELECT 1 FROM app.{table} WHERE {predicate} LIMIT 1")):
             raise RuntimeError("Cannot discard reviewed Weekly UTC quality or recorded incidents")
     _constraints(False)
     op.drop_table(_WEEKLY)

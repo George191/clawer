@@ -254,10 +254,14 @@ export const getDashboardWsUrl = () => wsUrl('/ws');
 export const fetchLayers = (signal?: AbortSignal): Promise<LayerNode[]> =>
   client.get('/etl/layers', { signal, ...(signal ? { timeout: 0 } : {}) }).then((r) => unwrap<LayerNode[]>(r.data));
 
-export type WarehouseConnection = { id: 'warehouse'; engine: 'postgresql'; database: string };
+export type WarehouseConnection = { id: 'warehouse'; engine: 'postgresql'; database: string; connectionId: string; name: string };
 const warehouseConnectionPath = (id: WarehouseConnection['id'] = 'warehouse') => `/etl/data-connections/${encodeURIComponent(id)}`;
 export const fetchWarehouseConnection = (signal?: AbortSignal): Promise<WarehouseConnection> =>
   client.get(warehouseConnectionPath(), { signal }).then((r) => unwrap<WarehouseConnection>(r.data));
+
+export const selectBusinessDatabase = (source: DataSource): Promise<WarehouseConnection> =>
+  client.put(warehouseConnectionPath(), { connectionId: source.id, expectedUpdatedAt: source.updatedAt })
+    .then((r) => unwrap<WarehouseConnection>(r.data));
 
 export const fetchEtlObjectTypes = (params: { schema?: string; search?: string; group?: string; ids?: string; limit?: number; offset?: number; includeHidden?: boolean; favoritesOnly?: boolean } = {}, signal?: AbortSignal, connectionId?: WarehouseConnection['id']): Promise<EtlObjectCatalog> =>
   client.get(`${warehouseConnectionPath(connectionId)}/object-types`, { params, signal }).then((r) => unwrap<EtlObjectCatalog>(r.data));

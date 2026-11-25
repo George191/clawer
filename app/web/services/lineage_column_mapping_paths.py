@@ -12,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.web.api.models.lineage_column_mapping_paths import ColumnMappingNode, ColumnMappingPath, ColumnMappingPaths
 from app.web.api.models.lineage_neighbors import LineageDirection
 from app.web.services.etl_layers import _LINEAGE_METADATA_JOIN, _LINEAGE_SCOPE, _LINEAGE_VISIBLE_SQL
+from app.storage.postgres_client import get_pg_client
+from app.etl.schema.catalog_metadata import RELATION_RECORDS, catalog_parameters
 
 
 
@@ -29,7 +31,7 @@ _READABLE_REGISTRY = text("""
     SELECT c.oid::bigint FROM pg_catalog.pg_class c
     JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
     JOIN pg_catalog.pg_am heap ON heap.oid=c.relam AND heap.amname='heap' AND heap.amtype='t'
-    WHERE n.nspname='public' AND c.relname='ontology_object_relations'
+    WHERE n.nspname='app' AND c.relname='ontology_object_relations'
       AND c.relkind='r' AND c.relpersistence='p'
       AND NOT (c.relrowsecurity OR c.relforcerowsecurity OR c.relhasrules)
       AND NOT EXISTS (
@@ -82,7 +84,7 @@ def _mapping_sql(direction: LineageDirection):
         WITH bounded_mapping AS MATERIALIZED (
             SELECT d.{own}_fields AS own_fields, d.{peer}_fields AS peer_fields,
                    d.{peer}_schema AS peer_schema, d.{peer}_table AS peer_table
-            FROM ONLY public.ontology_object_relations d
+            FROM (SELECT * FROM {RELATION_RECORDS}) d
             WHERE d.enabled AND d.{own}_schema=:schema AND d.{own}_table=:table
               AND pg_catalog.array_ndims(d.{own}_fields)=1 AND pg_catalog.array_ndims(d.{peer}_fields)=1
               AND pg_catalog.cardinality(d.{own}_fields) BETWEEN 1 AND {_MAX_FIELDS}
@@ -135,22 +137,25 @@ async def read_column_mapping_paths(
         with fail_after(3), session.no_autoflush:
             async with session.begin():
                 await _read_parameters(session)
-                original_root = (await session.execute(_ROOT, scope)).one_or_none()
+                original_root = (await session.execute(_ROOT, await catalog_parameters(scope))).one_or_none()
                 if original_root is None:
                     raise ColumnMappingRootUnavailable()
-                registry = await session.scalar(_READABLE_REGISTRY)
+                async with get_pg_client().session() as metadata_preflight:
+                    registry = await metadata_preflight.scalar(_READABLE_REGISTRY)
                 if registry is None:
                     return ColumnMappingPaths(status="unavailable", direction=direction)
-            async with session.begin():
+            async with session.begin(), get_pg_client().session() as metadata_session:
                 await _read_parameters(session)
+                await _read_parameters(metadata_session)
                 # Lock before acquiring the RR snapshot. A same-OID RLS/rule
                 # change or replacement after preflight cannot be overlooked.
-                await session.execute(text("LOCK TABLE ONLY public.ontology_object_relations IN ACCESS SHARE MODE NOWAIT"))
-                root = (await session.execute(_ROOT, scope)).one_or_none()
+                await metadata_session.execute(text("LOCK TABLE ONLY app.ontology_object_relations IN ACCESS SHARE MODE NOWAIT"))
+                metadata = await catalog_parameters(scope, session=metadata_session, relations=True)
+                root = (await session.execute(_ROOT, metadata)).one_or_none()
                 if root != original_root:
                     raise ColumnMappingRootUnavailable()
-                if (await session.scalar(_READABLE_REGISTRY) != registry
-                    or await session.scalar(_REGISTRY_LOCK_HELD, {"oid": registry}) is not True):
+                if (await metadata_session.scalar(_READABLE_REGISTRY) != registry
+                    or await metadata_session.scalar(_REGISTRY_LOCK_HELD, {"oid": registry}) is not True):
                     return ColumnMappingPaths(status="unavailable", direction=direction)
                 first = _WalkNode((root.oid, root.attnum), ColumnMappingNode(schema=schema, table=table, column=column))
                 queue = deque([([first], 0)])
@@ -164,7 +169,7 @@ async def read_column_mapping_paths(
                     # At the hop/node horizon, only ask whether another visible unique node exists.
                     capacity = min(_MAX_PEERS, _MAX_NODES - len(seen)) if depth < _MAX_HOPS else 0
                     peers = (await session.execute(sql, {
-                        **_LINEAGE_SCOPE, **last.event.model_dump(), "own_oid": last.key[0],
+                        **metadata, **last.event.model_dump(), "own_oid": last.key[0],
                         "seen_oids": [key[0] for key in seen], "seen_attnums": [key[1] for key in seen],
                         "cap": capacity + 1,
                     })).mappings().all()

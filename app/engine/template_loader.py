@@ -44,7 +44,7 @@ class TemplateLoader:
             SELECT name
             FROM (
                 SELECT DISTINCT ON (name) name, data_type
-                FROM public.ai_collect_templates
+                FROM app.ai_collect_templates
                 ORDER BY name, (status = 'active') DESC, updated_at DESC
             ) AS templates
             WHERE data_type = :data_type
@@ -92,7 +92,7 @@ class TemplateLoader:
         row = await get_pg_client().fetch_one(
             f"""
             SELECT name, version, template, adapter
-            FROM public.ai_collect_templates
+            FROM app.ai_collect_templates
             WHERE name = :name {version_clause}
             ORDER BY (status = 'active') DESC, updated_at DESC
             LIMIT 1

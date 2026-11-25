@@ -200,16 +200,16 @@ class TestStoredPushedTargetScope(IsolatedAsyncioTestCase):
             f"CREATE TABLE {_QUALIFIED} (ordinal bigint PRIMARY KEY)",
             f"CREATE TABLE {_OTHER}.{PUSH_APPLY_TARGET} (ordinal bigint PRIMARY KEY)",
             f"INSERT INTO {_QUALIFIED} VALUES (1)",
-            """CREATE TABLE public.ontology_objects(schema_name text, table_name text, is_active bool,
+            """CREATE TABLE app.ontology_objects(schema_name text, table_name text, is_active bool,
                                                        data_type text, description text)""",
-            """CREATE TABLE public.flow_publications(token text, schema_name text, table_name text,
+            """CREATE TABLE app.flow_publications(token text, schema_name text, table_name text,
                                                        scope jsonb, valid_from timestamptz, valid_until timestamptz)""",
-            f"""INSERT INTO public.flow_publications VALUES ('legacy-link', '{PUSH_APPLY_SCHEMA}',
+            f"""INSERT INTO app.flow_publications VALUES ('legacy-link', '{PUSH_APPLY_SCHEMA}',
                 '{PUSH_APPLY_TARGET}', '{{}}', now()-interval '1 hour', now()+interval '1 hour')""",
         )
         self.addAsyncCleanup(
-            self._write, "DROP TABLE public.flow_publications",
-            "DROP TABLE public.ontology_objects", f"DROP SCHEMA {PUSH_APPLY_SCHEMA} CASCADE", f"DROP SCHEMA {_OTHER} CASCADE",
+            self._write, "DROP TABLE app.flow_publications",
+            "DROP TABLE app.ontology_objects", f"DROP SCHEMA {PUSH_APPLY_SCHEMA} CASCADE", f"DROP SCHEMA {_OTHER} CASCADE",
         )
         owner = self
 
@@ -248,11 +248,11 @@ class TestStoredPushedTargetScope(IsolatedAsyncioTestCase):
         self.assertEqual([item["name"] for item in await self.layers.tables(_OTHER)], [PUSH_APPLY_TARGET])
         self.assertNotIn(PUSH_APPLY_SCHEMA, (await self.workspace.connections())[0]["schemas"])
         await self._write(
-            "CREATE TABLE public.flow_connections(id text, name text, database_name text, schemas jsonb)",
-            f"""INSERT INTO public.flow_connections VALUES ('old', 'old', current_database(),
+            "CREATE TABLE app.flow_connections(id text, name text, database_name text, schemas jsonb)",
+            f"""INSERT INTO app.flow_connections VALUES ('old', 'old', current_database(),
                     '["{PUSH_APPLY_SCHEMA}","{_OTHER}"]')""",
         )
-        self.addAsyncCleanup(self._write, "DROP TABLE public.flow_connections")
+        self.addAsyncCleanup(self._write, "DROP TABLE app.flow_connections")
         self.assertEqual((await self.workspace.connections())[0]["schemas"], [_OTHER])
         self.assertNotIn(PUSH_APPLY_SCHEMA, (await self.connections.catalog("fixture", schema=None, search="", limit=5, offset=0)).schemas)
         with self.assertRaises(HTTPException) as error:
@@ -280,12 +280,12 @@ class TestStoredPushedTargetScope(IsolatedAsyncioTestCase):
             f"CREATE TABLE {target} (id bigint PRIMARY KEY)",
             f"CREATE TABLE {BATCH_RANGE_TARGET_SCHEMA}.unrelated (id bigint PRIMARY KEY)",
             f"CREATE TABLE {_OTHER}.{BATCH_RANGE_TARGET} (id bigint PRIMARY KEY)",
-            "CREATE TABLE public.ontology_batch_sync_receipts(target_table text NOT NULL, range_min bigint)",
-            f"""INSERT INTO public.flow_publications VALUES ('range-old', '{BATCH_RANGE_TARGET_SCHEMA}',
+            "CREATE TABLE app.ontology_batch_sync_receipts(target_table text NOT NULL, range_min bigint)",
+            f"""INSERT INTO app.flow_publications VALUES ('range-old', '{BATCH_RANGE_TARGET_SCHEMA}',
                 '{BATCH_RANGE_TARGET}', '{{}}', now()-interval '1 hour', now()+interval '1 hour')""",
         )
         self.addAsyncCleanup(
-            self._write, "DROP TABLE public.ontology_batch_sync_receipts",
+            self._write, "DROP TABLE app.ontology_batch_sync_receipts",
             f"DROP SCHEMA {BATCH_RANGE_TARGET_SCHEMA} CASCADE", f"DROP SCHEMA IF EXISTS {BATCH_RANGE_SOURCE_SCHEMA} CASCADE",
         )
         self.assertEqual([item["name"] for item in await self.layers.tables(BATCH_RANGE_TARGET_SCHEMA)], ["unrelated"])
@@ -300,14 +300,14 @@ class TestStoredPushedTargetScope(IsolatedAsyncioTestCase):
         for statements in (
             (),
             (f"DROP SCHEMA {BATCH_RANGE_SOURCE_SCHEMA}",),
-            (f"DROP TABLE {target}", f"INSERT INTO public.ontology_batch_sync_receipts VALUES ('{BATCH_RANGE_TARGET}', 0)"),
+            (f"DROP TABLE {target}", f"INSERT INTO app.ontology_batch_sync_receipts VALUES ('{BATCH_RANGE_TARGET}', 0)"),
         ):
             if statements:
                 await self._write(*statements)
             with self.assertRaises(HTTPException) as raw:
                 await self.layers.query("SELECT 1")
             self.assertEqual(raw.exception.status_code, 403)
-        await self._write("UPDATE public.ontology_batch_sync_receipts SET range_min = NULL")
+        await self._write("UPDATE app.ontology_batch_sync_receipts SET range_min = NULL")
         self.assertEqual((await self.layers.query("SELECT 1 AS result"))["rows"], [{"result": 1}])
 
     async def test_handoff_never_catalogued_or_public_and_raw_depends_on_durable_evidence(self):
@@ -315,7 +315,7 @@ class TestStoredPushedTargetScope(IsolatedAsyncioTestCase):
         await self._write(
             f"DROP TABLE {_QUALIFIED}", f"CREATE SCHEMA {private}",
             *(f"CREATE TABLE {relation} (id int PRIMARY KEY)" for relation in HANDOFF_PROTECTED_REGCLASSES),
-            f"""INSERT INTO public.flow_publications VALUES ('handoff-old', '{private}',
+            f"""INSERT INTO app.flow_publications VALUES ('handoff-old', '{private}',
                 'copy_rows', '{{}}', now()-interval '1 hour', now()+interval '1 hour')""",
         )
         self.addAsyncCleanup(self._write, f"DROP SCHEMA {private} CASCADE")
@@ -342,13 +342,13 @@ class TestStoredPushedTargetScope(IsolatedAsyncioTestCase):
         await self._write(
             f"DROP TABLE {_QUALIFIED}", f"CREATE SCHEMA {private}",
             *(f"CREATE TABLE {relation} (id int PRIMARY KEY)" for relation in SNAPSHOT_INTENT_PROTECTED_REGCLASSES),
-            "CREATE TABLE public.flow_connections(id text, name text, database_name text, schemas jsonb)",
-            f"""INSERT INTO public.flow_connections VALUES ('old', 'old', current_database(),
+            "CREATE TABLE app.flow_connections(id text, name text, database_name text, schemas jsonb)",
+            f"""INSERT INTO app.flow_connections VALUES ('old', 'old', current_database(),
                     '["{private}","{_OTHER}"]')""",
-            f"""INSERT INTO public.flow_publications VALUES ('intent-old', '{private}',
+            f"""INSERT INTO app.flow_publications VALUES ('intent-old', '{private}',
                 'records', '{{}}', now()-interval '1 hour', now()+interval '1 hour')""",
         )
-        self.addAsyncCleanup(self._write, f"DROP SCHEMA {private} CASCADE", "DROP TABLE public.flow_connections")
+        self.addAsyncCleanup(self._write, f"DROP SCHEMA {private} CASCADE", "DROP TABLE app.flow_connections")
         self.assertEqual((await self.workspace.connections())[0]["schemas"], [_OTHER])
         self.assertNotIn(private, (await self.connections.catalog("fixture", schema=None, search="", limit=5, offset=0)).schemas)
         with self.assertRaises(HTTPException) as denied:

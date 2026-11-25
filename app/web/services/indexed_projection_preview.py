@@ -5,6 +5,7 @@ import re
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from anyio import fail_after
+from app.etl.schema.catalog_metadata import catalog_parameters
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, MultipleResultsFound
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -97,12 +98,12 @@ def _revision(scope: IndexedProjectionScope) -> UUID:
 
 
 async def _catalog(session: AsyncSession, scope: IndexedProjectionScope) -> str | None:
-    return (await session.execute(_SCOPE, {
+    return (await session.execute(_SCOPE, await catalog_parameters({
         **_LINEAGE_SCOPE, "schema": scope.schema_name, "table": scope.table, "key": scope.keyColumn,
         "heap_oid": scope.heapOid, "heap_node": scope.heapFilenode, "index_oid": scope.indexOid,
         "index_node": scope.indexFilenode, "width": 1 + len(scope.include),
         "include_names": [field.name for field in scope.include], "include_types": [field.type for field in scope.include],
-    })).scalar_one_or_none()
+    }))).scalar_one_or_none()
 
 
 async def _pinned(session: AsyncSession, scope: IndexedProjectionScope, origin: tuple[str, int]) -> str | None:

@@ -48,16 +48,18 @@ class CatalogSession:
     async def execute(self, query, params=None):
         sql = str(query)
         self.calls.append((sql, deepcopy(params)))
+        if "app.ontology_" in sql:
+            raise AssertionError("Business catalog queries must receive system metadata as parameters")
         if not sql.lstrip().startswith(self.allowed_prefixes):
             raise AssertionError("The object metadata endpoints must only issue SELECT")
-        if "to_regclass" in sql and "public.ontology_objects" in sql:
+        if "to_regclass" in sql and "app.ontology_objects" in sql:
             return Result(scalar=self.ontology_installed)
         if not self.results:
             raise AssertionError("Unexpected catalog query: " + sql)
         return self.results.pop(0)
 
 
-def service(*results, ontology_installed=True):
+def service(*results, ontology_installed=True, relations_installed=True):
     instance = object.__new__(EtlLayers)
     session = CatalogSession(*results, ontology_installed=ontology_installed)
 
@@ -66,6 +68,22 @@ def service(*results, ontology_installed=True):
         yield session
 
     instance.session = context
+
+    class MetadataSession:
+        async def execute(self, query, params=None):
+            sql = str(query)
+            if "to_regclass" in sql:
+                return Result(scalar=ontology_installed if "ontology_objects" in sql else relations_installed)
+            return Result([])
+
+        async def scalar(self, query, params=None):
+            return (await self.execute(query, params)).scalar_one()
+
+    @asynccontextmanager
+    async def metadata_context():
+        yield MetadataSession()
+
+    instance._metadata_pg = SimpleNamespace(session=metadata_context, fetch_all=AsyncMock(return_value=[]))
     return instance, session
 
 
@@ -194,7 +212,7 @@ class ObjectCatalogTests(unittest.IsolatedAsyncioTestCase):
         fields = [column("id", "bigint", True, 2, False, "Record identifier"),
                   column("tenant", "uuid", True, 1, False),
                   column("name", "character varying(80)", comment="Display text only")]
-        instance, session = service(Result([summary()]), Result([]), Result(scalar=True), Result([]), Result(fields))
+        instance, session = service(Result([summary()]), Result([]), Result([]), Result(fields))
         result = await instance.preview("ods", "objects")
         self.assertEqual(result["primaryKey"], ["tenant", "id"])
         self.assertIsNone(result["titleProperty"])
@@ -210,7 +228,7 @@ class ObjectCatalogTests(unittest.IsolatedAsyncioTestCase):
                  foreign("fk_second"), foreign("fk_incoming", "ts_rds", "owners", "ts_ods", "objects"),
                  foreign("fk_self", "ts_ods", "objects", "ts_ods", "objects")]
         logical = [{**row, "relationship_kind": "association", "cardinality": "many_to_many", "description": "", "provenance": "test"} for row in links]
-        instance, _ = service(Result([summary(properties_count=0)]), Result(links), Result(scalar=True), Result(logical))
+        instance, _ = service(Result([summary(properties_count=0)]), Result(links), Result(logical))
         result = await instance.preview("ts_ods", "objects")
         linked = {item["id"]: item for item in result["linkedObjectTypes"]}
         self.assertEqual(len(linked), 2)
@@ -228,7 +246,7 @@ class ObjectCatalogTests(unittest.IsolatedAsyncioTestCase):
                  foreign("meta_out", target_schema="ts_meta"),
                  foreign("meta_history_out", target_schema="ts_meta_hist"),
                  foreign("system_out", target_schema="pg_catalog"), foreign()]
-        instance, session = service(Result([summary(properties_count=0)]), Result(links), Result(scalar=True), Result([]))
+        instance, session = service(Result([summary(properties_count=0)]), Result(links), Result([]))
         result = await instance.preview("ts_ods", "objects")
         self.assertEqual(result["linkedObjectTypes"], [])
         sql = next(sql for sql, _ in session.calls if "FROM pg_constraint" in sql)
@@ -249,7 +267,7 @@ class ObjectCatalogTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all('"ts_ods"."missing"' not in sql for sql, _ in session.calls))
 
     async def test_zero_property_table_is_valid_and_does_not_invent_a_title_or_primary_key(self):
-        instance, session = service(Result([summary(properties_count=0)]), Result([]), Result(scalar=True), Result([]))
+        instance, session = service(Result([summary(properties_count=0)]), Result([]), Result([]))
         result = await instance.preview("ts_ods", "objects")
         self.assertEqual(result["properties"], [])
         self.assertEqual(result["primaryKey"], [])
@@ -298,7 +316,7 @@ class ObjectCatalogTests(unittest.IsolatedAsyncioTestCase):
                          source_data_type="company", target_data_type="organization")]
         logical = [{**row, "relationship_kind": "association", "cardinality": "many_to_many", "description": "", "provenance": "test"} for row in links]
         instance, session = service(Result([summary(properties_count=0, data_type="organization")]),
-                                    Result(links), Result(scalar=True), Result(logical))
+                                    Result(links), Result(logical))
         result = await instance.preview("ods", "objects")
         self.assertEqual(result["dataType"], "organization")
         self.assertEqual(result["linkedObjectTypes"][0]["dataType"], "company")
@@ -311,22 +329,23 @@ class ObjectCatalogTests(unittest.IsolatedAsyncioTestCase):
         fields = [column("id", "bigint", True, 2, False, "Metadata identifier"),
                   column("tenant", "uuid", True, 1, False), column("name", comment="Metadata label")]
         instance, session = service(Result([summary(object_id=777)]), Result([]),
-                                    Result(scalar=True), Result([]), Result(fields))
+                                    Result([]), Result(fields))
         instance.columns = AsyncMock(side_effect=AssertionError("No PG fallback for a registered object"))
         result = await instance.preview("ods", "objects")
         self.assertEqual([field["name"] for field in result["properties"]], ["id", "tenant", "name"])
         self.assertEqual(result["primaryKey"], ["tenant", "id"])
         self.assertEqual(result["properties"][0]["comment"], "Metadata identifier")
-        self.assertEqual(session.calls[-1][1], {"object_id": 777, "oid": 101})
+        self.assertEqual(session.calls[-1][1], {"object_id": 777, "oid": 101,
+                                               "object_metadata": "[]", "property_metadata": "[]"})
         self.assertIn("p.sql_type = format_type", session.calls[-1][0])
         self.assertIn("a.attname = p.name", session.calls[-1][0])
-        self.assertIn("ontology_object_properties", session.calls[-1][0])
+        self.assertIn("jsonb_to_recordset(CAST(:property_metadata AS jsonb))", session.calls[-1][0])
         self.assertIn("ORDER BY p.ordinal_position", session.calls[-1][0])
         instance.columns.assert_not_awaited()
 
     async def test_stale_registered_properties_report_conflict_instead_of_falling_back(self):
         instance, _ = service(Result([summary(object_id=777)]), Result([]),
-                              Result(scalar=True), Result([]), Result([column("id")]))
+                              Result([]), Result([column("id")]))
         instance.columns = AsyncMock(side_effect=AssertionError("Do not hide stale metadata"))
         with self.assertRaises(HTTPException) as error:
             await instance.preview("ods", "objects")
@@ -446,20 +465,30 @@ class ObjectRouteTests(unittest.TestCase):
         self.app = FastAPI()
         self.app.include_router(etl.router, prefix="/api/v1")
         self.app.dependency_overrides[get_current_user] = lambda: {"id": "ordinary-user"}
+        @asynccontextmanager
+        async def business_session():
+            yield object()
+        self.app.dependency_overrides[etl.get_business_db] = lambda: business_session()
         self.client = TestClient(self.app)
 
     def test_warehouse_descriptor_catalog_and_preview_use_the_same_registered_connection(self):
-        instance, _ = service(Result(scalar="warehouse_fixture"), Result([]),
-                              Result([summary(properties_count=0)]), Result([]), Result(scalar=True), Result([]))
+        instance, _ = service(Result([]),
+                              Result([summary(properties_count=0)]), Result([]), Result([]))
         pg = object()
+        business_pg = object()
+        connection_id = "3fa21f72-6f83-46bd-af04-6f221ed68ca8"
         with patch.object(data_connections, "get_pg_client", return_value=pg):
             registry = data_connections.DataConnections()
         with (patch.object(etl, "get_data_connections", return_value=registry),
+              patch.object(data_connections, "selected_business_connection", new_callable=AsyncMock,
+                           return_value={"id": connection_id, "name": "Selected business source", "config": {"database": "warehouse_fixture"}}),
+              patch.object(data_connections, "get_business_pg_client", return_value=business_pg),
               patch.object(data_connections, "EtlLayers", return_value=instance) as layers):
             warehouse = "/api/v1/etl/data-connections/warehouse"
             response = self.client.get(warehouse)
             self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.json(), {"id": "warehouse", "engine": "postgresql", "database": "warehouse_fixture"})
+            self.assertEqual(response.json(), {"id": "warehouse", "engine": "postgresql", "database": "warehouse_fixture",
+                                              "connectionId": connection_id, "name": "Selected business source"})
             response = self.client.get(warehouse + "/object-types?limit=100&offset=0")
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json()["total"], 0)
@@ -470,8 +499,8 @@ class ObjectRouteTests(unittest.TestCase):
             unrelated = "/api/v1/etl/data-connections/2e7a9733-daa3-4f04-a788-4fd9f2e2b818"
             self.assertEqual(self.client.get(unrelated + "/object-types").status_code, 404)
             self.assertEqual(self.client.get(unrelated + "/layers/ts_ods/tables").status_code, 404)
-            self.assertEqual(layers.call_count, 3)
-            self.assertTrue(all(call.kwargs == {"pg": pg} for call in layers.call_args_list))
+            self.assertEqual(layers.call_count, 2)
+            self.assertTrue(all(call.kwargs == {"pg": business_pg, "metadata_pg": pg} for call in layers.call_args_list))
 
     def test_missing_ontology_is_explicit_503_on_both_get_routes(self):
         instance, session = service(Result([]), ontology_installed=False)

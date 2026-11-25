@@ -6,4 +6,5 @@ aiokafka>=0.10
 redis>=5.0
 sqlalchemy[asyncio]>=2.0
 asyncpg>=0.30
+cryptography>=42.0
 elasticsearch>=8.0

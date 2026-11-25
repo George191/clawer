@@ -44,8 +44,8 @@ class AutomationTaskStore:
             """
             SELECT task.*, '[]'::jsonb AS logs,
                    to_jsonb(run) AS current_run
-            FROM public.automation_tasks task
-            LEFT JOIN public.automation_task_runs run
+            FROM app.automation_tasks task
+            LEFT JOIN app.automation_task_runs run
               ON run.task_id = task.id AND run.id = task.current_run_id
             WHERE task.deleted_at IS NULL
               AND (CAST(:product_domain AS text) IS NULL OR task.product_domain = :product_domain)
@@ -60,7 +60,7 @@ class AutomationTaskStore:
         if not names:
             return tasks
         templates = await self._pg.fetch_all(
-            "SELECT name, version, data_type, icon FROM public.ai_collect_templates "
+            "SELECT name, version, data_type, icon FROM app.ai_collect_templates "
             "WHERE name = ANY(CAST(:names AS text[]))",
             {"names": names},
         )
@@ -131,7 +131,7 @@ class AutomationTaskStore:
         }
         async with self._pg.locked_transaction(f"task-progress:{task_id}:{run_id}:{progress_prefix}") as session:
             result = await session.execute(text("""
-                SELECT id FROM public.automation_task_logs
+                SELECT id FROM app.automation_task_logs
                 WHERE task_id = CAST(:task_id AS uuid)
                   AND run_id = CAST(:run_id AS uuid)
                   AND strpos(message, :progress_prefix) > 0
@@ -141,7 +141,7 @@ class AutomationTaskStore:
             if existing:
                 params["log_id"] = existing["id"]
                 result = await session.execute(text("""
-                    UPDATE public.automation_task_logs
+                    UPDATE app.automation_task_logs
                     SET level = :level, message = :message
                     WHERE id = :log_id
                       AND task_id = CAST(:task_id AS uuid)
@@ -151,17 +151,17 @@ class AutomationTaskStore:
             else:
                 result = await session.execute(text("""
                     WITH inserted AS (
-                        INSERT INTO public.automation_task_logs
+                        INSERT INTO app.automation_task_logs
                             (task_id, run_id, level, message, created_at)
                         SELECT task.id, run.id, :level, :message, :created_at
-                        FROM public.automation_tasks task
-                        JOIN public.automation_task_runs run ON run.task_id = task.id
+                        FROM app.automation_tasks task
+                        JOIN app.automation_task_runs run ON run.task_id = task.id
                         WHERE task.id = CAST(:task_id AS uuid)
                           AND run.id = CAST(:run_id AS uuid)
                           AND task.deleted_at IS NULL
                         RETURNING id, run_id, level, message, created_at
                     ), counted AS (
-                        UPDATE public.automation_task_runs run
+                        UPDATE app.automation_task_runs run
                         SET log_count = run.log_count + 1
                         WHERE run.id IN (SELECT run_id FROM inserted)
                         RETURNING run.id
@@ -188,20 +188,20 @@ class AutomationTaskStore:
         inserted = await self._pg.fetch_all(
             """
             WITH inserted AS (
-                INSERT INTO public.automation_task_logs
+                INSERT INTO app.automation_task_logs
                     (task_id, run_id, level, message, created_at)
                 SELECT task.id, run.id, entry.level, entry.message, entry.created_at
-                FROM public.automation_tasks task
+                FROM app.automation_tasks task
                 CROSS JOIN jsonb_to_recordset(CAST(:logs AS jsonb))
                     AS entry(run_id uuid, level text, message text, created_at timestamptz)
-                JOIN public.automation_task_runs run
+                JOIN app.automation_task_runs run
                   ON run.id = entry.run_id
                  AND run.task_id = task.id
                 WHERE task.id = CAST(:task_id AS uuid)
                   AND task.deleted_at IS NULL
                 RETURNING id, run_id, level, message, created_at
             ), counted AS (
-                UPDATE public.automation_task_runs run
+                UPDATE app.automation_task_runs run
                 SET log_count = run.log_count + totals.log_count
                 FROM (SELECT run_id, count(*) AS log_count FROM inserted GROUP BY run_id) totals
                 WHERE run.id = totals.run_id
@@ -228,7 +228,7 @@ class AutomationTaskStore:
         await self.initialize()
         updated = await self._pg.fetch_one(
             """
-            UPDATE public.automation_task_logs
+            UPDATE app.automation_task_logs
             SET level = :level, message = :message
             WHERE id = :log_id
               AND task_id = CAST(:task_id AS uuid)
@@ -256,7 +256,7 @@ class AutomationTaskStore:
         await self.initialize()
         run = await self._pg.fetch_one(
             """
-            UPDATE public.automation_task_runs SET
+            UPDATE app.automation_task_runs SET
                 inserted_records = COALESCE(inserted_records, 0) + :inserted,
                 updated_records = COALESCE(updated_records, 0) + :updated,
                 deleted_records = COALESCE(deleted_records, 0) + :deleted,
@@ -264,7 +264,7 @@ class AutomationTaskStore:
                 synced_records = COALESCE(synced_records, 0) + :synced
             WHERE task_id = CAST(:task_id AS uuid) AND id = CAST(:run_id AS uuid)
               AND EXISTS (
-                  SELECT 1 FROM public.automation_tasks task
+                  SELECT 1 FROM app.automation_tasks task
                   WHERE task.id = CAST(:task_id AS uuid) AND task.deleted_at IS NULL
               )
             RETURNING *
@@ -295,7 +295,7 @@ class AutomationTaskStore:
         state_column = f"{stage}_state"
         task = await self._pg.fetch_one(
             f"""
-            UPDATE public.automation_tasks SET
+            UPDATE app.automation_tasks SET
                 {state_column} = :next_state,
                 updated_at = now()
             WHERE id = CAST(:id AS uuid)
@@ -323,7 +323,7 @@ class AutomationTaskStore:
             policies["incremental"] = True
         task = await self._pg.fetch_one(
             """
-            INSERT INTO public.automation_tasks
+            INSERT INTO app.automation_tasks
                 (name, product_domain, task_type, task_path,
                  template_name, template_version, status, download_state, sync_state,
                  schedule, parameters, policies, owner, started_at)
@@ -369,7 +369,7 @@ class AutomationTaskStore:
         task = await self._pg.fetch_one(
             """
             WITH changed AS (
-              UPDATE public.automation_tasks SET
+              UPDATE app.automation_tasks SET
                 status = COALESCE(:status, status),
                 progress = COALESCE(:progress, progress),
                 records = COALESCE(:records, records),
@@ -391,7 +391,7 @@ class AutomationTaskStore:
                    OR status IN ('running', 'paused'))
               RETURNING *
             ), changed_run AS (
-                UPDATE public.automation_task_runs run SET
+                UPDATE app.automation_task_runs run SET
                     status = CASE WHEN :status = 'queued' THEN 'completed' ELSE :status END,
                     ended_at = CASE WHEN :status IN ('queued', 'completed', 'failed')
                                     THEN now() ELSE NULL END
@@ -433,7 +433,7 @@ class AutomationTaskStore:
         await self.initialize()
         task = await self._pg.fetch_one(
             """
-            UPDATE public.automation_tasks SET
+            UPDATE app.automation_tasks SET
                 schedule = COALESCE(schedule, '{}'::jsonb) || CASE
                     WHEN schedule->>'mode' = 'recurring'
                          AND CAST(:changes AS jsonb) ? 'mode'
@@ -472,24 +472,24 @@ class AutomationTaskStore:
             """
             WITH current AS (
                 SELECT id, current_run_id
-                FROM public.automation_tasks
+                FROM app.automation_tasks
                 WHERE id = CAST(:id AS uuid)
                   AND deleted_at IS NULL
                   AND status IN ('queued', 'failed')
                   AND control_state IS DISTINCT FROM 'canceled'
                 FOR UPDATE
             ), closed AS (
-                UPDATE public.automation_task_runs run
+                UPDATE app.automation_task_runs run
                 SET status = 'canceled', ended_at = now()
                 FROM current
                 WHERE run.id = current.current_run_id AND run.status IN ('running', 'paused')
                 RETURNING run.id
             ), new_run AS (
-                INSERT INTO public.automation_task_runs (id, task_id)
+                INSERT INTO app.automation_task_runs (id, task_id)
                 SELECT CAST(:celery_task_id AS uuid), id FROM current
                 RETURNING id, task_id
             )
-            UPDATE public.automation_tasks task SET
+            UPDATE app.automation_tasks task SET
                 status = 'running',
                 celery_task_id = :celery_task_id,
                 current_run_id = new_run.id,
@@ -520,24 +520,24 @@ class AutomationTaskStore:
             """
             WITH current AS (
                 SELECT id, celery_task_id, current_run_id
-                FROM public.automation_tasks
+                FROM app.automation_tasks
                 WHERE id = CAST(:id AS uuid)
                   AND deleted_at IS NULL
                   AND status IN ('running', 'paused', 'failed')
                   AND control_state IS DISTINCT FROM 'canceled'
                 FOR UPDATE
             ), closed AS (
-                UPDATE public.automation_task_runs run
+                UPDATE app.automation_task_runs run
                 SET status = 'canceled', ended_at = now()
                 FROM current
                 WHERE run.id = current.current_run_id AND run.status IN ('running', 'paused')
                 RETURNING run.id
             ), new_run AS (
-                INSERT INTO public.automation_task_runs (id, task_id)
+                INSERT INTO app.automation_task_runs (id, task_id)
                 SELECT CAST(:celery_task_id AS uuid), id FROM current
                 RETURNING id, task_id
             )
-            UPDATE public.automation_tasks task SET
+            UPDATE app.automation_tasks task SET
                 status = 'running',
                 celery_task_id = :celery_task_id,
                 current_run_id = new_run.id,
@@ -567,7 +567,7 @@ class AutomationTaskStore:
             """
             WITH due AS (
                 SELECT id, gen_random_uuid() AS run_id
-                FROM public.automation_tasks
+                FROM app.automation_tasks
                 WHERE status IN ('queued', 'failed')
                   AND deleted_at IS NULL
                   AND control_state IS DISTINCT FROM 'canceled'
@@ -615,11 +615,11 @@ class AutomationTaskStore:
                 FOR UPDATE SKIP LOCKED
                 LIMIT :limit
             ), new_runs AS (
-                INSERT INTO public.automation_task_runs (id, task_id)
+                INSERT INTO app.automation_task_runs (id, task_id)
                 SELECT run_id, id FROM due
                 RETURNING id, task_id
             )
-            UPDATE public.automation_tasks task SET
+            UPDATE app.automation_tasks task SET
                 status = 'running',
                 celery_task_id = new_runs.id::text,
                 current_run_id = new_runs.id,
@@ -657,7 +657,7 @@ class AutomationTaskStore:
         task = await self._pg.fetch_one(
             """
             WITH changed AS (
-              UPDATE public.automation_tasks SET
+              UPDATE app.automation_tasks SET
                 status = :next_status,
                 celery_task_id = COALESCE(:celery_task_id, celery_task_id),
                 updated_at = now()
@@ -669,7 +669,7 @@ class AutomationTaskStore:
                    OR celery_task_id = :expected_celery_task_id)
               RETURNING *
             ), changed_run AS (
-                UPDATE public.automation_task_runs run SET
+                UPDATE app.automation_task_runs run SET
                     status = :next_status,
                     ended_at = CASE WHEN :next_status IN ('completed', 'failed')
                                     THEN now() ELSE NULL END
@@ -698,7 +698,7 @@ class AutomationTaskStore:
         task = await self._pg.fetch_one(
             """
             WITH changed AS (
-              UPDATE public.automation_tasks SET
+              UPDATE app.automation_tasks SET
                 status = 'failed', control_state = 'canceled', throughput = 0,
                 download_state = 'paused', sync_state = 'canceled', updated_at = now()
             WHERE id = CAST(:id AS uuid) AND deleted_at IS NULL
@@ -706,7 +706,7 @@ class AutomationTaskStore:
               AND control_state IS DISTINCT FROM 'canceled'
               RETURNING *
             ), changed_run AS (
-                UPDATE public.automation_task_runs run SET status = 'canceled', ended_at = now()
+                UPDATE app.automation_task_runs run SET status = 'canceled', ended_at = now()
                 FROM changed
                 WHERE run.id = changed.current_run_id AND run.task_id = changed.id
                   AND run.status IN ('running', 'paused')
@@ -737,7 +737,7 @@ class AutomationTaskStore:
                                       'created_at', created_at,
                                       'run_id', run_id::text
                                   ) AS payload
-                           FROM public.automation_task_logs
+                           FROM app.automation_task_logs
                            WHERE task_id = task.id AND run_id = current_run.id
                            ORDER BY created_at DESC, id DESC
                            LIMIT 200
@@ -748,19 +748,19 @@ class AutomationTaskStore:
                            to_jsonb(run_row) ORDER BY run_row.started_at DESC, run_row.id DESC
                        )
                        FROM (
-                           SELECT * FROM public.automation_task_runs
+                           SELECT * FROM app.automation_task_runs
                            WHERE task_id = task.id
                            ORDER BY started_at DESC, id DESC
                            LIMIT 20
                        ) run_row
                    ), '[]'::jsonb) AS log_runs,
-                   (SELECT count(*) FROM public.automation_task_runs
+                   (SELECT count(*) FROM app.automation_task_runs
                     WHERE task_id = task.id)::integer AS log_run_count
-            FROM public.automation_tasks task
-            LEFT JOIN public.automation_task_runs current_run
+            FROM app.automation_tasks task
+            LEFT JOIN app.automation_task_runs current_run
               ON current_run.task_id = task.id
              AND current_run.id = COALESCE(task.current_run_id, (
-                 SELECT latest.id FROM public.automation_task_runs latest
+                 SELECT latest.id FROM app.automation_task_runs latest
                  WHERE latest.task_id = task.id
                  ORDER BY latest.started_at DESC, latest.id DESC LIMIT 1
              ))
@@ -779,7 +779,7 @@ class AutomationTaskStore:
         result = await self._pg.fetch_one(
             """
             WITH deleted AS (
-                DELETE FROM public.automation_task_runs
+                DELETE FROM app.automation_task_runs
                 WHERE status IN ('completed', 'failed', 'canceled', 'legacy')
                   AND COALESCE(ended_at, started_at) < now() - interval '15 days'
                 RETURNING id
@@ -799,8 +799,8 @@ class AutomationTaskStore:
             SELECT id, level, message, created_at, run_id::text AS run_id
             FROM (
                 SELECT log.id, log.level, log.message, log.created_at, log.run_id
-                FROM public.automation_task_logs log
-                JOIN public.automation_tasks task ON task.id = log.task_id
+                FROM app.automation_task_logs log
+                JOIN app.automation_tasks task ON task.id = log.task_id
                 WHERE log.task_id = CAST(:task_id AS uuid)
                   AND log.run_id = CAST(:run_id AS uuid)
                   AND task.deleted_at IS NULL
@@ -809,7 +809,7 @@ class AutomationTaskStore:
                   ))
                   AND (CAST(:before_id AS bigint) IS NULL OR (log.created_at, log.id) < (
                       SELECT cursor.created_at, cursor.id
-                      FROM public.automation_task_logs cursor
+                      FROM app.automation_task_logs cursor
                       WHERE cursor.id = CAST(:before_id AS bigint)
                         AND cursor.task_id = CAST(:task_id AS uuid)
                         AND cursor.run_id = CAST(:run_id AS uuid)
@@ -834,8 +834,8 @@ class AutomationTaskStore:
                 SELECT log.*, CASE WHEN log.message ~ :sync_pattern THEN 'sync' ELSE 'download' END AS kind,
                        log.message ~ '(record_id|record)=' AS has_details,
                        substring(log.message FROM '^\[([0-9-]{10} [0-9:]{8},[0-9]{3}):') AS event_time
-                FROM public.automation_task_logs log
-                JOIN public.automation_tasks task ON task.id = log.task_id
+                FROM app.automation_task_logs log
+                JOIN app.automation_tasks task ON task.id = log.task_id
                 WHERE log.task_id = CAST(:task_id AS uuid)
                   AND log.run_id = CAST(:run_id AS uuid) AND task.deleted_at IS NULL
                   AND (log.message ~ :sync_pattern OR log.message ~ :download_pattern)
@@ -858,8 +858,8 @@ class AutomationTaskStore:
         return await self._pg.fetch_all(
             """
             SELECT run.*
-            FROM public.automation_task_runs run
-            JOIN public.automation_tasks task ON task.id = run.task_id
+            FROM app.automation_task_runs run
+            JOIN app.automation_tasks task ON task.id = run.task_id
             WHERE run.task_id = CAST(:task_id AS uuid)
               AND task.deleted_at IS NULL
             ORDER BY run.started_at DESC, run.id DESC
@@ -873,8 +873,8 @@ class AutomationTaskStore:
         await self.initialize()
         return await self._pg.fetch_one(
             """
-            SELECT run.* FROM public.automation_task_runs run
-            JOIN public.automation_tasks task ON task.id = run.task_id
+            SELECT run.* FROM app.automation_task_runs run
+            JOIN app.automation_tasks task ON task.id = run.task_id
             WHERE run.task_id = CAST(:task_id AS uuid) AND run.id = CAST(:run_id AS uuid)
               AND task.deleted_at IS NULL
             """,
@@ -887,7 +887,7 @@ class AutomationTaskStore:
         return await self._pg.fetch_one(
             """
             SELECT *
-            FROM public.automation_tasks
+            FROM app.automation_tasks
             WHERE id = CAST(:id AS uuid)
               AND deleted_at IS NULL
             """,
@@ -900,7 +900,7 @@ class AutomationTaskStore:
             """
             SELECT status, control_state, download_state, sync_state, celery_task_id, current_run_id,
                    task_type, task_path, product_domain
-            FROM public.automation_tasks
+            FROM app.automation_tasks
             WHERE id = CAST(:id AS uuid)
               AND deleted_at IS NULL
             """,
@@ -912,7 +912,7 @@ class AutomationTaskStore:
         await self.initialize()
         deleted = await self._pg.fetch_one(
             """
-            UPDATE public.automation_tasks SET
+            UPDATE app.automation_tasks SET
                 deleted_at = now(),
                 updated_at = now()
             WHERE id = CAST(:id AS uuid)

@@ -17,7 +17,7 @@ from app.etl.schema.ontology import ONTOLOGY_FAVORITES_DDL
 from app.storage.postgres_client import get_pg_client
 
 
-VISIBILITY_DDL = """ALTER TABLE public.ontology_objects ADD COLUMN visibility
+VISIBILITY_DDL = """ALTER TABLE app.ontology_objects ADD COLUMN visibility
     TEXT NOT NULL DEFAULT 'normal' CONSTRAINT ontology_objects_visibility_check
     CHECK (visibility IN ('normal','prominent','hidden'))"""
 
@@ -31,7 +31,7 @@ async def definition(session) -> dict | None:
         LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
         LEFT JOIN pg_constraint k ON k.conrelid = a.attrelid
             AND k.conname = 'ontology_objects_visibility_check' AND k.contype = 'c'
-        WHERE a.attrelid = to_regclass('public.ontology_objects')
+        WHERE a.attrelid = to_regclass('app.ontology_objects')
           AND a.attname = 'visibility' AND a.attnum > 0 AND NOT a.attisdropped
     """))).mappings().first()
     return dict(row) if row else None
@@ -60,11 +60,11 @@ async def favorites_definition(session) -> dict | None:
                 AND k.conkey = ARRAY[(SELECT attnum FROM pg_attribute WHERE attrelid = c.oid AND attname = 'user_id'),
                     (SELECT attnum FROM pg_attribute WHERE attrelid = c.oid AND attname = 'object_id')]::smallint[]) AS primary_key,
             EXISTS (SELECT 1 FROM pg_constraint k JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'object_id'
-                JOIN pg_attribute target ON target.attrelid = to_regclass('public.ontology_objects') AND target.attname = 'id'
+                JOIN pg_attribute target ON target.attrelid = to_regclass('app.ontology_objects') AND target.attname = 'id'
                 WHERE k.conrelid = c.oid AND k.contype = 'f' AND k.confdeltype = 'c' AND k.convalidated
                 AND k.confrelid = target.attrelid AND k.conkey = ARRAY[a.attnum]::smallint[]
                 AND k.confkey = ARRAY[target.attnum]::smallint[]) AS object_foreign_key
-        FROM pg_class c WHERE c.oid = to_regclass('public.ontology_object_favorites')
+        FROM pg_class c WHERE c.oid = to_regclass('app.ontology_object_favorites')
     """))).mappings().first()
     return dict(row) if row else None
 
@@ -76,20 +76,20 @@ def favorites_ready(row: dict | None) -> bool:
 async def migrate(pg, *, apply: bool = False) -> dict:
     async with pg.session() as session:
         if apply:
-            await session.execute(text("SELECT pg_advisory_xact_lock(hashtext('public.ontology_visibility_migration'))"))
+            await session.execute(text("SELECT pg_advisory_xact_lock(hashtext('app.ontology_visibility_migration'))"))
             await session.execute(text("SET LOCAL lock_timeout = '5s'"))
             await session.execute(text("SET LOCAL statement_timeout = '30s'"))
         else:
             await session.execute(text("SET TRANSACTION READ ONLY"))
         installed = bool((await session.execute(text(
-            "SELECT to_regclass('public.ontology_objects') IS NOT NULL"))).scalar_one())
+            "SELECT to_regclass('app.ontology_objects') IS NOT NULL"))).scalar_one())
         if not installed:
-            raise RuntimeError("Initialize the public Ontology catalog before adding visibility")
+            raise RuntimeError("Initialize the app Ontology catalog before adding visibility")
         before = await definition(session)
         if before and not ready(before):
             raise RuntimeError("Existing visibility definition differs from the expected contract; no settings were changed")
         favorites = bool((await session.execute(text(
-            "SELECT to_regclass('public.ontology_object_favorites') IS NOT NULL"))).scalar_one())
+            "SELECT to_regclass('app.ontology_object_favorites') IS NOT NULL"))).scalar_one())
         favorite_contract = await favorites_definition(session) if favorites else None
         if favorites and not favorites_ready(favorite_contract):
             raise RuntimeError("Existing favorites definition differs from the expected contract; no settings were changed")

@@ -55,7 +55,8 @@ class TsOds(ETLBase):
 
     async def _on_init_schema(self) -> None:
         await self._pg.execute("CREATE SCHEMA IF NOT EXISTS ts_ods")
-        await ensure_ontology_tables(self._pg)
+        await self._pg.execute("CREATE EXTENSION IF NOT EXISTS postgis")
+        await ensure_ontology_tables(self._metadata_pg)
         for table in CATALOG_ODS_COLUMNS:
             if not self._table_name or table == self._table_name:
                 await self._ensure_registered_table(table, "current", create_partitions=False)
@@ -79,12 +80,12 @@ class TsOds(ETLBase):
                 raise ValueError(f"Conflicting ODS schema for {table}; schema changes require review")
             return
         ddl = current_table_ddl("ods", table, columns)
-        existing = await get_registered_ddl(self._pg, "ods", table, "current")
+        existing = await get_registered_ddl(self._metadata_pg, "ods", table, "current")
         if existing and table not in CATALOG_ODS_COLUMNS and existing.strip() != ddl.strip():
             raise ValueError(f"ODS schema change requires review: {table}")
         if not existing or table not in CATALOG_ODS_COLUMNS:
             await save_registered_ddl(
-                self._pg, layer="ods", table=table, ddl_sql=ddl, updated_by="system:ods", allow_update=False,
+                self._metadata_pg, layer="ods", table=table, ddl_sql=ddl, updated_by="system:ods", allow_update=False,
             )
         await self._ensure_registered_table(table, "current")
         if table == "orbital":

@@ -86,7 +86,7 @@ async def _native(session: AsyncSession) -> bool:
 
 async def _limits(session: AsyncSession) -> None:
     await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"))
-    await session.execute(text("SET LOCAL search_path=pg_catalog,public,pg_temp"))
+    await session.execute(text("SET LOCAL search_path=pg_catalog,app,pg_temp"))
     await session.execute(text("SET LOCAL statement_timeout='1000ms'"))
     await session.execute(text("SET LOCAL lock_timeout='100ms'"))
 
@@ -106,7 +106,7 @@ async def sender_proof_available(session: AsyncSession, actor: UUID, generation:
     scope = _approval(actor, generation)
     if scope is None:
         return False
-    await session.execute(text("SET LOCAL search_path=pg_catalog,public,pg_temp"))
+    await session.execute(text("SET LOCAL search_path=pg_catalog,app,pg_temp"))
     return await _physical_scope(session, scope[0])
 
 

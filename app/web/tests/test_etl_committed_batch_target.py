@@ -69,11 +69,11 @@ class TestCommittedTargetCatalog(IsolatedAsyncioTestCase):
                         "CREATE TABLE ts_batch_sync_sandbox.committed_batch_fixture(id bigint PRIMARY KEY, value text NOT NULL)",
                         "CREATE TABLE ts_batch_sync_sandbox.regular_batch_target(id bigint PRIMARY KEY)",
                         "CREATE TABLE ts_other.committed_batch_fixture(id bigint PRIMARY KEY)",
-                        """CREATE TABLE public.ontology_objects(schema_name text, table_name text, is_active bool,
+                        """CREATE TABLE app.ontology_objects(schema_name text, table_name text, is_active bool,
                                                         data_type text, description text)""",
-                        """CREATE TABLE public.flow_publications(token text, schema_name text, table_name text,
+                        """CREATE TABLE app.flow_publications(token text, schema_name text, table_name text,
                                                         scope jsonb, valid_from timestamptz, valid_until timestamptz)""",
-                        """INSERT INTO public.flow_publications VALUES ('old-token', 'ts_batch_sync_sandbox',
+                        """INSERT INTO app.flow_publications VALUES ('old-token', 'ts_batch_sync_sandbox',
                             'committed_batch_fixture', '{}',now()-interval '1 hour',now()+interval '1 hour')""",
                     ):
                         await db.execute(text(sql))

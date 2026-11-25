@@ -24,11 +24,11 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute("SET LOCAL lock_timeout='3s'")
-    op.execute(f"LOCK TABLE public.{_TABLE} IN ACCESS EXCLUSIVE MODE")
+    op.execute(f"LOCK TABLE app.{_TABLE} IN ACCESS EXCLUSIVE MODE")
     op.execute(f"""
         DO $$
         BEGIN
-            IF EXISTS (SELECT 1 FROM public.{_TABLE} WHERE schema_drift IS NOT NULL) THEN
+            IF EXISTS (SELECT 1 FROM app.{_TABLE} WHERE schema_drift IS NOT NULL) THEN
                 RAISE EXCEPTION 'Cannot downgrade with recorded schema drift diagnostics';
             END IF;
         END $$

@@ -6,8 +6,9 @@ import re
 from typing import Any
 
 from sqlalchemy import text
+from app.etl.schema.catalog_metadata import OBJECT_RELATION, RELATION_RECORDS, catalog_parameters
 
-RELATION_TABLE = "public.ontology_object_relations"
+RELATION_TABLE = "app.ontology_object_relations"
 CARDINALITIES = {"one_to_one", "one_to_many", "many_to_one", "many_to_many"}
 _FIELDS = ("name", "source_schema", "source_table", "source_fields", "target_schema",
            "target_table", "target_fields", "relationship_kind", "cardinality", "description",
@@ -18,8 +19,8 @@ RELATION_IMPORT_FIELDS_CHECK = """cardinality(source_fields) = cardinality(targe
     AND array_position(source_fields, NULL) IS NULL
     AND array_position(target_fields, NULL) IS NULL"""
 OBJECT_RELATIONS_DDL_STATEMENTS = (
-    "CREATE SCHEMA IF NOT EXISTS public",
-    f"""CREATE TABLE IF NOT EXISTS public.ontology_object_relations (
+    "CREATE SCHEMA IF NOT EXISTS app",
+    f"""CREATE TABLE IF NOT EXISTS app.ontology_object_relations (
         id BIGSERIAL PRIMARY KEY,
         name TEXT NOT NULL UNIQUE,
         source_schema TEXT NOT NULL,
@@ -46,9 +47,9 @@ OBJECT_RELATIONS_DDL_STATEMENTS = (
         CHECK (length(provenance) > 0)
     )""",
     """CREATE INDEX IF NOT EXISTS idx_ontology_object_relations_target
-        ON public.ontology_object_relations (target_schema, target_table) WHERE enabled""",
+        ON app.ontology_object_relations (target_schema, target_table) WHERE enabled""",
     """CREATE INDEX IF NOT EXISTS idx_ontology_object_relations_source
-        ON public.ontology_object_relations (source_schema, source_table) WHERE enabled""",
+        ON app.ontology_object_relations (source_schema, source_table) WHERE enabled""",
 )
 OBJECT_RELATIONS_DDL = ";\n\n".join(OBJECT_RELATIONS_DDL_STATEMENTS) + ";\n"
 
@@ -103,23 +104,24 @@ async def _installed(session) -> bool:
                                       {"table_name": RELATION_TABLE})).scalar_one())
 
 
-async def read_object_relations(session, schema: str, table: str) -> list[dict[str, Any]]:
+async def read_object_relations(session, schema: str, table: str, *, catalog_session) -> list[dict[str, Any]]:
     if not await _installed(session):
         raise ObjectRelationsNotInitialized("Logical relationship registry is not initialized")
-    result = await session.execute(text("""
+    params = await catalog_parameters({"schema": schema, "table": table}, session=session, relations=True)
+    result = await catalog_session.execute(text(f"""
         SELECT r.name, r.source_schema, r.source_table, r.source_fields AS columns,
                r.target_schema, r.target_table, r.target_fields AS referenced_columns,
                r.relationship_kind, r.cardinality, r.description, r.provenance,
                so.data_type AS source_data_type, target_object.data_type AS target_data_type,
                COALESCE(so.visibility, 'normal') AS source_visibility, COALESCE(target_object.visibility, 'normal') AS target_visibility
-        FROM public.ontology_object_relations r
+        FROM {RELATION_RECORDS}
         JOIN pg_namespace sn ON sn.nspname = r.source_schema
         JOIN pg_class sc ON sc.relnamespace = sn.oid AND sc.relname = r.source_table
         JOIN pg_namespace tn ON tn.nspname = r.target_schema
         JOIN pg_class tc ON tc.relnamespace = tn.oid AND tc.relname = r.target_table
-        LEFT JOIN public.ontology_objects so ON so.schema_name = sn.nspname
+        LEFT JOIN {OBJECT_RELATION} so ON so.schema_name = sn.nspname
             AND so.table_name = sc.relname AND so.is_active
-        LEFT JOIN public.ontology_objects target_object ON target_object.schema_name = tn.nspname
+        LEFT JOIN {OBJECT_RELATION} target_object ON target_object.schema_name = tn.nspname
             AND target_object.table_name = tc.relname AND target_object.is_active
         WHERE r.enabled AND ((r.source_schema = :schema AND r.source_table = :table)
                          OR (r.target_schema = :schema AND r.target_table = :table))
@@ -137,7 +139,7 @@ async def read_object_relations(session, schema: str, table: str) -> list[dict[s
               WHERE NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = tc.oid
                   AND a.attname = f.name AND a.attnum > 0 AND NOT a.attisdropped))
         ORDER BY r.name
-    """), {"schema": schema, "table": table})
+    """), params)
     return [{**dict(row), "source_kind": "logical"} for row in result.mappings()]
 
 
@@ -166,7 +168,7 @@ def merge_object_relations(foreign_keys: list[dict[str, Any]], logical: list[dic
     return list(merged.values())
 
 
-async def manage_object_relations(pg, definitions: list[dict[str, Any]], *, apply: bool = False) -> dict[str, Any]:
+async def manage_object_relations(pg, definitions: list[dict[str, Any]], *, catalog_pg, apply: bool = False) -> dict[str, Any]:
     """Validate declared metadata; only explicit apply writes, all in one existing PG transaction."""
     rows = [validate_definition(value) for value in definitions]
     if len({row["name"] for row in rows}) != len(rows):
@@ -175,16 +177,17 @@ async def manage_object_relations(pg, definitions: list[dict[str, Any]], *, appl
                                  "referenced_columns": row["target_fields"]}) for row in rows]
     if len(set(mappings)) != len(mappings):
         raise ValueError("Duplicate relationship field mapping, including a reverse definition")
-    async with pg.session() as session:
+    async with pg.session() as session, catalog_pg.session() as catalog_session:
+        await catalog_session.execute(text("SET TRANSACTION READ ONLY"))
         if apply:
-            await session.execute(text("SELECT pg_advisory_xact_lock(hashtext('public.ontology_object_relations'))"))
+            await session.execute(text("SELECT pg_advisory_xact_lock(hashtext('app.ontology_object_relations'))"))
         else:
             await session.execute(text("SET TRANSACTION READ ONLY"))
         installed = await _installed(session)
         # Validate physical metadata only; cardinality is declared, never inferred from business rows.
         for row in rows:
             for side in ("source", "target"):
-                result = await session.execute(text("""
+                result = await catalog_session.execute(text("""
                     SELECT a.attname AS name FROM pg_namespace n
                     JOIN pg_class c ON c.relnamespace = n.oid
                     JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
@@ -197,7 +200,7 @@ async def manage_object_relations(pg, definitions: list[dict[str, Any]], *, appl
                     raise ValueError(f'Relationship {row["name"]} has a missing table or {side} field')
         existing = {}
         if installed:
-            result = await session.execute(text("SELECT " + ", ".join(_FIELDS) + " FROM public.ontology_object_relations ORDER BY name"))
+            result = await session.execute(text("SELECT " + ", ".join(_FIELDS) + " FROM app.ontology_object_relations ORDER BY name"))
             existing = {item["name"]: dict(item) for item in result.mappings()}
         existing_mappings = {relation_mapping({**row, "columns": row["source_fields"],
             "referenced_columns": row["target_fields"]}): name for name, row in existing.items()}
@@ -215,7 +218,7 @@ async def manage_object_relations(pg, definitions: list[dict[str, Any]], *, appl
                 if row["name"] in changes["unchanged"]:
                     continue
                 await session.execute(text("""
-                    INSERT INTO public.ontology_object_relations (name, source_schema, source_table, source_fields,
+                    INSERT INTO app.ontology_object_relations (name, source_schema, source_table, source_fields,
                         target_schema, target_table, target_fields, relationship_kind, cardinality,
                         description, provenance, enabled)
                     VALUES (:name, :source_schema, :source_table, CAST(:source_fields AS text[]),

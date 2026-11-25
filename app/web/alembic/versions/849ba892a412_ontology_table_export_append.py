@@ -22,7 +22,7 @@ def _install_admission_guard() -> None:
     # Older senders omit write_mode (therefore default Upsert). They must not
     # approve/admit an Upsert against a reviewed Append route during rollout.
     op.execute("""
-        CREATE FUNCTION public.guard_table_export_write_mode() RETURNS trigger
+        CREATE FUNCTION app.guard_table_export_write_mode() RETURNS trigger
         LANGUAGE plpgsql SET search_path TO pg_catalog, pg_temp AS $guard$
         DECLARE
             current_mode text;
@@ -36,7 +36,7 @@ def _install_admission_guard() -> None:
                 RETURN NEW; -- Preserve exact payload digest pinning and existing audit use.
             END IF;
             SELECT write_mode, updated_at INTO current_mode, current_revision
-              FROM public.ontology_table_export_plan WHERE destination = NEW.destination FOR SHARE;
+              FROM app.ontology_table_export_plan WHERE destination = NEW.destination FOR SHARE;
             IF NOT FOUND THEN
                 RAISE EXCEPTION 'An exact reviewed export scope is required' USING ERRCODE = '23514';
             END IF;
@@ -45,7 +45,7 @@ def _install_admission_guard() -> None:
                     -- A separately acknowledged current review may revoke its older grant.
                     -- Archive the original grant mode and revision, never the new plan's mode.
                     SELECT write_mode, plan_updated_at INTO current_mode, current_revision
-                      FROM public.ontology_table_export_grants
+                      FROM app.ontology_table_export_grants
                       WHERE destination = NEW.destination
                       ORDER BY generation DESC LIMIT 1;
                     IF NOT FOUND THEN
@@ -64,8 +64,8 @@ def _install_admission_guard() -> None:
     for item in ("grants", "requests"):
         op.execute(f"""
             CREATE TRIGGER guard_table_export_write_mode
-            BEFORE INSERT OR UPDATE ON public.ontology_table_export_{item}
-            FOR EACH ROW EXECUTE FUNCTION public.guard_table_export_write_mode()
+            BEFORE INSERT OR UPDATE ON app.ontology_table_export_{item}
+            FOR EACH ROW EXECUTE FUNCTION app.guard_table_export_write_mode()
         """)
 
 
@@ -87,8 +87,8 @@ def downgrade() -> None:
         if op.get_bind().scalar(sa.text(f"SELECT 1 FROM ontology_table_export_{item} WHERE write_mode='append' LIMIT 1")):
             raise RuntimeError("Cannot remove reviewed Append mode or its recorded history")
     for item in ("grants", "requests"):
-        op.execute(f"DROP TRIGGER guard_table_export_write_mode ON public.ontology_table_export_{item}")
-    op.execute("DROP FUNCTION public.guard_table_export_write_mode()")
+        op.execute(f"DROP TRIGGER guard_table_export_write_mode ON app.ontology_table_export_{item}")
+    op.execute("DROP FUNCTION app.guard_table_export_write_mode()")
     op.drop_constraint(_DESTINATION, _PLAN, type_="check")
     op.create_check_constraint(_DESTINATION, _PLAN, _LEGACY)
     for item in reversed(_TABLES):

@@ -86,24 +86,24 @@ class OntologyMigrationIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def test_apply_preserves_registration_and_persists_all_live_properties(self):
         old = await self.pg.fetch_one("SELECT 'ts_meta.ddlregistry'::regclass::oid AS oid")
-        plan = await self.migration.migrate(self.pg)
+        plan = await self.migration.migrate(self.pg, catalog_pg=self.pg)
         self.assertFalse(plan["applied"])
         self.assertEqual(plan["registered_objects"], 2)
         self.assertEqual(plan["physical_objects"], 6)
-        self.assertFalse(plan["installed"]["public.ontology_objects"])
-        applied = await self.migration.migrate(self.pg, apply=True)
+        self.assertFalse(plan["installed"]["app.ontology_objects"])
+        applied = await self.migration.migrate(self.pg, apply=True, catalog_pg=self.pg)
         self.assertTrue(applied["existing_registration_preserved"])
         self.assertTrue(applied["physical_property_counts_verified"])
-        actual = await self.pg.fetch_one("""SELECT 'public.ontology_objects'::regclass::oid AS oid,
+        actual = await self.pg.fetch_one("""SELECT 'app.ontology_objects'::regclass::oid AS oid,
             to_regclass('ts_meta.ddlregistry') IS NULL AS old_removed,
             to_regclass('public.ddlregistry_id_seq') IS NULL AS old_sequence_removed""")
         self.assertEqual(actual["oid"], old["oid"])
         self.assertTrue(actual["old_removed"] and actual["old_sequence_removed"])
-        registered = await self.pg.fetch_all("SELECT version,checksum FROM public.ontology_objects WHERE version > 0 ORDER BY table_name")
+        registered = await self.pg.fetch_all("SELECT version,checksum FROM app.ontology_objects WHERE version > 0 ORDER BY table_name")
         self.assertEqual(len(registered), 2)
         self.assertTrue(all(row["version"] == 7 and row["checksum"].startswith("preserved-") for row in registered))
-        properties = await self.pg.fetch_all("""SELECT p.* FROM public.ontology_object_properties p
-            JOIN public.ontology_objects o ON o.id=p.object_id
+        properties = await self.pg.fetch_all("""SELECT p.* FROM app.ontology_object_properties p
+            JOIN app.ontology_objects o ON o.id=p.object_id
             WHERE o.schema_name='ts_custom' AND o.table_name='people' ORDER BY ordinal_position""")
         self.assertEqual([row["name"] for row in properties], ["id", "name", "amount", "doubled", "created_at"])
         fields = {row["name"]: row for row in properties}
@@ -116,7 +116,7 @@ class OntologyMigrationIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(fields["doubled"]["default_expression"])
         self.assertTrue(fields["doubled"]["generation_expression"])
         self.assertEqual(fields["created_at"]["default_expression"], "now()")
-        rerun = await self.migration.migrate(self.pg, apply=True)
+        rerun = await self.migration.migrate(self.pg, apply=True, catalog_pg=self.pg)
         self.assertTrue(rerun["existing_registration_preserved"])
         self.assertEqual(rerun["registered_objects_after"], 6)
 
@@ -131,17 +131,17 @@ class OntologyMigrationIntegration(unittest.IsolatedAsyncioTestCase):
             return result
         with patch.object(self.migration, "sync_object_metadata", side_effect=fail_after_first):
             with self.assertRaisesRegex(RuntimeError, "Deliberate"):
-                await self.migration.migrate(self.pg, apply=True)
+                await self.migration.migrate(self.pg, apply=True, catalog_pg=self.pg)
         state = await self.pg.fetch_one("""SELECT to_regclass('ts_meta.ddlregistry') IS NOT NULL AS old_exists,
-            to_regclass('public.ontology_objects') IS NULL AS new_absent,
-            to_regclass('public.ontology_object_properties') IS NULL AS properties_absent""")
+            to_regclass('app.ontology_objects') IS NULL AS new_absent,
+            to_regclass('app.ontology_object_properties') IS NULL AS properties_absent""")
         self.assertTrue(all(state.values()))
         self.assertEqual((await self.pg.fetch_one("SELECT count(*) AS count FROM ts_meta.ddlregistry"))["count"], 2)
 
     async def test_restore_reapply_preserves_ids_versions_and_handles_old_bootstrap_duplicate_indexes(self):
         original_oid = (await self.pg.fetch_one("SELECT 'ts_meta.ddlregistry'::regclass::oid AS oid"))["oid"]
-        await self.migration.migrate(self.pg, apply=True)
-        original = await self.pg.fetch_all(f"SELECT {self.migration.IDENTITY_COLUMNS} FROM public.ontology_objects ORDER BY id")
+        await self.migration.migrate(self.pg, apply=True, catalog_pg=self.pg)
+        original = await self.pg.fetch_all(f"SELECT {self.migration.IDENTITY_COLUMNS} FROM app.ontology_objects ORDER BY id")
         await self.migration.restore_registration(self.pg)
         restored_indexes = await self.pg.fetch_all("""SELECT c.relname AS name FROM pg_index i
             JOIN pg_class c ON c.oid=i.indexrelid WHERE i.indrelid='ts_meta.ddlregistry'::regclass""")
@@ -158,20 +158,20 @@ class OntologyMigrationIntegration(unittest.IsolatedAsyncioTestCase):
             for name in (unusual, unusual.replace("ddlregistry", "ontology_objects")):
                 await session.execute(text(f"CREATE INDEX {self.migration.identifier(name)} ON ts_meta.ddlregistry (updated_at DESC) WHERE is_active"))
         keep_oid = (await self.pg.fetch_one("SELECT 'ts_meta.uq_ontology_objects_table'::regclass::oid AS oid"))["oid"]
-        result = await self.migration.migrate(self.pg, apply=True)
+        result = await self.migration.migrate(self.pg, apply=True, catalog_pg=self.pg)
         self.assertTrue(result["existing_registration_preserved"])
-        actual = await self.pg.fetch_all(f"SELECT {self.migration.IDENTITY_COLUMNS} FROM public.ontology_objects ORDER BY id")
+        actual = await self.pg.fetch_all(f"SELECT {self.migration.IDENTITY_COLUMNS} FROM app.ontology_objects ORDER BY id")
         self.assertEqual(actual, original)
-        self.assertEqual((await self.pg.fetch_one("SELECT 'public.ontology_objects'::regclass::oid AS oid"))["oid"], original_oid)
+        self.assertEqual((await self.pg.fetch_one("SELECT 'app.ontology_objects'::regclass::oid AS oid"))["oid"], original_oid)
         self.assertEqual((await self.pg.fetch_one("SELECT 'public.uq_ontology_objects_table'::regclass::oid AS oid"))["oid"], keep_oid)
         indexes = await self.pg.fetch_all("""SELECT c.relname AS name FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid
-            WHERE i.indrelid='public.ontology_objects'::regclass""")
+            WHERE i.indrelid='app.ontology_objects'::regclass""")
         self.assertNotIn(unusual, {row["name"] for row in indexes})
         self.assertIn(unusual.replace("ddlregistry", "ontology_objects"), {row["name"] for row in indexes})
         self.assertFalse(any("ddlregistry" in row["name"] for row in indexes))
         await self.migration.restore_registration(self.pg)
-        await self.migration.migrate(self.pg, apply=True)
-        self.assertEqual(await self.pg.fetch_all(f"SELECT {self.migration.IDENTITY_COLUMNS} FROM public.ontology_objects ORDER BY id"), original)
+        await self.migration.migrate(self.pg, apply=True, catalog_pg=self.pg)
+        self.assertEqual(await self.pg.fetch_all(f"SELECT {self.migration.IDENTITY_COLUMNS} FROM app.ontology_objects ORDER BY id"), original)
 
     async def test_migration_aborts_on_non_equivalent_or_business_index_name_collision(self):
         async with self.pg.session() as session:
@@ -179,35 +179,35 @@ class OntologyMigrationIntegration(unittest.IsolatedAsyncioTestCase):
             await session.execute(text("CREATE INDEX idx_ontology_objects_collision ON ts_meta.ddlregistry (version) WHERE is_active"))
         before = await self.pg.fetch_all(f"SELECT {self.migration.IDENTITY_COLUMNS} FROM ts_meta.ddlregistry ORDER BY id")
         with self.assertRaisesRegex(RuntimeError, "different metadata index"):
-            await self.migration.migrate(self.pg, apply=True)
+            await self.migration.migrate(self.pg, apply=True, catalog_pg=self.pg)
         self.assertEqual(await self.pg.fetch_all(f"SELECT {self.migration.IDENTITY_COLUMNS} FROM ts_meta.ddlregistry ORDER BY id"), before)
         async with self.pg.session() as session:
             await session.execute(text("DROP INDEX ts_meta.idx_ontology_objects_collision"))
-            await session.execute(text("CREATE TABLE public.ontology_index_collision_fixture (version INTEGER)"))
-            await session.execute(text("CREATE INDEX idx_ontology_objects_collision ON public.ontology_index_collision_fixture (version)"))
+            await session.execute(text("CREATE TABLE app.ontology_index_collision_fixture (version INTEGER)"))
+            await session.execute(text("CREATE INDEX idx_ontology_objects_collision ON app.ontology_index_collision_fixture (version)"))
         business_oid = (await self.pg.fetch_one("SELECT 'public.idx_ontology_objects_collision'::regclass::oid AS oid"))["oid"]
         try:
             with self.assertRaisesRegex(RuntimeError, "different metadata index"):
-                await self.migration.migrate(self.pg, apply=True)
+                await self.migration.migrate(self.pg, apply=True, catalog_pg=self.pg)
             state = await self.pg.fetch_one("""SELECT to_regclass('ts_meta.ddlregistry') IS NOT NULL AS old_exists,
-                to_regclass('public.ontology_objects') IS NULL AS new_absent,
+                to_regclass('app.ontology_objects') IS NULL AS new_absent,
                 'public.idx_ontology_objects_collision'::regclass::oid AS business_oid""")
             self.assertTrue(state["old_exists"] and state["new_absent"])
             self.assertEqual(state["business_oid"], business_oid)
             self.assertEqual(await self.pg.fetch_all(f"SELECT {self.migration.IDENTITY_COLUMNS} FROM ts_meta.ddlregistry ORDER BY id"), before)
         finally:
-            await self.pg.execute("DROP TABLE public.ontology_index_collision_fixture")
+            await self.pg.execute("DROP TABLE app.ontology_index_collision_fixture")
 
     async def test_release_recovery_preserves_object_identity_and_can_be_reapplied(self):
-        await self.migration.migrate(self.pg, apply=True)
-        before = await self.pg.fetch_all("SELECT id,table_name,version,checksum FROM public.ontology_objects ORDER BY id")
+        await self.migration.migrate(self.pg, apply=True, catalog_pg=self.pg)
+        before = await self.pg.fetch_all("SELECT id,table_name,version,checksum FROM app.ontology_objects ORDER BY id")
         await self.migration.restore_registration(self.pg)
         self.assertEqual(await self.pg.fetch_all("SELECT id,table_name,version,checksum FROM ts_meta.ddlregistry ORDER BY id"), before)
-        await self.migration.migrate(self.pg, apply=True)
-        self.assertEqual(await self.pg.fetch_all("SELECT id,table_name,version,checksum FROM public.ontology_objects ORDER BY id"), before)
+        await self.migration.migrate(self.pg, apply=True, catalog_pg=self.pg)
+        self.assertEqual(await self.pg.fetch_all("SELECT id,table_name,version,checksum FROM app.ontology_objects ORDER BY id"), before)
 
     async def test_create_table_and_metadata_commit_or_rollback_together(self):
-        await self.migration.migrate(self.pg, apply=True)
+        await self.migration.migrate(self.pg, apply=True, catalog_pg=self.pg)
         payload = {"name": "created_people", "dataType": "people", "description": "People's : catalog", "fields": [
             {"name": "id", "type": "BIGINT", "primary": True},
             {"name": "title", "type": "VARCHAR", "length": 60, "comment": "A person's label"},
@@ -218,7 +218,7 @@ class OntologyMigrationIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([row["name"] for row in preview["properties"]], ["id", "title"])
         self.assertEqual(preview["description"], "People's : catalog")
         self.assertEqual(preview["primaryKey"], ["id"])
-        registered = await self.pg.fetch_one("SELECT ddl_sql,version,checksum,data_type FROM public.ontology_objects WHERE table_name='created_people'")
+        registered = await self.pg.fetch_one("SELECT ddl_sql,version,checksum,data_type FROM app.ontology_objects WHERE table_name='created_people'")
         self.assertIn('CREATE TABLE "ts_custom"."created_people"', registered["ddl_sql"])
         self.assertEqual(registered["data_type"], "people")
         self.assertEqual(registered["version"], 1)
@@ -235,7 +235,7 @@ class OntologyMigrationIntegration(unittest.IsolatedAsyncioTestCase):
     async def test_property_type_drift_is_rejected_until_explicit_metadata_sync(self):
         from fastapi import HTTPException
         from app.etl.schema.ontology import sync_object_metadata
-        await self.migration.migrate(self.pg, apply=True)
+        await self.migration.migrate(self.pg, apply=True, catalog_pg=self.pg)
         await self.pg.execute("ALTER TABLE ts_custom.people ALTER COLUMN name TYPE TEXT")
         with self.assertRaises(HTTPException) as error:
             await self.layers.preview("ts_custom", "people")
@@ -246,7 +246,7 @@ class OntologyMigrationIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(next(row["type"] for row in preview["properties"] if row["name"] == "name"), "text")
 
     async def test_catalog_and_logical_relationships_use_persisted_ontology_metadata(self):
-        await self.migration.migrate(self.pg, apply=True)
+        await self.migration.migrate(self.pg, apply=True, catalog_pg=self.pg)
         seeds = [row for row in json.loads((ROOT / "app/etl/schema/object_relations.seed.json").read_text())
                  if row["name"].startswith("sec_edgar_")]
         report = await manage_object_relations(self.pg, seeds, apply=True)

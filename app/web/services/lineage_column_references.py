@@ -5,6 +5,8 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.storage.postgres_client import get_pg_client
+from app.etl.schema.catalog_metadata import RELATION_RECORDS, catalog_parameters
 
 from app.web.api.models.lineage_neighbors import LineageColumnReferences, LineageDirection
 from app.web.services.etl_layers import (
@@ -15,8 +17,8 @@ _LIMIT = 12
 _CANONICAL_COLUMN = r"^[a-z_][a-z0-9_]{0,62}$"
 _READABLE_REGISTRY = text("""
     SELECT coalesce(pg_catalog.has_table_privilege(
-        pg_catalog.to_regclass('public.ontology_object_relations'), 'SELECT'
-    ), false) AND pg_catalog.has_schema_privilege('public','USAGE')
+        pg_catalog.to_regclass('app.ontology_object_relations'), 'SELECT'
+    ), false) AND pg_catalog.has_schema_privilege('app','USAGE')
 """)
 _ROOT = text(f"""
     SELECT c.oid AS oid, a.attnum AS attnum
@@ -57,7 +59,7 @@ def _references(direction: LineageDirection, has_registry: bool):
     )
     declared = f"""
         SELECT n.nspname::text, c.relname::text, a.attname::text, 'object_relation'
-        FROM public.ontology_object_relations d
+        FROM (SELECT * FROM {RELATION_RECORDS}) d
         JOIN pg_catalog.pg_namespace n ON n.nspname = d.{peer}_schema
         JOIN pg_catalog.pg_class c ON c.relnamespace = n.oid AND c.relname = d.{peer}_table
         {_LINEAGE_METADATA_JOIN}
@@ -102,17 +104,19 @@ async def read_lineage_column_references(
     params = {**_LINEAGE_SCOPE, "schema": schema, "table": table, "column": column}
     try:
         with fail_after(3):
-            await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"))
-            await session.execute(text("SET LOCAL statement_timeout='1000ms'"))
-            await session.execute(text("SET LOCAL search_path=pg_catalog"))
-            root = (await session.execute(_ROOT, params)).one_or_none()
-            if root is None:
-                raise HTTPException(404, "Table or column reference is unavailable")
-            registry = bool(await session.scalar(_READABLE_REGISTRY))
-            result = await session.execute(_references(direction, registry), {
-                **params, "oid": root.oid, "attnum": root.attnum, "limit": _LIMIT + 1,
-            })
-            rows = result.mappings().all()
+            async with get_pg_client().session() as metadata_session:
+                registry = bool(await metadata_session.scalar(_READABLE_REGISTRY))
+                metadata = await catalog_parameters(params, session=metadata_session, relations=registry)
+                await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"))
+                await session.execute(text("SET LOCAL statement_timeout='1000ms'"))
+                await session.execute(text("SET LOCAL search_path=pg_catalog"))
+                root = (await session.execute(_ROOT, metadata)).one_or_none()
+                if root is None:
+                    raise HTTPException(404, "Table or column reference is unavailable")
+                result = await session.execute(_references(direction, registry), {
+                    **metadata, "oid": root.oid, "attnum": root.attnum, "limit": _LIMIT + 1,
+                })
+                rows = result.mappings().all()
     except (TimeoutError, DBAPIError):
         raise HTTPException(503, "Column references are temporarily unavailable") from None
     return LineageColumnReferences(

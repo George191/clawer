@@ -11,13 +11,13 @@ down_revision = "18f214f739c5"
 branch_labels = None
 depends_on = None
 
-_REGISTRY = "public.ontology_data_connections"
+_REGISTRY = "app.ontology_data_connections"
 
 
 def _lock_installed(bind):
     bind.execute(text("SET LOCAL lock_timeout = '3s'"))
     bind.execute(text("SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext("
-                      "'public.ontology_data_connections_migration'))"))
+                      "'app.ontology_data_connections_migration'))"))
     if not bind.scalar(text(f"SELECT pg_catalog.to_regclass('{_REGISTRY}') IS NOT NULL")):
         return False
     bind.execute(text(f"LOCK TABLE {_REGISTRY} IN ACCESS EXCLUSIVE MODE"))

@@ -1,6 +1,7 @@
 """Exact allowlisted ordinary ID-only read; no planner fallback or generic filter execution."""
 
 from anyio import fail_after
+from app.etl.schema.catalog_metadata import catalog_parameters
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -92,11 +93,11 @@ async def _reviewed_database(session: AsyncSession, scope: IndexedCompoundSample
 
 
 async def _catalog(session: AsyncSession, scope: IndexedSampleScope) -> str | None:
-    return await session.scalar(_SCOPE, {
+    return await session.scalar(_SCOPE, await catalog_parameters({
         **_LINEAGE_SCOPE, "database": scope.database, "schema": scope.schema_name, "table": scope.table,
         "key": scope.keyColumn, "heap_oid": scope.heapOid, "heap_node": scope.heapFilenode,
         "index_oid": scope.indexOid, "index_node": scope.indexFilenode,
-    })
+    }))
 
 
 async def _limits(session: AsyncSession) -> None:

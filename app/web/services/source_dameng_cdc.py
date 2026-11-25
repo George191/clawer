@@ -13,7 +13,7 @@ from app.etl.schema.dameng_cdc import DAMENG_CDC_INSTALLED
 
 async def require_no_dameng_binding(session, identifier):
     if await session.scalar(text(DAMENG_CDC_INSTALLED)):
-        if await session.scalar(text("SELECT EXISTS (SELECT 1 FROM public.ontology_dameng_cdc_bindings WHERE connection_id=:id)"), {"id": identifier}):
+        if await session.scalar(text("SELECT EXISTS (SELECT 1 FROM app.ontology_dameng_cdc_bindings WHERE connection_id=:id)"), {"id": identifier}):
             raise HTTPException(409, "Remove the DMDRS binding before editing or deleting this connection")
 
 
@@ -48,7 +48,7 @@ class SourceDamengCdc:
             ready = bool(await session.scalar(text(DAMENG_CDC_INSTALLED)))
             binding = None
             if ready:
-                binding = (await session.execute(text("SELECT topic,tables,source_updated_at FROM public.ontology_dameng_cdc_bindings WHERE connection_id=:id"), {"id": identifier})).mappings().first()
+                binding = (await session.execute(text("SELECT topic,tables,source_updated_at FROM app.ontology_dameng_cdc_bindings WHERE connection_id=:id"), {"id": identifier})).mappings().first()
             # Topic existence proves neither DMDRS health nor table coverage.
             return {"kind": "dmdrs", "schemaReady": ready, "state": "bound" if binding else "unconfigured",
                     "binding": {"topic": binding["topic"], "tables": binding["tables"],
@@ -63,7 +63,7 @@ class SourceDamengCdc:
             await require_no_dameng_binding(session, identifier)
             if not await topic_status(payload.topic):
                 raise HTTPException(422, "DMDRS output topic does not exist on the project's Kafka cluster")
-            await session.execute(text("""INSERT INTO public.ontology_dameng_cdc_bindings
+            await session.execute(text("""INSERT INTO app.ontology_dameng_cdc_bindings
                 (connection_id,source_updated_at,topic,tables) VALUES (:id,:revision,:topic,CAST(:tables AS jsonb))"""),
                                   {"id": identifier, "revision": row["updated_at"], "topic": payload.topic, "tables": json.dumps(payload.tables)})
         return {"bound": True, "deliveryVerified": False}
@@ -73,7 +73,7 @@ class SourceDamengCdc:
             await self._source(identifier, session, payload.expectedUpdatedAt)
             if not await session.scalar(text(DAMENG_CDC_INSTALLED)):
                 raise HTTPException(503, "DMDRS binding storage is not installed")
-            result = await session.execute(text("DELETE FROM public.ontology_dameng_cdc_bindings WHERE connection_id=:id RETURNING connection_id"), {"id": identifier})
+            result = await session.execute(text("DELETE FROM app.ontology_dameng_cdc_bindings WHERE connection_id=:id RETURNING connection_id"), {"id": identifier})
             if result.first() is None:
                 raise HTTPException(404, "No DMDRS binding is configured")
         return {"bound": False, "upstreamStopped": False}

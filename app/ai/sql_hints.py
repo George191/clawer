@@ -207,9 +207,9 @@ class SQLHintEngine:
 
     async def refresh_schema(self) -> None:
         """刷新 schema 缓存 — 从 information_schema 重新加载。"""
-        from app.storage.postgres_client import get_pg_client
+        from app.storage.business_database import get_business_pg_client
 
-        pg = get_pg_client()
+        pg = get_business_pg_client()
         await pg.connect()
 
         self._schema = {}

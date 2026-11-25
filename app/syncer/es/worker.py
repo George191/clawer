@@ -18,7 +18,8 @@ from aiokafka.admin import AIOKafkaAdminClient
 from app.config.settings import settings
 from app.base.kafka import build_admin_client_kwargs, build_consumer_kwargs
 from app.logger import get_logger
-from app.storage.postgres_client import PostgresClient, get_pg_client
+from app.storage.postgres_client import PostgresClient
+from app.storage.business_database import get_business_pg_client
 from app.syncer.es.config import SyncConfig, TableSyncConfig, build_doc_from_row
 from app.syncer.es.metrics import SyncMetrics
 from app.syncer.es.watermark import BackfillCursor, WatermarkStore
@@ -66,7 +67,7 @@ class EsSyncWorker:
 
     def _get_pg(self) -> PostgresClient:
         if self._pg is None:
-            self._pg = get_pg_client()
+            self._pg = get_business_pg_client()
         return self._pg
 
     def _get_es(self) -> Any:

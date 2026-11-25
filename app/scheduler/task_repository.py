@@ -1,6 +1,6 @@
 """调度任务配置 — 数据访问层。
 
-基于 PostgreSQL public.scheduler_tasks 表，提供 CRUD 操作。
+基于 PostgreSQL app.scheduler_tasks 表，提供 CRUD 操作。
 BeatScheduleRegistry 通过本模块从数据库加载任务配置。
 
 表结构见 app/scheduler/sql/init_scheduler_tasks.sql
@@ -18,7 +18,7 @@ from app.storage.postgres_client import PostgresClient, get_pg_client
 
 logger = get_logger(__name__)
 
-TABLE_NAME = "public.scheduler_tasks"
+TABLE_NAME = "app.scheduler_tasks"
 _DDL_PATH = Path(__file__).resolve().parent / "sql" / "init_scheduler_tasks.sql"
 _READY = False
 
@@ -93,7 +93,7 @@ class TaskConfig:
 class TaskRepository:
     """调度任务配置仓库。
 
-    提供 public.scheduler_tasks 表的 CRUD 操作。
+    提供 app.scheduler_tasks 表的 CRUD 操作。
 
     用法:
         repo = TaskRepository()

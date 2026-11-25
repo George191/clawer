@@ -25,7 +25,7 @@ def _table_identity(layer: str, table: str, table_role: str | None = None) -> tu
 
 
 async def _seed_current_objects(pg: PostgresClient) -> None:
-    existing = await pg.fetch_all("SELECT schema_name, table_name FROM public.ontology_objects")
+    existing = await pg.fetch_all("SELECT schema_name, table_name FROM app.ontology_objects")
     identities = {(row["schema_name"], row["table_name"]) for row in existing}
     for layer, tables in baseline_current_ddls().items():
         for logical_table, ddl_sql in tables.items():
@@ -49,7 +49,6 @@ async def ensure_ontology_tables(pg: PostgresClient) -> None:
     global _ONTOLOGY_READY
     if _ONTOLOGY_READY:
         return
-    await pg.execute("CREATE EXTENSION IF NOT EXISTS postgis;")
     await pg.init_schema([ONTOLOGY_DDL, OBJECT_RELATIONS_DDL])
     row = await pg.fetch_one("SELECT to_regclass(:table_name) AS table_name", {"table_name": ONTOLOGY_OBJECTS_TABLE})
     if not row or not row.get("table_name"):
@@ -61,7 +60,7 @@ async def ensure_ontology_tables(pg: PostgresClient) -> None:
 async def get_registered_ddl(pg: PostgresClient, layer: str, table: str,
                              table_role: str | None = None) -> str | None:
     schema, physical, _ = _table_identity(layer, table, table_role)
-    row = await pg.fetch_one("""SELECT ddl_sql FROM public.ontology_objects
+    row = await pg.fetch_one("""SELECT ddl_sql FROM app.ontology_objects
         WHERE schema_name = :schema_name AND table_name = :table_name
           AND is_active AND ddl_sql <> '' LIMIT 1""", {"schema_name": schema, "table_name": physical})
     return row["ddl_sql"] if row else None
@@ -73,7 +72,7 @@ async def get_registered_ddl_record(pg: PostgresClient, layer: str, table: str,
     return await pg.fetch_one("""SELECT id, layer, table_role, schema_name, table_name,
         ddl_sql, version, checksum, description, partition_type, partition_column,
         partition_granularity, partition_count, updated_by, created_at, updated_at
-        FROM public.ontology_objects
+        FROM app.ontology_objects
         WHERE schema_name = :schema_name AND table_name = :table_name
           AND is_active AND ddl_sql <> '' LIMIT 1""", {"schema_name": schema, "table_name": physical})
 
@@ -83,7 +82,7 @@ async def list_registered_ddl_records(pg: PostgresClient, layer: str | None = No
     sql = """SELECT id, layer, table_role, schema_name, table_name, version, checksum,
         description, partition_type, partition_column, partition_granularity,
         partition_count, updated_by, created_at, updated_at
-        FROM public.ontology_objects WHERE is_active AND ddl_sql <> ''"""
+        FROM app.ontology_objects WHERE is_active AND ddl_sql <> ''"""
     params: dict[str, Any] = {}
     if layer:
         sql += " AND layer = :layer"
@@ -111,13 +110,13 @@ async def save_registered_ddl(
         partition_column=column, partition_granularity=granularity, partition_count=count)
     params = {"layer": layer, "table_role": role, "schema_name": schema_name, "table_name": table_name}
     async with pg.locked_transaction(f"ontology:{schema_name}:{table_name}") as session:
-        current = (await session.execute(text("""SELECT id, version, checksum FROM public.ontology_objects
+        current = (await session.execute(text("""SELECT id, version, checksum FROM app.ontology_objects
             WHERE schema_name = :schema_name AND table_name = :table_name FOR UPDATE"""), params)).mappings().first()
         if current and current["checksum"] and not allow_update and current["checksum"] != checksum:
             raise ValueError(f"Schema change requires explicit review: {layer}/{table}")
         changed = not current or current["checksum"] != checksum
         version = (int(current["version"]) if current else 0) + int(changed)
-        result = await session.execute(text("""INSERT INTO public.ontology_objects (
+        result = await session.execute(text("""INSERT INTO app.ontology_objects (
             layer, table_role, schema_name, table_name, ddl_sql, version, checksum,
             partition_type, partition_column, partition_granularity, partition_count,
             description, description_source, updated_by, provenance, resource_group)
@@ -147,7 +146,7 @@ async def save_registered_ddl(
             logical = logical_table_name(layer, table_name)
             declared = await sync_declared_object_properties(session, object_id, layer, logical, role)
             if declared:
-                await session.execute(text("""UPDATE public.ontology_objects
+                await session.execute(text("""UPDATE app.ontology_objects
                     SET data_type = :data_type, data_type_source = 'table_definition'
                     WHERE id = :id AND data_type_source <> 'registration'"""), {"id": object_id, "data_type": logical})
     return {**params, "version": version, "changed": changed}

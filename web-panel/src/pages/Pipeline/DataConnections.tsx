@@ -2,7 +2,7 @@ import React, { useEffect, useId, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Button, Checkbox, Input, message, Modal, Select, NativeSelect } from '@/components/ui';
 import { ArrowLeftOutlined, ArrowRightOutlined, DatabaseOutlined, DeleteOutlined, EyeOutlined, FolderOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, TableOutlined } from '@/components/ui/icons';
-import apiClient, { createDataSource, deleteDataSource, fetchCurrentUserContext, fetchDataConnectorTypes, fetchDataSourceCatalog, fetchDataSourceColumns, fetchDataSources, setDataSourcePaused, testDataSource, updateDataSource } from '../../services/api';
+import apiClient, { createDataSource, deleteDataSource, fetchCurrentUserContext, fetchDataConnectorTypes, fetchDataSourceCatalog, fetchDataSourceColumns, fetchDataSources, selectBusinessDatabase, setDataSourcePaused, testDataSource, updateDataSource } from '../../services/api';
 import type { DataConnectorEngine, DataConnectorType, DataSource, DataSourceCatalog, DataSourceColumns, DataSourceConfig, DataSourcePayload, DataSourceProvider, DataSourceRelation, DataSourceTest, BatchSourceIdentity, WarehouseConnection } from '../../services/api';
 import { ontologyCatalogHref } from '../../services/explorerNavigation';
 import { getSessionState } from '../../services/session';
@@ -209,6 +209,7 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
   const feedbackKey = useId();
   const [connectors, setConnectors] = useState<DataConnectorType[]>([]);
   const [sources, setSources] = useState<DataSource[]>([]);
+  const [businessSelection, setBusinessSelection] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [canManage, setCanManage] = useState(false);
@@ -235,7 +236,7 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
   const [editingRevision, setEditingRevision] = useState<{ updatedAt: string; engine: DataConnectorEngine }>();
   const [editConflict, setEditConflict] = useState(false);
   const [baseline, setBaseline] = useState('');
-  const [operation, setOperation] = useState<'' | 'test' | 'save' | 'delete' | 'pause'>('');
+  const [operation, setOperation] = useState<'' | 'test' | 'save' | 'delete' | 'pause' | 'business'>('');
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const active = useRef(true);
   const pendingRef = useRef(false);
@@ -251,6 +252,26 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
   };
   const notifyTest = (result: DataSourceTest) => notify(result.ok ? 'success' : 'error', result.message, `${result.latencyMs} ms`);
   const pending = !!operation;
+  const businessId = businessSelection || warehouse?.connectionId || '';
+  const businessSources = sources.filter(source => source.engine === 'postgresql' && !isConnectionPaused(source));
+  const chooseBusinessDatabase = async () => {
+    const source = businessSources.find(item => item.id === businessId);
+    if (!source || pendingRef.current) return;
+    pendingRef.current = true;
+    setOperation('business');
+    try {
+      await selectBusinessDatabase(source);
+      if (!current()) return;
+      notify('success', 'Business database selected. Restart ETL Workers and the PostgreSQL CDC relay to apply it.');
+      onRetryWarehouse();
+      onChanged?.();
+    } catch (error) {
+      notify('error', errorText(error));
+    } finally {
+      pendingRef.current = false;
+      if (current()) setOperation('');
+    }
+  };
   const blocked = pending || loading || !!loadError || !canManage;
   const connector = connectors.find((item) => item.engine === draft?.engine);
   const selected = sources.find((item) => item.id === editingId);
@@ -586,14 +607,24 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
         <section className="ontology-connections-warehouse" aria-label="Workspace warehouse" aria-busy={!warehouse && !warehouseFailed}>
           <div className="ontology-connections-warehouse__identity">
             {warehouse && <ConnectorMark engine={warehouse.engine} />}
-            <div><h2>Workspace warehouse</h2>
-              {warehouse ? <p>PostgreSQL · <code>{warehouse.database}</code> · System-managed</p>
+            <div><h2>Business database</h2>
+              {warehouse ? <p>PostgreSQL · <code>{warehouse.database}</code> · {warehouse.name}</p>
                 : warehouseFailed ? <p role="alert">Unable to read the warehouse connection.</p>
                   : <p role="status">Loading warehouse connection…</p>}
             </div>
           </div>
           {warehouse && <Link className="ui-btn ui-btn-default" to={ontologyCatalogHref(params.toString(), 'backed')}>Browse warehouse tables <ArrowRightOutlined /></Link>}
           {warehouseFailed && <Button size="small" icon={<ReloadOutlined />} onClick={onRetryWarehouse}>Retry warehouse</Button>}
+          {canManage && <div>
+            <label>ETL business connection <NativeSelect aria-label="ETL business connection" value={businessId}
+              disabled={blocked} onChange={event => setBusinessSelection(event.target.value)}>
+              <option value="">Select a PostgreSQL connection</option>
+              {businessSources.map(source => <option key={source.id} value={source.id}>{source.name} · {source.config.database}</option>)}
+            </NativeSelect></label>
+            <Button disabled={blocked || !businessId || businessId === warehouse?.connectionId}
+              loading={operation === 'business'} onClick={chooseBusinessDatabase}>Use for ETL</Button>
+            <p>Stop Workers and the current PostgreSQL CDC capture before switching. Configure capture for the selected database, then restart Workers and the relay.</p>
+          </div>}
         </section>
 
         {canManage && <section className="ontology-connections-inventory" aria-label="External sources" aria-busy={loading || pending}>

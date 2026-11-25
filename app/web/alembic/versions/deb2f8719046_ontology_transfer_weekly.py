@@ -54,8 +54,8 @@ def upgrade() -> None:
         "AND schedule_weekday_utc = EXTRACT(ISODOW FROM slot AT TIME ZONE 'UTC') AND state <> 'canceled')",
     )
     op.execute("""
-        CREATE FUNCTION public.ontology_transfer_keep_clock_kind() RETURNS trigger
-        LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
+        CREATE FUNCTION app.ontology_transfer_keep_clock_kind() RETURNS trigger
+        LANGUAGE plpgsql SET search_path = pg_catalog, app, pg_temp AS $$
         BEGIN
             IF NEW.schedule_weekday_utc IS DISTINCT FROM OLD.schedule_weekday_utc THEN
                 RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'A recorded UTC job cannot change cadence';
@@ -64,23 +64,23 @@ def upgrade() -> None:
         END $$
     """)
     op.execute(f"""
-        CREATE TRIGGER ontology_transfer_keep_clock_kind BEFORE UPDATE OF schedule_weekday_utc ON public.{_JOBS}
-        FOR EACH ROW EXECUTE FUNCTION public.ontology_transfer_keep_clock_kind()
+        CREATE TRIGGER ontology_transfer_keep_clock_kind BEFORE UPDATE OF schedule_weekday_utc ON app.{_JOBS}
+        FOR EACH ROW EXECUTE FUNCTION app.ontology_transfer_keep_clock_kind()
     """)
 
 
 def downgrade() -> None:
     op.execute("SET LOCAL lock_timeout = '3s'")
-    op.execute(f"LOCK TABLE public.{_PLANS}, public.{_JOBS}, public.{_ATTEMPTS} IN ACCESS EXCLUSIVE MODE")
+    op.execute(f"LOCK TABLE app.{_PLANS}, app.{_JOBS}, app.{_ATTEMPTS} IN ACCESS EXCLUSIVE MODE")
     visited = op.get_bind().scalar(sa.text(f"""
-        SELECT EXISTS(SELECT 1 FROM public.{_PLANS} WHERE trigger='weekly' OR schedule_weekday_utc IS NOT NULL)
-            OR EXISTS(SELECT 1 FROM public.{_JOBS} WHERE schedule_weekday_utc IS NOT NULL)
-            OR EXISTS(SELECT 1 FROM public.{_ATTEMPTS} WHERE scope_trigger='week_utc')
+        SELECT EXISTS(SELECT 1 FROM app.{_PLANS} WHERE trigger='weekly' OR schedule_weekday_utc IS NOT NULL)
+            OR EXISTS(SELECT 1 FROM app.{_JOBS} WHERE schedule_weekday_utc IS NOT NULL)
+            OR EXISTS(SELECT 1 FROM app.{_ATTEMPTS} WHERE scope_trigger='week_utc')
     """))
     if visited:
         raise RuntimeError("Cannot discard reviewed Weekly UTC plans or their durable execution history")
-    op.execute(f"DROP TRIGGER ontology_transfer_keep_clock_kind ON public.{_JOBS}")
-    op.execute("DROP FUNCTION public.ontology_transfer_keep_clock_kind()")
+    op.execute(f"DROP TRIGGER ontology_transfer_keep_clock_kind ON app.{_JOBS}")
+    op.execute("DROP FUNCTION app.ontology_transfer_keep_clock_kind()")
     _replace_check(_PLANS, _PLAN_CHECK, _LEGACY_PLAN)
     _replace_check(_ATTEMPTS, _ATTEMPT_CHECK, _LEGACY_ATTEMPT)
     op.drop_constraint(_JOB_CHECK, _JOBS, type_="check")

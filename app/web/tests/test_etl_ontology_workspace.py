@@ -1,4 +1,4 @@
-"""Workspace DDL and Ontology metadata changes share the same PostgreSQL transaction."""
+"""Workspace DDL uses the business client; Ontology writes use the system client."""
 
 import re
 import unittest
@@ -18,7 +18,8 @@ class MissingMetadata(Exception):
 
 
 class TransactionPg:
-    def __init__(self):
+    def __init__(self, *, business=False):
+        self.business = business
         self.state = {"schemas": {"ts_custom", "ts_other"}, "tables": {("ts_other", "keep")},
                       "indexes": set(), "properties": {},
                       "objects": {("ts_custom", "old"): {"id": 1}, ("ts_other", "keep"): {"id": 2}},
@@ -41,7 +42,8 @@ class TransactionPg:
         try:
             yield self
         except Exception:
-            self.state = before
+            self.state.clear()
+            self.state.update(before)
             self.rollbacks += 1
             raise
         else:
@@ -52,25 +54,31 @@ class TransactionPg:
     async def execute(self, statement, params=None):
         sql = " ".join(str(statement).split())
         self.calls.append((sql, deepcopy(params)))
+        if self.business and "app.ontology_" in sql:
+            raise AssertionError("Business queries must not read or write system metadata")
         if self.fail_on and sql.startswith(self.fail_on):
             raise RuntimeError("Fixture rejects transaction step")
-        if self.missing_metadata and "public.ontology_" in sql:
+        if self.missing_metadata and "app.ontology_" in sql:
             raise DBAPIError(sql, params, MissingMetadata("Ontology table does not exist"), False)
         if sql.startswith("SET LOCAL"):
             return Result()
         if sql.startswith("SELECT 1 FROM pg_namespace"):
             return Result(scalar=1 if params["schema"] in self.state["schemas"] else None)
-        if sql.startswith("SELECT 1 FROM public.ontology_objects"):
+        if sql.startswith("SELECT 1 FROM app.ontology_objects"):
             return Result(scalar=1 if any(schema == params["schema"] and row.get("ddl_sql")
                 for (schema, _table), row in self.state["objects"].items()) else None)
         if sql.startswith("SELECT to_regclass"):
             return Result(scalar="ontology_" in str(params))
         if sql.startswith("SELECT pg_advisory_xact_lock"):
             return Result()
-        if sql.startswith("SELECT p.name FROM public.ontology_objects"):
+        if sql.startswith("SELECT p.name FROM app.ontology_objects"):
             identity = (params["schema"], params["table"])
             metadata = self.state["objects"].get(identity)
-            fields = self.state["properties"].get(identity, []) if metadata and metadata.get("is_active") and identity in self.state["tables"] else []
+            fields = self.state["properties"].get(identity, []) if metadata and metadata.get("is_active") else []
+            return Result(rows=[{"name": name} for name in fields])
+        if sql.startswith("SELECT a.attname AS name FROM pg_namespace"):
+            identity = (params["schema"], params["table"])
+            fields = self.state["properties"].get(identity, []) if identity in self.state["tables"] else []
             return Result(rows=[{"name": name} for name in fields])
         if sql.startswith("SELECT name, source_schema, source_table"):
             source = (params["schema"], params["table"])
@@ -82,7 +90,7 @@ class TransactionPg:
             self.state["tables"].add(identity)
         elif sql.startswith(("CREATE INDEX", "CREATE UNIQUE INDEX")):
             self.state["indexes"].add(re.search(r'INDEX "([a-z_]+)"', sql).group(1))
-        elif sql.startswith("INSERT INTO public.ontology_object_relations"):
+        elif sql.startswith("INSERT INTO app.ontology_object_relations"):
             self.state["relations"].append(deepcopy(params))
         elif sql.startswith("COMMENT ON"):
             pass
@@ -94,20 +102,20 @@ class TransactionPg:
                                     for schema, table in self.state["tables"]}
         elif sql.startswith("DROP SCHEMA"):
             self.state["schemas"].remove(re.findall(r'"([a-z_]+)"', sql)[0])
-        elif sql.startswith("UPDATE public.ontology_objects"):
+        elif sql.startswith("UPDATE app.ontology_objects"):
             self.state["objects"] = {(params["target"] if schema == params["schema"] else schema, table):
                 {**value, **{field: params[field] for field in ("layer", "table_role", "resource_group")}}
                 if schema == params["schema"] else value
                                      for (schema, table), value in self.state["objects"].items()}
-        elif sql.startswith("UPDATE public.ontology_object_relations"):
+        elif sql.startswith("UPDATE app.ontology_object_relations"):
             side = "source_schema" if "SET source_schema" in sql else "target_schema"
             for row in self.state["relations"]:
                 if row[side] == params["schema"]:
                     row[side] = params["target"]
-        elif sql.startswith("DELETE FROM public.ontology_object_relations"):
+        elif sql.startswith("DELETE FROM app.ontology_object_relations"):
             self.state["relations"] = [row for row in self.state["relations"]
                                        if params["schema"] not in (row["source_schema"], row["target_schema"])]
-        elif sql.startswith("DELETE FROM public.ontology_objects"):
+        elif sql.startswith("DELETE FROM app.ontology_objects"):
             self.state["objects"] = {key: value for key, value in self.state["objects"].items()
                                      if key[0] != params["schema"]}
         else:
@@ -118,6 +126,8 @@ class TransactionPg:
 def workspace():
     instance = object.__new__(EtlWorkspace)
     instance._pg = TransactionPg()
+    instance._business_pg = TransactionPg(business=True)
+    instance._business_pg.state = instance._pg.state
     instance._layers = type("Layers", (), {"get_table": AsyncMock(return_value={"name": "created"})})()
     return instance
 
@@ -199,7 +209,7 @@ class OntologyWorkspaceTests(unittest.IsolatedAsyncioTestCase):
 
         async def fail_second_relation(statement, params=None):
             nonlocal inserts
-            if str(statement).startswith("INSERT INTO public.ontology_object_relations"):
+            if str(statement).startswith("INSERT INTO app.ontology_object_relations"):
                 inserts += 1
                 if inserts == 2:
                     raise RuntimeError("Second relation rejected")
@@ -218,7 +228,7 @@ class OntologyWorkspaceTests(unittest.IsolatedAsyncioTestCase):
 
         async def sync(session, schema, table, **kwargs):
             self.assertIs(session, pg)
-            self.assertIs(kwargs["catalog_session"], pg)
+            self.assertIs(kwargs["catalog_session"], instance._business_pg)
             self.assertTrue(pg.active)
             self.assertIn((schema, table), pg.state["tables"])
             self.assertEqual(kwargs["provenance"], "flow:create_table")
@@ -270,13 +280,14 @@ class OntologyWorkspaceTests(unittest.IsolatedAsyncioTestCase):
     async def test_ddl_failure_never_attempts_metadata_sync(self):
         instance = workspace()
         before = deepcopy(instance._pg.state)
-        instance._pg.fail_on = "CREATE TABLE"
+        instance._business_pg.fail_on = "CREATE TABLE"
         with patch("app.web.services.etl_workspace.sync_object_metadata", new=AsyncMock()) as synchronize:
             with self.assertRaisesRegex(RuntimeError, "transaction step"):
                 await instance.create_table("custom", PAYLOAD)
         synchronize.assert_not_awaited()
         self.assertEqual(instance._pg.state, before)
         self.assertEqual(instance._pg.rollbacks, 1)
+        self.assertEqual(instance._business_pg.rollbacks, 1)
         instance._layers.get_table.assert_not_awaited()
 
     async def test_schema_rename_updates_objects_and_both_relation_sides_atomically(self):
@@ -284,7 +295,7 @@ class OntologyWorkspaceTests(unittest.IsolatedAsyncioTestCase):
         result = await instance.rename_schema("custom", {"name": "renamed", "alias": "Business domain"})
         self.assertEqual(result["name"], "ts_renamed")
         self.assertNotIn("ts_custom", instance._pg.state["schemas"])
-        parameters = next(params for sql, params in instance._pg.calls if sql.startswith("UPDATE public.ontology_objects"))
+        parameters = next(params for sql, params in instance._pg.calls if sql.startswith("UPDATE app.ontology_objects"))
         self.assertEqual(parameters, {"schema": "ts_custom", "target": "ts_renamed", "layer": "renamed",
             "table_role": "current", "resource_group": "other"})
         self.assertEqual(instance._pg.state["objects"], {("ts_renamed", "old"): {"id": 1,
@@ -308,7 +319,7 @@ class OntologyWorkspaceTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(any(sql.startswith(("ALTER", "UPDATE", "COMMENT")) for sql, _ in instance._pg.calls))
         self.assertEqual((instance._pg.commits, instance._pg.rollbacks), (0, 1))
         await instance.rename_schema("custom", {"alias": "Business domain"})
-        self.assertTrue(any(sql.startswith('COMMENT ON SCHEMA "ts_custom"') for sql, _ in instance._pg.calls))
+        self.assertTrue(any(sql.startswith('COMMENT ON SCHEMA "ts_custom"') for sql, _ in instance._business_pg.calls))
         self.assertEqual(instance._pg.state, before)
         self.assertEqual((instance._pg.commits, instance._pg.rollbacks), (1, 1))
 
@@ -327,7 +338,7 @@ class OntologyWorkspaceTests(unittest.IsolatedAsyncioTestCase):
     async def test_schema_rename_metadata_failure_restores_original_schema_and_rows(self):
         instance = workspace()
         before = deepcopy(instance._pg.state)
-        instance._pg.fail_on = "UPDATE public.ontology_object_relations"
+        instance._pg.fail_on = "UPDATE app.ontology_object_relations"
         with self.assertRaisesRegex(RuntimeError, "transaction step"):
             await instance.rename_schema("custom", {"name": "renamed"})
         self.assertEqual(instance._pg.state, before)
@@ -345,7 +356,7 @@ class OntologyWorkspaceTests(unittest.IsolatedAsyncioTestCase):
     async def test_drop_metadata_failure_restores_schema_and_all_its_metadata(self):
         instance = workspace()
         before = deepcopy(instance._pg.state)
-        instance._pg.fail_on = "DELETE FROM public.ontology_object_relations"
+        instance._pg.fail_on = "DELETE FROM app.ontology_object_relations"
         with self.assertRaisesRegex(RuntimeError, "transaction step"):
             await instance.delete_schema("custom")
         self.assertEqual(instance._pg.state, before)
@@ -368,7 +379,7 @@ class OntologyWorkspaceTests(unittest.IsolatedAsyncioTestCase):
     async def test_create_missing_ontology_returns_503_and_rolls_back_physical_table(self):
         instance = workspace()
         before = deepcopy(instance._pg.state)
-        failure = DBAPIError("SELECT * FROM public.ontology_objects", {}, MissingMetadata(), False)
+        failure = DBAPIError("SELECT * FROM app.ontology_objects", {}, MissingMetadata(), False)
         with patch("app.web.services.etl_workspace.sync_object_metadata", new=AsyncMock(side_effect=failure)):
             with self.assertRaises(HTTPException) as error:
                 await instance.create_table("custom", PAYLOAD)
@@ -380,14 +391,14 @@ class OntologyWorkspaceTests(unittest.IsolatedAsyncioTestCase):
     async def test_business_ddl_missing_relation_remains_422_instead_of_ontology_503(self):
         instance = workspace()
         before = deepcopy(instance._pg.state)
-        original = instance._pg.execute
+        original = instance._business_pg.execute
 
         async def fail_business_ddl(statement, params=None):
             if str(statement).startswith("CREATE TABLE"):
                 raise DBAPIError(str(statement), params, MissingMetadata("Missing referenced business table"), False)
             return await original(statement, params)
 
-        instance._pg.execute = fail_business_ddl
+        instance._business_pg.execute = fail_business_ddl
         with patch("app.web.services.etl_workspace.sync_object_metadata", new=AsyncMock()) as synchronize:
             with self.assertRaises(HTTPException) as error:
                 await instance.create_table("custom", PAYLOAD)

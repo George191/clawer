@@ -16,8 +16,8 @@ from app.storage.postgres_client import get_pg_client
 async def migrate(pg, *, apply=False):
     async with pg.session() as session:
         await session.execute(text("SET LOCAL lock_timeout = '3s'"))
-        await session.execute(text("SELECT pg_advisory_xact_lock(hashtext('public.ontology_data_connections_migration'))"))
-        if not await session.scalar(text("SELECT to_regclass('public.ontology_data_connections') IS NOT NULL")):
+        await session.execute(text("SELECT pg_advisory_xact_lock(hashtext('app.ontology_data_connections_migration'))"))
+        if not await session.scalar(text("SELECT to_regclass('app.ontology_data_connections') IS NOT NULL")):
             raise RuntimeError("Install the Data Source registry first")
         installed = bool(await session.scalar(text(DAMENG_CDC_INSTALLED)))
         if apply and not installed:

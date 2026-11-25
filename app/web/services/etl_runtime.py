@@ -26,7 +26,7 @@ _ETL_PATH = Path(__file__).resolve().parents[2] / "etl"
 _REDIS = RedisClient(settings.etl_redis_url)
 _STREAM = MonitorSnapshots(ttl=4, concurrent=6, capacity=128)
 _DRAFT_DDL = """
-CREATE TABLE IF NOT EXISTS public.flow_handler_drafts (
+CREATE TABLE IF NOT EXISTS app.flow_handler_drafts (
     schema_name TEXT NOT NULL,
     table_name TEXT NOT NULL,
     code TEXT NOT NULL,
@@ -257,10 +257,10 @@ async def read_handler(layer: str, table: str) -> dict[str, Any]:
     draft = None
     try:
         with fail_after(12):
-            exists = await pg.fetch_one("SELECT to_regclass('public.flow_handler_drafts') AS name")
+            exists = await pg.fetch_one("SELECT to_regclass('app.flow_handler_drafts') AS name")
             if exists and exists.get("name"):
                 draft = await pg.fetch_one(
-                    "SELECT code, updated_at FROM public.flow_handler_drafts "
+                    "SELECT code, updated_at FROM app.flow_handler_drafts "
                     "WHERE schema_name = :schema AND table_name = :table",
                     {"schema": row["schemaName"], "table": row["name"]},
                 )
@@ -287,7 +287,7 @@ async def save_handler(layer: str, table: str, code: str) -> dict[str, Any]:
         with fail_after(12):
             await pg.init_schema([_DRAFT_DDL])
             saved = await pg.fetch_one(
-                """INSERT INTO public.flow_handler_drafts (schema_name, table_name, code)
+                """INSERT INTO app.flow_handler_drafts (schema_name, table_name, code)
                 VALUES (:schema, :table, :code)
                 ON CONFLICT (schema_name, table_name)
                 DO UPDATE SET code = EXCLUDED.code, updated_at = now()

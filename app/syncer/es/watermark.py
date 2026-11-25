@@ -20,7 +20,7 @@ from app.storage.postgres_client import PostgresClient, get_pg_client
 
 logger = get_logger(__name__)
 
-TABLE_NAME = "public.syncer_watermarks"
+TABLE_NAME = "app.syncer_watermarks"
 _DDL = f"""
 CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
     syncer_name TEXT NOT NULL, source_table TEXT NOT NULL, target_index TEXT NOT NULL,

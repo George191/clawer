@@ -607,7 +607,7 @@ async def run_sandbox_transfer(
     target_stage = None
     weekly_constraint_settled = False
     try:
-        await session.execute(text("SET LOCAL search_path = pg_catalog, public, pg_temp"))
+        await session.execute(text("SET LOCAL search_path = pg_catalog, app, pg_temp"))
         await session.execute(text("SET LOCAL lock_timeout = '2s'"))
         await session.execute(text("SET LOCAL statement_timeout = '5s'"))
         parents = []

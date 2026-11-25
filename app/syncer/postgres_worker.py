@@ -14,6 +14,8 @@ from app.config.settings import settings
 from app.etl.cdc import cdc_schemas, committed_row, row_outputs
 from app.logger import get_logger, setup_service_logging
 from app.syncer.postgres_cdc import postgres_cdc_identity
+from app.storage.business_database import get_business_pg_client
+from app.storage.postgres_client import get_pg_client
 
 logger = get_logger(__name__)
 
@@ -114,7 +116,16 @@ def main() -> None:
     parser.add_argument("--batch", type=int, default=50)
     args = parser.parse_args()
     setup_service_logging("postgres-syncer", settings.log_level)
-    asyncio.run(PostgresSyncWorker(batch_size=args.batch).run())
+    async def run():
+        pg = get_business_pg_client()
+        await pg.resolve()
+        try:
+            await PostgresSyncWorker(batch_size=args.batch).run()
+        finally:
+            await pg.close()
+            await get_pg_client().close()
+
+    asyncio.run(run())
 
 
 if __name__ == "__main__":

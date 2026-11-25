@@ -28,7 +28,7 @@ class StorageRelationshipTypes(unittest.IsolatedAsyncioTestCase):
             active_patch.start()
             self.addCleanup(active_patch.stop)
         self.relation_id = str((await self.pg.fetch_one(
-            "SELECT id FROM public.ontology_object_relations WHERE name='child_parent'"))["id"])
+            "SELECT id FROM app.ontology_object_relations WHERE name='child_parent'"))["id"])
 
     async def listing(self, table="parents"):
         return await self.client.get(f"/etl/ts_creation/{table}/relationship-types")
@@ -48,15 +48,15 @@ class StorageRelationshipTypes(unittest.IsolatedAsyncioTestCase):
         return {
             "parents": await self.pg.fetch_all("SELECT * FROM ts_creation.parents ORDER BY tenant,id"),
             "children": await self.pg.fetch_all("SELECT * FROM ts_creation.children ORDER BY id"),
-            "links": await self.pg.fetch_all("SELECT * FROM public.ontology_object_links ORDER BY id"),
+            "links": await self.pg.fetch_all("SELECT * FROM app.ontology_object_links ORDER BY id"),
             "definition": await self.pg.fetch_one("""SELECT id, source_schema, source_table, source_fields,
                 target_schema, target_table, target_fields, cardinality, enabled, provenance, created_at
-                FROM public.ontology_object_relations WHERE id=:id""", {"id": int(self.relation_id)}),
+                FROM app.ontology_object_relations WHERE id=:id""", {"id": int(self.relation_id)}),
         }
 
     async def test_list_is_scoped_bidirectional_and_includes_disabled_and_self_once(self):
         disabled = await self.declare("inactive_parent", "standalone", ["tenant", "parent_id"])
-        await self.pg.execute("UPDATE public.ontology_object_relations SET enabled=false WHERE id=:id", {"id": int(disabled)})
+        await self.pg.execute("UPDATE app.ontology_object_relations SET enabled=false WHERE id=:id", {"id": int(disabled)})
         self_id = await self.declare("self_parent", "parents", ["tenant", "id"])
         response = await self.listing()
         self.assertEqual(response.status_code, 200, response.text)
@@ -140,7 +140,7 @@ class StorageRelationshipTypes(unittest.IsolatedAsyncioTestCase):
         self.actor.is_superuser = True
         await self.pg.execute("CREATE TABLE ts_creation.precision_source (id int PRIMARY KEY, tenant text, parent_id bigint)")
         exact_id = "9007199254740993"
-        await self.pg.execute("""INSERT INTO public.ontology_object_relations
+        await self.pg.execute("""INSERT INTO app.ontology_object_relations
             (id,name,source_schema,source_table,source_fields,target_schema,target_table,target_fields,
              relationship_kind,cardinality,provenance) VALUES (:id,'Exact relation','ts_creation','precision_source',
              ARRAY['tenant','parent_id'],'ts_creation','parents',ARRAY['tenant','id'],'association','many_to_one','precision test')""", {"id": int(exact_id)})
@@ -160,13 +160,13 @@ class StorageRelationshipTypes(unittest.IsolatedAsyncioTestCase):
     async def test_uninitialized_registry_fails_explicitly_without_installing_it(self):
         self.actor.is_superuser = True
         item = (await self.listing()).json()["items"][0]
-        await self.pg.execute("ALTER TABLE public.ontology_object_relations RENAME TO ontology_object_relations_unavailable")
+        await self.pg.execute("ALTER TABLE app.ontology_object_relations RENAME TO ontology_object_relations_unavailable")
         try:
             self.assertEqual((await self.listing()).status_code, 503)
             self.assertEqual((await self.update(item)).status_code, 503)
-            self.assertFalse((await self.pg.fetch_one("SELECT to_regclass('public.ontology_object_relations') IS NOT NULL AS installed"))["installed"])
+            self.assertFalse((await self.pg.fetch_one("SELECT to_regclass('app.ontology_object_relations') IS NOT NULL AS installed"))["installed"])
         finally:
-            await self.pg.execute("ALTER TABLE public.ontology_object_relations_unavailable RENAME TO ontology_object_relations")
+            await self.pg.execute("ALTER TABLE app.ontology_object_relations_unavailable RENAME TO ontology_object_relations")
 
     async def test_create_supports_multiple_business_dimensions_without_import_rules_or_automatic_edges(self):
         self.assertEqual((await self.create()).status_code, 403)
@@ -261,9 +261,9 @@ class StorageRelationshipTypes(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(page["canManage"], manage)
 
     async def test_explicit_metadata_migration_is_verified_idempotent_and_preserves_existing_rows(self):
-        await self.pg.execute("ALTER TABLE public.ontology_object_relations DROP CONSTRAINT ck_ontology_relation_import_fields")
-        await self.pg.execute("ALTER TABLE public.ontology_object_relations ADD CONSTRAINT legacy_import_fields CHECK (" + LEGACY_IMPORT_FIELDS_CHECK + ")")
-        await self.pg.execute("ALTER TABLE public.ontology_object_relations ADD CONSTRAINT legacy_endpoint_mapping UNIQUE (" + ",".join(ENDPOINT_FIELDS) + ")")
+        await self.pg.execute("ALTER TABLE app.ontology_object_relations DROP CONSTRAINT ck_ontology_relation_import_fields")
+        await self.pg.execute("ALTER TABLE app.ontology_object_relations ADD CONSTRAINT legacy_import_fields CHECK (" + LEGACY_IMPORT_FIELDS_CHECK + ")")
+        await self.pg.execute("ALTER TABLE app.ontology_object_relations ADD CONSTRAINT legacy_endpoint_mapping UNIQUE (" + ",".join(ENDPOINT_FIELDS) + ")")
         before = await self.snapshot()
         async with self.pg.session() as session:
             review = await migrate_relationship_type_definitions(session)
@@ -282,11 +282,11 @@ class StorageRelationshipTypes(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.create()).status_code, 201)
         for values in ("ARRAY[]::text[],ARRAY['id']::text[]", "ARRAY[NULL]::text[],ARRAY['id']::text[]"):
             with self.assertRaises(IntegrityError):
-                await self.pg.execute("UPDATE public.ontology_object_relations SET (source_fields,target_fields)=(" + values + ") WHERE name='Participates in'")
+                await self.pg.execute("UPDATE app.ontology_object_relations SET (source_fields,target_fields)=(" + values + ") WHERE name='Participates in'")
 
     async def test_metadata_migration_refuses_unknown_constraints_without_rewriting_them(self):
-        await self.pg.execute("ALTER TABLE public.ontology_object_relations DROP CONSTRAINT ck_ontology_relation_import_fields")
-        await self.pg.execute("""ALTER TABLE public.ontology_object_relations ADD CONSTRAINT unreviewed_fields
+        await self.pg.execute("ALTER TABLE app.ontology_object_relations DROP CONSTRAINT ck_ontology_relation_import_fields")
+        await self.pg.execute("""ALTER TABLE app.ontology_object_relations ADD CONSTRAINT unreviewed_fields
             CHECK (array_length(source_fields,1)=array_length(target_fields,1))""")
         try:
             before = await self.snapshot()
@@ -296,5 +296,5 @@ class StorageRelationshipTypes(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await self.snapshot(), before)
         finally:
             from app.etl.schema.object_relations import RELATION_IMPORT_FIELDS_CHECK
-            await self.pg.execute("ALTER TABLE public.ontology_object_relations DROP CONSTRAINT unreviewed_fields")
-            await self.pg.execute("ALTER TABLE public.ontology_object_relations ADD CONSTRAINT ck_ontology_relation_import_fields CHECK (" + RELATION_IMPORT_FIELDS_CHECK + ")")
+            await self.pg.execute("ALTER TABLE app.ontology_object_relations DROP CONSTRAINT unreviewed_fields")
+            await self.pg.execute("ALTER TABLE app.ontology_object_relations ADD CONSTRAINT ck_ontology_relation_import_fields CHECK (" + RELATION_IMPORT_FIELDS_CHECK + ")")

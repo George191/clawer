@@ -12,8 +12,8 @@ depends_on = None
 
 def _lock_registry(bind):
     bind.execute(text("SET LOCAL lock_timeout = '5s'"))
-    bind.execute(text("SELECT pg_advisory_xact_lock(hashtext('public.ontology_data_connections_migration'))"))
-    return bind.scalar(text("SELECT to_regclass('public.ontology_data_connections') IS NOT NULL"))
+    bind.execute(text("SELECT pg_advisory_xact_lock(hashtext('app.ontology_data_connections_migration'))"))
+    return bind.scalar(text("SELECT to_regclass('app.ontology_data_connections') IS NOT NULL"))
 
 
 def upgrade():
@@ -26,7 +26,7 @@ def downgrade():
     bind = op.get_bind()
     if _lock_registry(bind) and bind.scalar(text(ENGINE_CHECK_INSTALLED)):
         # PostgreSQL validates the restored check atomically, preserving any newer sources on failure.
-        op.execute("""ALTER TABLE public.ontology_data_connections
+        op.execute("""ALTER TABLE app.ontology_data_connections
             DROP CONSTRAINT ck_ontology_source_engine_v2,
             ADD CONSTRAINT ontology_data_connections_engine_check CHECK (
                 engine IN ('postgresql','mysql','oracle','dameng','elasticsearch','milvus'))""")

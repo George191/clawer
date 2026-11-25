@@ -55,7 +55,7 @@ class DataConnectionsIntegration(unittest.IsolatedAsyncioTestCase):
             await self.pg.close()
             raise RuntimeError("Connected database is not ontology_creation_regression")
         async with self.pg.session() as session:
-            await session.execute(text("DROP TABLE IF EXISTS public.ontology_data_connections"))
+            await session.execute(text("DROP TABLE IF EXISTS app.ontology_data_connections"))
         await migrate(self.pg, apply=True)
         self.service = object.__new__(sources.DataConnections)
         self.service._pg = self.pg
@@ -73,7 +73,7 @@ class DataConnectionsIntegration(unittest.IsolatedAsyncioTestCase):
         await self.pg.close()
 
     async def stored(self, identifier):
-        return await self.pg.fetch_one("SELECT * FROM public.ontology_data_connections WHERE id=CAST(:id AS uuid)", {"id": identifier})
+        return await self.pg.fetch_one("SELECT * FROM app.ontology_data_connections WHERE id=CAST(:id AS uuid)", {"id": identifier})
 
     async def test_mongodb_install_and_upgrade_preserve_saved_sources(self):
         maintenance = import_module("app.web.alembic.versions.ab69e2f48a0d_ontology_mongodb_source")
@@ -117,17 +117,17 @@ class DataConnectionsIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def test_migration_check_apply_and_repeat_preserve_other_schema_definitions(self):
         async with self.pg.session() as session:
-            await session.execute(text("DROP TABLE public.ontology_data_connections"))
+            await session.execute(text("DROP TABLE app.ontology_data_connections"))
         before = await self.pg.fetch_all("SELECT oid,nspname FROM pg_namespace ORDER BY oid")
         check = await migrate(self.pg)
         self.assertFalse(check["ready"])
-        self.assertFalse((await self.pg.fetch_one("SELECT to_regclass('public.ontology_data_connections') AS object"))["object"])
+        self.assertFalse((await self.pg.fetch_one("SELECT to_regclass('app.ontology_data_connections') AS object"))["object"])
         applied = await migrate(self.pg, apply=True)
-        first = await self.pg.fetch_one("SELECT 'public.ontology_data_connections'::regclass::oid AS oid")
+        first = await self.pg.fetch_one("SELECT 'app.ontology_data_connections'::regclass::oid AS oid")
         repeated = await migrate(self.pg, apply=True)
         self.assertTrue(applied["ready"] and repeated["ready"])
         self.assertEqual(repeated["changes"], [])
-        self.assertEqual(first, await self.pg.fetch_one("SELECT 'public.ontology_data_connections'::regclass::oid AS oid"))
+        self.assertEqual(first, await self.pg.fetch_one("SELECT 'app.ontology_data_connections'::regclass::oid AS oid"))
         self.assertEqual(before, await self.pg.fetch_all("SELECT oid,nspname FROM pg_namespace ORDER BY oid"))
         self.assertEqual(await self.service.list(), [])
 
@@ -219,7 +219,7 @@ class DataConnectionsIntegration(unittest.IsolatedAsyncioTestCase):
         async def set_proof(*, revision: str, fingerprint: str, is_current: bool = True):
             async with self.pg.session() as session:
                 await session.execute(text("""
-                    INSERT INTO public.ontology_batch_source_identities
+                    INSERT INTO app.ontology_batch_source_identities
                         (connection_id, source_updated_at, fingerprint, is_current)
                     VALUES (CAST(:id AS uuid), CAST(CAST(:revision AS text) AS timestamptz), :fingerprint, :is_current)
                     ON CONFLICT (connection_id) DO UPDATE SET
@@ -232,7 +232,7 @@ class DataConnectionsIntegration(unittest.IsolatedAsyncioTestCase):
                 raise RuntimeError("optional module initialization failed")
 
         async with self.pg.session() as session:
-            await session.execute(text("DROP TABLE IF EXISTS public.ontology_batch_source_identities"))
+            await session.execute(text("DROP TABLE IF EXISTS app.ontology_batch_source_identities"))
 
         with (
             patch.object(sources, "settings", configured), patch.object(identity, "settings", configured),
@@ -263,7 +263,7 @@ class DataConnectionsIntegration(unittest.IsolatedAsyncioTestCase):
                 try:
                     async with self.pg.session() as session:
                         await session.execute(text("""
-                            CREATE TABLE public.ontology_batch_source_identities (
+                            CREATE TABLE app.ontology_batch_source_identities (
                                 connection_id uuid PRIMARY KEY, source_updated_at timestamptz NOT NULL,
                                 fingerprint varchar(64) NOT NULL, is_current bool NOT NULL,
                                 verified_at timestamptz NOT NULL DEFAULT now())
@@ -301,7 +301,7 @@ class DataConnectionsIntegration(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(all(cap == deny("source_paused") for cap in paused["capabilities"].values()))
                 finally:
                     async with self.pg.session() as session:
-                        await session.execute(text("DROP TABLE IF EXISTS public.ontology_batch_source_identities"))
+                        await session.execute(text("DROP TABLE IF EXISTS app.ontology_batch_source_identities"))
 
     async def test_real_postgresql_probe_authenticates_and_persists_in_isolated_database(self):
         url = make_url(URL)
@@ -607,7 +607,7 @@ class DataConnectionsIntegration(unittest.IsolatedAsyncioTestCase):
                 async with self.pg.session() as session:
                     await session.execute(text("SET LOCAL lock_timeout = '100ms'"))
                     await session.execute(text("""
-                        UPDATE public.ontology_data_connections SET name='Concurrent edit', updated_at=clock_timestamp()
+                        UPDATE app.ontology_data_connections SET name='Concurrent edit', updated_at=clock_timestamp()
                         WHERE id=CAST(:id AS uuid)
                     """), {"id": saved["id"]})
             self.assertEqual(cannot_edit.exception.orig.sqlstate, "55P03")

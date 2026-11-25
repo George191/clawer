@@ -157,7 +157,7 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
     async def drop_fixture(self):
         await self.pg.execute("DROP TABLE ontology_pipeline_sandbox_output_rows, ontology_pipeline_sandbox_outputs")
         await self.pg.execute("DROP TABLE ontology_pipeline_sandbox_revisions")
-        await self.pg.execute("DROP FUNCTION IF EXISTS public.ontology_pipeline_keep_restore_provenance()")
+        await self.pg.execute("DROP FUNCTION IF EXISTS app.ontology_pipeline_keep_restore_provenance()")
         await self.pg.execute("DROP TABLE ontology_cdc_sandbox_version_rows, ontology_cdc_sandbox_versions")
         await self.pg.execute("DROP TABLE ontology_cdc_sandbox_receipts, ontology_cdc_sandbox_binding")
         await self.pg.execute("DROP SCHEMA ts_cdc_sandbox CASCADE")

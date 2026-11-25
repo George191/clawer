@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.etl.schema.object_relations import manage_object_relations
 from app.storage.postgres_client import get_pg_client
+from app.storage.business_database import get_business_pg_client
 
 
 def main() -> int:
@@ -29,13 +30,16 @@ def main() -> int:
 
 async def run(definitions: list[dict], *, apply: bool) -> int:
     pg = get_pg_client()
+    business_pg = get_business_pg_client()
     try:
         await pg.connect(max_retries=1)
-        result = await manage_object_relations(pg, definitions, apply=apply)
+        await business_pg.connect(max_retries=1)
+        result = await manage_object_relations(pg, definitions, catalog_pg=business_pg, apply=apply)
         print(json.dumps(result))
         return 0 if result["installed"] else 1
     finally:
         await pg.close()
+        await business_pg.close()
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ from math import isfinite
 import re
 
 from anyio import fail_after
+from app.etl.schema.catalog_metadata import catalog_parameters
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -61,7 +62,7 @@ async def read_column_planner_statistic(
             # catalog snapshot used after obtaining the exact relation lock.
             async with session.begin():
                 await _read_options(session)
-                original = (await session.execute(_ROOT, params)).one_or_none()
+                original = (await session.execute(_ROOT, await catalog_parameters(params))).one_or_none()
                 if original is None or original.filenode is None:
                     raise ColumnPlannerStatisticUnavailable()
             async with session.begin():
@@ -70,7 +71,7 @@ async def read_column_planner_statistic(
                 # A fresh RR snapshot now sees changes to RLS/ACL/visibility
                 # committed after preflight, even when the OID did not change.
                 await session.execute(text(f'LOCK TABLE ONLY "{schema}"."{table}" IN ACCESS SHARE MODE NOWAIT'))
-                locked = (await session.execute(_ROOT, params)).one_or_none()
+                locked = (await session.execute(_ROOT, await catalog_parameters(params))).one_or_none()
                 if locked != original or await session.scalar(_HELD, {"oid": original.oid}) is not True:
                     raise ColumnPlannerStatisticUnavailable()
                 sample = (await session.execute(_SAMPLE, params)).all()

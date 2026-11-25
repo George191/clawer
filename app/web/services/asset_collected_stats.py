@@ -20,7 +20,7 @@ from app.web.services.transfer_runs import SANDBOX
 _STALE_AFTER = timedelta(minutes=3)
 _log = logging.getLogger(__name__)
 _VISIBLE = text("""
-    SELECT NOT EXISTS (SELECT 1 FROM public.ontology_objects WHERE schema_name=:schema AND table_name=:table
+    SELECT NOT EXISTS (SELECT 1 FROM app.ontology_objects WHERE schema_name=:schema AND table_name=:table
                        AND is_active AND visibility='hidden')
 """)
 _SAMPLE = text("""
@@ -36,7 +36,7 @@ _SAMPLE = text("""
       AND pg_catalog.pg_relation_filenode(c.oid)=CAST(:filenode AS oid)
       AND c.relkind='r' AND c.relpersistence='p' AND NOT c.relispartition
       AND NOT c.relrowsecurity AND NOT c.relhasrules
-      AND NOT EXISTS (SELECT 1 FROM public.ontology_objects o WHERE o.schema_name=:schema AND o.table_name=:table
+      AND NOT EXISTS (SELECT 1 FROM app.ontology_objects o WHERE o.schema_name=:schema AND o.table_name=:table
                       AND o.is_active AND o.visibility='hidden')
       AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i WHERE c.oid IN (i.inhrelid, i.inhparent))
 """)

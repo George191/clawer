@@ -68,7 +68,7 @@ class MetadataPg:
 
     async def fetch_one(self, sql, params):
         if sql.startswith("SELECT to_regclass"):
-            return {"table_name": "public.ontology_objects"}
+            return {"table_name": "app.ontology_objects"}
         result = await self.execute(sql, params)
         return result.first()
 
@@ -78,7 +78,7 @@ class MetadataPg:
     async def execute(self, statement, params=None):
         sql = " ".join(str(statement).split())
         self.calls.append((sql, deepcopy(params)))
-        sql = sql.replace("public.ontology_", "ontology_")
+        sql = sql.replace("app.ontology_", "ontology_")
         params = params or {}
         if sql.startswith("SELECT c.oid"):
             row = self.catalog.get((params["schema"], params["table"]))
@@ -359,13 +359,13 @@ class OntologyMetadataTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(pg.objects, expected)
         self.assertEqual(pg.bootstrap_count, 1)
         ddl = "\n".join(pg.bootstrap_statements)
-        self.assertIn("public.ontology_objects", ddl)
-        self.assertIn("public.ontology_object_properties", ddl)
+        self.assertIn("app.ontology_objects", ddl)
+        self.assertIn("app.ontology_object_properties", ddl)
         self.assertNotIn("ddlregistry", ddl)
 
     def test_new_ddl_has_unique_physical_identity_and_valid_group_constraint(self):
         self.assertIn("(schema_name, table_name)", "\n".join(ontology.ONTOLOGY_INDEX_DDL_STATEMENTS))
-        self.assertIn("REFERENCES public.ontology_objects(id) ON DELETE CASCADE", ontology.ONTOLOGY_PROPERTIES_DDL)
+        self.assertIn("REFERENCES app.ontology_objects(id) ON DELETE CASCADE", ontology.ONTOLOGY_PROPERTIES_DDL)
         self.assertIn("ontology_objects_resource_group_check", ontology.ONTOLOGY_OBJECTS_DDL)
         self.assertIn("CHECK (resource_group IN", "\n".join(ontology.ONTOLOGY_OBJECT_COLUMNS_ADD_STATEMENTS))
         self.assertEqual({ontology.resource_group(layer) for layer in ["ods", "task", "ads", "unknown"]}, {"ingestion", "processing", "serving", "other"})

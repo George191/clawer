@@ -17,20 +17,20 @@ def upgrade():
     # its credential in place. The existing rows alone represent retained keys.
     # ORM-created schemas already have the enum and may have disabled keys.
     op.execute("""
-        ALTER TABLE public.apikey ADD COLUMN IF NOT EXISTS status public.statustypes
-        NOT NULL DEFAULT 'ENABLE'::public.statustypes
+        ALTER TABLE app.apikey ADD COLUMN IF NOT EXISTS status app.statustypes
+        NOT NULL DEFAULT 'ENABLE'::app.statustypes
     """)
-    op.execute("ALTER TABLE public.apikey ALTER COLUMN status DROP DEFAULT")
+    op.execute("ALTER TABLE app.apikey ALTER COLUMN status DROP DEFAULT")
 
 
 def downgrade():
     # An old schema cannot represent a disabled, expired, or locked key.
-    op.execute("LOCK TABLE public.apikey IN ACCESS EXCLUSIVE MODE")
+    op.execute("LOCK TABLE app.apikey IN ACCESS EXCLUSIVE MODE")
     op.execute("""
         DO $$ BEGIN
-            IF EXISTS (SELECT 1 FROM public.apikey WHERE status <> 'ENABLE') THEN
+            IF EXISTS (SELECT 1 FROM app.apikey WHERE status <> 'ENABLE') THEN
                 RAISE EXCEPTION 'Cannot downgrade team API keys with retained non-enabled states';
             END IF;
         END $$
     """)
-    op.execute("ALTER TABLE public.apikey DROP COLUMN status")
+    op.execute("ALTER TABLE app.apikey DROP COLUMN status")

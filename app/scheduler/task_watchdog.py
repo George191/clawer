@@ -121,7 +121,7 @@ async def _record_failure(task_id: str, run_id: str, delivery_id: str, reason: s
             )
             async with connection.transaction():
                 task = await connection.fetchrow(
-                    """SELECT id FROM public.automation_tasks
+                    """SELECT id FROM app.automation_tasks
                        WHERE id=$1::uuid AND current_run_id=$2::uuid AND celery_task_id=$3
                          AND status IN ('running','paused') AND deleted_at IS NULL
                          AND control_state IS DISTINCT FROM 'canceled' FOR UPDATE""",
@@ -130,7 +130,7 @@ async def _record_failure(task_id: str, run_id: str, delivery_id: str, reason: s
                 if task is None:
                     return
                 run = await connection.fetchrow(
-                    """SELECT id FROM public.automation_task_runs
+                    """SELECT id FROM app.automation_task_runs
                        WHERE id=$1::uuid AND task_id=$2::uuid
                          AND status IN ('running','paused') AND ended_at IS NULL FOR UPDATE""",
                     UUID(run_id), UUID(task_id),
@@ -143,17 +143,17 @@ async def _record_failure(task_id: str, run_id: str, delivery_id: str, reason: s
                     created_at=observed,
                 )
                 await connection.execute(
-                    """INSERT INTO public.automation_task_logs
+                    """INSERT INTO app.automation_task_logs
                        (task_id,run_id,level,message,created_at) VALUES ($1,$2,'warn',$3,$4)""",
                     UUID(task_id), UUID(run_id), message, observed,
                 )
                 await connection.execute(
-                    """UPDATE public.automation_task_runs SET status='failed',ended_at=$2,
+                    """UPDATE app.automation_task_runs SET status='failed',ended_at=$2,
                        log_count=COALESCE(log_count,0)+1 WHERE id=$1""",
                     UUID(run_id), observed,
                 )
                 await connection.execute(
-                    """UPDATE public.automation_tasks SET status='failed',throughput=0,
+                    """UPDATE app.automation_tasks SET status='failed',throughput=0,
                        updated_at=$2 WHERE id=$1""", UUID(task_id), observed,
                 )
     finally:

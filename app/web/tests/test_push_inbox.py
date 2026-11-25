@@ -271,7 +271,7 @@ class PushInboxPostgres(IsolatedAsyncioTestCase):
             self.assertEqual((await admin.get(_ADMIN)).json()["acceptedCount"], 2)
             async with self.engine.connect() as conn:
                 values = (await conn.execute(text(
-                    "SELECT body_digest FROM public.ontology_push_inbox_receipts ORDER BY ordinal"
+                    "SELECT body_digest FROM app.ontology_push_inbox_receipts ORDER BY ordinal"
                 ))).scalars().all()
                 self.assertEqual(values, [sha256(_BODY).hexdigest(),
                                           sha256(b"synthetic-push-secondary-receipt-v1\0" + sha256(_BODY).digest()).hexdigest()])

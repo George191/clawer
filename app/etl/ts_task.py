@@ -105,12 +105,12 @@ class TsTask(ETLBase):
         return await super()._dispatch(message)
 
     async def _on_init_schema(self) -> None:
-        await ensure_ontology_tables(self._pg)
+        await ensure_ontology_tables(self._metadata_pg)
         if "vulnerability" in self._handlers and not await get_registered_ddl(
-            self._pg, "task", "vulnerability",
+            self._metadata_pg, "task", "vulnerability",
         ):
             await save_registered_ddl(
-                self._pg,
+                self._metadata_pg,
                 layer="task",
                 table="vulnerability",
                 ddl_sql=TASK_VULNERABILITY_DDL,

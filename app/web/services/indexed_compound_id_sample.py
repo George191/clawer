@@ -4,6 +4,7 @@ from ipaddress import ip_address
 import re
 
 from anyio import fail_after
+from app.etl.schema.catalog_metadata import catalog_parameters
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
@@ -82,10 +83,10 @@ def _origin(session: AsyncSession, scope: IndexedCompoundSampleScope) -> tuple[s
 
 
 async def _catalog(session: AsyncSession, scope: IndexedCompoundSampleScope) -> str | None:
-    return await session.scalar(_SCOPE, {
+    return await session.scalar(_SCOPE, await catalog_parameters({
         **_LINEAGE_SCOPE, "schema": scope.schema_name, "table": scope.table,
         "heap_oid": scope.heapOid, "heap_node": scope.heapFilenode, "index_oid": scope.indexOid, "index_node": scope.indexFilenode,
-    })
+    }))
 
 
 async def _pinned(session: AsyncSession, scope: IndexedCompoundSampleScope, origin: tuple[str, int]) -> str | None:

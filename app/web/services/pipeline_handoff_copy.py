@@ -106,7 +106,7 @@ async def copy_database_ready(session: AsyncSession, *, write: bool) -> bool:
 async def copy_available(session: AsyncSession, actor_id: UUID, grant) -> bool:
     if not _granted(actor_id, grant):
         return False
-    await session.execute(text("SET LOCAL search_path=pg_catalog,public,pg_temp"))
+    await session.execute(text("SET LOCAL search_path=pg_catalog,app,pg_temp"))
     return await copy_database_ready(session, write=False)
 
 
@@ -149,7 +149,7 @@ async def copy_handoff(
         raise _unavailable()
     await session.execute(text("SET LOCAL statement_timeout='1000ms'"))
     await session.execute(text("SET LOCAL lock_timeout='100ms'"))
-    await session.execute(text("SET LOCAL search_path=pg_catalog,public,pg_temp"))
+    await session.execute(text("SET LOCAL search_path=pg_catalog,app,pg_temp"))
     if not await copy_database_ready(session, write=True):
         raise _unavailable()
     # This scope cannot change the archived Builder review while a copy settles.

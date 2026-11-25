@@ -34,7 +34,7 @@ async function mount({ sources = [], selected = '', query = '', overrides = {}, 
   const session = { identity: 'synthetic-account', authenticated: true, locked: false }, id = 'data-connections-' + ++instance;
   const store = { sources: [...sources], closed: false, warehouseRetries: 0 };
   const props = {
-    warehouse: warehouseFailed ? undefined : { id: 'warehouse', engine: 'postgresql', database: 'warehouse_fixture' }, warehouseFailed,
+    warehouse: warehouseFailed ? undefined : { id: 'warehouse', engine: 'postgresql', database: 'warehouse_fixture', connectionId: 'selected-business', name: 'Selected business source' }, warehouseFailed,
     onRetryWarehouse: () => store.warehouseRetries++, onCancel: () => { store.closed = true; },
   };
   const defaults = {
@@ -45,6 +45,7 @@ async function mount({ sources = [], selected = '', query = '', overrides = {}, 
     createDataSource: async payload => { const saved = source(payload.engine, { name: payload.name, config: payload.config }); store.sources.push(saved); return saved; },
     updateDataSource: async (identifier, payload) => { const saved = source(payload.engine, { id: identifier, name: payload.name, config: payload.config }); store.sources = store.sources.map(row => row.id === identifier ? saved : row); return saved; },
     deleteDataSource: async identifier => { store.sources = store.sources.filter(row => row.id !== identifier); },
+    selectBusinessDatabase: async saved => ({ id: 'warehouse', engine: 'postgresql', database: saved.config.database, connectionId: saved.id, name: saved.name }),
   };
   const implementations = { ...defaults, ...overrides };
   const api = Object.fromEntries(Object.keys(defaults).map(name => [name, (...args) => { requests.push({ name, args }); return implementations[name](...args); }]));
@@ -115,7 +116,7 @@ test('the inventory dialog shows the real warehouse even with no saved external 
   const ui = await mount({ query: 'source=ts_ods&view=list' });
   assert.equal(ui.inventory().props.open, true);
   const warehouse = ui.nodes().find(node => node.props['aria-label'] === 'Workspace warehouse');
-  assert.match(text(warehouse), /PostgreSQL · warehouse_fixture · System-managed/);
+  assert.match(text(warehouse), /PostgreSQL · warehouse_fixture · Selected business source/);
   assert.equal(nodes(warehouse).find(node => node.type === 'ConnectorMark').props.engine, 'postgresql');
   assert.equal(nodes(warehouse).find(node => node.type === 'Link').props.to, '/ontology?source=ts_ods&view=list');
   assert.ok(ui.nodes().find(node => node.type === 'strong' && text(node) === 'No external sources configured'));
@@ -126,6 +127,32 @@ test('the inventory dialog shows the real warehouse even with no saved external 
   assert.equal(ui.inventory().props.open, true);
   assert.equal(ui.params().get('view'), 'list');
   ui.inventory().props.onCancel(); assert.equal(ui.store.closed, true); ui.unmount();
+});
+
+test('ETL selection uses a saved active PostgreSQL connection and refreshes the business database', async () => {
+  const postgres = source('postgresql', { id: 'business-target', name: 'Business target' });
+  const ui = await mount({ warehouseFailed: true, sources: [postgres, source('mysql', { id: 'mysql-source' }),
+    source('postgresql', { id: 'paused-source', pausedAt: '2026-01-01T00:00:00Z' })] });
+  const selector = ui.nodes().find(node => node.props['aria-label'] === 'ETL business connection');
+  const options = nodes(selector).filter(node => node.type === 'option').map(node => node.props.value);
+  assert.deepEqual(options, ['', postgres.id]);
+  ui.select('ETL business connection', postgres.id);
+  await ui.click('Use for ETL'); await ui.settle();
+  assert.equal(ui.requests.find(request => request.name === 'selectBusinessDatabase').args[0].id, postgres.id);
+  assert.equal(ui.store.warehouseRetries, 1);
+  assert.ok(ui.notices.some(notice => notice.kind === 'success' && /Business database selected/.test(notice.value.content)));
+});
+
+test('a failed business selection keeps the explicit selection and reports its error', async () => {
+  const postgres = source('postgresql', { id: 'business-target' });
+  const ui = await mount({ warehouseFailed: true, sources: [postgres], overrides: {
+    selectBusinessDatabase: async () => { throw new Error('Connection changed; reload it'); },
+  } });
+  ui.select('ETL business connection', postgres.id);
+  await ui.click('Use for ETL'); await ui.settle();
+  assert.equal(ui.store.warehouseRetries, 0);
+  assert.equal(ui.nodes().find(node => node.props['aria-label'] === 'ETL business connection').props.value, postgres.id);
+  assert.ok(ui.notices.some(notice => notice.kind === 'error' && /Connection changed/.test(notice.value.content)));
 });
 
 test('warehouse visibility is independent of external source access and errors', async () => {

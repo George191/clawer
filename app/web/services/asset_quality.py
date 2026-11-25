@@ -59,9 +59,9 @@ _HEAP = text("""
 # the generic object registry being installed or readable.
 _DRIFT_DETAIL = text("""
     SELECT o.schema_drift
-    FROM public.ontology_asset_quality_observations o
-    JOIN public.ontology_asset_freshness_policies p ON p.target_table = o.target_table
-    JOIN public.ontology_transfer_plans pl ON pl.id = p.plan_id AND pl.updated_at = p.plan_updated_at
+    FROM app.ontology_asset_quality_observations o
+    JOIN app.ontology_asset_freshness_policies p ON p.target_table = o.target_table
+    JOIN app.ontology_transfer_plans pl ON pl.id = p.plan_id AND pl.updated_at = p.plan_updated_at
       AND pl.source_schema = :schema AND pl.target_schema = :schema AND pl.target_table = p.target_table
     JOIN pg_catalog.pg_namespace n ON n.nspname = :schema
     JOIN pg_catalog.pg_class c ON c.relnamespace = n.oid AND c.relname = p.target_table
@@ -80,7 +80,7 @@ _DRIFT_DETAIL = text("""
       AND pg_catalog.has_schema_privilege(n.oid, 'USAGE')
       AND pg_catalog.has_table_privilege(c.oid, 'SELECT')
       AND NOT EXISTS (
-          SELECT 1 FROM public.ontology_objects r WHERE r.schema_name = n.nspname AND r.table_name = c.relname
+          SELECT 1 FROM app.ontology_objects r WHERE r.schema_name = n.nspname AND r.table_name = c.relname
             AND (r.is_active IS NOT TRUE OR r.visibility = 'hidden')
       )
 """)

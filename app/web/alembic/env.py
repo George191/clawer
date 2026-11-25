@@ -5,7 +5,7 @@ import sys
 
 from alembic import context
 from pydantic import PostgresDsn
-from sqlalchemy import pool
+from sqlalchemy import pool, text
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 # this is the Alembic Config object, which provides
@@ -34,26 +34,22 @@ from app.web.core.config import settings # noqa
 
 target_metadata = SQLModel.metadata
 
-# This is one migration chain for the whole PostgreSQL database.  The
-# historical SQLModel tables use PostgreSQL's default schema (public), while
-# ETL creates its ts_* schemas dynamically from the ETL table layout.  Keeping
-# schema awareness enabled prevents Alembic from silently treating tables in
-# other schemas as tables in public during autogenerate.  The unprefixed names
-# remain available for future platform schemas without creating another
-# migration chain.
-_USER_SCHEMAS = {"app", "etl", "web", "meta"}
+# System tables and the migration version are owned by app. Physical ts_*
+# tables belong to the business database selected through Data Connections.
+_USER_SCHEMAS = {"app"}
 
 
 def include_name(name, type_, parent_names):
     # Ontology owns these table definitions and its explicit metadata migration.
-    if type_ == "table" and parent_names.get("schema_name") in {None, "app", "public"}:
-        if name in {"ontology_objects", "ontology_object_properties", "ontology_object_relations"}:
+    if type_ == "table" and parent_names.get("schema_name") in {None, "app"}:
+        if name in {"ontology_objects", "ontology_object_properties", "ontology_object_relations",
+                    "ontology_data_connections", "etl_business_connection"}:
             return False
     if type_ != "schema":
         return True
-    if name is None or name == "public":
+    if name is None:
         return True
-    return name in _USER_SCHEMAS or name.startswith("ts_")
+    return name in _USER_SCHEMAS
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
@@ -86,9 +82,12 @@ def run_migrations_offline():
         compare_type=True,
         include_schemas=True,
         include_name=include_name,
+        version_table_schema="app",
     )
 
     with context.begin_transaction():
+        context.execute("CREATE SCHEMA IF NOT EXISTS app")
+        context.execute("SET LOCAL search_path=app,pg_catalog")
         context.run_migrations()
 
 
@@ -99,6 +98,7 @@ def do_run_migrations(connection):
         compare_type=True,
         include_schemas=True,
         include_name=include_name,
+        version_table_schema="app",
     )
 
     with context.begin_transaction():
@@ -118,9 +118,13 @@ async def run_async_migrations():
         configuration,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        connect_args={"server_settings": {"search_path": "app,pg_catalog"}},
     )
 
     async with connectable.connect() as connection:
+        await connection.execute(text("CREATE SCHEMA IF NOT EXISTS app"))
+        await connection.commit()
+        connection.dialect.default_schema_name = "app"
         await connection.run_sync(do_run_migrations)
 
     await connectable.dispose()

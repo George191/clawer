@@ -24,6 +24,8 @@ from app.etl.schema.object_relations import (
     read_object_relations,
 )
 from app.storage.postgres_client import PostgresClient, get_pg_client
+from app.storage.business_database import BusinessDatabaseNotConfigured, get_business_pg_client
+from app.etl.schema.catalog_metadata import OBJECT_RELATION, PROPERTY_RECORDS, RELATION_RECORDS, catalog_parameters
 from app.web.api.models.batch_syncs import INCREMENTAL_TARGET, TARGET_SCHEMA as BATCH_TARGET_SCHEMA
 from app.web.api.models.etl import PREVIEW_ROWS_MAX_LIMIT, PREVIEW_ROWS_MAX_OFFSET, RowPreviewPolicy
 from app.web.core.config import settings
@@ -61,12 +63,12 @@ def browser_scalar(value):
 RESERVED_BATCH_RANGE_TARGET = (BATCH_TARGET_SCHEMA, BATCH_RANGE_TARGET)
 _RESERVED_BATCH_REGCLASS = ".".join(RESERVED_BATCH_TARGET)
 _RESERVED_BATCH_RANGE_REGCLASS = ".".join(RESERVED_BATCH_RANGE_TARGET)
-_BATCH_RECEIPTS_REGCLASS = "public.ontology_batch_sync_receipts"
-_PUSH_INBOX_RECEIPTS = "public.ontology_push_inbox_receipts"
-_PUSH_INBOX_MARKER = "public.ontology_push_inbox_state"
+_BATCH_RECEIPTS_REGCLASS = "app.ontology_batch_sync_receipts"
+_PUSH_INBOX_RECEIPTS = "app.ontology_push_inbox_receipts"
+_PUSH_INBOX_MARKER = "app.ontology_push_inbox_state"
 _PUSH_APPLY_REGCLASS = f"{PUSH_APPLY_SCHEMA}.{PUSH_APPLY_TARGET}"
-_PUSH_APPLY_BINDING = "public.ontology_push_inbox_apply_binding"
-_PUSH_APPLY_RECEIPTS = "public.ontology_push_inbox_apply_receipts"
+_PUSH_APPLY_BINDING = "app.ontology_push_inbox_apply_binding"
+_PUSH_APPLY_RECEIPTS = "app.ontology_push_inbox_apply_receipts"
 
 
 def require_ordinary_table(schema: str, table: str) -> None:
@@ -85,7 +87,7 @@ LAYERS = ("rds", "ods", "task", "dwd", "dws", "dim", "ads")
 WAREHOUSE_SCHEMAS = frozenset(f"ts_{layer}" for layer in LAYERS)
 _OBJECT_GROUPS = ("ingestion", "processing", "serving", "other")
 _OBJECT_GROUP_SQL = "COALESCE(o.resource_group, 'other')"
-_OBJECT_METADATA_JOIN = """LEFT JOIN public.ontology_objects o
+_OBJECT_METADATA_JOIN = f"""LEFT JOIN {OBJECT_RELATION} o
     ON o.schema_name = n.nspname AND o.table_name = c.relname AND o.is_active"""
 _OBJECT_DESCRIPTION_SQL = "COALESCE(NULLIF(obj_description(c.oid, 'pg_class'), ''), o.description, '')"
 _OBJECT_TABLE_SQL = f"""n.nspname ~ '^ts_[a-z0-9_]+$' AND n.nspname <> 'ts_meta'
@@ -94,14 +96,14 @@ _OBJECT_TABLE_SQL = f"""n.nspname ~ '^ts_[a-z0-9_]+$' AND n.nspname <> 'ts_meta'
     AND c.relname ~ '^[a-z_][a-z0-9_]{{0,62}}$' AND c.relkind IN ('r','p')
     AND NOT c.relispartition
     AND NOT EXISTS (SELECT 1 FROM pg_inherits child WHERE child.inhrelid = c.oid)"""
-_LINEAGE_METADATA_JOIN = """LEFT JOIN public.ontology_objects o
+_LINEAGE_METADATA_JOIN = f"""LEFT JOIN {OBJECT_RELATION} o
     ON o.schema_name = n.nspname AND o.table_name = c.relname"""
 _LINEAGE_VISIBLE_SQL = f"""{_OBJECT_TABLE_SQL} AND COALESCE(o.is_active, true)
     AND COALESCE(o.visibility, 'normal') <> 'hidden'
     AND right(n.nspname::text, 5) <> '_hist'
     AND NOT (n.nspname = :index_schema AND c.relname = :index_table)"""
 _LINEAGE_SCOPE = {"index_schema": INDEX_SANDBOX_SCHEMA, "index_table": INDEX_SANDBOX_TABLE}
-_LINEAGE_REGISTRY_PRESENT = text("SELECT pg_catalog.to_regclass('public.ontology_object_relations') IS NOT NULL")
+_LINEAGE_REGISTRY_PRESENT = text("SELECT pg_catalog.to_regclass('app.ontology_object_relations') IS NOT NULL")
 _LINEAGE_NEIGHBOR_LIMIT = 12
 _LINEAGE_HOP_LIMIT = 4
 _LINEAGE_NODE_LIMIT = 24
@@ -285,8 +287,13 @@ def _object_summary(row: dict[str, Any]) -> dict[str, Any]:
 
 
 class EtlLayers:
-    def __init__(self, pg: PostgresClient | None = None) -> None:
-        self._pg = pg if pg is not None else get_pg_client()
+    def __init__(self, pg: PostgresClient | None = None, *, metadata_pg: PostgresClient | None = None) -> None:
+        self._pg = pg if pg is not None else get_business_pg_client()
+        self._metadata_pg = metadata_pg if metadata_pg is not None else get_pg_client()
+
+    async def _catalog_parameters(self, params=None, *, relations=False, object_id=None):
+        async with self._metadata_pg.session() as session:
+            return await catalog_parameters(params, session=session, relations=relations, object_id=object_id)
 
     @asynccontextmanager
     async def session(self, *, repeatable_read: bool = False, query_timeout: bool = True):
@@ -300,6 +307,8 @@ class EtlLayers:
                     yield session
         except HTTPException:
             raise
+        except BusinessDatabaseNotConfigured as exc:
+            raise HTTPException(409, str(exc)) from None
         except (TimeoutError, ConnectionError, OSError) as exc:
             raise HTTPException(503, "PostgreSQL is unavailable or the query timed out") from exc
         except DBAPIError as exc:
@@ -367,7 +376,7 @@ class EtlLayers:
                   AND NOT c.relispartition
                   AND NOT (n.nspname = :batch_schema AND c.relname IN (:batch_target, :batch_range_target))
                 ORDER BY c.relname
-            """), {"schema": schema, "batch_schema": BATCH_TARGET_SCHEMA, "batch_target": INCREMENTAL_TARGET, "batch_range_target": BATCH_RANGE_TARGET, **scope})
+            """), await self._catalog_parameters({"schema": schema, "batch_schema": BATCH_TARGET_SCHEMA, "batch_target": INCREMENTAL_TARGET, "batch_range_target": BATCH_RANGE_TARGET, **scope}))
             rows = result.mappings().all()
         return [{"name": row["name"], "schemaName": schema, "dataType": row["data_type"] or "",
                  "tableRole": "history" if schema.endswith("_hist") else "current", "ontologySource": row["ontology_source"],
@@ -378,13 +387,21 @@ class EtlLayers:
     @staticmethod
     async def _require_ontology(session) -> None:
         installed = (await session.execute(text(
-            "SELECT to_regclass('public.ontology_objects') IS NOT NULL "
-            "AND to_regclass('public.ontology_object_properties') IS NOT NULL "
-            "AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('public.ontology_objects') "
+            "SELECT to_regclass('app.ontology_objects') IS NOT NULL "
+            "AND to_regclass('app.ontology_object_properties') IS NOT NULL "
+            "AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('app.ontology_objects') "
             "AND attname = 'visibility' AND attnum > 0 AND NOT attisdropped)"
         ))).scalar_one()
         if not installed:
             raise HTTPException(503, "Ontology metadata is not initialized")
+
+    async def _require_metadata(self) -> None:
+        async with self._metadata_pg.session() as session:
+            await self._require_ontology(session)
+
+    async def _relation_registry_present(self) -> bool:
+        async with self._metadata_pg.session() as session:
+            return bool(await session.scalar(_LINEAGE_REGISTRY_PRESENT))
 
     async def _object_rows(self, session, where: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         result = await session.execute(text(f"""
@@ -412,7 +429,7 @@ class EtlLayers:
             WHERE {where}
             ORDER BY CASE WHEN COALESCE(o.visibility, 'normal') = 'prominent' THEN 0 ELSE 1 END,
                 n.nspname, c.relname LIMIT :limit OFFSET :offset
-        """), params)
+        """), await self._catalog_parameters(params))
         return [dict(row) for row in result.mappings()]
 
     async def object_types(self, schema: str | None = None, search: str = "", group: str = "",
@@ -432,13 +449,11 @@ class EtlLayers:
         if schema:
             params["schema"] = _object_schema(schema)
         if favorite_user_id is not None:
-            params["favorite_user_id"] = favorite_user_id
-            where += """ AND EXISTS (
-                SELECT 1 FROM public.ontology_object_favorites f
-                JOIN public.ontology_objects favorite ON favorite.id = f.object_id
-                WHERE f.user_id = CAST(:favorite_user_id AS uuid)
-                  AND favorite.schema_name = n.nspname AND favorite.table_name = c.relname
-            )"""
+            favorites = await self._metadata_pg.fetch_all("""SELECT favorite.schema_name || '.' || favorite.table_name AS name
+                FROM app.ontology_object_favorites f JOIN app.ontology_objects favorite ON favorite.id=f.object_id
+                WHERE f.user_id=CAST(:user_id AS uuid)""", {"user_id": favorite_user_id})
+            params["favorite_ids"] = [row["name"] for row in favorites]
+            where += " AND n.nspname || '.' || c.relname = ANY(CAST(:favorite_ids AS text[]))"
         if ids:
             identifiers = list(dict.fromkeys(ids.split(",")))
             if len(identifiers) > 200:
@@ -455,13 +470,13 @@ class EtlLayers:
         if schema:
             where += " AND n.nspname = :schema"
         async with self.session() as session:
-            await self._require_ontology(session)
+            await self._require_metadata()
             counts = await session.execute(text(f"""
                 SELECT n.nspname AS schema, {_OBJECT_GROUP_SQL} AS resource_group, count(*) AS count
                 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
                 {_OBJECT_METADATA_JOIN}
                 WHERE {facet_where} GROUP BY n.nspname, {_OBJECT_GROUP_SQL} ORDER BY n.nspname
-            """), params)
+            """), await self._catalog_parameters(params))
             schema_counts: dict[str, int] = {}
             group_counts = dict.fromkeys(_OBJECT_GROUPS, 0)
             group_schema_counts: dict[str, dict[str, int]] = {key: {} for key in _OBJECT_GROUPS}
@@ -480,8 +495,7 @@ class EtlLayers:
                 "limit": limit, "offset": offset, "schemaCounts": schema_counts,
                 "groupCounts": group_counts, "groupSchemaCounts": group_schema_counts}
 
-    @staticmethod
-    async def _lineage_table_oid(session, key: LineageKey) -> int:
+    async def _lineage_table_oid(self, session, key: LineageKey) -> int:
         schema, table = key
         if not re.fullmatch(r"ts_[a-z0-9_]{1,60}", schema) or not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", table):
             raise HTTPException(404, "Table does not exist in this schema")
@@ -490,14 +504,13 @@ class EtlLayers:
             JOIN pg_catalog.pg_class c ON c.relnamespace = n.oid
             {_LINEAGE_METADATA_JOIN}
             WHERE n.nspname = :schema AND c.relname = :table AND {_LINEAGE_VISIBLE_SQL}
-        """), {**_LINEAGE_SCOPE, "schema": schema, "table": table})
+        """), await self._catalog_parameters({**_LINEAGE_SCOPE, "schema": schema, "table": table}))
         if oid is None:
             raise HTTPException(404, "Table does not exist in this schema")
         return oid
 
-    @staticmethod
     async def _lineage_neighbor_rows(
-        session, key: LineageKey, oid: int, direction: LineageDirection, registry_present: bool,
+        self, session, key: LineageKey, oid: int, direction: LineageDirection, registry_present: bool,
         *, exclude_peer_oids: tuple[int, ...] = (),
     ):
         root_end, peer_end, fk_root, fk_peer = (
@@ -508,7 +521,7 @@ class EtlLayers:
         # declarations/FKs to the same peer can make the visible result appear truncated.
         declared_neighbors = f"""
             SELECT n.nspname AS schema, c.relname AS "table", c.oid, 'object_relation' AS kind
-            FROM public.ontology_object_relations r
+            FROM {RELATION_RECORDS}
             JOIN pg_catalog.pg_namespace n ON n.nspname = r.{peer_end}_schema
             JOIN pg_catalog.pg_class c ON c.relnamespace = n.oid AND c.relname = r.{peer_end}_table
             {_LINEAGE_METADATA_JOIN}
@@ -543,8 +556,8 @@ class EtlLayers:
             FROM neighbors WHERE oid <> ALL(CAST(:excluded AS oid[])) GROUP BY schema, "table", oid
             ORDER BY schema COLLATE "C", "table" COLLATE "C"
             LIMIT :limit
-        """), {**_LINEAGE_SCOPE, "schema": key[0], "table": key[1], "oid": oid, "limit": _LINEAGE_NEIGHBOR_LIMIT + 1,
-              "excluded": list(exclude_peer_oids)})
+        """), await self._catalog_parameters({**_LINEAGE_SCOPE, "schema": key[0], "table": key[1], "oid": oid, "limit": _LINEAGE_NEIGHBOR_LIMIT + 1,
+              "excluded": list(exclude_peer_oids)}, relations=registry_present))
         rows = result.mappings().all()
         return rows[:_LINEAGE_NEIGHBOR_LIMIT], len(rows) > _LINEAGE_NEIGHBOR_LIMIT
 
@@ -553,7 +566,7 @@ class EtlLayers:
         async with self.session(repeatable_read=True) as session:
             await session.execute(text("SET LOCAL statement_timeout = '1000ms'"))
             oid = await self._lineage_table_oid(session, key)
-            registry_present = bool(await session.scalar(_LINEAGE_REGISTRY_PRESENT))
+            registry_present = await self._relation_registry_present()
             rows, truncated = await self._lineage_neighbor_rows(session, key, oid, direction, registry_present)
         return LineageNeighbors(direction=direction, neighbors=[dict(row) for row in rows], truncated=truncated)
 
@@ -572,7 +585,7 @@ class EtlLayers:
                   AND position(lower(:search) in (n.nspname::text || '.' || c.relname::text)) > 0
                 ORDER BY n.nspname::text COLLATE "C", c.relname::text COLLATE "C"
                 LIMIT :limit
-            """), {**_LINEAGE_SCOPE, "oid": oid, "search": search.strip(), "limit": limit + 1})
+            """), await self._catalog_parameters({**_LINEAGE_SCOPE, "oid": oid, "search": search.strip(), "limit": limit + 1}))
             rows = result.mappings().all()
         return LineagePathTargets(items=[dict(row) for row in rows[:limit]], truncated=len(rows) > limit)
 
@@ -598,7 +611,7 @@ class EtlLayers:
                 return LineagePath(state="incomplete", searchTruncated=True)
 
     async def _search_lineage_path(self, session, start: LineageKey, start_oid: int, end: LineageKey) -> LineagePath:
-        registry_present = bool(await session.scalar(_LINEAGE_REGISTRY_PRESENT))
+        registry_present = await self._relation_registry_present()
         pending = deque([(start, start_oid, 0)])
         predecessor: dict[LineageKey, tuple[LineageKey, list[LineageNeighborKind]]] = {}
         truncated = False
@@ -654,7 +667,7 @@ class EtlLayers:
                         endpoints_verified = True
                         if left == right:
                             raise HTTPException(422, "Choose a different visible target table")
-                        registry = bool(await session.scalar(_LINEAGE_REGISTRY_PRESENT))
+                        registry = await self._relation_registry_present()
                         left_seen, left_cut = await self._lineage_breadth(session, left, roots[0], registry, direction)
                         right_seen, right_cut = await self._lineage_breadth(session, right, roots[1], registry, direction)
                     except DBAPIError as error:
@@ -722,9 +735,8 @@ class EtlLayers:
                     pending.append((peer, row["oid"], depth + 1))
         return seen, truncated or bool(pending)
 
-    @staticmethod
-    async def declared_relations(session, schema, table, oid):
-        result = await session.execute(text("""
+    async def declared_relations(self, session, schema, table, oid):
+        result = await session.execute(text(f"""
             SELECT con.conname AS name, sn.nspname AS source_schema, sc.relname AS source_table,
                    tn.nspname AS target_schema, tc.relname AS target_table,
                    ARRAY(SELECT a.attname FROM unnest(con.conkey) WITH ORDINALITY k(attnum, position)
@@ -740,9 +752,9 @@ class EtlLayers:
             JOIN pg_namespace sn ON sn.oid = sc.relnamespace
             JOIN pg_class tc ON tc.oid = con.confrelid
             JOIN pg_namespace tn ON tn.oid = tc.relnamespace
-            LEFT JOIN public.ontology_objects so ON so.schema_name = sn.nspname
+            LEFT JOIN {OBJECT_RELATION} so ON so.schema_name = sn.nspname
                 AND so.table_name = sc.relname AND so.is_active
-            LEFT JOIN public.ontology_objects target_object ON target_object.schema_name = tn.nspname
+            LEFT JOIN {OBJECT_RELATION} target_object ON target_object.schema_name = tn.nspname
                 AND target_object.table_name = tc.relname AND target_object.is_active
             WHERE con.contype = 'f' AND con.conparentid = 0
               AND (sc.oid = CAST(:oid AS oid) OR tc.oid = CAST(:oid AS oid))
@@ -752,18 +764,19 @@ class EtlLayers:
               AND tn.nspname <> 'ts_meta_hist' AND tn.nspname NOT IN (:restricted, :push_schema)
               AND NOT (sn.nspname = :batch_schema AND sc.relname IN (:batch_target, :batch_range_target))
               AND NOT (tn.nspname = :batch_schema AND tc.relname IN (:batch_target, :batch_range_target))
-              AND sc.relname ~ '^[a-z_][a-z0-9_]{0,62}$'
-              AND tc.relname ~ '^[a-z_][a-z0-9_]{0,62}$'
+              AND sc.relname ~ '^[a-z_][a-z0-9_]{{0,62}}$'
+              AND tc.relname ~ '^[a-z_][a-z0-9_]{{0,62}}$'
               AND sc.relkind IN ('r','p') AND tc.relkind IN ('r','p')
               AND NOT sc.relispartition AND NOT tc.relispartition
               AND NOT EXISTS (SELECT 1 FROM pg_inherits child WHERE child.inhrelid = sc.oid)
               AND NOT EXISTS (SELECT 1 FROM pg_inherits child WHERE child.inhrelid = tc.oid)
             ORDER BY sn.nspname, sc.relname, con.conname, con.oid
-        """), {"oid": oid, "restricted": PROTECTED_SYNTHETIC_SCHEMA, "push_schema": PUSH_APPLY_SCHEMA,
-                "batch_schema": BATCH_TARGET_SCHEMA, "batch_target": INCREMENTAL_TARGET, "batch_range_target": BATCH_RANGE_TARGET})
+        """), await self._catalog_parameters({"oid": oid, "restricted": PROTECTED_SYNTHETIC_SCHEMA, "push_schema": PUSH_APPLY_SCHEMA,
+                "batch_schema": BATCH_TARGET_SCHEMA, "batch_target": INCREMENTAL_TARGET, "batch_range_target": BATCH_RANGE_TARGET}))
         foreign_keys = [dict(item) for item in result.mappings()]
         try:
-            logical = await read_object_relations(session, schema, table)
+            async with self._metadata_pg.session() as metadata_session:
+                logical = await read_object_relations(metadata_session, schema, table, catalog_session=session)
         except ObjectRelationsNotInitialized as exc:
             raise HTTPException(503, str(exc)) from exc
         return foreign_keys, logical
@@ -773,7 +786,7 @@ class EtlLayers:
         require_ordinary_table(schema, table)
         quote_identifier(table)
         async with self.session() as session:
-            await self._require_ontology(session)
+            await self._require_metadata()
             visible = "" if include_hidden else " AND COALESCE(o.visibility, 'normal') <> 'hidden'"
             rows = await self._object_rows(session, _OBJECT_TABLE_SQL + visible +
                 " AND n.nspname = :schema AND c.relname = :table",
@@ -783,10 +796,10 @@ class EtlLayers:
             row = rows[0]
             _, logical = await self.declared_relations(session, schema, table, row["oid"])
             if row.get("object_id") is not None:
-                result = await session.execute(text("""
+                result = await session.execute(text(f"""
                     SELECT p.name, p.sql_type AS type, p.comment, p.is_nullable AS nullable,
                            p.is_primary_key AS primary, p.primary_key_position AS "primaryPosition"
-                    FROM public.ontology_object_properties p
+                    FROM {PROPERTY_RECORDS}
                     JOIN pg_attribute a ON a.attrelid = CAST(:oid AS oid) AND a.attname = p.name
                         AND a.attnum > 0 AND NOT a.attisdropped
                     LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
@@ -805,7 +818,7 @@ class EtlLayers:
                           CASE WHEN array_position(i.indkey::smallint[], a.attnum) < i.indnkeyatts
                                THEN array_position(i.indkey::smallint[], a.attnum) + 1 END
                     ORDER BY p.ordinal_position
-                """), {"object_id": row["object_id"], "oid": row["oid"]})
+                """), await self._catalog_parameters({"object_id": row["object_id"], "oid": row["oid"]}, object_id=row["object_id"]))
                 columns = [dict(item) for item in result.mappings()]
                 if len(columns) != row["properties_count"]:
                     raise HTTPException(409, "Object properties differ from the table structure; synchronize its Ontology metadata")
@@ -872,7 +885,7 @@ class EtlLayers:
                 {_OBJECT_METADATA_JOIN}
                 WHERE {_OBJECT_TABLE_SQL} AND c.relname = :table AND n.nspname = :schema
                   AND (:include_hidden OR COALESCE(o.visibility, 'normal') <> 'hidden')
-            """), {"table": table, "schema": schema, "include_hidden": include_hidden})).mappings().first()
+            """), await self._catalog_parameters({"table": table, "schema": schema, "include_hidden": include_hidden}))).mappings().first()
         if row is None:
             raise HTTPException(404, "Table does not exist in this schema")
         return dict(row)
@@ -881,7 +894,7 @@ class EtlLayers:
         """Return eligible visible tables and whether they have a valid primary key."""
         async with self.session() as session:
             await session.execute(text("SET LOCAL statement_timeout = '2s'"))
-            await self._require_ontology(session)
+            await self._require_metadata()
             result = await session.execute(text(f"""
                 SELECT n.nspname AS schema_name, c.relname AS table_name,
                        EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = c.oid
@@ -889,8 +902,8 @@ class EtlLayers:
                 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
                 {_OBJECT_METADATA_JOIN}
                 WHERE {_TRANSFER_ENDPOINT_WHERE}
-            """), {"source_schema": source[0], "source_table": source[1],
-                    "target_schema": target[0], "target_table": target[1]})
+            """), await self._catalog_parameters({"source_schema": source[0], "source_table": source[1],
+                    "target_schema": target[0], "target_table": target[1]}))
             return {(row["schema_name"], row["table_name"]): row["has_primary_key"] for row in result.mappings()}
 
     async def transfer_endpoint_columns(
@@ -904,7 +917,7 @@ class EtlLayers:
     async def transfer_endpoint_columns_in_session(
         self, session, source: tuple[str, str], target: tuple[str, str],
     ) -> dict[tuple[str, str], dict[str, Any]]:
-        await self._require_ontology(session)
+        await self._require_metadata()
         result = await session.execute(text(f"""
             WITH endpoints AS (
                 SELECT n.nspname AS schema_name, c.relname AS table_name, c.oid,
@@ -929,8 +942,8 @@ class EtlLayers:
             FROM endpoints e LEFT JOIN pg_attribute a
               ON a.attrelid = e.oid AND a.attnum > 0 AND NOT a.attisdropped
             ORDER BY e.schema_name, e.table_name, a.attnum
-        """), {"source_schema": source[0], "source_table": source[1],
-                "target_schema": target[0], "target_table": target[1]})
+        """), await self._catalog_parameters({"source_schema": source[0], "source_table": source[1],
+                "target_schema": target[0], "target_table": target[1]}))
         endpoints: dict[tuple[str, str], dict[str, Any]] = {}
         for row in result.mappings():
             endpoint = endpoints.setdefault((row["schema_name"], row["table_name"]),
@@ -949,7 +962,7 @@ class EtlLayers:
         observation = "safe_plan_unavailable" if is_financial else "metadata_only"
         async with self.session() as session:
             await session.execute(text("SET LOCAL statement_timeout = '2s'"))
-            await self._require_ontology(session)
+            await self._require_metadata()
             target = (await session.execute(text(f"""
                 SELECT attributes.column_count, attributes.primary_key_column_count,
                        attributes.not_null_column_count, attributes.filed_is_date
@@ -967,7 +980,7 @@ class EtlLayers:
                 ) attributes
                 WHERE {_OBJECT_TABLE_SQL} AND n.nspname = :schema AND c.relname = :table
                     AND (:include_hidden OR COALESCE(o.visibility, 'normal') <> 'hidden')
-            """), {"schema": schema, "table": table, "include_hidden": include_hidden})).mappings().first()
+            """), await self._catalog_parameters({"schema": schema, "table": table, "include_hidden": include_hidden}))).mappings().first()
             if target is None:
                 raise HTTPException(404, "Evidence is not available for this table")
             if is_financial and target["filed_is_date"]:
@@ -1059,7 +1072,7 @@ class EtlLayers:
                       AND pg_catalog.has_schema_privilege(n.oid,'USAGE')
                       AND pg_catalog.has_table_privilege(c.oid,'SELECT')
                 )
-            """), {"schema": schema, "table": table})
+            """), await self._catalog_parameters({"schema": schema, "table": table}))
             if visible is not True:
                 raise HTTPException(404, "Table does not exist in this schema")
             required = await _required_preview_family(session, schema, table, enrolled)
@@ -1239,11 +1252,11 @@ class EtlLayers:
             raise HTTPException(400, "Only a single read-only SELECT query is supported")
         started = perf_counter()
         # Observe the protection gate and execute the caller's SELECT in the same snapshot.
-        async with self.session(repeatable_read=True) as session:
+        async with self.session(repeatable_read=True) as session, self._metadata_pg.session() as metadata_session:
             # Raw SQL is not a relation sandbox: views and database functions can hide references.
             # Migration-only empty metadata must not disable the ordinary workspace.
             fixture, marked_history_column, push_marker, push_receipts, push_binding, push_apply_receipts, batch_receipts = (
-                await session.execute(text("""
+                await metadata_session.execute(text("""
                 SELECT (pg_catalog.to_regnamespace(:fixture) IS NOT NULL
                         OR pg_catalog.to_regclass(:batch_target) IS NOT NULL
                         OR pg_catalog.to_regclass(:batch_range_target) IS NOT NULL
@@ -1251,7 +1264,7 @@ class EtlLayers:
                         OR pg_catalog.to_regclass(:push_sink) IS NOT NULL),
                        EXISTS (
                            SELECT 1 FROM pg_catalog.pg_attribute
-                           WHERE attrelid = pg_catalog.to_regclass('public.ontology_cdc_sandbox_versions')
+                           WHERE attrelid = pg_catalog.to_regclass('app.ontology_cdc_sandbox_versions')
                              AND attname = 'marking_level' AND attnum > 0 AND NOT attisdropped
                        ),
                        pg_catalog.to_regclass(:push_marker) IS NOT NULL,
@@ -1270,15 +1283,24 @@ class EtlLayers:
                     "push_sink": _PUSH_APPLY_REGCLASS, "push_binding": _PUSH_APPLY_BINDING,
                     "push_apply_receipts": _PUSH_APPLY_RECEIPTS})
             ).one()
-            if fixture:
+            business_fixture = await session.scalar(text("""SELECT (
+                pg_catalog.to_regnamespace(:fixture) IS NOT NULL
+                OR pg_catalog.to_regclass(:batch_target) IS NOT NULL
+                OR pg_catalog.to_regclass(:batch_range_target) IS NOT NULL
+                OR pg_catalog.to_regnamespace(:batch_range_source) IS NOT NULL
+                OR pg_catalog.to_regclass(:push_sink) IS NOT NULL)
+            """), {"fixture": PROTECTED_SYNTHETIC_SCHEMA, "batch_target": _RESERVED_BATCH_REGCLASS,
+                    "batch_range_target": _RESERVED_BATCH_RANGE_REGCLASS, "batch_range_source": BATCH_RANGE_SOURCE_SCHEMA,
+                    "push_sink": _PUSH_APPLY_REGCLASS})
+            if fixture or business_fixture:
                 raise HTTPException(403, "Free-form SQL is unavailable in the protected synthetic workspace")
             protected_push = (
-                push_marker and await session.scalar(text(
+                push_marker and await metadata_session.scalar(text(
                     f"SELECT EXISTS (SELECT 1 FROM {_PUSH_INBOX_MARKER} WHERE singleton IS TRUE AND database_marker IS NOT NULL)"
                 ))
-                or push_receipts and await session.scalar(text(f"SELECT EXISTS (SELECT 1 FROM {_PUSH_INBOX_RECEIPTS})"))
-                or push_binding and await session.scalar(text(f"SELECT EXISTS (SELECT 1 FROM {_PUSH_APPLY_BINDING})"))
-                or push_apply_receipts and await session.scalar(text(f"SELECT EXISTS (SELECT 1 FROM {_PUSH_APPLY_RECEIPTS})"))
+                or push_receipts and await metadata_session.scalar(text(f"SELECT EXISTS (SELECT 1 FROM {_PUSH_INBOX_RECEIPTS})"))
+                or push_binding and await metadata_session.scalar(text(f"SELECT EXISTS (SELECT 1 FROM {_PUSH_APPLY_BINDING})"))
+                or push_apply_receipts and await metadata_session.scalar(text(f"SELECT EXISTS (SELECT 1 FROM {_PUSH_APPLY_RECEIPTS})"))
             )
             # Only fixed internal identifiers may appear in these SQL strings.
             # Existence and data checks use the caller's same read-only snapshot.
@@ -1294,12 +1316,12 @@ class EtlLayers:
                 ):
                     protected_private = True
                     break
-            protected_range = batch_receipts and await session.scalar(text(f"""
+            protected_range = batch_receipts and await metadata_session.scalar(text(f"""
                 SELECT EXISTS (SELECT 1 FROM {_BATCH_RECEIPTS_REGCLASS}
                                WHERE target_table = '{BATCH_RANGE_TARGET}' AND range_min IS NOT NULL)
             """))
-            if protected_push or protected_private or protected_range or (marked_history_column and await session.scalar(text("""
-                SELECT EXISTS (SELECT 1 FROM public.ontology_cdc_sandbox_versions WHERE marking_level IS NOT NULL)
+            if protected_push or protected_private or protected_range or (marked_history_column and await metadata_session.scalar(text("""
+                SELECT EXISTS (SELECT 1 FROM app.ontology_cdc_sandbox_versions WHERE marking_level IS NOT NULL)
             """))):
                 raise HTTPException(403, "Free-form SQL is unavailable in the protected synthetic workspace")
             result = await session.execute(text(f"SELECT * FROM ({sql}) AS flow_query LIMIT 500".replace(":", r"\:")))

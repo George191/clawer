@@ -138,7 +138,7 @@ def _receipt(row: TableExportReceiptRow, generation: int, mode: str = "upsert") 
 
 
 async def _limits(session: AsyncSession) -> None:
-    await session.execute(text("SET LOCAL search_path = pg_catalog, public, pg_temp"))
+    await session.execute(text("SET LOCAL search_path = pg_catalog, app, pg_temp"))
     await session.execute(text("SET LOCAL lock_timeout = '2s'"))
     await session.execute(text("SET LOCAL statement_timeout = '5s'"))
     await session.execute(text("SET LOCAL idle_in_transaction_session_timeout = '25s'"))

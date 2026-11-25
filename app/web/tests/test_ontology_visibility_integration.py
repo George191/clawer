@@ -51,8 +51,8 @@ class OntologyVisibilityIntegration(unittest.IsolatedAsyncioTestCase):
                 await ontology.sync_object_metadata(session, SCHEMA, table, catalog_session=session)
             await session.execute(text(f"INSERT INTO {SCHEMA}.visibility_normal VALUES (42)"))
             # Reproduce the deployed public catalog before this migration, without revisiting ddlregistry.
-            await session.execute(text("ALTER TABLE public.ontology_objects DROP COLUMN visibility"))
-            await session.execute(text("DROP TABLE public.ontology_object_favorites"))
+            await session.execute(text("ALTER TABLE app.ontology_objects DROP COLUMN visibility"))
+            await session.execute(text("DROP TABLE app.ontology_object_favorites"))
         await manage_object_relations(self.pg, [RELATION], apply=True)
         self.layers = object.__new__(EtlLayers)
         self.layers._pg = self.pg
@@ -88,7 +88,7 @@ class OntologyVisibilityIntegration(unittest.IsolatedAsyncioTestCase):
         for visibility in ("prominent", "hidden", "normal", "hidden"):
             result = await self.workspace.set_object_visibility("visibility", "visibility_normal", visibility, "admin:42")
             self.assertEqual(result["visibility"], visibility)
-            row = await self.pg.fetch_one("""SELECT visibility, updated_by, updated_at FROM public.ontology_objects
+            row = await self.pg.fetch_one("""SELECT visibility, updated_by, updated_at FROM app.ontology_objects
                 WHERE schema_name=:schema AND table_name='visibility_normal'""", {"schema": SCHEMA})
             self.assertEqual((row["visibility"], row["updated_by"]), (visibility, "admin:42"))
             self.assertIsNotNone(row["updated_at"])
@@ -104,16 +104,16 @@ class OntologyVisibilityIntegration(unittest.IsolatedAsyncioTestCase):
             await ontology.sync_object_metadata(session, SCHEMA, "visibility_normal", catalog_session=session)
         await registry.save_registered_ddl(self.pg, layer="visibility", table="normal",
             ddl_sql=f"CREATE TABLE {SCHEMA}.visibility_normal (id BIGINT PRIMARY KEY)")
-        row = await self.pg.fetch_one("SELECT visibility FROM public.ontology_objects WHERE table_name='visibility_normal'")
+        row = await self.pg.fetch_one("SELECT visibility FROM app.ontology_objects WHERE table_name='visibility_normal'")
         self.assertEqual(row["visibility"], "hidden")
         with self.assertRaises(DBAPIError):
             async with self.pg.session() as session:
-                await session.execute(text("UPDATE public.ontology_objects SET visibility='invalid'"))
+                await session.execute(text("UPDATE app.ontology_objects SET visibility='invalid'"))
         self.assertEqual(await self.pg.fetch_all(f"SELECT * FROM {SCHEMA}.visibility_normal"), [{"id": 42}])
         async with self.pg.session() as session:
             await session.execute(text(f"CREATE TABLE {SCHEMA}.visibility_new (id BIGINT)"))
             await ontology.sync_object_metadata(session, SCHEMA, "visibility_new", catalog_session=session)
-        self.assertEqual((await self.pg.fetch_one("SELECT visibility FROM public.ontology_objects WHERE table_name='visibility_new'"))["visibility"], "normal")
+        self.assertEqual((await self.pg.fetch_one("SELECT visibility FROM app.ontology_objects WHERE table_name='visibility_new'"))["visibility"], "normal")
 
     async def test_hidden_ids_facets_pagination_sort_and_logical_link_preview(self):
         await self.migration.migrate(self.pg, apply=True)
@@ -188,7 +188,7 @@ class OntologyVisibilityIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len((await self.workspace.object_favorites(USER_A))["ids"]), 2)
         self.assertEqual(await self.workspace.object_favorites(USER_B), {"ids": [SCHEMA + ".visibility_normal"]})
         async with self.pg.session() as session:
-            await session.execute(text("DELETE FROM public.ontology_objects WHERE table_name='visibility_prominent'"))
+            await session.execute(text("DELETE FROM app.ontology_objects WHERE table_name='visibility_prominent'"))
         self.assertEqual(await self.workspace.object_favorites(USER_A), {"ids": [SCHEMA + ".visibility_normal"]})
         app = FastAPI()
         app.include_router(etl.router, prefix="/api/v1")
@@ -206,7 +206,7 @@ class OntologyVisibilityIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def test_conflicting_favorites_table_refuses_migration_without_modifying_existing_objects(self):
         async with self.pg.session() as session:
-            await session.execute(text("CREATE TABLE public.ontology_object_favorites (user_id TEXT, object_id BIGINT)"))
+            await session.execute(text("CREATE TABLE app.ontology_object_favorites (user_id TEXT, object_id BIGINT)"))
         before = await self.snapshot()
         with self.assertRaisesRegex(RuntimeError, "favorites definition differs"):
             await self.migration.migrate(self.pg, apply=True)

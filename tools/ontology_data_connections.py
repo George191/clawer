@@ -28,7 +28,7 @@ PAUSED_CONTRACT = {**EXPECTED, "paused_at": "timestamp with time zone"}
 async def required_changes(session):
     rows = (await session.execute(text("""SELECT a.attname AS name,
         format_type(a.atttypid,a.atttypmod) AS type, a.attnotnull AS not_null
-        FROM pg_attribute a WHERE a.attrelid=to_regclass('public.ontology_data_connections')
+        FROM pg_attribute a WHERE a.attrelid=to_regclass('app.ontology_data_connections')
         AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum"""))).mappings().all()
     if not rows:
         return ["create_external_source_registry"]
@@ -41,7 +41,7 @@ async def required_changes(session):
         raise RuntimeError("Existing external source registry differs from its expected column contract")
     primary = (await session.execute(text("""SELECT EXISTS (SELECT 1 FROM pg_constraint k
         JOIN pg_attribute a ON a.attrelid=k.conrelid AND a.attname='id'
-        WHERE k.conrelid=to_regclass('public.ontology_data_connections') AND k.contype='p'
+        WHERE k.conrelid=to_regclass('app.ontology_data_connections') AND k.contype='p'
         AND k.conkey=ARRAY[a.attnum]::smallint[])"""))).scalar_one()
     if not primary:
         raise RuntimeError("External source registry is missing its UUID primary key")
@@ -58,7 +58,7 @@ async def migrate(pg, *, apply=False):
         if apply:
             await session.execute(text("SET LOCAL lock_timeout='5s'"))
             await session.execute(text("SET LOCAL statement_timeout='30s'"))
-            await session.execute(text("SELECT pg_advisory_xact_lock(hashtext('public.ontology_data_connections_migration'))"))
+            await session.execute(text("SELECT pg_advisory_xact_lock(hashtext('app.ontology_data_connections_migration'))"))
         else:
             await session.execute(text("SET TRANSACTION READ ONLY"))
         changes = await required_changes(session)

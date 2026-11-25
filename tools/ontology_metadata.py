@@ -1,4 +1,4 @@
-"""Explicit, transactional migration from DDL registration to the public Ontology catalog."""
+"""Explicit migration of system Ontology metadata using the selected business catalog."""
 
 from __future__ import annotations
 
@@ -21,11 +21,12 @@ from app.etl.schema.ontology import (
 )
 from app.etl.schema.object_relations import OBJECT_RELATIONS_DDL_STATEMENTS
 from app.storage.postgres_client import get_pg_client
+from app.storage.business_database import get_business_pg_client
 
 OLD_OBJECTS = "ts_meta.ddlregistry"
-OBJECTS = "public.ontology_objects"
-PROPERTIES = "public.ontology_object_properties"
-RELATIONS = "public.ontology_object_relations"
+OBJECTS = "app.ontology_objects"
+PROPERTIES = "app.ontology_object_properties"
+RELATIONS = "app.ontology_object_relations"
 OLD_RELATIONS = "ts_meta.object_relations"
 IDENTITY_COLUMNS = "id,layer,table_role,schema_name,table_name,ddl_sql,version,checksum,partition_type,partition_column,partition_granularity,partition_count"
 
@@ -94,7 +95,7 @@ async def rename_metadata_indexes(session, table: str, old: str, new: str) -> No
             await session.execute(text(f"ALTER INDEX {identifier(schema)}.{identifier(current['name'])} RENAME TO {identifier(target_name)}"))
 
 
-async def snapshot(session) -> dict:
+async def snapshot(session, *, catalog_session) -> dict:
     installed = {name: await exists(session, name) for name in (OLD_OBJECTS, OBJECTS, PROPERTIES, OLD_RELATIONS, RELATIONS)}
     if installed[OLD_OBJECTS] and installed[OBJECTS]:
         raise RuntimeError("Both object registries exist; reconcile their definitions before migration")
@@ -102,7 +103,7 @@ async def snapshot(session) -> dict:
         raise RuntimeError("Both relationship registries exist; reconcile their definitions before migration")
     source = OLD_OBJECTS if installed[OLD_OBJECTS] else OBJECTS if installed[OBJECTS] else None
     registered = await rows(session, f"SELECT {IDENTITY_COLUMNS} FROM {source} ORDER BY id") if source else []
-    tables = await rows(session, """
+    tables = await rows(catalog_session, """
         SELECT n.nspname AS schema, c.relname AS name,
             (SELECT count(*) FROM pg_attribute a WHERE a.attrelid = c.oid
                 AND a.attnum > 0 AND NOT a.attisdropped) AS fields
@@ -116,15 +117,16 @@ async def snapshot(session) -> dict:
             "registration_fingerprint": fingerprint(registered)}
 
 
-async def migrate(pg, *, apply: bool = False) -> dict:
-    async with pg.session() as session:
+async def migrate(pg, *, catalog_pg, apply: bool = False) -> dict:
+    async with pg.session() as session, catalog_pg.session() as catalog_session:
+        await catalog_session.execute(text("SET TRANSACTION READ ONLY"))
         if apply:
-            await session.execute(text("SELECT pg_advisory_xact_lock(hashtext('public.ontology_metadata_migration'))"))
+            await session.execute(text("SELECT pg_advisory_xact_lock(hashtext('app.ontology_metadata_migration'))"))
             await session.execute(text("SET LOCAL lock_timeout = '5s'"))
             await session.execute(text("SET LOCAL statement_timeout = '60s'"))
         else:
             await session.execute(text("SET TRANSACTION READ ONLY"))
-        before = await snapshot(session)
+        before = await snapshot(session, catalog_session=catalog_session)
         report = {"applied": apply, "installed": before["installed"],
                   "registered_objects": len(before["registered"]), "physical_objects": len(before["tables"]),
                   "physical_properties": sum(int(table["fields"]) for table in before["tables"]),
@@ -133,17 +135,17 @@ async def migrate(pg, *, apply: bool = False) -> dict:
         if not apply:
             return report
         if before["installed"][OLD_OBJECTS]:
-            await session.execute(text("ALTER TABLE ts_meta.ddlregistry SET SCHEMA public"))
-            await session.execute(text("ALTER TABLE public.ddlregistry RENAME TO ontology_objects"))
+            await session.execute(text("ALTER TABLE ts_meta.ddlregistry SET SCHEMA app"))
+            await session.execute(text("ALTER TABLE app.ddlregistry RENAME TO ontology_objects"))
             # Rename the old catalog's own objects, preserving their OIDs, ACLs and ownership.
-            constraints = await rows(session, "SELECT conname FROM pg_constraint WHERE conrelid = 'public.ontology_objects'::regclass")
+            constraints = await rows(session, "SELECT conname FROM pg_constraint WHERE conrelid = 'app.ontology_objects'::regclass")
             for value in constraints:
                 name = value["conname"]
                 if "ddlregistry" in name:
-                    await session.execute(text(f'ALTER TABLE public.ontology_objects RENAME CONSTRAINT {identifier(name)} TO {identifier(name.replace("ddlregistry", "ontology_objects"))}'))
+                    await session.execute(text(f'ALTER TABLE app.ontology_objects RENAME CONSTRAINT {identifier(name)} TO {identifier(name.replace("ddlregistry", "ontology_objects"))}'))
             await rename_metadata_indexes(session, OBJECTS, "ddlregistry", "ontology_objects")
-            if await exists(session, "public.ddlregistry_id_seq"):
-                await session.execute(text("ALTER SEQUENCE public.ddlregistry_id_seq RENAME TO ontology_objects_id_seq"))
+            if await exists(session, "app.ddlregistry_id_seq"):
+                await session.execute(text("ALTER SEQUENCE app.ddlregistry_id_seq RENAME TO ontology_objects_id_seq"))
         for statement in ONTOLOGY_DDL_STATEMENTS:
             await session.execute(text(statement))
         for statement in ONTOLOGY_OBJECT_COLUMNS_ADD_STATEMENTS:
@@ -151,21 +153,21 @@ async def migrate(pg, *, apply: bool = False) -> dict:
         for statement in ONTOLOGY_OBJECT_DEFAULT_STATEMENTS:
             await session.execute(text(statement))
         if before["installed"][OLD_RELATIONS]:
-            await session.execute(text("ALTER TABLE ts_meta.object_relations SET SCHEMA public"))
-            await session.execute(text("ALTER TABLE public.object_relations RENAME TO ontology_object_relations"))
+            await session.execute(text("ALTER TABLE ts_meta.object_relations SET SCHEMA app"))
+            await session.execute(text("ALTER TABLE app.object_relations RENAME TO ontology_object_relations"))
         for statement in OBJECT_RELATIONS_DDL_STATEMENTS:
             await session.execute(text(statement))
         for table in before["tables"]:
             await sync_object_metadata(
-                session, table["schema"], table["name"], catalog_session=session, provenance="pg_catalog",
+                session, table["schema"], table["name"], catalog_session=catalog_session, provenance="pg_catalog",
             )
-        after = await snapshot(session)
+        after = await snapshot(session, catalog_session=catalog_session)
         by_id = {row["id"]: row for row in after["registered"]}
         if any(by_id.get(row["id"]) != row for row in before["registered"]):
             raise RuntimeError("Migration changed an existing object's identity or registered DDL")
         counts = await rows(session, """
             SELECT o.schema_name AS schema, o.table_name AS name, count(p.name) AS fields
-            FROM public.ontology_objects o LEFT JOIN public.ontology_object_properties p ON p.object_id = o.id
+            FROM app.ontology_objects o LEFT JOIN app.ontology_object_properties p ON p.object_id = o.id
             GROUP BY o.id, o.schema_name, o.table_name
         """)
         actual = {(row["schema"], row["name"]): int(row["fields"]) for row in counts}
@@ -181,12 +183,12 @@ async def migrate(pg, *, apply: bool = False) -> dict:
 async def restore_registration(pg) -> dict:
     """Release rollback only: quiesce new processes before restoring the previous registry name."""
     async with pg.session() as session:
-        await session.execute(text("SELECT pg_advisory_xact_lock(hashtext('public.ontology_metadata_migration'))"))
+        await session.execute(text("SELECT pg_advisory_xact_lock(hashtext('app.ontology_metadata_migration'))"))
         await session.execute(text("SET LOCAL lock_timeout = '5s'"))
         if await exists(session, OLD_OBJECTS) or not await exists(session, OBJECTS):
             raise RuntimeError("Rollback requires the migrated registry and no previous registry")
         await session.execute(text("CREATE SCHEMA IF NOT EXISTS ts_meta"))
-        await session.execute(text("ALTER TABLE public.ontology_objects SET SCHEMA ts_meta"))
+        await session.execute(text("ALTER TABLE app.ontology_objects SET SCHEMA ts_meta"))
         await session.execute(text("ALTER TABLE ts_meta.ontology_objects RENAME TO ddlregistry"))
         constraints = await rows(session, "SELECT conname FROM pg_constraint WHERE conrelid = 'ts_meta.ddlregistry'::regclass")
         for row in constraints:
@@ -199,13 +201,21 @@ async def restore_registration(pg) -> dict:
 
 async def run(apply: bool, restore: bool = False) -> int:
     pg = get_pg_client()
+    business_pg = None
     try:
         await pg.connect(max_retries=1)
-        result = await restore_registration(pg) if restore else await migrate(pg, apply=apply)
+        if restore:
+            result = await restore_registration(pg)
+        else:
+            business_pg = get_business_pg_client()
+            await business_pg.connect(max_retries=1)
+            result = await migrate(pg, catalog_pg=business_pg, apply=apply)
         print(json.dumps(result))
         return 0
     finally:
         await pg.close()
+        if business_pg is not None:
+            await business_pg.close()
 
 
 def main() -> int:

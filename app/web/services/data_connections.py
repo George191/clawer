@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 from contextlib import asynccontextmanager, closing
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -15,8 +14,6 @@ import uuid
 
 from anyio import fail_after, to_thread
 from cryptography.fernet import Fernet, InvalidToken
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from fastapi import HTTPException
 import httpx
 from pydantic import ValidationError
@@ -24,6 +21,11 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
 from app.storage.postgres_client import get_pg_client
+from app.storage.connection_credentials import connection_cipher
+from app.storage.business_database import (
+    BusinessDatabaseNotConfigured, business_connection_options, get_business_pg_client,
+    selected_business_connection,
+)
 from app.web.api.models.batch_syncs import INCREMENTAL_TARGET, TARGET_SCHEMA as BATCH_TARGET_SCHEMA
 from app.web.services.source_cdc import CONNECTORS as CDC_CONNECTORS, require_unconfigured
 from app.web.api.models.data_connections import (
@@ -114,9 +116,7 @@ def credential_cipher() -> Fernet:
     secret = settings.SECRET_KEY
     if "SECRET_KEY" not in settings.model_fields_set or not secret or secret.lower() == "changethis":
         raise HTTPException(503, "A stable SECRET_KEY must be explicitly configured before storing source credentials")
-    key = HKDF(algorithm=hashes.SHA256(), length=32, salt=None,
-               info=b"ontology-data-connections:v1").derive(secret.encode("utf-8"))
-    return Fernet(base64.urlsafe_b64encode(key))
+    return connection_cipher(secret)
 
 
 def _secrets(payload: DataConnectionPayload) -> dict[str, str]:
@@ -365,11 +365,48 @@ class DataConnections:
     def warehouse(self, connection_id: str) -> EtlLayers:
         if connection_id != WAREHOUSE_CONNECTION_ID:
             raise HTTPException(404, "Warehouse connection not found")
-        return EtlLayers(pg=self._pg)
+        return EtlLayers(pg=get_business_pg_client(), metadata_pg=self._pg)
 
     async def describe_warehouse(self) -> dict[str, str]:
-        database = await self.warehouse(WAREHOUSE_CONNECTION_ID).database_name()
-        return {"id": WAREHOUSE_CONNECTION_ID, "engine": "postgresql", "database": database}
+        try:
+            row = await selected_business_connection()
+        except BusinessDatabaseNotConfigured as error:
+            raise HTTPException(409, str(error)) from None
+        except (ConnectionError, OSError, TimeoutError, DBAPIError):
+            raise HTTPException(503, "The system connection registry is unavailable; verify connectivity and apply system migrations") from None
+        config = json.loads(row["config"]) if isinstance(row["config"], str) else row["config"]
+        return {"id": WAREHOUSE_CONNECTION_ID, "engine": "postgresql", "database": config["database"],
+                "connectionId": str(row["id"]), "name": row["name"]}
+
+    async def select_business_database(self, connection_id: str, expected_updated_at: datetime):
+        async with self._session() as session:
+            await session.execute(text("SELECT pg_advisory_xact_lock(hashtext('etl-business-connection'))"))
+            row = await self._stored(connection_id, session=session, lock=" FOR SHARE")
+            if row["updated_at"] != expected_updated_at:
+                raise HTTPException(409, "The connection changed; reload before selecting the business database")
+            if row["engine"] != "postgresql":
+                raise HTTPException(422, "ETL Workers require a PostgreSQL business database")
+            try:
+                business_connection_options(row)
+            except BusinessDatabaseNotConfigured as error:
+                raise HTTPException(422, str(error)) from None
+            config = json.loads(row["config"]) if isinstance(row["config"], str) else row["config"]
+            payload = DataConnectionPayload(name=row["name"], engine=row["engine"], config=config)
+            result = await self._probe_result(payload, await self._credentials(payload, row))
+            if not result["ok"]:
+                raise HTTPException(422, result["message"])
+            await session.execute(text("""INSERT INTO app.etl_business_connection (singleton, connection_id)
+                VALUES (true, :id) ON CONFLICT (singleton) DO UPDATE
+                SET connection_id=EXCLUDED.connection_id, updated_at=clock_timestamp()
+            """), {"id": uuid.UUID(connection_id)})
+        await get_business_pg_client().close()
+        return await self.describe_warehouse()
+
+    @staticmethod
+    async def _require_not_business_connection(session, connection_id):
+        if await session.scalar(text("SELECT EXISTS(SELECT 1 FROM app.etl_business_connection WHERE connection_id=:id)"),
+                                {"id": uuid.UUID(str(connection_id))}):
+            raise HTTPException(409, "This connection is selected for ETL; select another business database before changing, pausing or deleting it")
 
     @asynccontextmanager
     async def _session(self):
@@ -475,6 +512,7 @@ class DataConnections:
             """), params)).mappings().first()
             if row is None:
                 raise HTTPException(404, "Data source not found")
+            await self._require_not_business_connection(session, connection_id)
             if row["engine"] != "postgresql":
                 raise HTTPException(422, "Only saved PostgreSQL sources can be paused")
             if row["updated_at"] != change.expectedUpdatedAt:
@@ -720,6 +758,7 @@ class DataConnections:
                 return await self._save_verified(session, params)
         async with self._session() as session:
             stored = await self._stored(connection_id, session=session, lock=" FOR UPDATE")
+            await self._require_not_business_connection(session, connection_id)
             await require_unconfigured(connection_id, stored["engine"], registry=self, row=stored, session=session)
             self._require_draft_revision(payload, stored, expected_updated_at)
             params = await self._prepare_save(payload, user_id, uuid.UUID(connection_id), stored)
@@ -763,6 +802,7 @@ class DataConnections:
                                             {"id": uuid.UUID(connection_id)})).mappings().first()
             if stored is None:
                 raise HTTPException(404, "Data source not found")
+            await self._require_not_business_connection(session, connection_id)
             await require_unconfigured(connection_id, stored["engine"], registry=self, session=session)
             row = (await session.execute(text("DELETE FROM ontology_data_connections WHERE id=:id RETURNING id"), {"id": uuid.UUID(connection_id)})).first()
             if row is None:

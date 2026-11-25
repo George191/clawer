@@ -67,7 +67,7 @@ class AICollectStore(AutomationTaskStore):
                 templates_by_name[template_name] = raw
                 template_content_by_name[template_name] = content
 
-        query = "SELECT * FROM public.ai_collect_templates"
+        query = "SELECT * FROM app.ai_collect_templates"
         params: dict[str, Any] = {}
         if template_id is not None:
             query += " WHERE id = CAST(:id AS uuid)"
@@ -140,7 +140,7 @@ class AICollectStore(AutomationTaskStore):
                     await minio.upload_bytes_to_key(favicon_bytes, favicon_key, favicon_mime)
                 await self._pg.execute(
                     """
-                    UPDATE public.ai_collect_templates
+                    UPDATE app.ai_collect_templates
                     SET template = :template,
                         icon = :icon
                     WHERE id = :id
@@ -156,7 +156,7 @@ class AICollectStore(AutomationTaskStore):
         await self.initialize()
         await self._pg.execute(
             """
-            INSERT INTO public.ai_collect_analyses
+            INSERT INTO app.ai_collect_analyses
                 (template_id, source_url, template_name, template_yaml, adapter_code, fields, pagination, sample_items)
             VALUES
                 (:template_id, :source_url, :template_name, :template_yaml, :adapter_code,
@@ -182,7 +182,7 @@ class AICollectStore(AutomationTaskStore):
     async def get_analysis(self, template_id: str) -> dict[str, Any] | None:
         await self.initialize()
         return await self._pg.fetch_one(
-            "SELECT * FROM public.ai_collect_analyses WHERE template_id = :template_id",
+            "SELECT * FROM app.ai_collect_analyses WHERE template_id = :template_id",
             {"template_id": template_id},
         )
 
@@ -283,10 +283,10 @@ class AICollectStore(AutomationTaskStore):
         rows = await self._pg.fetch_all(
             """
             SELECT t.*,
-                   COALESCE((SELECT count(*) FROM public.automation_tasks task
+                   COALESCE((SELECT count(*) FROM app.automation_tasks task
                              WHERE task.template_name = t.name
                                AND task.deleted_at IS NULL), 0)::int AS task_count
-            FROM public.ai_collect_templates t
+            FROM app.ai_collect_templates t
             ORDER BY t.updated_at DESC
             """
         )
@@ -312,10 +312,10 @@ class AICollectStore(AutomationTaskStore):
         rows = await self._pg.fetch_all(
             """
             SELECT t.*,
-                   COALESCE((SELECT count(*) FROM public.automation_tasks task
+                   COALESCE((SELECT count(*) FROM app.automation_tasks task
                              WHERE task.template_name = t.name
                                AND task.deleted_at IS NULL), 0)::int AS task_count
-            FROM public.ai_collect_templates t
+            FROM app.ai_collect_templates t
             ORDER BY t.updated_at DESC
             """
         )
@@ -363,10 +363,10 @@ class AICollectStore(AutomationTaskStore):
         row = await self._pg.fetch_one(
             f"""
             SELECT t.*,
-                   COALESCE((SELECT count(*) FROM public.automation_tasks task
+                   COALESCE((SELECT count(*) FROM app.automation_tasks task
                              WHERE task.template_name = t.name
                                AND task.deleted_at IS NULL), 0)::int AS task_count
-            FROM public.ai_collect_templates t
+            FROM app.ai_collect_templates t
             WHERE t.name = :name {version_clause}
             ORDER BY (t.status = 'active') DESC, t.updated_at DESC
             LIMIT 1
@@ -393,11 +393,11 @@ class AICollectStore(AutomationTaskStore):
         await self.initialize()
         row = await self._pg.fetch_one(
             """
-            DELETE FROM public.ai_collect_templates target
+            DELETE FROM app.ai_collect_templates target
             WHERE target.name = :name
               AND target.version = :version
               AND NOT EXISTS (
-                  SELECT 1 FROM public.automation_tasks task
+                  SELECT 1 FROM app.automation_tasks task
                   WHERE task.template_name = target.name
                     AND task.deleted_at IS NULL
               )
@@ -422,7 +422,7 @@ class AICollectStore(AutomationTaskStore):
     async def update_template(self, template_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
         await self.initialize()
         current = await self._pg.fetch_one(
-            "SELECT name, version, template, adapter FROM public.ai_collect_templates WHERE id = CAST(:id AS uuid)",
+            "SELECT name, version, template, adapter FROM app.ai_collect_templates WHERE id = CAST(:id AS uuid)",
             {"id": template_id},
         )
         if current is None:
@@ -444,7 +444,7 @@ class AICollectStore(AutomationTaskStore):
         )
         row = await self._pg.fetch_one(
             """
-            UPDATE public.ai_collect_templates SET
+            UPDATE app.ai_collect_templates SET
                 template = :template,
                 adapter = :adapter,
                 data_type = :data_type,
@@ -472,7 +472,7 @@ class AICollectStore(AutomationTaskStore):
     async def release_template(self, payload: dict[str, Any]) -> dict[str, Any]:
         await self.initialize()
         versions = await self._pg.fetch_all(
-            "SELECT version, template, adapter, icon FROM public.ai_collect_templates WHERE name = :name",
+            "SELECT version, template, adapter, icon FROM app.ai_collect_templates WHERE name = :name",
             {"name": payload["name"]},
         )
         existing = next((row for row in versions if row["version"] == payload["version"]), None)
@@ -504,7 +504,7 @@ class AICollectStore(AutomationTaskStore):
         ) or str(existing.get("icon") or "")
         row = await self._pg.fetch_one(
             """
-            INSERT INTO public.ai_collect_templates
+            INSERT INTO app.ai_collect_templates
                 (name, version, title, domain, data_type, template, icon, status, adapter, description, metadata)
             VALUES
                 (:name, :version, :title, :domain, :data_type, :template, :icon, :status, :adapter,

@@ -86,7 +86,7 @@ async def create_google_search_task(payload: GoogleSearchRequest) -> dict[str, A
     }
     await pg.execute(
         """
-        INSERT INTO public.ai_collect_template_alias
+        INSERT INTO app.ai_collect_template_alias
             (template_name, collection_name, data_type, enabled)
         VALUES (:template_name, :collection_name, :data_type, false)
         ON CONFLICT DO NOTHING
@@ -96,7 +96,7 @@ async def create_google_search_task(payload: GoogleSearchRequest) -> dict[str, A
     route = await pg.fetch_one(
         """
         SELECT template_name, collection_name, data_type, enabled
-        FROM public.ai_collect_template_alias
+        FROM app.ai_collect_template_alias
         WHERE collection_name = :collection_name
         """,
         {"collection_name": route_params["collection_name"]},

@@ -38,18 +38,13 @@ logger = get_logger(__name__)
 def setup_logging(service: str = "etl") -> None:
     setup_service_logging(service, settings.log_level)
 
-def _mask_url(url: str) -> str:
-    import re
-    return re.sub(r"://[^@]+@", "://***:***@", url)
-
-
 def _preflight_check() -> None:
     errors: list[str] = []
 
     if not settings.kafka_brokers:
         errors.append("SPIDER_KAFKA_BROKERS is not configured; the ETL pipeline requires Kafka")
     if not settings.pg_url or settings.pg_url == settings.__class__.model_fields["pg_url"].default:
-        errors.append("SPIDER_PG_URL is not configured; the ETL pipeline requires Postgres")
+        errors.append("SPIDER_PG_URL is not configured; ETL requires the system connection registry")
 
     if errors:
         print("=" * 60, file=sys.stderr)
@@ -59,7 +54,7 @@ def _preflight_check() -> None:
         print("=" * 60, file=sys.stderr)
         print("Check the following settings in .env:", file=sys.stderr)
         print("  SPIDER_KAFKA_BROKERS  — Kafka broker address (e.g. kafka:9092)", file=sys.stderr)
-        print("  SPIDER_PG_URL         — Postgres connection URL", file=sys.stderr)
+        print("  SPIDER_PG_URL         — System database URL (app schema)", file=sys.stderr)
         sys.exit(1)
 
 
@@ -130,7 +125,7 @@ async def run_all() -> None:
     _preflight_check()
 
     logger.info("=== ETL All Layers Starting ===")
-    logger.info("  Postgres: %s", _mask_url(settings.pg_url))
+    logger.info("  Business database: selected in Data Connections")
     logger.info("  RDS: %s → %s-<table>", TsRds._consumer_topics, settings.etl_rds_topic)
     logger.info("  ODS: %s → %s", TsOds._consumer_topics, settings.etl_ods_topic)
     logger.info("  TASK: %s → %s", settings.etl_task_topic, settings.etl_ads_topic)

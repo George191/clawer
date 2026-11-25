@@ -7,14 +7,13 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import Any
 
 from sqlalchemy import text
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -43,8 +42,10 @@ _DDL_INDEX_IF_NOT_EXISTS = re.compile(
 
 
 class PostgresClient:
-    def __init__(self, url: str | None = None) -> None:
+    def __init__(self, url: str | None = None, *, schema: str | None = "app", connect_args: dict | None = None) -> None:
         self._url = url
+        self._schema = schema
+        self._connect_args = connect_args or {}
         self._engine: AsyncEngine | None = None
         self._session_factory: async_sessionmaker | None = None
         self._connected = False
@@ -54,6 +55,8 @@ class PostgresClient:
             return
 
         pg_url = self._url or _resolved_pg_url()
+        if not pg_url:
+            raise ValueError("SPIDER_PG_URL must specify the system database connection")
         masked_url = _mask_url(pg_url)
         attempt = 0
         last_error: Exception | None = None
@@ -72,6 +75,8 @@ class PostgresClient:
                         # Multiple long-lived workers share this database while
                         # startup migrations can change result row shapes.
                         "prepared_statement_cache_size": 0,
+                        "server_settings": {"search_path": f"{self._schema},pg_catalog"} if self._schema else {},
+                        **self._connect_args,
                     },
                 )
                 self._session_factory = async_sessionmaker(
@@ -259,48 +264,9 @@ def get_pg_client() -> PostgresClient:
 
 def _resolved_pg_url() -> str:
     pg_url = settings.pg_url.strip()
-    if not pg_url:
-        return pg_url
-
-    if "?" in pg_url:
-        base_url, query = pg_url.split("?", 1)
-        suffix = f"?{query}"
-    else:
-        base_url, suffix = pg_url, ""
-
-    if base_url.rstrip("/").count("/") >= 3:
-        return pg_url
-
-    pg_db = _configured_pg_db()
-    if not pg_db:
-        return pg_url
-
-    return f"{base_url.rstrip('/')}/{pg_db}{suffix}"
-
-
-def _configured_pg_db() -> str:
-    pg_db = os.getenv("SPIDER_PG_DB", "").strip()
-    if pg_db:
-        return pg_db
-
-    env_file = settings.__class__.model_config.get("env_file")
-    if not env_file:
-        return ""
-
-    env_path = Path(env_file)
-    if not env_path.is_absolute():
-        env_path = Path.cwd() / env_path
-    if not env_path.exists():
-        return ""
-
-    try:
-        for line in env_path.read_text(encoding="utf-8").splitlines():
-            if line.startswith("SPIDER_PG_DB="):
-                return line.split("=", 1)[1].strip()
-    except Exception:
-        logger.exception("Failed to read SPIDER_PG_DB from %s", env_path)
-
-    return ""
+    if pg_url and not make_url(pg_url).database:
+        raise ValueError("SPIDER_PG_URL must include the system database name")
+    return pg_url
 
 
 def _mask_url(url: str) -> str:

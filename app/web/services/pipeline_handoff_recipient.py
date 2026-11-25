@@ -52,7 +52,7 @@ def _grant(actor: UUID, expected: UUID | None = None) -> HandoffCopyGrant | None
 
 async def _physical_ready(session: AsyncSession) -> bool:
     await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"))
-    await session.execute(text("SET LOCAL search_path=pg_catalog,public,pg_temp"))
+    await session.execute(text("SET LOCAL search_path=pg_catalog,app,pg_temp"))
     await session.execute(text("SET LOCAL lock_timeout='100ms'"))
     await session.execute(text("SET LOCAL statement_timeout='1000ms'"))
     return await copy_database_ready(session, write=False)

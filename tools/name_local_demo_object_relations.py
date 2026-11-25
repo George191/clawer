@@ -32,7 +32,7 @@ async def run(apply):
             for old, name, schema, table in NAMES:
                 rows = (await session.execute(text("""SELECT id, name, source_schema, source_table,
                     source_fields, target_schema, target_table, target_fields, cardinality
-                    FROM public.ontology_object_relations WHERE name IN (:old, :name)
+                    FROM app.ontology_object_relations WHERE name IN (:old, :name)
                     """ + (" FOR UPDATE" if apply else "")), {"old": old, "name": name})).mappings().all()
                 if len(rows) != 1:
                     raise ValueError("The reviewed synthetic relationship definition is missing or ambiguous")
@@ -44,7 +44,7 @@ async def run(apply):
                     raise ValueError("The synthetic relationship differs from its reviewed contract")
                 changed = row["name"] != name
                 if apply and changed:
-                    await session.execute(text("""UPDATE public.ontology_object_relations
+                    await session.execute(text("""UPDATE app.ontology_object_relations
                         SET name=:name, updated_at=now() WHERE id=:id"""), {"id": row["id"], "name": name})
                 report.append({"relationId": str(row["id"]), "name": name, "changed": changed and apply})
         print(json.dumps({"applied": apply, "relations": report, "businessRowsChanged": 0,

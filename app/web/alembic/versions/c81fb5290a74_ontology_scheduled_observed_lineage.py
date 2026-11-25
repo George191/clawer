@@ -35,8 +35,8 @@ def upgrade() -> None:
                                              "AND receipt_id IS NOT NULL"))
 
     op.execute("""
-        CREATE FUNCTION public.ontology_transfer_keep_scheduled_source() RETURNS trigger
-        LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
+        CREATE FUNCTION app.ontology_transfer_keep_scheduled_source() RETURNS trigger
+        LANGUAGE plpgsql SET search_path = pg_catalog, app, pg_temp AS $$
         BEGIN
             IF NEW.scheduled_source_oid IS DISTINCT FROM OLD.scheduled_source_oid
                 OR NEW.scheduled_source_filenode IS DISTINCT FROM OLD.scheduled_source_filenode
@@ -48,21 +48,21 @@ def upgrade() -> None:
     """)
     op.execute(f"""
         CREATE TRIGGER ontology_transfer_keep_scheduled_source
-        BEFORE UPDATE OF scheduled_source_oid, scheduled_source_filenode ON public.{_RUNS}
-        FOR EACH ROW EXECUTE FUNCTION public.ontology_transfer_keep_scheduled_source()
+        BEFORE UPDATE OF scheduled_source_oid, scheduled_source_filenode ON app.{_RUNS}
+        FOR EACH ROW EXECUTE FUNCTION app.ontology_transfer_keep_scheduled_source()
     """)
 
 
 def downgrade() -> None:
     op.execute("SET LOCAL lock_timeout = '3s'")
-    op.execute(f"LOCK TABLE public.{_RUNS}, public.{_ATTEMPTS} IN ACCESS EXCLUSIVE MODE")
+    op.execute(f"LOCK TABLE app.{_RUNS}, app.{_ATTEMPTS} IN ACCESS EXCLUSIVE MODE")
     if op.get_bind().scalar(sa.text(f"""
-        SELECT EXISTS (SELECT 1 FROM public.{_RUNS}
+        SELECT EXISTS (SELECT 1 FROM app.{_RUNS}
                        WHERE scheduled_source_oid IS NOT NULL OR scheduled_source_filenode IS NOT NULL)
     """)):
         raise RuntimeError("Cannot discard committed Daily or Weekly UTC source provenance")
-    op.execute(f"DROP TRIGGER ontology_transfer_keep_scheduled_source ON public.{_RUNS}")
-    op.execute("DROP FUNCTION public.ontology_transfer_keep_scheduled_source()")
+    op.execute(f"DROP TRIGGER ontology_transfer_keep_scheduled_source ON app.{_RUNS}")
+    op.execute("DROP FUNCTION app.ontology_transfer_keep_scheduled_source()")
     op.drop_index(_ATTEMPT_INDEX, table_name=_ATTEMPTS)
     op.drop_index(_SOURCE_INDEX, table_name=_RUNS)
     op.drop_constraint(_CHECK, _RUNS, type_="check")

@@ -126,7 +126,6 @@ class AppSettings(BaseSettings):
         default_factory=list, description="临时维护时排除订阅的精确 topic 名；JSON 数组，重启消费者生效",
     )
     cdc_connect_url: str = Field(default="", description="Kafka Connect 管理地址，用于 CDC 状态和 Data Source 持续捕获任务；留空时不可配置任务")
-    pg_cdc_url: str = Field(default="", description="专用 Postgres CDC 复制账号连接串，留空复用 PG_URL")
     etl_output_mode: Literal["debezium", "direct"] = Field(
         default="debezium", description="ETL 出站由 Debezium 负责；direct 仅用于回滚",
     )
@@ -197,9 +196,10 @@ class AppSettings(BaseSettings):
 
     # ── Postgres ETL Pipeline (Postgres ETL 管道) ─────────────────────────────
     pg_url: str = Field(
-        default="postgresql+asyncpg://postgres:postgres@localhost:32775/spider_etl",
-        description="Postgres 连接 URL (asyncpg 驱动)",
+        default="",
+        description="系统数据库完整连接 URL (asyncpg 驱动)，系统表位于 app schema；业务库通过 Data Connections 选择",
     )
+    connection_secret_key: str = Field(default="", validation_alias="SECRET_KEY", repr=False, exclude=True)
     pg_pool_min: int = Field(default=2, description="Postgres 连接池最小值")
     pg_pool_max: int = Field(default=10, description="Postgres 连接池最大值")
     es_url: str = Field(default="", description="Elasticsearch 地址，留空不启用 ES 同步")

@@ -59,6 +59,7 @@ def worker(kind=base.ETLBase, layer="ods"):
     instance._layer, instance._table_role = layer, "current"
     instance._table_name, instance._handlers = "fixture", {"fixture": AsyncMock()}
     instance._log_prefix, instance._pg = "[fixture]", Pg()
+    instance._metadata_pg = Pg()
     instance._ready_types, instance._columns = set(), {}
     instance._create_partitions = AsyncMock()
     instance._ensure_cdc_identity = AsyncMock()
@@ -80,7 +81,7 @@ class OntologyConsumerTests(unittest.IsolatedAsyncioTestCase):
         pg.execute.assert_not_awaited()
         pg.init_schema.assert_not_awaited()
         for args in pg.fetch_one.await_args_list:
-            self.assertIn("FROM public.ontology_objects", args.args[0])
+            self.assertIn("FROM app.ontology_objects", args.args[0])
 
     async def test_base_initializes_new_ontology_api_before_registered_handlers(self):
         instance = worker(layer="dwd")
@@ -88,8 +89,9 @@ class OntologyConsumerTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(base, "ensure_ontology_tables", new_callable=AsyncMock) as ensure, \
              patch.object(base, "get_registered_ddl", new_callable=AsyncMock, return_value="ddl"):
             await instance._on_init_schema()
-        ensure.assert_awaited_once_with(instance._pg)
-        instance._pg.execute.assert_awaited_once_with("CREATE SCHEMA IF NOT EXISTS ts_dwd")
+        ensure.assert_awaited_once_with(instance._metadata_pg)
+        instance._pg.execute.assert_any_await("CREATE SCHEMA IF NOT EXISTS ts_dwd")
+        instance._pg.execute.assert_any_await("CREATE EXTENSION IF NOT EXISTS postgis")
         instance._ensure_registered_table.assert_awaited_once_with("fixture", "current", create_partitions=False)
 
     async def test_rds_and_ods_startup_keep_table_scope_and_new_bootstrap(self):
@@ -103,7 +105,7 @@ class OntologyConsumerTests(unittest.IsolatedAsyncioTestCase):
                 instance._ensure_registered_table = AsyncMock()
                 with patch.object(module, "ensure_ontology_tables", new_callable=AsyncMock) as ensure:
                     await instance._on_init_schema()
-                ensure.assert_awaited_once_with(instance._pg)
+                ensure.assert_awaited_once_with(instance._metadata_pg)
                 instance._ensure_registered_table.assert_awaited_once_with(
                     instance._table_name, "current", create_partitions=False,
                 )
@@ -124,8 +126,8 @@ class OntologyConsumerTests(unittest.IsolatedAsyncioTestCase):
              patch.object(base, "ensure_ontology_tables", new_callable=AsyncMock) as ensure, \
              patch.object(base, "get_registered_ddl", new_callable=AsyncMock, return_value="ddl"):
             await instance._on_init_schema()
-        ensure.assert_awaited_once_with(instance._pg)
-        task_ensure.assert_awaited_once_with(instance._pg)
+        ensure.assert_awaited_once_with(instance._metadata_pg)
+        task_ensure.assert_awaited_once_with(instance._metadata_pg)
         self.assertEqual(order, ["ensure", "lookup"])
         self.assertEqual(save.await_args.kwargs["ddl_sql"], ts_task.TASK_VULNERABILITY_DDL)
         self.assertEqual(save.await_args.kwargs["partition_type"], "none")
@@ -135,7 +137,7 @@ class OntologyConsumerTests(unittest.IsolatedAsyncioTestCase):
         instance = worker()
         instance._pg.fetch_one.return_value = {"relation": None}
         async def sync(session, schema, table, *, catalog_session):
-            self.assertIs(session, instance._pg)
+            self.assertIs(session, instance._metadata_pg)
             self.assertIs(catalog_session, instance._pg)
             self.assertEqual((schema, table), ("ts_ods", "ods_fixture"))
             instance._pg.events.append("metadata")
@@ -176,6 +178,11 @@ class OntologyConsumerTests(unittest.IsolatedAsyncioTestCase):
 
 
 class CdcOntologyConsumerTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        patcher = patch.object(cdc, "catalog_parameters", new_callable=AsyncMock, return_value={"object_metadata": "[]"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     async def test_worker_only_alters_tables_without_full_replica_identity(self):
         table = "ts_ods.ods_fixture"
         for has_full_identity in (True, False):
@@ -196,7 +203,8 @@ class CdcOntologyConsumerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_discovery_is_limited_to_active_registered_ods_current_parents(self):
         sql = cdc._ODS_CURRENT_SQL
-        self.assertIn("FROM public.ontology_objects r", sql)
+        self.assertIn("jsonb_to_recordset", sql)
+        self.assertNotIn("app.ontology_objects", sql)
         for predicate in ["r.layer='ods'", "r.table_role='current'", "r.is_active", "NOT c.relispartition"]:
             self.assertIn(predicate, sql)
         self.assertEqual(cdc._ods_whitelist([
@@ -204,16 +212,15 @@ class CdcOntologyConsumerTests(unittest.IsolatedAsyncioTestCase):
             {"nspname": "ts_ods", "relname": "ods_orbital"},
         ]), {("ts_ods", "ods_fixture")})
 
-    async def test_prepare_grants_only_required_ontology_columns_and_preserves_publication_scope(self):
+    async def test_prepare_uses_business_catalog_and_preserves_publication_scope(self):
         pg = Pg(registered=[{"nspname": "ts_ods", "relname": "ods_fixture"}])
         pg.execute = pg._sql
         with patch.object(cdc, "postgres_cdc_identity", return_value=IDENTITY), \
              patch.object(cdc, "cdc_schemas", return_value=("ts_rds", "ts_ods", "ts_task")), \
-             patch.object(cdc.settings, "pg_cdc_url", "postgresql+asyncpg://fixture_reader@fixture.invalid/fixture"):
+             patch.object(cdc, "catalog_parameters", new_callable=AsyncMock, return_value={"object_metadata": "[]"}):
             await cdc.prepare_database(pg)
         statements = [sql for sql, _ in pg.calls]
-        self.assertIn('GRANT USAGE ON SCHEMA public TO "fixture_reader"', statements)
-        self.assertIn('GRANT SELECT (layer,table_role,is_active,schema_name,table_name) ON public.ontology_objects TO "fixture_reader"', statements)
+        self.assertFalse(any("GRANT" in sql for sql in statements))
         publication = next(sql for sql in statements if sql.startswith("CREATE PUBLICATION"))
         self.assertIn('TABLES IN SCHEMA "ts_rds", "ts_task"', publication)
         self.assertIn('TABLE "ts_ods"."ods_fixture"', publication)

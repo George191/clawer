@@ -27,8 +27,8 @@ def upgrade() -> None:
         ["generation", "stream_marker", "physical_digest"],
     )
     op.execute("""
-        CREATE FUNCTION public.ontology_pipeline_keep_restore_provenance() RETURNS trigger
-        LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
+        CREATE FUNCTION app.ontology_pipeline_keep_restore_provenance() RETURNS trigger
+        LANGUAGE plpgsql SET search_path = pg_catalog, app, pg_temp AS $$
         BEGIN
             IF NEW.restored_from_generation IS DISTINCT FROM OLD.restored_from_generation THEN
                 RAISE EXCEPTION USING ERRCODE='55000', MESSAGE='Builder restore provenance is immutable';
@@ -38,17 +38,17 @@ def upgrade() -> None:
     """)
     op.execute(f"""
         CREATE TRIGGER ontology_pipeline_keep_restore_provenance BEFORE UPDATE OF restored_from_generation
-        ON public.{_TABLE} FOR EACH ROW EXECUTE FUNCTION public.ontology_pipeline_keep_restore_provenance()
+        ON app.{_TABLE} FOR EACH ROW EXECUTE FUNCTION app.ontology_pipeline_keep_restore_provenance()
     """)
 
 
 def downgrade() -> None:
     op.execute("SET LOCAL lock_timeout='3s'")
-    op.execute(f"LOCK TABLE ONLY public.{_TABLE} IN ACCESS EXCLUSIVE MODE")
-    if op.get_bind().scalar(sa.text(f"SELECT EXISTS (SELECT 1 FROM ONLY public.{_TABLE} WHERE restored_from_generation IS NOT NULL)")):
+    op.execute(f"LOCK TABLE ONLY app.{_TABLE} IN ACCESS EXCLUSIVE MODE")
+    if op.get_bind().scalar(sa.text(f"SELECT EXISTS (SELECT 1 FROM ONLY app.{_TABLE} WHERE restored_from_generation IS NOT NULL)")):
         raise RuntimeError("Cannot discard durable Builder restore provenance")
-    op.execute(f"DROP TRIGGER ontology_pipeline_keep_restore_provenance ON public.{_TABLE}")
-    op.execute("DROP FUNCTION public.ontology_pipeline_keep_restore_provenance()")
+    op.execute(f"DROP TRIGGER ontology_pipeline_keep_restore_provenance ON app.{_TABLE}")
+    op.execute("DROP FUNCTION app.ontology_pipeline_keep_restore_provenance()")
     op.drop_constraint(_FOREIGN, _TABLE, type_="foreignkey")
     op.drop_constraint(_CHECK, _TABLE, type_="check")
     op.drop_constraint(_UNIQUE, _TABLE, type_="unique")

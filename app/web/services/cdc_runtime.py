@@ -16,7 +16,7 @@ from aiokafka.structs import OffsetAndMetadata, TopicPartition
 from app.base.kafka import build_admin_client_kwargs, build_consumer_kwargs
 from app.config.settings import settings
 from app.records.change_feed import MONGO_CDC_GROUP_PREFIX, mongo_cdc_topic_prefix
-from app.storage.postgres_client import get_pg_client
+from app.storage.business_database import BusinessDatabaseNotConfigured, get_business_pg_client
 from app.web.api.models.cdc import (
     CdcStatus, ConnectState, ConnectorState, ConsumerLag, KafkaState,
     PostgresState, ProbeState, WalSlot,
@@ -66,6 +66,9 @@ async def _connect() -> ConnectState:
     if settings.db_url and settings.db_name:
         expected.add(f"{mongo_cdc_topic_prefix()}-{settings.db_name}")
     if settings.etl_output_mode == "debezium":
+        if get_business_pg_client().connection_id is None:
+            return ConnectState(state="not_ready", connectors=connectors,
+                                reason="Select a business database in Data Connections before enabling PostgreSQL capture")
         expected.add(_postgres_identity()["connector"])
     missing = expected - {item.name for item in connectors}
     ready = all(item.state == "RUNNING" and item.task_states and
@@ -99,9 +102,11 @@ async def _mongo() -> ProbeState:
 
 
 async def _postgres() -> PostgresState:
-    if not settings.pg_url:
-        return PostgresState(state="unconfigured", reason="No PostgreSQL source is configured")
-    pg = get_pg_client()
+    pg = get_business_pg_client()
+    try:
+        await pg.connect(max_retries=1)
+    except BusinessDatabaseNotConfigured as error:
+        return PostgresState(state="unconfigured", reason=str(error))
     level = await pg.fetch_one(
         "SELECT current_setting('wal_level') AS wal_level, pg_is_in_recovery() AS in_recovery",
     )
@@ -131,7 +136,7 @@ async def _postgres() -> PostgresState:
 
 
 async def _consumer_offsets(admin: AIOKafkaAdminClient) -> dict[str, dict[TopicPartition, OffsetAndMetadata]]:
-    pg_prefix = _postgres_identity()["prefix"]
+    pg_prefix = f"{settings.kafka_topic}-postgres-cdc"
     mongo_prefix = f"{mongo_cdc_topic_prefix()}.{settings.db_name}."
     worker_topics = {
         settings.etl_rds_consumer_group: (settings.etl_raw_topic, settings.kafka_topic + "-"),
@@ -192,10 +197,10 @@ async def _probe(operation: Callable[[], Awaitable[_Probe]], model: type[_Probe]
 
 async def _status() -> CdcStatus:
     """Return bounded independent infrastructure probes, without implying ETL completion."""
-    connect, mongo, postgres, kafka = await asyncio.gather(
+    postgres = await _probe(_postgres, PostgresState, "Unable to read PostgreSQL WAL status. Check connectivity and monitoring permissions.")
+    connect, mongo, kafka = await asyncio.gather(
         _probe(_connect, ConnectState, "Unable to read Kafka Connect status. Check connectivity and permissions."),
         _probe(_mongo, ProbeState, "Unable to verify MongoDB topology and Change Streams read permissions"),
-        _probe(_postgres, PostgresState, "Unable to read PostgreSQL WAL status. Check connectivity and monitoring permissions."),
         _probe(_kafka, KafkaState, "Unable to read CDC offsets. Check Kafka connectivity and consumer group read permissions."),
     )
     return CdcStatus(

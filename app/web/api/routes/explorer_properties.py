@@ -112,8 +112,8 @@ async def warehouse_asset(layer, table, user):
                    COALESCE(o.data_type,'') AS data_type,
                    p.name, p.comment
             FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-            LEFT JOIN public.ontology_objects o ON o.schema_name=n.nspname AND o.table_name=c.relname
-            LEFT JOIN public.ontology_object_properties p ON p.object_id=o.id
+            LEFT JOIN app.ontology_objects o ON o.schema_name=n.nspname AND o.table_name=c.relname
+            LEFT JOIN app.ontology_object_properties p ON p.object_id=o.id
             WHERE n.nspname=:schema AND c.relname=:table AND COALESCE(o.is_active,true)
               AND (:admin OR COALESCE(o.visibility,'normal') <> 'hidden')
               AND has_schema_privilege(n.oid,'USAGE') AND has_table_privilege(c.oid,'SELECT')

@@ -33,7 +33,7 @@ def _utc_now() -> datetime:
 
 
 _REGISTRY = table("ontology_data_connections", column("id", Uuid()), column("updated_at", DateTime(timezone=True)),
-                  schema="public").alias("saved_batch_source")
+                  schema="app").alias("saved_batch_source")
 
 
 _SOURCE_PAUSED_AT = literal_column(paused_at_sql("saved_batch_source"), type_=DateTime(timezone=True))

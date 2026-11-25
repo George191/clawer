@@ -49,7 +49,8 @@ class TsRds(ETLBase):
 
     async def _on_init_schema(self) -> None:
         await self._pg.execute("CREATE SCHEMA IF NOT EXISTS ts_rds")
-        await ensure_ontology_tables(self._pg)
+        await self._pg.execute("CREATE EXTENSION IF NOT EXISTS postgis")
+        await ensure_ontology_tables(self._metadata_pg)
         for table in RDS_CURRENT_BASELINE_DDLS:
             if not self._table_name or table == self._table_name:
                 await self._ensure_registered_table(table, "current", create_partitions=False)
@@ -58,9 +59,9 @@ class TsRds(ETLBase):
         validate_table_name(table)
         if table in self._ready_types:
             return
-        if not await get_registered_ddl(self._pg, "rds", table, "current"):
+        if not await get_registered_ddl(self._metadata_pg, "rds", table, "current"):
             await save_registered_ddl(
-                self._pg, layer="rds", table=table,
+                self._metadata_pg, layer="rds", table=table,
                 ddl_sql=current_table_ddl("rds", table), updated_by="system:rds", allow_update=False,
             )
         await self._ensure_registered_table(table, "current")

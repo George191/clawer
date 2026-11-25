@@ -126,7 +126,7 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
             await session.execute(text("CREATE TABLE ts_batch_sync_sandbox.accounts (id integer PRIMARY KEY, caption text NOT NULL)"))
             await session.execute(text("INSERT INTO ts_batch_sync_sandbox.accounts VALUES(1,'old'),(77,'untouched')"))
             await session.execute(text("""
-                INSERT INTO public.ontology_data_connections
+                INSERT INTO app.ontology_data_connections
                 (id,name,engine,config,credentials_ciphertext,created_by,tested_at,updated_at)
                 VALUES (:id,'fake local source','postgresql','{"host":"127.0.0.1"}','never read by this fixture','test',now(),:version)
             """), {"id": UUID(PAYLOAD["connectionId"]), "version": datetime.fromisoformat(PAYLOAD["expectedSourceUpdatedAt"])})
@@ -135,11 +135,11 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
     async def drop_fixture(self):
         async with self.pg.session() as session:
             for command in (
-                "DROP TABLE public.ontology_batch_sync_attempts, public.ontology_batch_sync_requests, "
-                "public.ontology_batch_sync_schedule_jobs, public.ontology_batch_sync_schedules",
-                "DROP TABLE public.ontology_batch_sync_receipts, public.ontology_batch_sync_plans",
-                "DROP TABLE public.ontology_data_connections, public.ontology_batch_source_identities, "
-                "public.ontology_batch_sync_incremental_watermark",
+                "DROP TABLE app.ontology_batch_sync_attempts, app.ontology_batch_sync_requests, "
+                "app.ontology_batch_sync_schedule_jobs, app.ontology_batch_sync_schedules",
+                "DROP TABLE app.ontology_batch_sync_receipts, app.ontology_batch_sync_plans",
+                "DROP TABLE app.ontology_data_connections, app.ontology_batch_source_identities, "
+                "app.ontology_batch_sync_incremental_watermark",
                 "DROP SCHEMA ts_batch_sync_sandbox CASCADE",
             ):
                 await session.execute(text(command))
@@ -165,7 +165,7 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(available.json()["lineageAsset"], asset)
                 self.assertIs(available.json()["incrementalLineage"], True)
                 await self.pg.execute("""
-                    INSERT INTO public.ontology_batch_sync_incremental_watermark
+                    INSERT INTO app.ontology_batch_sync_incremental_watermark
                     (singleton, connection_id, source_identity_fingerprint, source_stream_digest,
                      target_oid, target_file_node, applied_through)
                     SELECT true, :connection, repeat('a', 64), repeat('b', 64), oid, relfilenode, 0
@@ -242,7 +242,7 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
                 # A connection edit blocks new requests but not the replay of an
                 # already-committed request; neither case reopens the source.
                 async with self.pg.session() as session:
-                    await session.execute(text("UPDATE public.ontology_data_connections SET updated_at=clock_timestamp()"))
+                    await session.execute(text("UPDATE app.ontology_data_connections SET updated_at=clock_timestamp()"))
                 stale_source = await submit(plan)
                 self.assertEqual(stale_source.status_code, 409, stale_source.text)
                 self.assertEqual(stale_source.json()["detail"]["code"], "source_revision_changed")
@@ -402,7 +402,7 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
                 await self.pg.execute('UPDATE public."user" SET is_superuser=true')
                 day4 = slot + timedelta(days=3)
                 fourth, = await due_jobs(day4)
-                await self.pg.execute("UPDATE public.ontology_data_connections SET updated_at=clock_timestamp()")
+                await self.pg.execute("UPDATE app.ontology_data_connections SET updated_at=clock_timestamp()")
                 stale = (await client.get(path + "/schedule")).json()
                 self.assertFalse(stale["enabled"])
                 self.assertTrue(stale["configuredEnabled"])

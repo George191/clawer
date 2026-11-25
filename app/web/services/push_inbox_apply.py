@@ -87,7 +87,7 @@ def _result(row: PushApplyResultRow) -> PushApplyResult:
 async def _limits(session: AsyncSession, *, read_only: bool = False) -> None:
     if read_only:
         await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"))
-    await session.execute(text("SET LOCAL search_path = pg_catalog, public, pg_temp"))
+    await session.execute(text("SET LOCAL search_path = pg_catalog, app, pg_temp"))
     await session.execute(text("SET LOCAL statement_timeout='1500ms'"))
     await session.execute(text("SET LOCAL lock_timeout='500ms'"))
 

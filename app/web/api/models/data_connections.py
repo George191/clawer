@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
+from uuid import UUID
 from typing import Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
@@ -110,6 +111,13 @@ class DataConnectionPauseChange(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     paused: bool = Field(strict=True)
+    expectedUpdatedAt: AwareDatetime
+
+
+class BusinessDatabaseSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    connectionId: UUID
     expectedUpdatedAt: AwareDatetime
 
 

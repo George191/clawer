@@ -36,7 +36,7 @@ class CollectionRouteStore:
         routes = await get_pg_client().fetch_all(
             """
             SELECT template_name, collection_name, data_type, enabled
-            FROM public.ai_collect_template_alias AS routes
+            FROM app.ai_collect_template_alias AS routes
             WHERE template_name = :template_name OR collection_name = :template_name
             """,
             {"template_name": template_name},
@@ -44,7 +44,7 @@ class CollectionRouteStore:
         if not routes:
             template = await get_pg_client().fetch_one(
                 """
-                SELECT data_type FROM public.ai_collect_templates
+                SELECT data_type FROM app.ai_collect_templates
                 WHERE name = :name
                 ORDER BY (status = 'active') DESC, updated_at DESC LIMIT 1
                 """,
@@ -83,7 +83,7 @@ class CollectionRouteStore:
             """
             WITH released_templates AS (
                 SELECT DISTINCT ON (name) name, data_type
-                FROM public.ai_collect_templates
+                FROM app.ai_collect_templates
                 ORDER BY name, (status = 'active') DESC, updated_at DESC
             ), template_groups AS (
                 SELECT data_type, array_agg(name ORDER BY name) AS names
@@ -98,13 +98,13 @@ class CollectionRouteStore:
                        COALESCE(routes.data_type, templates.data_type) AS data_type,
                        (routes.template_name IS NOT NULL) AS explicit_route
                 FROM templates
-                LEFT JOIN public.ai_collect_template_alias AS routes
+                LEFT JOIN app.ai_collect_template_alias AS routes
                   ON routes.template_name = templates.name
                 WHERE routes.enabled OR (
                     routes.template_name IS NULL
                     AND NOT EXISTS (
                         SELECT 1
-                        FROM public.ai_collect_template_alias AS collection_owner
+                        FROM app.ai_collect_template_alias AS collection_owner
                         WHERE collection_owner.collection_name = templates.name
                           AND collection_owner.data_type = templates.data_type
                     )

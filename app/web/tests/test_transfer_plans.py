@@ -177,9 +177,9 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 "CREATE TABLE ts_ods.ods_financial_fact (id int PRIMARY KEY)",
                 "CREATE TABLE ts_ods.no_pk (id int)", "CREATE TABLE ts_ods.hidden (id int PRIMARY KEY)",
                 "CREATE TABLE ts_meta.reserved (id int PRIMARY KEY)",
-                "CREATE TABLE public.ontology_objects (schema_name text, table_name text, is_active bool, visibility text)",
-                "CREATE TABLE public.ontology_object_properties (id int)",
-                "INSERT INTO public.ontology_objects VALUES ('ts_ods', 'hidden', true, 'hidden')",
+                "CREATE TABLE app.ontology_objects (schema_name text, table_name text, is_active bool, visibility text)",
+                "CREATE TABLE app.ontology_object_properties (id int)",
+                "INSERT INTO app.ontology_objects VALUES ('ts_ods', 'hidden', true, 'hidden')",
                 "INSERT INTO ts_rds.rds_financial_fact VALUES (1), (2)",
                 "INSERT INTO ts_ods.ods_financial_fact VALUES (3)",
             ):
@@ -217,31 +217,31 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def drop_fixtures(self):
         async with self.pg.session() as session:
-            await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_daily_job_quality, "
-                                       "public.ontology_transfer_schedule_target_rejections"))
-            await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_min_rows"))
-            await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_field_freshness"))
-            await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_collected_stats"))
-            await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_quality_incidents"))
-            await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_quality_transitions, "
-                                       "public.ontology_asset_quality_observations"))
-            await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_freshness_transitions, "
-                                       "public.ontology_asset_freshness_policies"))
-            await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_attempts"))
-            await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_schedule_jobs"))
-            await session.execute(text("DROP FUNCTION IF EXISTS public.ontology_transfer_keep_clock_kind()"))
-            await session.execute(text("DROP FUNCTION IF EXISTS public.ontology_transfer_keep_month_day()"))
-            await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_schedules"))
-            await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_upstream_mixed_slots"))
-            await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_upstream_job_events, "
-                                       "public.ontology_transfer_upstream_parents"))
-            await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_upstream_jobs, "
-                                       "public.ontology_transfer_upstream_triggers, public.ontology_transfer_commit_events"))
-            await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_checkpoints"))
-            await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_runs"))
-            await session.execute(text("DROP FUNCTION IF EXISTS public.ontology_transfer_keep_scheduled_source()"))
-            await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_plans"))
-            await session.execute(text("DROP TABLE public.ontology_objects, public.ontology_object_properties"))
+            await session.execute(text("DROP TABLE IF EXISTS app.ontology_asset_daily_job_quality, "
+                                       "app.ontology_transfer_schedule_target_rejections"))
+            await session.execute(text("DROP TABLE IF EXISTS app.ontology_asset_min_rows"))
+            await session.execute(text("DROP TABLE IF EXISTS app.ontology_asset_field_freshness"))
+            await session.execute(text("DROP TABLE IF EXISTS app.ontology_asset_collected_stats"))
+            await session.execute(text("DROP TABLE IF EXISTS app.ontology_asset_quality_incidents"))
+            await session.execute(text("DROP TABLE IF EXISTS app.ontology_asset_quality_transitions, "
+                                       "app.ontology_asset_quality_observations"))
+            await session.execute(text("DROP TABLE IF EXISTS app.ontology_asset_freshness_transitions, "
+                                       "app.ontology_asset_freshness_policies"))
+            await session.execute(text("DROP TABLE IF EXISTS app.ontology_transfer_attempts"))
+            await session.execute(text("DROP TABLE IF EXISTS app.ontology_transfer_schedule_jobs"))
+            await session.execute(text("DROP FUNCTION IF EXISTS app.ontology_transfer_keep_clock_kind()"))
+            await session.execute(text("DROP FUNCTION IF EXISTS app.ontology_transfer_keep_month_day()"))
+            await session.execute(text("DROP TABLE IF EXISTS app.ontology_transfer_schedules"))
+            await session.execute(text("DROP TABLE IF EXISTS app.ontology_transfer_upstream_mixed_slots"))
+            await session.execute(text("DROP TABLE IF EXISTS app.ontology_transfer_upstream_job_events, "
+                                       "app.ontology_transfer_upstream_parents"))
+            await session.execute(text("DROP TABLE IF EXISTS app.ontology_transfer_upstream_jobs, "
+                                       "app.ontology_transfer_upstream_triggers, app.ontology_transfer_commit_events"))
+            await session.execute(text("DROP TABLE IF EXISTS app.ontology_transfer_checkpoints"))
+            await session.execute(text("DROP TABLE IF EXISTS app.ontology_transfer_runs"))
+            await session.execute(text("DROP FUNCTION IF EXISTS app.ontology_transfer_keep_scheduled_source()"))
+            await session.execute(text("DROP TABLE IF EXISTS app.ontology_transfer_plans"))
+            await session.execute(text("DROP TABLE app.ontology_objects, app.ontology_object_properties"))
             for schema in ("ts_rds", "ts_ods", "ts_meta"):
                 await session.execute(text(f"DROP SCHEMA {schema} CASCADE"))
             await session.execute(text("DROP SCHEMA IF EXISTS ts_transfer_sandbox CASCADE"))
@@ -625,17 +625,17 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                     await self.pg.execute("ALTER TABLE ts_transfer_sandbox.quality_target ADD COLUMN unevaluated int")
                     self.assertEqual((await client.get(route)).json()["checks"]["schema"]["schemaDrift"], drift)
                     await self.pg.execute("""
-                        INSERT INTO public.ontology_objects VALUES ('ts_transfer_sandbox','quality_target',true,'hidden')
+                        INSERT INTO app.ontology_objects VALUES ('ts_transfer_sandbox','quality_target',true,'hidden')
                     """)
                     self.assertNotIn("schemaDrift", (await client.get(route)).json()["checks"]["schema"])
-                    await self.pg.execute("DELETE FROM public.ontology_objects WHERE table_name='quality_target'")
-                    await self.pg.execute("ALTER TABLE public.ontology_objects RENAME TO ontology_objects_missing")
+                    await self.pg.execute("DELETE FROM app.ontology_objects WHERE table_name='quality_target'")
+                    await self.pg.execute("ALTER TABLE app.ontology_objects RENAME TO ontology_objects_missing")
                     try:
                         without_registry = (await client.get(route)).json()["checks"]["schema"]
                         self.assertEqual(without_registry["reason"], "schema_drift")
                         self.assertNotIn("schemaDrift", without_registry)
                     finally:
-                        await self.pg.execute("ALTER TABLE public.ontology_objects_missing RENAME TO ontology_objects")
+                        await self.pg.execute("ALTER TABLE app.ontology_objects_missing RENAME TO ontology_objects")
                 next_tick = late + timedelta(minutes=1)
                 await self.pg.execute("""
                     ALTER TABLE ts_transfer_sandbox.quality_target DROP COLUMN unevaluated,
@@ -647,7 +647,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(healthy["state"], "healthy")
                     self.assertNotIn("schemaDrift", healthy)
                 persisted = await self.pg.fetch_one("""
-                    SELECT schema_drift FROM public.ontology_asset_quality_observations
+                    SELECT schema_drift FROM app.ontology_asset_quality_observations
                     WHERE target_table='quality_target' AND kind='schema'
                 """)
                 self.assertIsNone(persisted["schema_drift"])
@@ -672,7 +672,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual((await client.get(route)).json()["checks"]["schema"]["schemaDrift"], detail)
                     self.assertTrue(all(item["kind"] == "added" and "before" not in item for item in detail["changes"]))
                     await self.pg.execute("""
-                        UPDATE public.ontology_asset_quality_observations
+                        UPDATE app.ontology_asset_quality_observations
                         SET schema_drift = jsonb_set(schema_drift, '{diagnostics,truncated}', '"invalid"')
                         WHERE target_table='quality_target' AND kind='schema'
                     """)
@@ -690,7 +690,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(unknown["reason"], "schema_unavailable")
                     self.assertNotIn("schemaDrift", unknown)
                 persisted = await self.pg.fetch_one("""
-                    SELECT schema_drift FROM public.ontology_asset_quality_observations
+                    SELECT schema_drift FROM app.ontology_asset_quality_observations
                     WHERE target_table='quality_target' AND kind='schema'
                 """)
                 self.assertIsNone(persisted["schema_drift"])
@@ -913,8 +913,8 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
             await self.migrate(session, self.run_migration.downgrade)
             await self.migrate(session, self.migration.downgrade)
         rows = await self.pg.fetch_one("""
-            SELECT to_regclass('public.ontology_transfer_plans') IS NULL AS removed,
-                   to_regclass('public.ontology_objects') IS NOT NULL AS ontology_preserved,
+            SELECT to_regclass('app.ontology_transfer_plans') IS NULL AS removed,
+                   to_regclass('app.ontology_objects') IS NOT NULL AS ontology_preserved,
                    (SELECT count(*) FROM ts_rds.rds_financial_fact) = 2 AS warehouse_preserved
         """)
         self.assertTrue(all(rows.values()))
@@ -1214,8 +1214,8 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 'CREATE TABLE public."user" (id uuid PRIMARY KEY, status public.statustypes, is_superuser bool)',
                 f"CREATE ROLE {role} LOGIN PASSWORD '{password}'",
                 f"GRANT USAGE ON SCHEMA {schema} TO {role}",
-                f"GRANT SELECT ON public.ontology_objects, public.ontology_transfer_schedule_jobs, "
-                f"public.ontology_transfer_runs, public.ontology_transfer_attempts, public.ontology_transfer_upstream_jobs TO {role}",
+                f"GRANT SELECT ON app.ontology_objects, app.ontology_transfer_schedule_jobs, "
+                f"app.ontology_transfer_runs, app.ontology_transfer_attempts, app.ontology_transfer_upstream_jobs TO {role}",
                 f"GRANT SELECT ON {schema}.source, {schema}.target TO {role}",
             ):
                 await session.execute(text(sql))
@@ -1650,10 +1650,10 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await client.get(source_path.replace("ts_transfer_sandbox", "ts_ods"), params=params)).status_code, 404)
                 with patch.object(settings, "TRANSFER_SANDBOX_OBSERVED_LINEAGE_ENABLED", False):
                     self.assertFalse((await client.get(source_path, params=params)).json()["available"])
-                await self.pg.execute("INSERT INTO public.ontology_objects VALUES ('ts_transfer_sandbox','a',true,'hidden')")
+                await self.pg.execute("INSERT INTO app.ontology_objects VALUES ('ts_transfer_sandbox','a',true,'hidden')")
                 self.assertEqual((await client.get(source_path, params=params)).status_code, 404)
                 self.assertEqual(await incoming(), [])
-                await self.pg.execute("DELETE FROM public.ontology_objects WHERE schema_name='ts_transfer_sandbox'")
+                await self.pg.execute("DELETE FROM app.ontology_objects WHERE schema_name='ts_transfer_sandbox'")
                 await self.pg.execute("TRUNCATE ts_transfer_sandbox.a")
                 self.assertEqual(await incoming(), [])
                 self.assertEqual((await client.get(source_path, params=params)).json()["neighbors"], [])
@@ -1775,11 +1775,11 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn("weekly_dst", await neighbors())
                 self.assertEqual((await link("weekly_dst", receipts["weekly_dst"])).status_code, 200)
 
-                await self.pg.execute("INSERT INTO public.ontology_objects VALUES "
+                await self.pg.execute("INSERT INTO app.ontology_objects VALUES "
                                       "('ts_transfer_sandbox','clock_src',true,'hidden')")
                 self.assertEqual((await link("weekly_dst", receipts["weekly_dst"])).status_code, 404)
                 self.assertEqual(await neighbors(root + "/daily_dst/lineage-observed", "incoming"), {})
-                await self.pg.execute("DELETE FROM public.ontology_objects WHERE table_name='clock_src'")
+                await self.pg.execute("DELETE FROM app.ontology_objects WHERE table_name='clock_src'")
                 await self.pg.execute("TRUNCATE ts_transfer_sandbox.clock_src")
                 self.assertEqual(await neighbors(), {})
                 archived = await link("daily_dst", receipts["daily_dst"])
@@ -1973,7 +1973,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 for query in ("?requireVisible=false", "?requireVisible=TRUE", "?requireVisible=true&requireVisible=true",
                               "?requireVisible=true&ignored=1"):
                     self.assertEqual((await client.get(link + query)).status_code, 422)
-                await self.pg.execute("""INSERT INTO public.ontology_objects
+                await self.pg.execute("""INSERT INTO app.ontology_objects
                     VALUES ('ts_transfer_sandbox','timeline_target',true,'hidden')""")
                 hidden = await client.get(link, params={"requireVisible": "true"})
                 self.assertEqual(hidden.status_code, 404, hidden.text)
@@ -1983,16 +1983,16 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                     nope = await client.get(f"/etl/ts_transfer_sandbox/{asset}/transfer-timeline/receipt/{receipt_id}",
                                             params={"requireVisible": "true"})
                     self.assertEqual((nope.status_code, nope.json()), (404, hidden.json()))
-                await self.pg.execute("""UPDATE public.ontology_objects SET is_active=false,visibility='normal'
+                await self.pg.execute("""UPDATE app.ontology_objects SET is_active=false,visibility='normal'
                     WHERE schema_name='ts_transfer_sandbox' AND table_name='timeline_target'""")
                 self.assertEqual((await client.get(link, params={"requireVisible": "true"})).json(), hidden.json())
-                await self.pg.execute("""DELETE FROM public.ontology_objects
+                await self.pg.execute("""DELETE FROM app.ontology_objects
                     WHERE schema_name='ts_transfer_sandbox' AND table_name='timeline_target'""")
-                await self.pg.execute("""INSERT INTO public.ontology_objects
+                await self.pg.execute("""INSERT INTO app.ontology_objects
                     VALUES ('ts_transfer_sandbox','timeline_source',true,'hidden')""")
                 self.assertEqual((await client.get(link, params={"requireVisible": "true"})).json(), hidden.json())
                 self.assertEqual((await client.get(link)).status_code, 200)
-                await self.pg.execute("""DELETE FROM public.ontology_objects
+                await self.pg.execute("""DELETE FROM app.ontology_objects
                     WHERE schema_name='ts_transfer_sandbox' AND table_name='timeline_source'""")
                 with patch.object(settings, "TRANSFER_SANDBOX_OBSERVED_LINEAGE_ENABLED", False):
                     self.assertEqual((await client.get(link, params={"requireVisible": "true"})).json(), hidden.json())
@@ -2364,7 +2364,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 scheduled = f"{RUNS}/{passing['id']}/schedule"
                 passing_path = f"{RUNS}/{passing['id']}/upstream-trigger"
                 await self.pg.execute("""
-                    INSERT INTO public.ontology_transfer_schedules
+                    INSERT INTO app.ontology_transfer_schedules
                         (plan_id, generation, enabled, armed_by, armed_for_updated_at, updated_at)
                     VALUES (CAST(:plan AS uuid),1,true,:actor,CAST(:version AS timestamptz),NOW())
                 """, {"plan": UUID(passing["id"]), "actor": TEST_ACTOR,
@@ -2681,14 +2681,14 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(fresh["state"], "current", fresh)
                 self.assertEqual(fresh["current"]["estimatedRows"], "3")
                 await self.pg.execute(
-                    "INSERT INTO public.ontology_objects VALUES ('ts_transfer_sandbox','stats_target',true,'hidden')",
+                    "INSERT INTO app.ontology_objects VALUES ('ts_transfer_sandbox','stats_target',true,'hidden')",
                 )
                 self.assertEqual((await tick(7))["checked"], 1)
                 hidden = (await client.get(route)).json()
                 self.assertFalse(hidden["available"])
                 self.assertIsNone(hidden["current"])
                 self.assertIsNone(hidden["historical"])
-                await self.pg.execute("DELETE FROM public.ontology_objects WHERE table_name='stats_target'")
+                await self.pg.execute("DELETE FROM app.ontology_objects WHERE table_name='stats_target'")
 
                 await self.pg.execute("TRUNCATE ts_transfer_sandbox.stats_target")
                 rewritten = (await client.get(route)).json()
@@ -2758,7 +2758,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
             ):
                 await session.execute(text(sql))
             await session.execute(text("""INSERT INTO public."user" VALUES (:id, 'ENABLE', true)"""), {"id": TEST_ACTOR})
-        self.addAsyncCleanup(self.pg.execute, "DROP TABLE public.ontology_asset_weekly_job_quality")
+        self.addAsyncCleanup(self.pg.execute, "DROP TABLE app.ontology_asset_weekly_job_quality")
         self.addAsyncCleanup(self.pg.execute, "DROP TYPE public.statustypes")
         self.addAsyncCleanup(self.pg.execute, 'DROP TABLE public."user"')
         slot = datetime.now(timezone.utc).replace(second=0, microsecond=0) - timedelta(minutes=1)
@@ -2865,11 +2865,11 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 now += timedelta(minutes=3)
                 self.assertEqual((await evidence("evid_good")).json(), missing.json())
                 now = snapshot
-                await self.pg.execute("INSERT INTO public.ontology_objects VALUES "
+                await self.pg.execute("INSERT INTO app.ontology_objects VALUES "
                                       "('ts_transfer_sandbox','evid_source',true,'hidden')")
                 self.assertEqual((await evidence("evid_good")).json(), missing.json())
                 self.assertEqual((await evidence("evid_bad")).json(), missing.json())
-                await self.pg.execute("DELETE FROM public.ontology_objects WHERE table_name='evid_source'")
+                await self.pg.execute("DELETE FROM app.ontology_objects WHERE table_name='evid_source'")
                 await self.pg.execute("TRUNCATE ts_transfer_sandbox.evid_good")
                 self.assertEqual((await evidence("evid_good")).json(), missing.json())
                 await self.pg.execute("TRUNCATE ts_transfer_sandbox.evid_bad")
@@ -2897,7 +2897,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
             await session.execute(text("""
                 CREATE FUNCTION ts_transfer_sandbox.reject_week_proof() RETURNS trigger LANGUAGE plpgsql AS $$
                 BEGIN
-                    IF EXISTS (SELECT 1 FROM public.ontology_transfer_attempts
+                    IF EXISTS (SELECT 1 FROM app.ontology_transfer_attempts
                                WHERE id=NEW.attempt_id AND target_table='week_audit_fail') THEN
                         RAISE EXCEPTION 'isolated proof ledger fault';
                     END IF;
@@ -2905,7 +2905,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 END $$
             """))
             await session.execute(text("""
-                CREATE TRIGGER reject_week_proof BEFORE INSERT ON public.ontology_transfer_schedule_target_rejections
+                CREATE TRIGGER reject_week_proof BEFORE INSERT ON app.ontology_transfer_schedule_target_rejections
                 FOR EACH ROW EXECUTE FUNCTION ts_transfer_sandbox.reject_week_proof()
             """))
         self.addAsyncCleanup(self.pg.execute, "DROP TYPE public.statustypes")

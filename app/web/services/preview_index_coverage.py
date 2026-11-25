@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.etl.schema.catalog_metadata import catalog_parameters
 
 from app.web.api.models.etl import PreviewCompositeIndexCoverageRequest, PreviewIndexCoverage, PreviewIndexCoverageInput, PreviewSortIndexCoverageRequest
 from app.web.services.etl_layers import _LINEAGE_METADATA_JOIN, _LINEAGE_SCOPE, _LINEAGE_VISIBLE_SQL
@@ -175,7 +176,7 @@ async def preview_index_coverage(
         with fail_after(2):
             await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"))
             await session.execute(text("SET LOCAL statement_timeout='750ms'"))
-            state = await session.scalar(statement, {**_LINEAGE_SCOPE, "schema": schema, "table": table, **shape})
+            state = await session.scalar(statement, await catalog_parameters({**_LINEAGE_SCOPE, "schema": schema, "table": table, **shape}))
     except (TimeoutError, DBAPIError):
         await session.rollback()
         return PreviewIndexCoverage(state="unavailable")
