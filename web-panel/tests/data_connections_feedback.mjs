@@ -112,13 +112,11 @@ async function mount({ sources = [], selected = '', query = '', overrides = {}, 
   render(); await ui.settle(); return ui;
 }
 
-test('the inventory dialog shows the real warehouse even with no saved external sources', async () => {
+test('the inventory starts with the connection list and has no standalone storage catalog card', async () => {
   const ui = await mount({ query: 'source=ts_ods&view=list' });
   assert.equal(ui.inventory().props.open, true);
-  const warehouse = ui.nodes().find(node => node.props['aria-label'] === 'Workspace warehouse');
-  assert.match(text(warehouse), /PostgreSQL · warehouse_fixture · Selected business source/);
-  assert.equal(nodes(warehouse).find(node => node.type === 'ConnectorMark').props.engine, 'postgresql');
-  assert.equal(nodes(warehouse).find(node => node.type === 'Link').props.to, '/ontology?source=ts_ods&view=list');
+  assert.equal(ui.nodes().find(node => node.props['aria-label'] === 'Workspace warehouse'), undefined);
+  assert.equal(ui.nodes().find(node => node.type === 'h2' && text(node) === 'Storage catalog'), undefined);
   assert.ok(ui.nodes().find(node => node.type === 'strong' && text(node) === 'No external sources configured'));
   ui.click('New source');
   assert.equal(ui.inventory().props.open, false);
@@ -152,19 +150,45 @@ test('node sync links retain their connection, scope and kind', async () => {
   assert.equal(ui.params().has('sourceKind'), false); assert.equal(ui.params().has('sourceSchema'), false);
 });
 
-test('warehouse visibility is independent of external source access and errors', async () => {
-  const viewer = await mount({ overrides: { fetchCurrentUserContext: async () => ({ user: { is_superuser: false } }) } });
+test('catalog access is placed in the actual saved connection row without a duplicate connection', async () => {
+  const saved = source('postgresql', { id: 'selected-business', name: 'Business PostgreSQL', config: { ...source('postgresql').config, database: 'warehouse_fixture' } });
+  const ui = await mount({ query: 'source=ts_ods&view=list', sources: [saved, source('mysql', { id: 'other-source' })] });
+  const inventory = ui.nodes().find(node => node.props['aria-label'] === 'Saved external sources');
+  const rows = nodes(inventory).filter(node => node.type === 'tr' && nodes(node).some(child => child.type === 'td'));
+  assert.equal(rows.length, 2);
+  const row = rows.find(row => text(row).includes('Business PostgreSQL'));
+  assert.match(text(row), /warehouse_fixture/);
+  const links = nodes(inventory).filter(node => node.type === 'Link' && text(node).includes('Browse tables'));
+  assert.equal(links.length, 1); assert.ok(nodes(row).includes(links[0]));
+  assert.equal(links[0].props.to, '/ontology?source=ts_ods&view=list');
+  assert.equal(nodes(inventory).filter(node => node.type === 'col').length, 5);
+  ui.select('Filter sources by connector', 'mysql');
+  assert.equal(ui.nodes().some(node => node.type === 'Link' && text(node).includes('Browse tables')), false);
+  ui.unmount();
+});
+
+test('viewers retain a read-only catalog row without fetching or managing saved connections', async () => {
+  const viewer = await mount({ query: 'source=ts_ods&view=list', overrides: { fetchCurrentUserContext: async () => ({ user: { is_superuser: false } }) } });
   assert.ok(viewer.nodes().find(node => node.type === 'code' && text(node) === 'warehouse_fixture'));
   assert.equal(viewer.calls('fetchDataSources').length, 0);
+  assert.equal(viewer.calls('fetchDataConnectorTypes').length, 0);
   assert.equal(viewer.button('New source'), undefined);
+  assert.equal(viewer.button('Syncs'), undefined); assert.equal(viewer.button('Disconnect'), undefined);
+  const catalog = viewer.nodes().find(node => node.props['aria-label'] === 'Available catalog connection');
+  assert.match(text(catalog), /Read-only catalog/);
+  assert.equal(nodes(catalog).find(node => node.type === 'Link').props.to, '/ontology?source=ts_ods&view=list');
   viewer.unmount();
+});
 
-  const failing = await mount({ warehouseFailed: true });
-  assert.ok(failing.nodes().find(node => node.props.role === 'alert' && /warehouse connection/.test(text(node))));
-  assert.equal(failing.nodes().some(node => node.type === 'Link' && /Browse warehouse tables/.test(text(node))), false);
-  failing.click('Retry warehouse');
+test('catalog errors stay compact and do not block independent connection management', async () => {
+  const failing = await mount({ warehouseFailed: true, sources: [source('mysql')] });
+  assert.ok(failing.nodes().find(node => node.props.role === 'status' && /Resource catalog access is unavailable/.test(text(node))));
+  assert.equal(failing.nodes().some(node => node.type === 'Link' && /Browse tables/.test(text(node))), false);
+  failing.click('Retry catalog');
   assert.equal(failing.store.warehouseRetries, 1);
   assert.ok(failing.button('New source'));
+  assert.equal(failing.button('Syncs').props.disabled, false);
+  assert.equal(failing.button('Disconnect').props.disabled, false);
   failing.unmount();
 });
 
@@ -181,7 +205,7 @@ test('saving a new source continues into its details dialog while retaining the 
   const linkedCatalog = ui.nodes().find(node => node.type === 'Link' && text(node.props.children).includes('View published object types'));
   assert.equal(linkedCatalog?.props.to, `/ontology?catalog=published&publishedSource=${id}`);
   assert.equal(ui.inventory().props.open, false);
-  assert.ok(ui.nodes().find(node => node.type === 'section' && node.props['aria-label'] === 'External sources'));
+  assert.ok(ui.nodes().find(node => node.type === 'section' && node.props['aria-label'] === 'Connections'));
   assert.ok(ui.button('Configure Continuous CDC'));
   assert.equal(ui.nodes().find(node => node.type === 'SourceCdc'), undefined);
   ui.click('Configure Continuous CDC');

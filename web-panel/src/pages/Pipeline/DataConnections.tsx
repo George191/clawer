@@ -671,28 +671,20 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
       open={!detailsOpen && !(wizard && canManage)} onCancel={onCancel} closable={!pending && !captureBusy}
       keyboard={!pending && !captureBusy} maskClosable={false} footer={<Button disabled={pending || captureBusy} onClick={onCancel}>Done</Button>}>
       <div className="ontology-connections-workspace">
-        <p className="ontology-connections-intro">Manage each connection and its syncs independently. Use PostgreSQL schemas, MySQL databases or Elasticsearch indices as separate source nodes.</p>
-        <section className="ontology-connections-warehouse" aria-label="Workspace warehouse" aria-busy={!warehouse && !warehouseFailed}>
-          <div className="ontology-connections-warehouse__identity">
-            {warehouse && <ConnectorMark engine={warehouse.engine} />}
-            <div><h2>Storage catalog</h2>
-              {warehouse ? <p>PostgreSQL · <code>{warehouse.database}</code> · {warehouse.name}</p>
-                : warehouseFailed ? <p role="alert">Unable to read the warehouse connection.</p>
-                  : <p role="status">Loading warehouse connection…</p>}
-            </div>
-          </div>
-          {warehouse && <Link className="ui-btn ui-btn-default" to={ontologyCatalogHref(params.toString(), 'backed')}>Browse warehouse tables <ArrowRightOutlined /></Link>}
-          {warehouseFailed && <Button size="small" icon={<ReloadOutlined />} onClick={onRetryWarehouse}>Retry warehouse</Button>}
-        </section>
-
-        {canManage && <section className="ontology-connections-inventory" aria-label="External sources" aria-busy={loading || pending}>
-        <header><h2>Connections {!loading && !loadError && <span>{sources.length}</span>}</h2>
-          <div className="ontology-connectors__actions">
+        <section className="ontology-connections-inventory" aria-label="Connections" aria-busy={loading || pending}>
+        <header><div><h2>Connections {canManage && !loading && !loadError && <span>{sources.length}</span>}</h2><p className="ontology-connections-intro">{canManage ? 'Choose a connection to explore its data or manage syncs.' : 'Browse the catalog available to your account.'}</p></div>
+          {canManage && <div className="ontology-connectors__actions">
             <Button size="small" icon={<ReloadOutlined />} disabled={pending || loading} onClick={() => setReload(value => value + 1)}>Refresh sources</Button>
             <Button type="primary" icon={<PlusOutlined />} disabled={blocked} onClick={newSource}>New source</Button>
-          </div>
+          </div>}
         </header>
-        {!loading && !loadError && <>
+        {warehouseFailed && <div className="ontology-connections-catalog-status" role="status"><span>Resource catalog access is unavailable.</span><Button size="small" icon={<ReloadOutlined />} onClick={onRetryWarehouse}>Retry catalog</Button></div>}
+        {!canManage && !loading && warehouse && <div className="ontology-connections-inventory__table is-readonly" role="region" aria-label="Available catalog connection" tabIndex={0}><table>
+          <thead><tr><th scope="col">Connection</th><th scope="col">Connector</th><th scope="col">Database</th><th scope="col">Access</th><th scope="col">Actions</th></tr></thead>
+          <tbody><tr><td><div className="ontology-connections-source"><ConnectorMark engine={warehouse.engine} /><span className="ontology-connections-source__name">{warehouse.name}</span></div></td><td>PostgreSQL</td><td><code>{warehouse.database}</code></td><td>Read-only catalog</td><td><Link className="ui-btn ui-btn-default" to={ontologyCatalogHref(params.toString(), 'backed')}>Browse tables <ArrowRightOutlined /></Link></td></tr></tbody>
+        </table></div>}
+        {!canManage && !loading && !warehouse && !warehouseFailed && <p role="status">Loading catalog access…</p>}
+        {canManage && !loading && !loadError && <>
         {!!sources.length && <div className="ontology-connections-inventory__toolbar">
           <Input aria-label="Search sources" placeholder="Search sources" prefix={<SearchOutlined />} value={sourceSearch} allowClear onChange={(event) => setSourceSearch(event.target.value)} />
           <label className="ontology-connections-inventory__filter">Connector <NativeSelect aria-label="Filter sources by connector" popupWidth={224} value={sourceEngine} onChange={(event) => setSourceEngine(event.target.value)}>
@@ -701,20 +693,20 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
           <span className="ontology-connections-inventory__count" role="status">{filteredSources.length} of {sources.length} sources</span>
         </div>}
         {filteredSources.length ? <div className="ontology-connections-inventory__table" role="region" aria-label="Saved external sources" tabIndex={0}><table>
-          <colgroup><col className="ontology-connections-inventory__source-column" /><col className="ontology-connections-inventory__connector-column" /><col className="ontology-connections-inventory__endpoint-column" /><col className="ontology-connections-inventory__tested-column" /></colgroup>
-          <thead><tr><th scope="col">Source</th><th scope="col">Connector</th><th scope="col">Endpoint</th><th scope="col">Last connectivity test</th><th scope="col">Actions</th></tr></thead>
+          <colgroup><col className="ontology-connections-inventory__source-column" /><col className="ontology-connections-inventory__connector-column" /><col className="ontology-connections-inventory__endpoint-column" /><col className="ontology-connections-inventory__tested-column" /><col className="ontology-connections-inventory__actions-column" /></colgroup>
+          <thead><tr><th scope="col">Connection</th><th scope="col">Connector</th><th scope="col">Endpoint</th><th scope="col">Last connectivity test</th><th scope="col">Actions</th></tr></thead>
           <tbody>{filteredSources.map((source) => <tr key={source.id}>
-            <td><div className="ontology-connections-source"><button type="button" className="ontology-connections-source-link" title={source.name} onClick={() => showSource(source)}><ConnectorMark engine={source.engine} /><span>{source.name}</span></button>
+            <td><div className="ontology-connections-source"><button type="button" className="ontology-connections-source-link" title={source.name} onClick={() => showSource(source)}><ConnectorMark engine={source.engine} /><span><strong>{source.name}</strong>{(source.config.database || source.config.bucket) && <small>{source.config.database || source.config.bucket}</small>}</span></button>
               {isConnectionPaused(source) && <span className="ontology-connections-source__paused">Paused</span>}</div></td>
             <td>{labelFor(source.engine)}</td><td><code title={endpoint(source.config)}>{endpoint(source.config)}</code></td><td><time dateTime={source.testedAt || undefined}>{formatDate(source.testedAt)}</time></td>
-            <td><div className="ontology-connections-source-actions"><Button size="small" disabled={blocked} onClick={() => manageSyncs(source)}>Syncs</Button><Button size="small" danger disabled={blocked} onClick={() => void reviewDisconnect(source)}>Disconnect</Button></div></td>
+            <td className="ontology-connections-inventory__row-actions"><div className="ontology-connections-source-actions">{warehouse?.connectionId === source.id && <Link className="ui-btn ui-btn-default" to={ontologyCatalogHref(params.toString(), 'backed')}>Browse tables <ArrowRightOutlined /></Link>}<Button size="small" disabled={blocked} onClick={() => manageSyncs(source)}>Syncs</Button><Button size="small" danger disabled={blocked} onClick={() => void reviewDisconnect(source)}>Disconnect</Button></div></td>
           </tr>)}</tbody>
         </table></div> : <div className="ontology-connections-inventory__empty" role="status">
           <DatabaseOutlined /><strong>{sources.length ? 'No sources match your filters' : 'No external sources configured'}</strong>
           <p>{sources.length ? 'Try another search or connector.' : 'Add a source to configure ingestion from a database or object store.'}</p>
         </div>}
         </>}
-        </section>}
+        </section>
         {canManage && !loading && !loadError && <>
         <section className="ontology-connections-sandbox" aria-label="Test data flows">
           <header>
