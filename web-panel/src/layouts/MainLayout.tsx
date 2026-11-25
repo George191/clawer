@@ -55,7 +55,7 @@ const SIDER_TRANSITION_MS = 200;
 const PROJECT_LOGO_SIZE = 26;
 const PROJECT_LOGO_EXPANDED_X = 26;
 const PROJECT_LOGO_COLLAPSED_X = (SIDER_COLLAPSED - PROJECT_LOGO_SIZE) / 2;
-const PRODUCT_NAME_ZH = 'Astral Helio';
+const PRODUCT_NAME = 'Astral';
 type ProjectKey = 'ai-collect' | 'data-lake' | 'etl-pipeline' | 'data-cockpit' | 'knowledge-graph' | 'knowledge-rag';
 
 const TemplateNavIcon: React.FC = () => (
@@ -180,8 +180,8 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
   'etl-pipeline': {
     key: 'etl-pipeline',
     domain: 'ontology',
-    label: 'Ontology Foundry',
-    shortLabel: 'Ontology Foundry',
+    label: 'Helio',
+    shortLabel: 'Helio',
     enabled: true,
     icon: <ApartmentOutlined />,
     defaultPath: '/ontology',
@@ -324,7 +324,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   }, [currentProject, routedProject]);
 
   useEffect(() => {
-    document.title = `${activeProject.shortLabel} - ${PRODUCT_NAME_ZH}`;
+    document.title = `${activeProject.shortLabel} - ${PRODUCT_NAME}`;
   }, [activeProject.label]);
 
   useEffect(() => {
@@ -676,13 +676,12 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         <button
           type="button"
           className="platform-header-brand"
-          aria-label="Astral Helio home"
+          aria-label={`${PRODUCT_NAME} home`}
+          title={PRODUCT_NAME}
           onClick={() => navigate('/')}
         >
-          <picture>
-            <source media="(max-width: 767px)" srcSet="/astral-helio-mark.svg" />
-            <img src="/astral-helio-logo-white.svg" alt="Astral Helio" />
-          </picture>
+          <img src="/project-network-mark.svg" width="36" height="36" alt="" />
+          <span className="platform-header-wordmark">{PRODUCT_NAME}</span>
         </button>
         <nav className="platform-header-nav" aria-label="Main navigation">
           <Dropdown

@@ -125,14 +125,22 @@ body {
   outline-offset: -2px;
 }
 .platform-header-brand,
-.platform-header-brand picture,
 .platform-header-status,
 .platform-header .ui-dropdown-trigger {
   display: inline-flex;
   align-items: center;
   flex-shrink: 0;
 }
-.platform-header-brand img { display: block; height: 30px; width: auto; }
+.platform-header .platform-header-brand { gap: 12px; height: 44px; color: #E6E9ED; }
+.platform-header-brand img { display: block; width: 36px; height: 36px; }
+.platform-header-wordmark {
+  font-family: 'Trebuchet MS', 'Arial', sans-serif;
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: .12em;
+  line-height: 1;
+  text-transform: uppercase;
+}
 .platform-header-nav {
   display: flex;
   align-items: center;
@@ -183,6 +191,7 @@ body {
 @media (max-width: 767px) {
   .platform-header { gap: 8px; padding-inline: 10px; }
   .platform-header-brand img { width: 30px; height: 30px; }
+  .platform-header-wordmark { display: none; }
   .platform-header-user { display: none; }
   .platform-header-status { gap: 4px; }
 }
