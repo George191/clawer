@@ -26,6 +26,7 @@ output/source_dedup_20261109/*
 !output/source_dedup_20261109/progress_table.py
 docs/
 scripts/
+outputs/
 static/
 logs/
 LLM/

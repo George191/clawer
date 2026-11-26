@@ -15,7 +15,7 @@ from app.etl.schema import ontology, registry
 from app.web.api.dependencies.common import get_current_user
 from app.web.api.routes import etl
 from app.web.services.etl_workspace import EtlWorkspace
-from app.web.tests.test_etl_object_types import Result, foreign, service, summary
+from app.web.tests.test_etl_object_types import Result, foreign, registered, service, summary
 from app.web.tests.test_ontology_metadata import MetadataPg
 
 
@@ -77,6 +77,9 @@ class VisibilityPg(MetadataPg):
             return Result(scalar=1 if any(key[0] == params["schema"] for key in self.catalog) else None)
         if sql.startswith("SELECT to_regclass"):
             return Result(scalar=True)
+        if sql.startswith("SELECT id FROM app.ontology_objects"):
+            row = self.objects.get((params["schema"], params["table"]))
+            return Result([row] if row and row["is_active"] else [])
         if sql.startswith("UPDATE app.ontology_objects SET visibility"):
             self.calls.append((sql, deepcopy(params)))
             for value in self.objects.values():
@@ -141,6 +144,7 @@ class VisibilityWorkspaceTests(unittest.IsolatedAsyncioTestCase):
     def workspace(self):
         instance = object.__new__(EtlWorkspace)
         instance._pg = VisibilityPg(table="custom_items")
+        instance._pg.register("ts_custom", "custom_items", layer="custom", data_type="items")["visibility"] = "normal"
         instance._layers = SimpleNamespace(session=instance._pg.session)
         return instance
 
@@ -149,11 +153,11 @@ class VisibilityWorkspaceTests(unittest.IsolatedAsyncioTestCase):
         pg = instance._pg
         original_catalog = deepcopy(pg.catalog)
         for visibility in ("normal", "prominent", "hidden", "normal"):
-            result = await instance.set_object_visibility("custom", "custom_items", visibility, "user:42")
+            result = await instance.set_object_visibility("ts_custom", "custom_items", visibility, "user:42")
             self.assertEqual(result, {"schema": "ts_custom", "table": "custom_items", "visibility": visibility})
             actual = pg.objects[("ts_custom", "custom_items")]
             self.assertEqual((actual["visibility"], actual["updated_by"]), (visibility, "user:42"))
-        await instance.set_object_visibility("custom", "custom_items", "hidden", "user:42")
+        await instance.set_object_visibility("ts_custom", "custom_items", "hidden", "user:42")
         async with pg.session() as session:
             await ontology.sync_object_metadata(session, "ts_custom", "custom_items", catalog_session=session,
                                                  layer="custom", table_role="current", data_type="items")
@@ -175,9 +179,9 @@ class VisibilityWorkspaceTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(HTTPException) as raised:
                     await instance.set_object_visibility(schema, table, value, "admin")
                 self.assertEqual(raised.exception.status_code, status)
-        self.assertFalse(instance._pg.objects)
+        self.assertEqual(instance._pg.objects[("ts_custom", "custom_items")]["visibility"], "normal")
 
-    async def test_registered_changes_only_touch_visibility_audit_and_inactive_objects_are_activated(self):
+    async def test_registered_changes_only_touch_visibility_audit_and_inactive_objects_are_rejected(self):
         instance = self.workspace()
         pg = instance._pg
         async with pg.session() as session:
@@ -187,7 +191,7 @@ class VisibilityWorkspaceTests(unittest.IsolatedAsyncioTestCase):
             )
         before = deepcopy((pg.objects, pg.properties))
         with patch("app.web.services.etl_workspace.sync_object_metadata", new=AsyncMock()) as sync:
-            await instance.set_object_visibility("custom", "custom_items", "hidden", "admin")
+            await instance.set_object_visibility("ts_custom", "custom_items", "hidden", "admin")
         sync.assert_not_awaited()
         actual = deepcopy(pg.objects)
         actual[("ts_custom", "custom_items")].pop("visibility")
@@ -197,24 +201,29 @@ class VisibilityWorkspaceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(actual, expected)
         self.assertEqual(pg.properties, before[1])
         pg.objects[("ts_custom", "custom_items")]["is_active"] = False
-        await instance.set_object_visibility("custom", "custom_items", "prominent", "admin")
-        self.assertTrue(pg.objects[("ts_custom", "custom_items")]["is_active"])
-        self.assertEqual(pg.objects[("ts_custom", "custom_items")]["visibility"], "prominent")
+        with self.assertRaises(HTTPException) as inactive:
+            await instance.set_object_visibility("ts_custom", "custom_items", "prominent", "admin")
+        self.assertEqual(inactive.exception.status_code, 404)
+        self.assertFalse(pg.objects[("ts_custom", "custom_items")]["is_active"])
+        self.assertEqual(pg.objects[("ts_custom", "custom_items")]["visibility"], "hidden")
 
 
 class VisibilityReadTests(unittest.IsolatedAsyncioTestCase):
     async def test_catalog_ids_and_all_facets_share_hidden_filter_and_stable_prominent_sort(self):
-        instance, session = service(Result([]))
-        await instance.object_types(schema="ods", search="station", group="ingestion", ids="ts_ods.hidden")
-        count_query = next(sql for sql, _ in session.calls if "count(*) AS count" in sql)
-        self.assertIn("COALESCE(o.visibility, 'normal') <> 'hidden'", count_query)
-        self.assertIn("ANY(CAST(:ids AS text[]))", count_query)
-        instance, session = service(Result([{"schema": "ts_ods", "resource_group": "ingestion", "count": 1}]),
-                                    Result([summary(visibility="prominent")]))
+        instance, session = service(registered=[
+            registered("ts_ods", "hidden", "ingestion", 1, visibility="hidden", description="station"),
+            registered("ts_ods", "normal", "ingestion", 2, description="station"),
+            registered("ts_ods", "prominent", "ingestion", 3, visibility="prominent", description="station"),
+        ])
+        result = await instance.object_types(schema="ts_ods", search="station", group="ingestion", ids="ts_ods.hidden")
+        self.assertEqual((result["items"], result["total"], result["schemaCounts"]), ([], 0, {}))
         result = await instance.object_types(include_hidden=True)
-        self.assertEqual(result["items"][0]["visibility"], "prominent")
-        self.assertTrue(all("<> 'hidden'" not in sql for sql, _ in session.calls))
-        self.assertIn("ORDER BY CASE WHEN COALESCE(o.visibility, 'normal') = 'prominent' THEN 0 ELSE 1 END", session.calls[-1][0])
+        self.assertEqual([item["visibility"] for item in result["items"]], ["prominent", "hidden", "normal"])
+        self.assertEqual(result["groupCounts"]["ingestion"], 3)
+        result = await instance.object_types()
+        self.assertEqual([item["visibility"] for item in result["items"]], ["prominent", "normal"])
+        self.assertEqual(result["groupCounts"]["ingestion"], 2)
+        self.assertEqual(session.calls, [])
 
     async def test_preview_shows_hidden_logical_neighbor_only_when_requested(self):
         from app.web.tests.test_etl_object_relations import logical, SEEDS
@@ -222,7 +231,7 @@ class VisibilityReadTests(unittest.IsolatedAsyncioTestCase):
         hidden = foreign(target_schema="ts_custom", target_table="secret", target_visibility="hidden")
         for include_hidden in (False, True):
             instance, _ = service(Result([summary(properties_count=0)]), Result([hidden]), Result([logical_hidden]))
-            preview = await instance.preview("ods", "objects", include_hidden=include_hidden)
+            preview = await instance.preview("ts_ods", "objects", include_hidden=include_hidden)
             linked = preview["linkedObjectTypes"]
             if include_hidden:
                 peer_id = f"{logical_hidden['target_schema']}.{logical_hidden['target_table']}"
@@ -234,7 +243,7 @@ class VisibilityReadTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(linked, [])
         instance, session = service(Result([]))
         with self.assertRaises(HTTPException) as raised:
-            await instance.preview("ods", "hidden")
+            await instance.preview("ts_ods", "hidden")
         self.assertEqual(raised.exception.status_code, 404)
         self.assertIn("<> 'hidden'", session.calls[-1][0])
 
@@ -266,11 +275,11 @@ class VisibilityRouteTests(unittest.TestCase):
         layers = SimpleNamespace(object_types=AsyncMock(return_value={"items": []}), preview=AsyncMock(return_value={"visibility": "hidden"}))
         with patch.object(etl, "get_data_connections", return_value=SimpleNamespace(warehouse=lambda _: layers)):
             self.assertEqual(self.client.get("/api/v1/etl/object-types?includeHidden=true").status_code, 200)
-            layers.object_types.assert_awaited_once_with(None, "", "", 100, 0, None, include_hidden=True, favorite_user_id=None)
+            layers.object_types.assert_awaited_once_with(None, "", "", 100, 0, None, include_hidden=True, favorite_user_id=None, connection_id=None)
             self.assertEqual(self.client.get("/api/v1/etl/object-types?favoritesOnly=true").status_code, 200)
-            layers.object_types.assert_awaited_with(None, "", "", 100, 0, None, include_hidden=False, favorite_user_id=self.user.id)
+            layers.object_types.assert_awaited_with(None, "", "", 100, 0, None, include_hidden=False, favorite_user_id=self.user.id, connection_id=None)
             self.assertEqual(self.client.get("/api/v1/etl/data-connections/warehouse/object-types/custom/items/preview?includeHidden=true").status_code, 200)
-            layers.preview.assert_awaited_once_with("custom", "items", include_hidden=True)
+            layers.preview.assert_awaited_once_with("custom", "items", include_hidden=True, connection_id=None)
             self.user.is_superuser = False
             for path in ("/api/v1/etl/object-types", "/api/v1/etl/custom/items/preview"):
                 self.assertEqual(self.client.get(path + "?includeHidden=true").status_code, 403)

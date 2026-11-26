@@ -76,7 +76,8 @@ def service(*results, ontology_installed=True, relations_installed=True, registe
             if "to_regclass" in sql:
                 return Result(scalar=ontology_installed if "ontology_objects" in sql else relations_installed)
             if "FROM app.ontology_objects o WHERE o.is_active" in sql:
-                return Result(sorted(registered, key=lambda row: (row["schema_name"], row["table_name"])))
+                return Result(sorted((row for row in registered if params["include_hidden"] or row["visibility"] != "hidden"),
+                                     key=lambda row: (row["visibility"] != "prominent", row["schema_name"], row["table_name"])))
             return Result([])
 
         async def scalar(self, query, params=None):
