@@ -3,6 +3,7 @@
 import argparse
 import re
 from ipaddress import ip_address
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from playwright.sync_api import expect, sync_playwright
@@ -58,12 +59,16 @@ with sync_playwright() as p:
     expect(entry).to_be_visible()
     entry.fill("Plan a collection")
     entry.press("Enter")
-    progress = page.get_by_role("complementary", name="Live collection progress")
-    expect(progress).to_be_visible()
-    expect(progress.get_by_text("Analyzing the webpage", exact=True)).to_be_visible()
-    expect(progress.get_by_text("Writing the adapter", exact=True)).to_be_visible()
-    expect(progress.locator("li.is-current h3")).to_have_text("Analyzing the webpage")
-    expect(progress.locator("li.is-current h3")).to_have_text("Writing the adapter")
+    results = page.get_by_role("complementary", name="Collection results")
+    expect(results).to_be_visible()
+    expect(results.get_by_role("tab", name="Webpage")).to_have_attribute("aria-selected", "true")
+    expect(page.locator(".scout-worked-toggle").first).to_contain_text("Analyzing the webpage")
+    expect(results.get_by_role("tab", name="template.yaml")).to_have_attribute(
+        "aria-selected", "true"
+    )
+    expect(results.locator(".scout-result-code")).to_contain_text("name: example_articles")
+    expect(results.get_by_role("tab", name="adapter.py")).to_have_attribute("aria-selected", "true")
+    expect(results.locator(".scout-result-file-status")).to_have_text("Writing…")
     canvas = page.frame_locator(".scout-dot-host iframe").locator("canvas")
     expect(canvas).to_have_attribute("data-ready", "true", timeout=90000)
     expect(page.get_by_role("button", name="Confirm and continue")).to_be_visible()
@@ -71,17 +76,37 @@ with sync_playwright() as p:
     page.get_by_role("button", name="Confirm and continue").click()
     expect(page.get_by_role("button", name="Copy response")).to_be_visible()
     expect(canvas).to_have_attribute("data-activity", "Ready")
-    expect(progress.locator("li.is-done")).to_have_count(6)
-    expect(progress.locator("li.is-current")).to_have_count(0)
-    bounds = progress.bounding_box()
+    expect(results.locator(".scout-result-code")).to_contain_text("def adapt_page")
+    bounds = results.bounding_box()
     chat_bounds = page.locator(".scout-chat-messages").bounding_box()
+    root_bounds = page.locator(".scout-chat-preview").bounding_box()
     dot_bounds = page.locator(".ai-chat-dot").bounding_box()
+    assert abs(bounds["width"] - root_bounds["width"] / 2) < 1
     assert abs(bounds["x"] + bounds["width"] - chat_bounds["x"]) < 1
-    assert abs(dot_bounds["x"] + dot_bounds["width"] / 2 - chat_bounds["x"]) < 1
-    page.get_by_role("button", name="Hide live progress").click()
-    expect(progress).to_be_hidden()
-    page.get_by_role("button", name="Show live progress").click()
-    expect(progress).to_be_visible()
+    assert abs(dot_bounds["x"] + dot_bounds["width"] / 2 - bounds["x"] - bounds["width"] / 2) < 1
+    assert dot_bounds["y"] < bounds["y"]
+    results.get_by_role("button", name="Copy adapter.py").click()
+    adapter = page.evaluate("navigator.clipboard.readText()")
+    assert "def normalize_article" in adapter and "yield record" in adapter
+    with page.expect_download() as download_event:
+        results.get_by_role("button", name="Download adapter.py").click()
+    download = download_event.value
+    assert download.suggested_filename == "adapter.py"
+    assert Path(download.path()).read_text(encoding="utf-8") == adapter.replace("\r\n", "\n")
+    results.get_by_role("tab", name="template.yaml").click()
+    expect(results.locator(".scout-result-code")).to_contain_text("adapter: adapter.py")
+    results.get_by_role("button", name="Copy template.yaml").click()
+    assert "name: example_articles" in page.evaluate("navigator.clipboard.readText()")
+    results.get_by_role("tab", name="Sample data").click()
+    expect(results.get_by_role("table")).to_be_visible()
+    expect(results.get_by_role("row")).to_have_count(3)
+    assert results.locator(".scout-step-content").count() == 0
+    results.get_by_role("tab", name="Webpage").click()
+    expect(results.get_by_text("Ideas worth collecting.", exact=True)).to_be_visible()
+    page.get_by_role("button", name="Hide collection results").click()
+    expect(results).to_be_hidden()
+    page.get_by_role("button", name="Show collection results").click()
+    expect(results).to_be_visible()
     page.wait_for_timeout(700)
     toggle = page.locator(".scout-worked-toggle").first
     panel = page.locator(".scout-step-content").first
@@ -192,8 +217,8 @@ with sync_playwright() as p:
     page.set_viewport_size({"width": 390, "height": 844})
     page.wait_for_timeout(700)
     expect(rail).to_be_visible()
-    expect(progress).to_be_visible()
-    bounds = progress.bounding_box()
+    expect(results).to_be_visible()
+    bounds = results.bounding_box()
     chat_bounds = page.locator(".scout-chat-messages").bounding_box()
     assert abs(bounds["y"] + bounds["height"] - chat_bounds["y"]) < 1
     box = page.locator(".scout-persistent-composer").bounding_box()
@@ -201,7 +226,7 @@ with sync_playwright() as p:
     assert not posts, posts
     assert not errors, errors
     print(
-        "Live progress, responsive split panels, Dot alignment, native state actions, animated steps, history, feedback, clipboard and speech passed",
+        "Artifact output/streaming, file copy/download, equal split panels, Dot alignment, chat progress, history, feedback, clipboard and speech passed",
         flush=True,
     )
     b.close()
