@@ -16,7 +16,7 @@ def upgrade() -> None:
         revision bigint NOT NULL DEFAULT 0,
         tested_revision bigint,
         tested_at timestamptz,
-        updated_by uuid REFERENCES app."user"(id),
+        updated_by uuid REFERENCES app."user"(id) ON DELETE SET NULL,
         updated_at timestamptz NOT NULL DEFAULT now()
     )""")
     op.execute("INSERT INTO app.collection_agent_settings (singleton) VALUES (true)")

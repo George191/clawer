@@ -214,3 +214,11 @@ class PostgresStoreTests(unittest.IsolatedAsyncioTestCase):
         events = await self.store.events(self.owner, submitted["id"], 0, 100)
         self.assertEqual([event["event"]["stage"] for event in events if event["event"]["type"] == "stage_completed"],
                          ["capture", "template", "adapter", "validate"])
+
+    async def test_user_removal_does_not_block_on_settings_audit_reference(self):
+        await self.enqueue()
+        async with self.database.begin() as conn:
+            await conn.execute(text('DELETE FROM app."user" WHERE id=:owner'), {"owner": self.owner})
+            count = (await conn.execute(text("SELECT count(*) FROM app.collection_agent_runs"))).scalar_one()
+            self.assertEqual(count, 0)
+        self.assertTrue((await self.store.settings()).api_key_configured)
