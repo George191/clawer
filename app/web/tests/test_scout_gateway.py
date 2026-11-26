@@ -73,7 +73,6 @@ class ScoutGatewayTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([call.args[0]["type"] for call in send.await_args_list],
                          ["adapter_started", "adapter_delta", "adapter_ready"])
         self.assertEqual(send.await_args.args[0]["data"]["code"], adapter)
-        self.assertEqual(await ai_collect.chat_model(), {"model": "Scout-AI-Regression"})
         self.assertEqual([req["model"] for req in requests], ["Scout-AI-Regression"] * 2)
         self.assertTrue(all(req["stream"] for req in requests))
         self.assertIn("name: previous", requests[0]["messages"][0]["content"])

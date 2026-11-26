@@ -105,11 +105,6 @@ def _analysis_response(url: str, analysis: dict[str, Any], yaml_content: str, te
     }
 
 
-@router.get("/chat-model", dependencies=[Depends(get_current_user)])
-async def chat_model() -> dict[str, str]:
-    return {"model": ai_settings.scout_model}
-
-
 def _preflight_response(url: str, result: BrowserRenderResult) -> dict[str, Any]:
     return {
         "ok": True,
