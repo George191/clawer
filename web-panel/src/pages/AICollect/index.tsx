@@ -62,6 +62,7 @@ import {
   releaseWorkspaceTemplate,
   uploadWorkspaceBatchInput,
 } from '@/services/aiApi';
+import { fetchCurrentUserContext } from '@/services/api';
 import workspacePalette from './palette';
 import { ReleaseArchiveIcon, ReleaseDraftIcon } from './releaseIcons';
 import WorkspaceDock, { type WorkspacePanel } from './WorkspaceDock';
@@ -1151,8 +1152,14 @@ const AICollect: React.FC = () => {
   const analysisFeedIdRef = useRef(0);
   const simulationTimerRef = useRef<number | null>(null);
   const promptGenerationTimerRef = useRef<number | null>(null);
-  const accountDisplayName = 'Blank George';
-  const currentUserName = accountDisplayName.split(/\s+/)[0] || accountDisplayName;
+  const [currentUserName, setCurrentUserName] = useState('');
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchCurrentUserContext(controller.signal).then(({ user }) => {
+      setCurrentUserName(user.full_name?.trim() || user.email.split('@')[0]);
+    }).catch(() => { if (!controller.signal.aborted) message.error('Unable to load your profile.'); });
+    return () => controller.abort();
+  }, [message]);
   const [mode, setMode] = useState<WorkMode>('explore');
   const [missionTab, setMissionTab] = useState<MissionTab>('goal');
   const [runStatus, setRunStatus] = useState<RunStatus>('idle');
@@ -2564,12 +2571,6 @@ const AICollect: React.FC = () => {
     return '';
   }, []);
 
-  const commitLandingUrl = useCallback(() => {
-    const candidate = intent.trim();
-    if (!validateUrl(candidate)) {
-    }
-  }, [intent, validateUrl]);
-
   const handleAnalyze = useCallback(async () => {
     if (preflightLoading) return;
     if (!analyzeSocketConnected) {
@@ -3260,7 +3261,7 @@ const AICollect: React.FC = () => {
       return (
         <section className="ai-prompt-landing">
           <div className="ai-prompt-copy">
-            <h1 className="ai-prompt-title">嗨，<span className="ai-prompt-name">{currentUserName}</span>，又有新灵感了吗？</h1>
+            <h1 className="ai-prompt-title">Hi{currentUserName ? <>, <span className="ai-prompt-name">{currentUserName}</span></> : null}, any new ideas?</h1>
           </div>
 
           <div className={`ai-prompt-shell ${preflightLoading ? 'is-preflighting' : ''}`}>
@@ -3269,21 +3270,17 @@ const AICollect: React.FC = () => {
             </span>
             <Input
               className="ai-prompt-input"
-              aria-label="采集网址"
+              aria-label="Message Scout"
               onKeyDown={(event) => {
                 if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
                 event.preventDefault();
-                const error = validateUrl(intent.trim());
-                if (error) { message.error(error); return; }
-                setSubmittedPrompt(intent.trim());
-                setUrl(intent.trim());
+                setSubmittedPrompt(intent);
                 setChatEntered(true);
               }}
               value={intent}
               disabled={preflightLoading}
               onChange={(event) => setIntent(event.target.value.replace(/[\r\n]+/g, ''))}
-              onBlur={commitLandingUrl}
-              placeholder="输入 HTTP/HTTPS 网址"
+              placeholder="Ask anything or describe what you want to collect"
             />
             {preflightLoading ? (
               <span className="ai-prompt-preflight-copy" aria-hidden="true">
@@ -3291,7 +3288,7 @@ const AICollect: React.FC = () => {
                 <span className="ai-prompt-preflight-copy-sweep"><GlobalOutlined />{intent}</span>
               </span>
             ) : null}
-            <Button className="ai-prompt-icon" shape="circle" icon={<AudioOutlined />} aria-label="语音输入" disabled />
+            <Button className="ai-prompt-icon" shape="circle" icon={<AudioOutlined />} aria-label="Voice input" disabled />
           </div>
         </section>
       );
@@ -5132,7 +5129,7 @@ const AICollect: React.FC = () => {
               <span className="ai-session-sparkle" aria-hidden="true">✦</span>
             )}
           </Button>
-          <Button className="ai-session-icon-btn" icon={<AudioOutlined />} aria-label="语音输入" disabled />
+          <Button className="ai-session-icon-btn" icon={<AudioOutlined />} aria-label="Voice input" disabled />
           </div>
         </div>
       </section>
@@ -9689,29 +9686,28 @@ const AICollect: React.FC = () => {
               } as React.CSSProperties) : undefined}
             >
               <div className={`ai-chat-layout ${collectionStarted ? 'is-collecting' : ''}`}>
-                {collectionStarted && <aside className="ai-chat-progress" aria-label="实时进展">
-                  <h2>实时进展</h2>
+                {collectionStarted && <aside className="ai-chat-progress" aria-label="Live progress">
+                  <h2>Live progress</h2>
                   <div role="log" aria-live="polite">{analysisFeed.map((item) => <div key={item.id} className={`ai-chat-event is-${item.kind}`}><span>{item.step || '采集'}</span><p>{item.content}</p></div>)}</div>
                   {streamError && <Alert type="error" message={streamError} />}
                 </aside>}
-                <main className="ai-chat-main" aria-label="采集聊天">
+                <main className="ai-chat-main" aria-label="Scout chat">
                   <div className="ai-chat-thread" role="log" aria-live="polite">
                     <div className="ai-chat-message is-user">{submittedPrompt}</div>
-                    <div className="ai-chat-message is-assistant">请输入采集要求，或发送“开始采集”。</div>
+                    <div className="ai-chat-message is-assistant">What would you like to work on?</div>
                     {chatMessages.map((text, index) => <div className="ai-chat-message is-user" key={index}>{text}</div>)}
-                    {collectionStarted && <div className="ai-chat-message is-assistant">{streamError || analysisFeed[analysisFeed.length - 1]?.content || '正在连接采集任务…'}</div>}
-                    {collectionStarted && runStatus !== 'running' && !streamError && <details className="ai-chat-results"><summary>查看采集结果与确认操作</summary>{renderWorkflowLayout()}</details>}
+                    {collectionStarted && <div className="ai-chat-message is-assistant">{streamError || analysisFeed[analysisFeed.length - 1]?.content || 'Connecting to the collection task…'}</div>}
+                    {collectionStarted && runStatus !== 'running' && !streamError && <details className="ai-chat-results"><summary>View collection results and actions</summary>{renderWorkflowLayout()}</details>}
                   </div>
                   <form className="ai-chat-composer" onSubmit={(event) => {
                     event.preventDefault();
-                    if (preflightLoading || !taskDraft.trim()) return;
-                    setChatMessages((prev) => [...prev, taskDraft.trim()]);
-                    void handleAnalyze();
+                    setChatMessages((prev) => [...prev, taskDraft]);
+                    setTaskDraft('');
                   }}>
-                    <Input aria-label="聊天消息" placeholder="输入采集要求…" value={taskDraft}
+                    <Input aria-label="Chat message" placeholder="Message Scout…" value={taskDraft}
                       onChange={(event) => setTaskDraft(event.target.value.replace(/[\r\n]+/g, ''))}
                       onKeyDown={(event) => { if (event.nativeEvent.isComposing && event.key === 'Enter') event.preventDefault(); }} />
-                    <Button htmlType="submit" disabled={preflightLoading || !taskDraft.trim()}>发送</Button>
+                    <Button htmlType="submit">Send</Button>
                   </form>
                 </main>
               </div>

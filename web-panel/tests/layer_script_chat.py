@@ -127,7 +127,7 @@ def verify(base):
         expect(dot).to_have_attribute("data-activity", "Ready")
         assert not pending
         page.goto(base + "/scout", wait_until="domcontentloaded")
-        expect(page.get_by_placeholder("输入 HTTP/HTTPS 网址", exact=True)).to_be_visible()
+        expect(page.get_by_placeholder("Ask anything or describe what you want to collect", exact=True)).to_be_visible()
         expect(page.get_by_text("网关模型", exact=False)).to_have_count(0)
         expect(page.get_by_text("站点采集", exact=True)).to_have_count(0)
         expect(page.get_by_text("网页搜索", exact=True)).to_have_count(0)
