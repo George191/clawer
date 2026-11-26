@@ -7,6 +7,7 @@ import re
 from urllib.parse import urlsplit
 
 import yaml
+from yaml.tokens import AliasToken, AnchorToken
 
 from agent.contracts import CollectionRequest, public_url
 from agent.model import CollectionModel
@@ -18,10 +19,24 @@ from app.web.services.browser_renderer import browser_renderer
 from app.web.utils.validation import scope_limit, validate_generated_adapter
 
 
+def reject_yaml_aliases(content: str) -> None:
+    # YAML aliases can expand traversal exponentially even within a small model response.
+    try:
+        if any(isinstance(token, AliasToken | AnchorToken) for token in yaml.scan(content)):
+            raise ValueError("Collection artifacts must not contain YAML anchors or aliases")
+    except yaml.YAMLError as exc:
+        raise ValueError("Invalid collection YAML") from exc
+
+
 class ScopedTemplateAgent(TemplateAgent):
     def __init__(self, model: CollectionModel):
         super().__init__()
-        self.generate = model.generate
+        self.model = model
+
+    async def generate(self, prompt: str, max_tokens: int = 8192, on_chunk=None) -> str:
+        response = await self.model.generate(prompt, max_tokens=max_tokens, on_chunk=on_chunk)
+        reject_yaml_aliases(self._extract_yaml(response))
+        return response
 
     @staticmethod
     async def _reference_template_summaries(*_args) -> list:
@@ -101,6 +116,7 @@ class CollectionTools:
     def validate_template(content: str, request: CollectionRequest, capture: dict) -> SiteTemplate:
         if len(content.encode()) > scope_limit("max_generated_template_bytes", 65536):
             raise ValueError("Generated template exceeds the byte limit")
+        reject_yaml_aliases(content)
         raw = yaml.safe_load(content)
         if not isinstance(raw, dict) or set(raw) - set(SiteTemplate.model_fields):
             raise ValueError("Generated template contains unsupported keys")

@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from agent.contracts import AgentSettings, CollectionRequest, LeaseLost, SettingsUpdate
 from agent.model import CollectionModel, ModelFailure
 from agent.runtime import CollectionHarness
-from agent.tools import CollectionTools
+from agent.tools import CollectionTools, ScopedTemplateAgent
 
 TEMPLATE = """name: articles
 display_name: Articles
@@ -139,6 +139,14 @@ class ModelTests(unittest.IsolatedAsyncioTestCase):
         model.calls = 4
         with self.assertRaisesRegex(ModelFailure, "MODEL_CALL_BUDGET"):
             await model.generate("test")
+
+    async def test_yaml_aliases_are_rejected_before_legacy_template_parsing(self):
+        bomb = TEMPLATE + "list_request: {params: &cycle {again: *cycle}}\n"
+        model = SimpleNamespace(generate=AsyncMock(return_value="```yaml\n" + bomb + "```"))
+        with self.assertRaisesRegex(ValueError, "anchors or aliases"):
+            await ScopedTemplateAgent(model).generate("untrusted page")
+        with self.assertRaisesRegex(ValueError, "anchors or aliases"):
+            CollectionTools.validate_template(bomb, CollectionRequest(url="https://example.org", goal="titles"), {"url": "https://example.org", "evidence": {}})
 
     async def test_oversized_response_envelope_is_rejected_before_decoding(self):
         self.transport(lambda _: httpx.Response(200, content=b"x" * 524289))
