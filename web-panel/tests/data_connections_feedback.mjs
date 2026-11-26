@@ -89,7 +89,7 @@ async function mount({ sources = [], selected = '', query = '', overrides = {}, 
     nodes: () => nodes(tree),
     feedback: () => notices.filter(notice => notice.kind !== 'loading'),
     calls: name => requests.filter(request => request.name === name),
-    button: name => nodes(tree).find(node => node.type === 'Button' && text(node.props.children) === name),
+    button: name => nodes(tree).find(node => ['Button', 'button'].includes(node.type) && text(node.props.children) === name),
     field: name => nodes(tree).find(node => node.type === 'Input' && node.props['aria-label'] === name),
     confirmation: () => nodes(tree).find(node => node.type === 'Modal' && node.props.okText),
     inventory: () => nodes(tree).find(node => node.type === 'Modal' && node.props.title === 'Data Connections'),
@@ -248,6 +248,19 @@ test('editing swaps the details dialog for the existing wizard and cancellation 
   ui.click('Edit connection'); assert.equal(ui.details(), undefined); assert.ok(ui.wizard());
   ui.click('Cancel'); await ui.settle(); assert.equal(ui.wizard(), undefined); assert.ok(ui.details());
   assert.equal(ui.calls('updateDataSource').length, 0); ui.unmount();
+});
+
+test('editing a PostgreSQL name retains credentials and the saved revision', async () => {
+  const saved = source('postgresql'); const ui = await mount({ sources: [saved], selected: saved.id });
+  ui.click('Edit name');
+  assert.equal(ui.field('Connection name').props.autoFocus, true);
+  ui.fill('Connection name', 'Renamed source'); ui.click('Save source'); await ui.settle();
+  const payload = ui.calls('updateDataSource')[0].args[1];
+  assert.equal(payload.name, 'Renamed source');
+  assert.equal(payload.expectedUpdatedAt, saved.updatedAt);
+  assert.deepEqual(payload.credentials, {});
+  assert.equal(ui.store.sources[0].name, 'Renamed source');
+  ui.unmount();
 });
 
 test('unsupported connectors and paused sources do not expose capture controls', async () => {

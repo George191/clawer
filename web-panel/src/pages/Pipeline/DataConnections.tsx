@@ -593,6 +593,7 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
             <p className="source-detail-endpoint"><code>{viewedSource.config.database || viewedSource.config.bucket || endpoint(viewedSource.config)}</code><span>{endpoint(viewedSource.config)}</span></p>
             {sourcePaused && <span className="ontology-connectors__capability is-unavailable" role="status">Paused</span>}</div></div>
           <div className="ontology-connections-detail__actions">
+            <Button type="text" disabled={blocked || captureBusy || sourcePaused || !viewedType} onClick={() => openSource(viewedSource)}>Edit name</Button>
             <Button disabled={blocked || captureBusy || sourcePaused || !viewedType?.driverAvailable} loading={operation === 'test'} onClick={() => void testSaved()}>Test saved connection</Button>
             <Button type="primary" disabled={blocked || captureBusy || sourcePaused || !viewedType} onClick={() => openSource(viewedSource)}>Edit connection</Button>
             {pauseAvailable && <Button disabled={blocked || captureBusy || panelDirty} title={panelDirty ? 'Save or discard the open setup before changing the connection status.' : undefined} loading={operation === 'pause'} onClick={changePause}>{sourcePaused ? 'Resume connection' : 'Pause connection'}</Button>}
@@ -605,8 +606,8 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
             {catalogAvailable && <Button disabled={blocked || captureBusy} onClick={() => openSourcePanel('catalog')}>Explore source</Button>}</div>
         </div>}
         <div className="source-detail-navigation"><nav className="ontology-connections-detail__nav" role="tablist" aria-label="Source sections" onKeyDown={switchSourceTab}>
-          {sourceSections.map(section => <Button key={section.key} role="tab" id={`${feedbackKey}-tab-${section.key}`} aria-selected={sourcePanel === section.key}
-            aria-controls={`${feedbackKey}-panel`} tabIndex={sourcePanel === section.key ? 0 : -1} disabled={pending || captureBusy} onClick={() => openSourcePanel(section.key)}>{section.label}</Button>)}
+          {sourceSections.map(section => <button type="button" key={section.key} role="tab" id={`${feedbackKey}-tab-${section.key}`} aria-selected={sourcePanel === section.key}
+            aria-controls={`${feedbackKey}-panel`} tabIndex={sourcePanel === section.key ? 0 : -1} disabled={pending || captureBusy} onClick={() => openSourcePanel(section.key)}>{section.label}</button>)}
         </nav>
           <Link className="ui-btn ui-btn-link" to={ontologyCatalogHref(new URLSearchParams({ publishedSource: viewedSource.id }).toString(), 'published')}
             aria-disabled={pending || captureBusy || panelDirty || undefined} tabIndex={pending || captureBusy || panelDirty ? -1 : undefined}
@@ -637,6 +638,7 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
           <div><dt>Last connectivity test</dt><dd>{formatDate(viewedSource.testedAt)}</dd></div>
           {sourcePaused && <div><dt>Paused at</dt><dd>{formatDate(viewedSource.pausedAt)}</dd></div>}
         </dl>
+        <details className="source-detail-advanced"><summary>Connection capabilities and source identity</summary>
         <SavedConnectionCapabilities capabilities={viewedSource.capabilities} />
         <p className="ontology-connectors__scope"><DatabaseOutlined /> These settings do not import or synchronize tables.</p>
         {sourcePaused && <p>This source cannot be tested, explored, verified or edited while paused. Sync history remains available.</p>}
@@ -644,6 +646,7 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
           onIdentity={value => { if (current()) setSourceProof({ key: proofKey, value }); }}
           onVerificationStarted={() => invalidateVerificationCapability(viewedSource.id)}
           onVerificationSettled={() => { metadataVerifying.current.delete(viewedSource.id); refreshCapabilities(viewedSource.id); }} disabled={blocked} />}
+        </details>
         <div className="ontology-connections-detail__destructive"><Button size="small" danger icon={<DeleteOutlined />} disabled={blocked || captureBusy} onClick={() => void reviewDisconnect(viewedSource)}>Disconnect connection</Button></div>
         </>}
         {sourcePanel === 'catalog' && exploring && catalogAvailable && <SourceCatalog key={JSON.stringify(["catalog", sessionIdentity, viewedSource.id, sourceSchema])} sourceId={viewedSource.id} sourceRevision={viewedSource.updatedAt} initialSchema={sourceSchema} onSetUpSync={selection => { setParams(currentParams => { const next = new URLSearchParams(currentParams); next.set('sourceSchema', selection.schema); return next; }); setSyncSelection({ sourceId: viewedSource.id, selection }); openSourcePanel('sync'); }} />}
@@ -754,7 +757,7 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
             <fieldset disabled={blocked || editConflict}>
               <section className="ontology-connectors__section"><h3>Source details</h3>
                 <div className="ontology-connectors__credentials">
-                  <label>Connection name<Input aria-label="Connection name" value={draft.name} maxLength={200} autoComplete="off" placeholder="Production source" onChange={(event) => change({ name: event.target.value })} /></label>
+                  <label>Connection name<Input aria-label="Connection name" autoFocus={!!editingId} value={draft.name} maxLength={200} autoComplete="off" placeholder="Production source" onChange={(event) => change({ name: event.target.value })} /></label>
                   <label>Hosting provider<Select<DataSourceProvider> aria-label="Hosting provider" className="ontology-connectors__provider-select"
                     value={draft.config.provider ?? 'self_hosted'} options={providerOptions} disabled={blocked || editConflict}
                     onChange={provider => changeConfig({ provider: provider === 'self_hosted' ? undefined : provider })} /></label>

@@ -327,7 +327,8 @@
 .source-detail-endpoint { display: flex; flex-wrap: wrap; gap: 8px; margin: 5px 0 0; color: var(--ontology-muted); font-size: 11px; overflow-wrap: anywhere; }
 .source-detail-navigation { display: flex; flex: none; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px 16px; padding: 0 24px; border-bottom: 1px solid var(--ontology-border); }
 .ontology-connections-detail__nav { display: flex; flex-wrap: wrap; gap: 12px; min-width: 0; }
-.ontology-connections-detail__nav [role="tab"] { min-height: 44px; padding: 10px 4px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--ontology-muted); }
+.ontology-connections-detail__nav [role="tab"] { min-height: 44px; padding: 10px 4px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--ontology-muted); font: inherit; cursor: pointer; }
+.ontology-connections-detail__nav [role="tab"]:hover { color: var(--ontology-text); }
 .ontology-connections-detail__nav [aria-selected="true"] { border-bottom-color: var(--ontology-text); color: var(--ontology-text); font-weight: 600; }
 .ontology-connections-detail__body { flex: 1; min-height: 0; padding: 20px 24px; overflow: auto; overscroll-behavior: contain; }
 .ontology-connections-detail__next { flex: none; margin: 0 24px 12px; padding: 14px; border: 1px solid var(--ontology-control-border); border-radius: 5px; background: var(--ontology-selected); }
@@ -370,6 +371,17 @@
 .source-detail-start button > .ui-icon { grid-row: span 2; font-size: 21px; }
 .source-detail-start strong { font-weight: 600; }
 .source-detail-start button > span:last-child { grid-column: 2; color: var(--ontology-muted); font-size: 11px; }
+.source-layer-bindings { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto; align-items: end; gap: 8px 16px; padding: 12px 14px; margin-bottom: 16px; border: 1px solid var(--ontology-border); border-radius: 5px; background: var(--ontology-bg); }
+.source-layer-bindings h3 { margin: 0 0 4px; font-size: 14px; }
+.source-layer-bindings p { margin: 0; color: var(--ontology-muted); overflow-wrap: anywhere; }
+.source-layer-bindings label { display: grid; gap: 4px; min-width: 0; }
+.source-layer-bindings .ui-input { width: 100%; min-width: 0; }
+.source-layer-bindings__note, .source-layer-bindings [role="alert"] { grid-column: 1 / -1; }
+.source-detail-advanced { border: 1px solid var(--ontology-border); border-radius: 5px; background: var(--ontology-bg); }
+.source-detail-advanced > summary { padding: 10px 14px; cursor: pointer; font-weight: 600; }
+.source-detail-advanced[open] { padding: 0 12px 12px; }
+.source-detail-advanced[open] > summary { margin-inline: -12px; }
+.ontology-connections-detail__body > .ontology-connections-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .source-node-syncs__layout { display: grid; grid-template-columns: minmax(220px, .75fr) minmax(0, 2fr); }
 .source-node-syncs__source { min-width: 0; padding: 16px; border-right: 1px solid var(--ontology-border); background: var(--ontology-bg); }
 .source-node-syncs__source > label { display: grid; gap: 6px; margin: 16px 0 10px; }
@@ -394,6 +406,8 @@
   .source-node-syncs__source { border-right: 0; border-bottom: 1px solid var(--ontology-border); }
 }
 @media (max-width: 700px) {
+  .source-layer-bindings { grid-template-columns: minmax(0, 1fr); }
+  .ontology-connections-detail__body > .ontology-connections-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ontology-connections-modal { max-width: calc(100vw - 24px); }
   .ontology-connections-detail > header, .ontology-connections-detail__body { padding: 14px; }
   .source-detail-navigation { padding-inline: 14px; }
@@ -404,4 +418,12 @@
 }
 @media (max-width: 520px) {
   .ontology-connections-detail__body .ontology-source-catalog__layout { grid-template-columns: minmax(0, 1fr); }
+}
+@media (min-width: 701px) and (max-height: 800px) {
+  .ontology-connections-detail > header { padding-block: 12px; }
+  .ontology-connections-detail__body { padding-block: 12px; }
+  .source-layer-bindings { padding-block: 8px; margin-bottom: 12px; }
+  .source-detail-start { margin-bottom: 12px; }
+  .source-detail-start button { padding: 10px; }
+  .ontology-connections-summary > div { padding-block: 8px; }
 }

@@ -28,17 +28,18 @@ export default function LayerConnectionBindingForm({ source }: { source: DataSou
       setError('Binding failed. Reload to check the saved connection and current assignment.');
     } finally { setSaving(false); }
   };
-  return <section aria-label="Layer bindings">
-    <h3>Layer bindings</h3>
+  return <section className="source-layer-bindings" aria-label="Layer bindings" aria-busy={saving}>
+    <div className="source-layer-bindings__heading"><h3>Layer bindings</h3>
     <p>Assigned here: {bindings?.filter(item => item.connectionId === source.id).map(item => item.layer).join(', ') || (bindings ? 'None' : 'Loading…')}</p>
-    <label>Logical layer<Input value={name} list="warehouse-layer-options" onChange={event => setName(event.target.value)} /></label>
+    </div>
+    <label>Logical layer<Input value={name} disabled={!bindings || saving} placeholder="Select or enter a layer" maxLength={63} list="warehouse-layer-options" onChange={event => setName(event.target.value)} /></label>
     <datalist id="warehouse-layer-options">{bindings?.map(row => <option value={row.layer} key={row.layer} />)}</datalist>
-    {current?.name && <p>Currently assigned to {current.name}. {({
+    <Button disabled={!bindings || saving || !/^[a-z_][a-z0-9_]{0,62}$/.test(layer) || current?.connectionId === source.id} onClick={save}>Bind to this connection</Button>
+    {current?.name && <p className="source-layer-bindings__note">Currently assigned to {current.name}. {({
       postgres_worker: 'PostgreSQL worker enabled.', mongo_source: 'MongoDB source for ODS.',
       catalog_only: 'Catalog access only.',
     })[current.executionMode]}</p>}
-    {layer && current?.connectionId !== source.id && <p>Applies to every registered object in this layer. Complete the data and CDC cutover before restarting workers.</p>}
-    <Button disabled={!bindings || saving || !/^[a-z_][a-z0-9_]{0,62}$/.test(layer) || current?.connectionId === source.id} onClick={save}>Bind to this connection</Button>
+    {layer && current?.connectionId !== source.id && <p className="source-layer-bindings__note">Applies to every registered object in this layer. Complete the data and CDC cutover before restarting workers.</p>}
     {error && <p role="alert">{error} <Button onClick={() => { setError(''); setRevision(value => value + 1); }}>Reload</Button></p>}
   </section>;
 }
