@@ -6,6 +6,7 @@ import PreviewResults, { previewAdapter, previewTemplate } from './PreviewResult
 import { ArtifactIcon } from './StageArtifacts';
 import ConversationContext, { SourcePreview } from './ConversationContext';
 import ChatComposer, { type ComposerField, type QueuedMessage } from './ChatComposer';
+import CodexReplyIcon from './CodexReplyIcon';
 import './chatPreview.css';
 
 const steps: Array<{ activity: DotActivity; title: string; detail: string }> = [
@@ -17,7 +18,6 @@ const steps: Array<{ activity: DotActivity; title: string; detail: string }> = [
   { activity: 'Ready', title: 'Validating the adapter', detail: 'Review sample output, required fields, and collection readiness.' },
 ];
 const labels: Record<DotActivity, string> = { None: 'Idle', Working: 'Working', Searching: 'Searching', Creating: 'Creating', Payment: 'Payment', Thinking: 'Thinking', NeedsInput: 'Needs input', Ready: 'Ready', Paused: 'Paused', Error: 'Error' };
-const feedbackPath = 'M7 10H4a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h3m0-10 4-7a2.4 2.4 0 0 1 2.2 2.8L12.5 10h6a1.7 1.7 0 0 1 1.6 2.2l-2 6.5a1.8 1.8 0 0 1-1.7 1.3H7V10Z';
 const outlineReply = 'The example template and adapter are ready in the results panel. Review template.yaml, adapter.py, and the sample data, or describe what you would like to change.';
 type Turn = { id: number; prompt: string; files: File[]; step: number; reply: string; template: string; adapter: string; done: number; waiting?: 'template' | 'adapter'; complete: boolean; vote?: 'up' | 'down' };
 
@@ -225,7 +225,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
     <aside id="scout-collection-results" className="scout-collection-results" aria-label="Collection results" aria-hidden={!entered}>
       <PreviewResults turn={resultTurn} step={resultStep} running={running && resultTurn?.id === latest?.id} />
     </aside>
-    {entered && <div className="scout-activity-menu"><Dropdown trigger={['click']} placement="bottomRight" overlayClassName="scout-dot-state-menu" menu={{ selectedKeys: [activity], items: (Object.keys(DOT_ACTIVITIES) as DotActivity[]).map((value) => ({ key: value, label: labels[value] })), onClick: ({ key }) => selectActivity(key as DotActivity) }}><button type="button" aria-label="Dot activity"><MoreIcon /></button></Dropdown></div>}
+    {entered && <div className="scout-activity-menu"><Dropdown trigger={['click']} placement="bottomRight" overlayClassName="scout-dot-state-menu" menu={{ selectedKeys: [activity], items: (Object.keys(DOT_ACTIVITIES) as DotActivity[]).map((value) => ({ key: value, label: labels[value] })), onClick: ({ key }) => selectActivity(key as DotActivity) }}><button type="button" aria-label="Dot activity"><CodexReplyIcon name="more" /></button></Dropdown></div>}
     {entered && <aside className="scout-history-rail" aria-label="Conversation history" onMouseLeave={() => setHoveredHistory(null)} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setHoveredHistory(null); }}>
       <div className="ai-session-stage-bars">{history.map((entry, index) => {
         const distance = hoveredHistory === null ? -1 : Math.abs(index - hoveredHistory);
@@ -241,12 +241,12 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
           {turn.reply && <p className="scout-reply">{turn.reply}</p>}
           {turn.complete && <ReleasePreview />}
           {turn.complete && <><div className="scout-response-actions" aria-label="Response actions">
-            <button type="button" title={copied === turn.id ? 'Copied' : 'Copy'} aria-label="Copy response" onClick={() => void copy(turn)}>{copied === turn.id ? <span>✓</span> : <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8V3h13v13h-5M3 8h13v13H3V8Z" /></svg>}</button>
+            <button type="button" title={copied === turn.id ? 'Copied' : 'Copy'} aria-label="Copy response" onClick={() => void copy(turn)}><CodexReplyIcon name={copied === turn.id ? 'copied' : 'copy'} /></button>
             <Dropdown trigger={['click']} placement="bottomLeft" overlayClassName="scout-feedback-menu" menu={{ selectedKeys: turn.vote ? [turn.vote] : [], items: [{ key: 'up', label: goodLabel, icon: <FeedbackIcon /> }, { key: 'down', label: badLabel, icon: <FeedbackIcon down /> }], onClick: ({ key }) => vote(turn.id, key as 'up' | 'down') }}>
-              <button type="button" title={turn.vote === 'up' ? goodLabel : turn.vote === 'down' ? badLabel : 'Rate response'} aria-label="Rate response" aria-pressed={Boolean(turn.vote)}>{turn.vote ? <FeedbackIcon down={turn.vote === 'down'} /> : <FeedbackControlIcon />}</button>
+              <button type="button" title={turn.vote === 'up' ? goodLabel : turn.vote === 'down' ? badLabel : 'Rate response'} aria-label="Rate response" aria-pressed={Boolean(turn.vote)}><CodexReplyIcon name={turn.vote === 'up' ? 'upSelected' : turn.vote === 'down' ? 'downSelected' : 'feedback'} /></button>
             </Dropdown>
-            <button type="button" title={'speechSynthesis' in window ? 'Read aloud' : 'Read aloud is unavailable in this browser'} aria-label={speaking === turn.id ? 'Stop reading' : 'Read aloud'} aria-pressed={speaking === turn.id} disabled={!('speechSynthesis' in window)} onClick={() => read(turn)}><svg viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4V5Zm4 3a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14" /></svg></button>
-            <Dropdown trigger={['click']} placement="bottomLeft" overlayClassName="scout-response-more-menu" menu={{ items: [{ key: 'steps', label: 'Show steps' }, { key: 'replay', label: 'Replay response' }], onClick: ({ key }) => { if (key === 'steps') jumpHistory(history.find((entry) => entry.key === `step-${turn.id}-0`)!); else startTurn(turn.prompt, turn.files, false); } }}><button type="button" aria-label="More response actions" title="More"><MoreIcon /></button></Dropdown>
+            <button type="button" title={'speechSynthesis' in window ? 'Read aloud' : 'Read aloud is unavailable in this browser'} aria-label={speaking === turn.id ? 'Stop reading' : 'Read aloud'} aria-pressed={speaking === turn.id} disabled={!('speechSynthesis' in window)} onClick={() => read(turn)}><CodexReplyIcon name="speaker" /></button>
+            <Dropdown trigger={['click']} placement="bottomLeft" overlayClassName="scout-response-more-menu" menu={{ items: [{ key: 'steps', label: 'Show steps' }, { key: 'replay', label: 'Replay response' }], onClick: ({ key }) => { if (key === 'steps') jumpHistory(history.find((entry) => entry.key === `step-${turn.id}-0`)!); else startTurn(turn.prompt, turn.files, false); } }}><button type="button" aria-label="More response actions" title="More"><CodexReplyIcon name="more" /></button></Dropdown>
           </div></>}
         </div>
       </article>)}
@@ -263,14 +263,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
 }
 
 function FeedbackIcon({ down = false }: { down?: boolean }) {
-  return <svg viewBox="0 0 24 24" style={down ? { transform: 'rotate(180deg)' } : undefined}><path d={feedbackPath} /></svg>;
-}
-
-function MoreIcon() {
-  return <svg viewBox="0 0 24 24" className="scout-more-icon" aria-hidden="true"><circle cx="5" cy="12" r="1.3" /><circle cx="12" cy="12" r="1.3" /><circle cx="19" cy="12" r="1.3" /></svg>;
-}
-function FeedbackControlIcon() {
-  return <svg viewBox="0 0 28 24" className="scout-feedback-control" aria-hidden="true"><path d={feedbackPath} transform="translate(0 0) scale(.68)" vectorEffect="non-scaling-stroke" /><path d={feedbackPath} transform="translate(28 24) rotate(180) scale(.68)" vectorEffect="non-scaling-stroke" /></svg>;
+  return <CodexReplyIcon name={down ? 'down' : 'up'} />;
 }
 function StepProgress({ turn, running, current, activity, expandSignal }: { turn: Turn; running: boolean; current: boolean; activity: DotActivity; expandSignal: number }) {
   const [open, setOpen] = useState(!turn.complete);

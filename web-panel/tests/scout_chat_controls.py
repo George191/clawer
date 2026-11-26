@@ -159,6 +159,9 @@ with sync_playwright() as p:
     expect(canvas).to_have_attribute("data-activity", "NeedsInput")
     page.get_by_role("button", name="Confirm Adapter", exact=True).click()
     expect(page.get_by_role("button", name="Copy response")).to_be_visible()
+    actions = page.locator(".scout-response-actions")
+    assert actions.locator("svg").evaluate_all("nodes=>nodes.map(e=>e.dataset.codexIcon)") == ["copy", "feedback", "speaker", "more"]
+    assert actions.locator("svg").evaluate_all("nodes=>nodes.every(e=>e.getAttribute('viewBox')==='0 0 16 16' && getComputedStyle(e).stroke==='none' && e.getBoundingClientRect().width===16)")
     expect(canvas).to_have_attribute("data-activity", "Ready")
     expect(results.locator(".scout-result-code")).to_contain_text("def adapt_page")
     bounds = results.bounding_box()
