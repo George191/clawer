@@ -63,7 +63,7 @@ async function mount({ sources = [], selected = '', query = '', overrides = {}, 
     if (name === 'react') return react;
     if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx, Fragment: 'Fragment' };
     if (name === 'react-router-dom') return { Link: 'Link', useSearchParams: () => [params, next => { params = typeof next === 'function' ? next(params) : next; }] };
-    if (name === '@/components/ui') return { Button: 'Button', Checkbox: 'Checkbox', Input: 'Input', Modal: 'Modal', Select: 'Select', NativeSelect: 'NativeSelect', message };
+    if (name === '@/components/ui') return { Button: 'Button', Checkbox: 'Checkbox', Input: 'Input', Modal: 'Modal', Select: 'Select', NativeSelect: 'NativeSelect', Tabs: 'Tabs', message };
     if (name === '@/components/ui/icons') return new Proxy({}, { get: (_, key) => String(key) });
     if (name === '../../services/api') return api;
     if (name === '../../services/explorerNavigation') return navigation;

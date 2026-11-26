@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Button } from '@/components/ui';
+import { Button, Modal } from '@/components/ui';
 import { fetchCdcStatus, type DataSource } from '../../services/api';
 import type { CdcProbe, CdcStatus } from '../../services/types';
 
@@ -11,6 +11,7 @@ export default function SourceRuntimeStatus({ source }: { source: DataSource }) 
   const [status, setStatus] = useState<CdcStatus>();
   const [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
+  const [consumersOpen, setConsumersOpen] = useState(false);
   useEffect(() => {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
@@ -31,7 +32,7 @@ export default function SourceRuntimeStatus({ source }: { source: DataSource }) 
   const slots = status?.postgres.slots.filter(item => item.connectionId === source.id) ?? [];
   return <section className="ontology-source-catalog" aria-label="Live CDC and Kafka status">
     <header><div><h3>Live CDC and Kafka status</h3><p>{status ? `Checked ${new Date(status.checkedAt).toLocaleString()} · Refreshes every 15 seconds` : 'Reading runtime status…'}</p></div>
-      <Button size="small" onClick={() => setRevision(value => value + 1)}>Refresh live status</Button></header>
+      <div className="source-runtime-actions"><Button size="small" disabled={!status} onClick={() => setConsumersOpen(true)}>Kafka consumer lag · cluster-wide</Button><Button size="small" onClick={() => setRevision(value => value + 1)}>Refresh live status</Button></div></header>
     {error && <p role="alert">{error}</p>}
     {status && <>
       <dl className="ontology-connection-capabilities__list">
@@ -42,9 +43,11 @@ export default function SourceRuntimeStatus({ source }: { source: DataSource }) 
         </dd></div>
         <div><dt>Kafka cluster</dt><dd><strong>{probeLabel(status.kafka)}</strong><span>{status.kafka.reason}</span><span>Cluster-wide connectivity and consumer offsets; downstream writes are not verified here.</span></dd></div>
       </dl>
-      <details className="source-runtime-consumers"><summary>Kafka consumer lag · cluster-wide</summary>
-        {status.kafka.consumers.length ? <dl>{status.kafka.consumers.map(item => <div key={item.group}><dt>{item.group}</dt><dd>{item.lag} pending · {item.partitions} partitions</dd></div>)}</dl> : <p>No consumer offsets reported.</p>}
-      </details>
+      <Modal className="flow-surface-modal source-runtime-consumers" title="Kafka consumer lag · cluster-wide" open={consumersOpen} centered width={840} onCancel={() => setConsumersOpen(false)}
+        footer={<Button onClick={() => setConsumersOpen(false)}>Done</Button>}>
+        <p>Cluster-wide consumer offsets · Checked {new Date(status.checkedAt).toLocaleString()}</p>
+        {status.kafka.consumers.length ? <table><thead><tr><th>Consumer group</th><th>Pending messages</th><th>Partitions</th></tr></thead><tbody>{status.kafka.consumers.map(item => <tr key={item.group}><td>{item.group}</td><td>{item.lag.toLocaleString()}</td><td>{item.partitions}</td></tr>)}</tbody></table> : <p>No consumer offsets reported.</p>}
+      </Modal>
     </>}
   </section>;
 }

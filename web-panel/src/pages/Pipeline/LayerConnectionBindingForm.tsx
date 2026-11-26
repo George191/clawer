@@ -32,11 +32,12 @@ export default function LayerConnectionBindingForm({ source }: { source: DataSou
     <div className="source-layer-bindings__heading"><h3>Layer bindings</h3>
     <p>Assigned here: {bindings?.filter(item => item.connectionId === source.id).map(item => item.layer).join(', ') || (bindings ? 'None' : 'Loading…')}</p>
     </div>
-    <label>Logical layer<NativeSelect aria-label="Logical layer" value={name} disabled={!bindings?.length || saving} onChange={event => setName(event.target.value)}>
+    <div className="source-layer-bindings__controls"><label>Logical layer<NativeSelect aria-label="Logical layer" value={name} disabled={!bindings?.length || saving} onChange={event => setName(event.target.value)}>
       <option value="">{!bindings ? 'Loading layers…' : bindings.length ? 'Select a layer' : 'No logical layers'}</option>
       {bindings?.map(row => <option value={row.layer} key={row.layer}>{row.layer}</option>)}
     </NativeSelect></label>
     <Button disabled={!current || saving || !/^[a-z_][a-z0-9_]{0,62}$/.test(layer) || current?.connectionId === source.id} onClick={save}>Bind to this connection</Button>
+    </div>
     {current?.name && <p className="source-layer-bindings__note">Currently assigned to {current.name}. {({
       postgres_worker: 'PostgreSQL worker enabled.', mongo_source: 'MongoDB source for ODS.',
       catalog_only: 'Catalog access only.',

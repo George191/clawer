@@ -19,7 +19,7 @@ async function mount(component, saved, api, extraProps = {}) {
   const require = name => {
     if (name === 'react') return react;
     if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx, Fragment: 'Fragment' };
-    if (name === '@/components/ui') return { Button: 'Button', Checkbox: 'Checkbox', Input: 'Input', NativeSelect: 'NativeSelect' };
+    if (name === '@/components/ui') return { Button: 'Button', Checkbox: 'Checkbox', Input: 'Input', NativeSelect: 'NativeSelect', Modal: 'Modal' };
     if (name === '../../services/api') return Object.fromEntries(Object.entries(api).map(([key, value]) => [key, (...args) => { calls.push({ key, args }); return value(...args); }]));
     if (name.endsWith('.css')) return {};
     throw new Error('Unexpected dependency ' + name);
@@ -96,8 +96,14 @@ test('live status shows only this source CDC and WAL, with explicitly cluster-wi
       ] }, kafka: { state: 'available', consumers: [{ group: 'cluster-worker', lag: 25, partitions: 3 }] },
     }),
   });
-  for (const value of ['internal-current', 'FAILED', 'current-slot', 'Active reader', 'cluster-wide', '25 pending']) assert.ok(ui.text().includes(value), value);
+  for (const value of ['internal-current', 'FAILED', 'current-slot', 'Active reader', 'cluster-wide', 'cluster-worker']) assert.ok(ui.text().includes(value), value);
   for (const value of ['private-other', 'other-slot']) assert.equal(ui.text().includes(value), false, value);
+  assert.equal(ui.nodes().find(node => node.type === 'Modal').props.open, false);
+  ui.button('Kafka consumer lag · cluster-wide').props.onClick(); await ui.settle();
+  assert.equal(ui.nodes().find(node => node.type === 'Modal').props.open, true);
+  assert.ok(ui.nodes().some(node => node.type === 'td' && node.props.children === '25'));
+  ui.nodes().find(node => node.type === 'Modal').props.onCancel(); await ui.settle();
+  assert.equal(ui.nodes().find(node => node.type === 'Modal').props.open, false);
   ui.close();
 });
 

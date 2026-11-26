@@ -1,6 +1,6 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Button, Checkbox, Input, message, Modal, Select, NativeSelect } from '@/components/ui';
+import { Button, Checkbox, Input, message, Modal, Select, NativeSelect, Tabs } from '@/components/ui';
 import { ArrowLeftOutlined, ArrowRightOutlined, DatabaseOutlined, DeleteOutlined, EyeOutlined, FolderOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, TableOutlined } from '@/components/ui/icons';
 import apiClient, { createDataSource, deleteDataSource, fetchCurrentUserContext, fetchDataConnectorTypes, fetchDataConnectionDependencies, fetchDataSourceCatalog, fetchDataSourceColumns, fetchDataSources, setDataSourcePaused, testDataSource, updateDataSource } from '../../services/api';
 import type { DataConnectionDependencies, DataConnectorEngine, DataConnectorType, DataSource, DataSourceCatalog, DataSourceColumns, DataSourceConfig, DataSourcePayload, DataSourceProvider, DataSourceRelation, DataSourceTest, BatchSourceIdentity, WarehouseConnection } from '../../services/api';
@@ -615,7 +615,7 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
             aria-disabled={pending || captureBusy || panelDirty || undefined} tabIndex={pending || captureBusy || panelDirty ? -1 : undefined}
             onClick={event => { if (pending || captureBusy || panelDirty) event.preventDefault(); if (!pending && !captureBusy && panelDirty) notify('error', 'Save or cancel the open setup before viewing published object types.'); }}>View published object types <ArrowRightOutlined /></Link>
         </div>
-        <div className="ontology-connections-detail__body" role="tabpanel" id={`${feedbackKey}-panel`} aria-labelledby={`${feedbackKey}-tab-${sourcePanel}`}>
+        <div className={`ontology-connections-detail__body${sourcePanel === 'overview' ? ' is-overview' : ''}`} role="tabpanel" id={`${feedbackKey}-panel`} aria-labelledby={`${feedbackKey}-tab-${sourcePanel}`}>
         {sourcePanel === 'overview' && <>
           {!sourcePaused && <LayerConnectionBindingForm key={viewedSource.id} source={viewedSource} />}
         <div className="source-detail-start"><h3>What would you like to do?</h3><div>
@@ -641,16 +641,17 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
           {sourcePaused && <div><dt>Paused at</dt><dd>{formatDate(viewedSource.pausedAt)}</dd></div>}
         </dl>
         <details className="source-detail-advanced"><summary>Connection capabilities and source identity</summary>
-        <div className="source-detail-advanced__panels">
-        {viewedSource.engine === 'postgresql' && <SourceRuntimeStatus key={`runtime:${proofKey}`} source={viewedSource} />}
-        <SavedConnectionCapabilities capabilities={viewedSource.capabilities} />
+        <Tabs key={proofKey} className="source-detail-diagnostics" size="small" items={[
+          ...(viewedSource.engine === 'postgresql' ? [{ key: 'runtime', label: 'Live CDC and Kafka', children: <SourceRuntimeStatus key={`runtime:${proofKey}`} source={viewedSource} /> }] : []),
+          { key: 'capabilities', label: 'Feature availability', children: <SavedConnectionCapabilities capabilities={viewedSource.capabilities} /> },
+          ...(viewedSource.engine === 'postgresql' && !sourcePaused ? [{ key: 'identity', label: 'Source identity', forceRender: true, children: activeProof?.state === 'disabled'
+            ? <p>Source identity verification is not enabled for this connection.</p>
+            : <SourceIdentity key={`identity:${proofKey}`} source={viewedSource} identity={activeProof}
+                onIdentity={value => { if (current()) setSourceProof({ key: proofKey, value }); }}
+                onVerificationStarted={() => invalidateVerificationCapability(viewedSource.id)}
+                onVerificationSettled={() => { metadataVerifying.current.delete(viewedSource.id); refreshCapabilities(viewedSource.id); }} disabled={blocked} /> }] : []),
+        ]} />
         {sourcePaused && <p>This source cannot be tested, explored, verified or edited while paused. Sync history remains available.</p>}
-        {viewedSource.engine === 'postgresql' && !sourcePaused && <SourceIdentity key={`identity:${proofKey}`} source={viewedSource} identity={activeProof}
-          onIdentity={value => { if (current()) setSourceProof({ key: proofKey, value }); }}
-          onVerificationStarted={() => invalidateVerificationCapability(viewedSource.id)}
-          onVerificationSettled={() => { metadataVerifying.current.delete(viewedSource.id); refreshCapabilities(viewedSource.id); }} disabled={blocked} />}
-        <p className="ontology-connectors__scope"><DatabaseOutlined /> These settings do not import or synchronize tables.</p>
-        </div>
         </details>
         </>}
         {sourcePanel === 'catalog' && exploring && catalogAvailable && <SourceCatalog key={JSON.stringify(["catalog", sessionIdentity, viewedSource.id, sourceSchema])} sourceId={viewedSource.id} sourceRevision={viewedSource.updatedAt} initialSchema={sourceSchema} onSetUpSync={selection => { setParams(currentParams => { const next = new URLSearchParams(currentParams); next.set('sourceSchema', selection.schema); return next; }); setSyncSelection({ sourceId: viewedSource.id, selection }); openSourcePanel('sync'); }} />}
