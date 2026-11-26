@@ -46,7 +46,7 @@ import {
 } from '@/components/ui/icons';
 import { useSearchParams } from 'react-router-dom';
 import ErrorBoundary from '@/components/ErrorBoundary';
-import { type DotActivity } from '@/components/NativeDot';
+import NativeDot, { type DotActivity } from '@/components/NativeDot';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { formatWorkspaceScheduleLabel } from '@/services/taskSchedule';
 import {
@@ -1176,6 +1176,8 @@ const AICollect: React.FC = () => {
   const [dryRunResult, setDryRunResult] = useState<DryRunResponse | null>(null);
   const [taskDraft, setTaskDraft] = useState('');
   const [submittedPrompt, setSubmittedPrompt] = useState('');
+  const [chatEntered, setChatEntered] = useState(false);
+  const [chatMessages, setChatMessages] = useState<string[]>([]);
   const [workflowPhase, setWorkflowPhase] = useState<SessionWorkflowPhase>('analyzing-template');
   const [expandedStep, setExpandedStep] = useState<WorkMode>('explore');
   const [activeProcessStep, setActiveProcessStep] = useState<ProcessStepKey>('prepare');
@@ -1242,7 +1244,8 @@ const AICollect: React.FC = () => {
   const inspectorTransitionTimerRef = useRef<number | null>(null);
   const releaseExitTimerRef = useRef<number | null>(null);
 
-  const hasSession = runStatus !== 'idle';
+  const hasSession = chatEntered || runStatus !== 'idle';
+  const collectionStarted = runStatus !== 'idle';
   const selectedCount = fields.filter((field) => selectedFields.has(field.name)).length;
   const qualityScore = mode === 'publish' ? 94 : mode === 'dryrun' ? 86 : mode === 'contract' ? 88 : 92;
   const activeStepIndex = processStepOrder.indexOf(activeProcessStep);
@@ -1461,6 +1464,7 @@ const AICollect: React.FC = () => {
   const dotActivity: DotActivity = runStatus === 'paused' ? 'Paused'
     : hasSession && streamError ? 'Error'
     : adapterWriting ? 'Creating'
+    : analysisFeed[analysisFeed.length - 1]?.kind === 'thinking' && runStatus === 'running' ? 'Thinking'
     : promptGenerating ? 'Thinking'
     : templateReadyForConfirm || (pendingConfirmations.adapter && adapterReadyForConfirm) ? 'NeedsInput'
     : runStatus === 'running' && (preflightLoading || browserAnalysisActive) ? 'Searching'
@@ -2566,13 +2570,6 @@ const AICollect: React.FC = () => {
     }
   }, [intent, validateUrl]);
 
-  const handleLandingUrlPaste = useCallback((event: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const candidate = event.clipboardData.getData('text').trim();
-    if (validateUrl(candidate)) return;
-    event.preventDefault();
-    setIntent(candidate);
-  }, [validateUrl]);
-
   const handleAnalyze = useCallback(async () => {
     if (preflightLoading) return;
     if (!analyzeSocketConnected) {
@@ -2585,7 +2582,7 @@ const AICollect: React.FC = () => {
       return;
     }
     const draftPrompt = taskDraft.trim();
-    const isRefinement = hasSession && Boolean(draftPrompt);
+    const isRefinement = Boolean(workspaceTemplateYaml) && Boolean(draftPrompt);
     const currentTemplateYaml = workspaceTemplateYaml || activeTemplate.raw;
     const currentAdapterCode = workspaceAdapterCode;
     const targetUrl = hasSession
@@ -3263,7 +3260,6 @@ const AICollect: React.FC = () => {
       return (
         <section className="ai-prompt-landing">
           <div className="ai-prompt-copy">
-            <div className="ai-collect-dot is-landing" data-activity={dotActivity} />
             <h1 className="ai-prompt-title">嗨，<span className="ai-prompt-name">{currentUserName}</span>，又有新灵感了吗？</h1>
           </div>
 
@@ -3271,14 +3267,22 @@ const AICollect: React.FC = () => {
             <span className="ai-prompt-leading-icon" aria-hidden="true">
               <GlobalOutlined />
             </span>
-            <TextArea
+            <Input
               className="ai-prompt-input"
+              aria-label="采集网址"
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
+                event.preventDefault();
+                const error = validateUrl(intent.trim());
+                if (error) { message.error(error); return; }
+                setSubmittedPrompt(intent.trim());
+                setUrl(intent.trim());
+                setChatEntered(true);
+              }}
               value={intent}
               disabled={preflightLoading}
-              onChange={(event) => setIntent(event.target.value)}
+              onChange={(event) => setIntent(event.target.value.replace(/[\r\n]+/g, ''))}
               onBlur={commitLandingUrl}
-              onPaste={handleLandingUrlPaste}
-              autoSize={{ minRows: 1, maxRows: 1 }}
               placeholder="输入 HTTP/HTTPS 网址"
             />
             {preflightLoading ? (
@@ -9343,6 +9347,37 @@ const AICollect: React.FC = () => {
               box-shadow: 0 0 18px rgba(138, 180, 255, 0.22);
             }
           }
+          .ai-collect-workbench .ai-prompt-input.ui-input,
+          .ai-collect-workbench .ai-prompt-input.ui-input:focus,
+          .ai-collect-workbench .ai-chat-composer .ui-input:focus {
+            border: 0 !important; outline: none !important; box-shadow: none !important; background: transparent !important;
+          }
+          .ai-chat-dot { position: absolute; z-index: 20; width: 120px; height: 120px; top: 15%; left: calc(50% - 60px); transition: left .6s cubic-bezier(.22,1,.36,1), top .6s cubic-bezier(.22,1,.36,1); }
+          .is-chat > .ai-chat-dot { top: 12px; }
+          .is-chat.is-collecting > .ai-chat-dot { left: calc(34% - 60px); top: calc(50% - 60px); }
+          .ai-chat-layout { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr); min-height: 0; }
+          .ai-chat-layout.is-collecting { grid-template-columns: minmax(0, 34fr) minmax(0, 66fr); }
+          .ai-chat-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 110px 36px 22px; }
+          .ai-chat-thread { flex: 1; overflow: auto; min-height: 0; width: min(760px, 100%); margin: 0 auto; padding-bottom: 24px; }
+          .ai-chat-message { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; margin: 20px 0; }
+          .ai-chat-message.is-user { margin-left: auto; width: fit-content; max-width: 85%; padding: 10px 18px; border-radius: 20px; background: rgba(255,255,255,.07); }
+          .ai-chat-composer { display: flex; gap: 12px; align-items: center; width: min(760px,100%); margin: 0 auto; padding: 12px 16px; border: 1px solid ${aura.border}; border-radius: 24px; }
+          .ai-chat-composer .ui-input { flex: 1; min-width: 0; border: 0 !important; background: transparent !important; box-shadow: none !important; }
+          .ai-chat-progress { overflow: auto; padding: 24px 40px 24px 12px; border-right: 1px solid ${aura.border}; animation: aiWorkbenchIn .45s ease both; }
+          .ai-chat-progress h2 { font-size: 14px; font-weight: 500; }
+          .ai-chat-event { font-size: 13px; padding: 14px 0; border-bottom: 1px solid ${aura.border}; overflow-wrap: anywhere; }
+          .ai-chat-event span { color: ${aura.muted}; }
+          .ai-chat-event p { white-space: pre-wrap; margin: 6px 0 0; }
+          .ai-chat-results { margin-top: 24px; }
+          .ai-chat-results > summary { cursor: pointer; padding: 12px 0; }
+          .ai-chat-results .ai-session-layout { min-height: 600px; }
+          @media (max-width: 700px) {
+            .ai-chat-main { padding: 110px 12px 12px; }
+            .ai-chat-layout.is-collecting { grid-template-columns: minmax(100px, 30fr) minmax(0, 70fr); }
+            .ai-chat-progress { padding: 12px 18px 12px 0; }
+            .is-chat.is-collecting > .ai-chat-dot { left: calc(30% - 40px); width: 80px; height: 80px; }
+          }
+          @media (prefers-reduced-motion: reduce) { .ai-chat-dot { transition: none; } }
           @keyframes ai-session-step-attention {
             0%, 100% {
               background: rgba(194, 200, 210, 0.34);
@@ -9629,7 +9664,8 @@ const AICollect: React.FC = () => {
         `}
       </style>
 
-      <div className="ai-collect-workbench">
+      <div className={`ai-collect-workbench ${hasSession ? 'is-chat' : ''} ${collectionStarted ? 'is-collecting' : ''}`}>
+        <div className="ai-chat-dot" aria-label="AI 进度"><NativeDot activity={dotActivity} preload /></div>
         <header
           className={`ai-collect-header ${hasSession ? 'is-session' : 'is-idle'}`}
           style={{
@@ -9652,30 +9688,33 @@ const AICollect: React.FC = () => {
                 '--release-exit-scale': releaseExit.scale,
               } as React.CSSProperties) : undefined}
             >
-              {renderWorkflowLayout()}
-              {false && (
-              <main className="ai-collect-panel ai-stage-shell ai-stage-shell-full" style={panelStyle}>
-                <div className="ai-stage-top">
-                  <div className="ai-stage-headline">
-                    <div className="ai-stage-headline-copy">
-                      <div>
-                        <Text className="ai-aura-kicker">当前阶段</Text>
-                        <Text strong className="ai-panel-title">{processStepMeta[activeProcessStep].title}</Text>
-                      </div>
-                      <Text className="ai-stage-subtitle">{processStepMeta[activeProcessStep].desc}</Text>
-                    </div>
-                    {renderRunActions()}
+              <div className={`ai-chat-layout ${collectionStarted ? 'is-collecting' : ''}`}>
+                {collectionStarted && <aside className="ai-chat-progress" aria-label="实时进展">
+                  <h2>实时进展</h2>
+                  <div role="log" aria-live="polite">{analysisFeed.map((item) => <div key={item.id} className={`ai-chat-event is-${item.kind}`}><span>{item.step || '采集'}</span><p>{item.content}</p></div>)}</div>
+                  {streamError && <Alert type="error" message={streamError} />}
+                </aside>}
+                <main className="ai-chat-main" aria-label="采集聊天">
+                  <div className="ai-chat-thread" role="log" aria-live="polite">
+                    <div className="ai-chat-message is-user">{submittedPrompt}</div>
+                    <div className="ai-chat-message is-assistant">请输入采集要求，或发送“开始采集”。</div>
+                    {chatMessages.map((text, index) => <div className="ai-chat-message is-user" key={index}>{text}</div>)}
+                    {collectionStarted && <div className="ai-chat-message is-assistant">{streamError || analysisFeed[analysisFeed.length - 1]?.content || '正在连接采集任务…'}</div>}
+                    {collectionStarted && runStatus !== 'running' && !streamError && <details className="ai-chat-results"><summary>查看采集结果与确认操作</summary>{renderWorkflowLayout()}</details>}
                   </div>
-                  {renderStageOverview()}
-                  {renderStepNavigator()}
-                </div>
-                <div className="ai-stage-content">
-                  {streamError && <Alert type="warning" showIcon message={streamError} style={{ marginBottom: 12 }} />}
-                  {renderStageContent()}
-                </div>
-                {renderGuidancePanel()}
-              </main>
-              )}
+                  <form className="ai-chat-composer" onSubmit={(event) => {
+                    event.preventDefault();
+                    if (preflightLoading || !taskDraft.trim()) return;
+                    setChatMessages((prev) => [...prev, taskDraft.trim()]);
+                    void handleAnalyze();
+                  }}>
+                    <Input aria-label="聊天消息" placeholder="输入采集要求…" value={taskDraft}
+                      onChange={(event) => setTaskDraft(event.target.value.replace(/[\r\n]+/g, ''))}
+                      onKeyDown={(event) => { if (event.nativeEvent.isComposing && event.key === 'Enter') event.preventDefault(); }} />
+                    <Button htmlType="submit" disabled={preflightLoading || !taskDraft.trim()}>发送</Button>
+                  </form>
+                </main>
+              </div>
             </div>
           )}
         </div>
