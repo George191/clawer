@@ -100,7 +100,7 @@ def read_migration(kind):
   need(owner['root']=='/data/clawer/output/sec_migration_20261104/'+root.name
     and (owner['workers'],owner['page_size']) in ((6,3000),(5,8000),(6,8000))
     and owner['mongo_cdc_replay'] is False and fingerprint(owner['source_sha256'])
-    and owner['container'].startswith(('source-safe-facts-full-20261116' if kind=='facts' else 'source-safe-patent-20261116'))
+    and isinstance(owner['container'],str) and bool(owner['container'])
     and isinstance(owner['image'],str))
   plan=json.loads((root/'plan.json').read_bytes());sha=plan['plan_sha256']
   need(fingerprint(sha) and sha==owner['plan_sha256']
@@ -178,8 +178,10 @@ def read_migration(kind):
  except Exception as error:
   return {'verified':False,'kind':kind,'sampled_at':sampled,'error_class':type(error).__name__}
 
-async def main():
+def read_history():
  plan=json.loads((ROOT/'plan.json').read_text())
+ need(plan['plan_sha256']==OWNERS['history']['plan_sha256']
+  and OWNERS['history']['root']=='/data/clawer/output/source_dedup_20261109/sec-history-run01')
  scope_bytes=(ROOT/'scope.json').read_bytes()
  if hashlib.sha256(scope_bytes).hexdigest()!=plan['plan_sha256']:
   raise RuntimeError('Repair scope and plan differ')
@@ -191,11 +193,22 @@ async def main():
   value=json.loads(path.read_text())
   states.append({key:value.get(key) for key in (
    'unit','worker','stage','processed','renamed','deduplicated','done','pending','last_error')})
- cutoff=datetime.fromisoformat(__HISTORY_STARTED_AT__.replace('Z','+00:00')).timestamp()
+ cutoff=datetime.fromisoformat(OWNER_STATES['history']['sample_started_at'].replace('Z','+00:00')).timestamp()
  for path in ROOT.glob('worker-*-error.json'):
   if path.stat().st_mtime<cutoff:continue
   value=json.loads(path.read_text())
   errors.append({key:value.get(key) for key in ('worker','unit','stage','last_error')})
+ units=[{key:value[key] for key in ('unit','worker','ordinal','schema','table','leaf','old','new','data_type','layer')} for value in plan['units']]
+ return {'plan_sha256':plan['plan_sha256'],'layout':layout,'units':units,'checkpoints':states,'worker_errors':errors,'stop_requested':(ROOT/'STOP').exists()}
+
+async def main():
+ history={}
+ history_error=None
+ try:
+  need(OWNER_STATES['history']['verified'])
+  history=read_history()
+ except Exception as error:
+  history_error=OWNER_STATES['history'].get('error_class') or type(error).__name__
  prefix='source-dedup-'+hashlib.sha256(str(ROOT).encode()).hexdigest()[:12]+'-worker-'
  connection=await asyncpg.connect(
   _resolved_pg_url().replace('postgresql+asyncpg://','postgresql://',1),timeout=10,command_timeout=10,
@@ -205,7 +218,9 @@ async def main():
   backends=[dict(row) for row in await connection.fetch(
    'SELECT pid,application_name,state,wait_event_type,wait_event FROM pg_stat_activity '
    'WHERE application_name LIKE $1 ORDER BY application_name',prefix+'%')]
-  migrations={kind:read_migration(kind) for kind in ('facts','patent')}
+  migrations={kind:read_migration(kind) if OWNER_STATES[kind]['verified'] else
+   {'verified':False,'sampled_at':datetime.now(timezone.utc).isoformat(),'error_class':OWNER_STATES[kind]['error_class']}
+   for kind in ('facts','patent')}
   facts_repair=read_facts_repair()
   for value in migrations.values():
    if not value.get('verified'):continue
@@ -219,11 +234,8 @@ async def main():
    except Exception as error:
     value['pg_workers']=None;value['pg_workers_error']=type(error).__name__
  finally:await connection.close()
- units=[{key:value[key] for key in ('unit','worker','ordinal','schema','table','leaf','old','new','data_type')}
-        for value in plan['units']]
  print(json.dumps({'observed_at':datetime.now(timezone.utc).isoformat(),'run':str(ROOT),
-  'plan_sha256':plan['plan_sha256'],'layout':layout,'stop_requested':(ROOT/'STOP').exists(),
-  'units':units,'checkpoints':states,'worker_errors':errors,'backends':backends,
+  **history,'history_error':history_error,'backends':backends,
   'migrations':migrations,'facts_repair':facts_repair}))
 asyncio.run(main())
 
@@ -292,6 +304,20 @@ def migration_report(values, markdown_format=False, facts_repair=None):
     return '\n'.join(lines)
 
 def summarize(snapshot, previous=None):
+    """Keep independent migration observations when history validation fails."""
+    if not snapshot.get('history_error'):
+        try:
+            return summarize_history(snapshot, previous)
+        except (ValueError, KeyError, TypeError) as error:
+            snapshot = {**snapshot, 'history_error': type(error).__name__ + ': ' + str(error)}
+    return {'observed_at': snapshot['observed_at'], 'run': snapshot['run'],
+            'history_error': snapshot['history_error'], 'facts_repair': snapshot.get('facts_repair'),
+            'migrations': {kind: summarize_migration((snapshot.get('migrations') or {}).get(kind),
+                (previous.get('migrations') or {}).get(kind) if previous else None, snapshot['observed_at'])
+                for kind in ('facts', 'patent')}}
+
+
+def summarize_history(snapshot, previous=None):
     """Count only committed checkpoints; never treat Kafka/Mongo progress as PG coverage."""
     units = snapshot['units']
     by_unit = {unit['unit']: unit for unit in units}
@@ -322,7 +348,7 @@ def summarize(snapshot, previous=None):
             current[owner] = unit
     elapsed = None
     old_rows = {}
-    if (previous and previous.get('run') == snapshot['run'] and
+    if (previous and not previous.get('history_error') and previous.get('run') == snapshot['run'] and
             previous.get('plan_sha256') == snapshot['plan_sha256']):
         elapsed = (parse_time(snapshot['observed_at']) - parse_time(previous['observed_at'])).total_seconds()
         if elapsed <= 0:
@@ -390,6 +416,15 @@ def summarize(snapshot, previous=None):
                 for kind in ('facts', 'patent')}}
 
 def markdown(value):
+    if value.get('history_error'):
+        stamp = parse_time(value['observed_at']).astimezone(BEIJING).strftime('%Y-%m-%d %H:%M:%S')
+        lines = ['财报 / 专利迁移进度', '', '北京时间 ' + stamp,
+                 '历史修复采集未验证：' + value['history_error'], '',
+                 '| 范围/层 | 状态 | 累计处理 | 错误 |', '|---|---|---|---|']
+        lines += ['| ' + scope + ' | 未验证 | — | ' + value['history_error'] + ' |'
+                  for scope in ('filing/RDS', 'filing/ODS', 'document/ODS')]
+        lines.append(migration_report(value['migrations'], markdown_format=True, facts_repair=value.get('facts_repair')))
+        return '\n'.join(lines)
     time = parse_time(value['observed_at']).astimezone(BEIJING).strftime('%Y-%m-%d %H:%M:%S')
     layout = value['layout']
     interval = value.get('interval_seconds')
@@ -421,6 +456,9 @@ def markdown(value):
 
 def plain_table(value):
     """Render a table that remains readable when the caller strips Markdown."""
+    if value.get('history_error'):
+        return markdown(value)
+
     def display_width(text):
         return sum(2 if unicodedata.east_asian_width(char) in 'WF' else 1 for char in text)
 
@@ -471,53 +509,67 @@ class Docker(http.client.HTTPConnection):
  def connect(self):
   self.sock=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
   self.sock.connect('/var/run/docker.sock')
-history_root=Path('/data/clawer/output/source_dedup_20261109/sec-history-run01')
-history_inside='/app/output/source_dedup_20261109/sec-history-run01'
-history_owner=json.loads((history_root/'git-deployed-20261116.json').read_bytes())['new_started']
-info=subprocess.run(['docker','inspect',history_owner],text=True,capture_output=True,timeout=10)
-if info.returncode:raise RuntimeError('Current history container unavailable')
-history=json.loads(info.stdout)[0]
-if not history['State']['Running'] or history['State']['Pid']<=0:raise ValueError('Current history container is not running')
-if not any(arg==history_inside or repr(history_inside) in arg or json.dumps(history_inside) in arg
- for arg in history['Config']['Cmd']):raise ValueError('Current history command root differs')
-if not any(m['Type']=='bind' and m['RW'] and Path(history_inside).is_relative_to(Path(m['Destination']))
- and Path(m['Source'])/Path(history_inside).relative_to(Path(m['Destination']))==history_root
- for m in history['Mounts']):raise ValueError('Current history output mount differs')
-history_started=history['State']['StartedAt']
-history_started_iso=re.sub(r'(\.\d{6})\d+(?=Z|[+-]|$)',r'\1',history_started)
-if datetime.fromisoformat(history_started_iso.replace('Z','+00:00')).timestamp()<=0:raise ValueError('Invalid history start time')
+
+def source_sha(container,path):
+ client=Docker()
+ try:
+  client.request('GET','/containers/'+quote(container,safe='')+'/archive?path='+quote(path,safe=''))
+  response=client.getresponse();raw=response.read(524289)
+  if response.status!=200 or len(raw)>524288:raise ValueError('Current owner source unavailable')
+ finally:client.close()
+ with tarfile.open(fileobj=io.BytesIO(raw),mode='r:*') as archive:
+  members=[m for m in archive.getmembers() if m.isfile()]
+  if len(members)!=1 or members[0].name.rsplit('/',1)[-1]!=Path(path).name:raise ValueError('Unexpected source archive')
+  return hashlib.sha256(archive.extractfile(members[0]).read()).hexdigest()
+
+def validate_owner(kind,owner):
+ info=subprocess.run(['docker','inspect',owner['container']],text=True,capture_output=True,timeout=10)
+ if info.returncode:raise RuntimeError('Current migration container unavailable')
+ current=json.loads(info.stdout)[0]
+ if current['Config']['Image']!=owner['image']:raise ValueError('Current owner image differs')
+ if owner.get('container_id') and current['Id']!=owner['container_id']:raise ValueError('Current owner container ID differs')
+ if owner.get('image_id') and current['Image']!=owner['image_id']:raise ValueError('Current owner image ID differs')
+ root=Path(owner['root']);inside='/app/output/'+str(root.relative_to('/data/clawer/output'))
+ if not any(arg==inside or repr(inside) in arg or json.dumps(inside) in arg for arg in current['Config']['Cmd']):
+  raise ValueError('Current owner command root differs')
+ if not any(m['Type']=='bind' and m['RW'] and Path(inside).is_relative_to(Path(m['Destination']))
+  and Path(m['Source'])/Path(inside).relative_to(Path(m['Destination']))==root for m in current['Mounts']):
+  raise ValueError('Current owner output mount differs')
+ folder='/opt/sec-history/' if kind=='history' else '/opt/sec-migration/'
+ entry='pg_worker.py' if kind=='history' else 'source_safe_migration.py'
+ if source_sha(current['Id'],folder+entry)!=owner['source_sha256']:raise ValueError('Current owner source SHA differs')
+ if owner.get('worker_source_sha256') and source_sha(current['Id'],folder+'pg_worker.py')!=owner['worker_source_sha256']:
+  raise ValueError('Current owner worker SHA differs')
+ if owner.get('registry_source_sha256') and source_sha(current['Id'],folder+'registry_targets.py')!=owner['registry_source_sha256']:
+  raise ValueError('Current owner registry source SHA differs')
+ started=re.sub(r'(\.\d{6})\d+(?=Z|[+-]|$)',r'\1',current['State']['StartedAt'])
+ if datetime.fromisoformat(started.replace('Z','+00:00')).timestamp()<=0:raise ValueError('Invalid owner start time')
+ return {'verified':True,'id':current['Id'],'started_at':current['State']['StartedAt'],'sample_started_at':started,
+  'container_running':current['State']['Running'],'exit_code':current['State']['ExitCode'],'restart_count':current['RestartCount']}
+
+ledger=Path('/data/clawer/output/sec_migration_20261104/source-safe-current-owners.json')
+owners=json.loads(ledger.read_bytes());states={}
+for kind in ('history','facts','patent'):
+ try:states[kind]=validate_owner(kind,owners[kind])
+ except Exception as error:states[kind]={'verified':False,'error_class':type(error).__name__+': '+str(error)}
+probe='OWNERS='+repr(owners)+'\nOWNER_STATES='+repr(states)+'\n'+__PROBE__
 p=subprocess.run(['docker','exec','-i','-u','0','-e','PYTHONPATH=/app','web','python','-B','-'],
- input=__PROBE__.replace('__HISTORY_STARTED_AT__',repr(history_started_iso)),text=True,capture_output=True,timeout=45)
+ input=probe,text=True,capture_output=True,timeout=45)
 if p.returncode:raise RuntimeError(p.stderr[-1800:])
 result=json.loads(p.stdout)
-info=subprocess.run(['docker','inspect',history_owner],text=True,capture_output=True,timeout=10)
-if info.returncode:raise RuntimeError('Current history container unavailable')
-latest_history=json.loads(info.stdout)[0]
-if latest_history['Id']!=history['Id'] or latest_history['State']['StartedAt']!=history_started or not latest_history['State']['Running']:
- raise ValueError('Current history container changed during sampling')
-for kind,value in result['migrations'].items():
- if not value.get('verified'):continue
+latest=json.loads(ledger.read_bytes())
+for kind,state in states.items():
+ if not state['verified']:continue
  try:
-  owner=value['owner'];info=subprocess.run(['docker','inspect',owner['container']],text=True,capture_output=True,timeout=10)
-  if info.returncode:raise RuntimeError('Current migration container unavailable')
+  info=subprocess.run(['docker','inspect',state['id']],text=True,capture_output=True,timeout=10)
+  if info.returncode:raise RuntimeError('Current owner disappeared during sampling')
   current=json.loads(info.stdout)[0]
-  if current['Config']['Image']!=owner['image']:raise ValueError('Current owner image differs')
-  client=Docker()
-  try:
-   client.request('GET','/containers/'+quote(owner['container'],safe='')+'/archive?path=%2Fopt%2Fsec-migration%2Fsource_safe_migration.py')
-   response=client.getresponse();raw=response.read(524289)
-   if response.status!=200 or len(raw)>524288:raise ValueError('Current owner source unavailable')
-  finally:client.close()
-  with tarfile.open(fileobj=io.BytesIO(raw),mode='r:*') as archive:
-   members=[m for m in archive.getmembers() if m.isfile()]
-   if len(members)!=1 or members[0].name.rsplit('/',1)[-1]!='source_safe_migration.py':raise ValueError('Unexpected source archive')
-   source=archive.extractfile(members[0]).read()
-  if hashlib.sha256(source).hexdigest()!=owner['source_sha256']:raise ValueError('Current owner source SHA differs')
-  latest=json.loads(Path('/data/clawer/output/sec_migration_20261104/source-safe-current-owners.json').read_bytes())
-  if latest.get(kind)!=owner:raise ValueError('Current owner changed during sampling')
-  value.update(container_running=current['State']['Running'],exit_code=current['State']['ExitCode'],restart_count=current['RestartCount'])
+  if latest.get(kind)!=owners[kind] or current['State']['StartedAt']!=state['started_at'] or current['State']['Running']!=state['container_running']:
+   raise ValueError('Current owner changed during sampling')
+  if kind!='history':result['migrations'][kind].update({k:state[k] for k in ('container_running','exit_code','restart_count')})
  except Exception as error:
-  result['migrations'][kind]={'verified':False,'sampled_at':value['sampled_at'],'error_class':type(error).__name__}
+  if kind=='history':result['history_error']=type(error).__name__+': '+str(error)
+  else:result['migrations'][kind]={'verified':False,'sampled_at':result['observed_at'],'error_class':type(error).__name__+': '+str(error)}
 print(json.dumps(result))
 """
 
