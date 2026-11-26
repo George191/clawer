@@ -1,6 +1,6 @@
 import { useId, type ComponentProps, type CSSProperties, type ReactNode, type Ref } from 'react';
 import { Drawer, Select } from '@/components/ui';
-import { ArrowRightOutlined, CloseOutlined, EyeOutlined, ReloadOutlined, RightOutlined } from '@/components/ui/icons';
+import { ArrowRightOutlined, CloseOutlined, EyeOutlined, InfoCircleOutlined, ReloadOutlined, RightOutlined } from '@/components/ui/icons';
 import type { EtlObjectVisibility } from '../../services/types';
 import LinkedObjectTypes from './LinkedObjectTypes';
 import PropertyTypeIcon from './PropertyTypeIcon';
@@ -47,10 +47,15 @@ export default function ObjectTypePreview({
       <div className="flow-ontology__inspector-content" aria-busy={busy}>
         {loading ? <section className="flow-ontology__preview-section" role="status"><h3>Object details</h3>
             <p className="flow-ontology__muted"><ReloadOutlined spin /> Loading {name}…</p></section>
-          : error ? <div className="flow-ontology__notice" role="alert"><span>{error}</span>
-            {onRetry && <button type="button" onClick={onRetry}>Retry</button>}
-            {errorAction && <button type="button" onClick={errorAction.onClick}>{errorAction.label}</button>}
-          </div> : <>
+          : error ? <section className="flow-ontology__preview-error" role="alert">
+            <InfoCircleOutlined className="flow-ontology__preview-error-icon" aria-hidden="true" />
+            <div className="flow-ontology__preview-error-body"><h3>Object details unavailable</h3><p>{error}</p>
+              <div className="flow-ontology__preview-error-actions">
+                {onRetry && <button type="button" className="flow-ontology__button flow-ontology__button--primary" onClick={onRetry}><ReloadOutlined aria-hidden="true" />Retry</button>}
+                {errorAction && <button type="button" className="flow-ontology__button" onClick={errorAction.onClick}>{errorAction.label}</button>}
+              </div>
+            </div>
+          </section> : <>
             <section className="flow-ontology__preview-section"><h3>Description</h3><p className="flow-ontology__muted">{description || 'No description provided.'}</p></section>
             {summary && <section className="flow-ontology__preview-section" aria-label="Object type summary">
               {summary.map(item => <div key={item.label}><h3>{item.label}</h3><p>{item.value}</p></div>)}
