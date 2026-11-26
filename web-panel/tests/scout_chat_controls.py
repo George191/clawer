@@ -3,7 +3,6 @@
 import argparse
 import re
 from ipaddress import ip_address
-from pathlib import Path
 from urllib.parse import urlsplit
 
 from playwright.sync_api import expect, sync_playwright
@@ -79,25 +78,45 @@ with sync_playwright() as p:
         pending.fulfill(json=profile)
     expect(page.locator(".scout-loaded-name")).to_have_text("Alex")
     expect(loading).to_have_count(0)
+    assert entry.evaluate("e=>e.tagName") == "INPUT"
+    page.locator('input[aria-label="Composer files"]').set_input_files(
+        {"name": "notes.py", "mimeType": "text/plain", "buffer": b"print('source')"}
+    )
+    page.get_by_role("button", name="Preview attachment notes.py", exact=True).click()
+    expect(page.get_by_role("dialog", name="notes.py")).to_contain_text("print('source')")
+    page.get_by_role("dialog", name="notes.py").get_by_role("button", name="Close dialog").click()
+    page.get_by_role("button", name="Remove attachment notes.py", exact=True).click()
+    expect(
+        page.get_by_role("button", name="Preview attachment notes.py", exact=True)
+    ).to_have_count(0)
     entry.fill("Plan a collection")
     entry.press("Enter")
     results = page.get_by_role("complementary", name="Collection results")
     expect(results).to_be_visible()
+    assert entry.evaluate("e=>e.tagName") == "TEXTAREA"
+    assert page.get_by_role("button", name="Hide collection results").count() == 0
+    entry.fill("First line")
+    entry.press("Shift+Enter")
+    entry.type("Second line")
+    expect(entry).to_have_value("First line\nSecond line")
+    entry.fill("")
+    context = page.get_by_role("complementary", name="Conversation context")
+    expect(context).to_be_visible()
+    context.get_by_role("button", name="Pause Understanding the request", exact=True).click()
+    expect(page.get_by_role("button", name="Continue", exact=True)).to_be_visible()
+    page.get_by_role("button", name="Continue", exact=True).click()
     expect(results.locator(".scout-result-content")).to_have_attribute("data-phase", "source")
-    flight = page.locator(".scout-artifact-flight").first
-    expect(flight).to_be_visible()
-    origin = page.locator(".scout-dot-host").bounding_box()
-    assert (
-        abs(
-            float(flight.evaluate("e=>e.style.left").removesuffix("px"))
-            + 18
-            - origin["x"]
-            - origin["width"] / 2
-        )
-        < 2
-    )
-    brief = page.get_by_role("button", name="View Request brief", exact=True)
-    expect(brief).to_have_attribute("aria-busy", "false")
+    entry.fill("Queued changes")
+    entry.press("Enter")
+    expect(page.locator(".scout-queued-message")).to_have_count(1)
+    expect(page.get_by_role("button", name="Stop response", exact=True)).to_be_visible()
+    expect(page.locator(".scout-chat-turn")).to_have_count(1)
+    page.get_by_role("button", name="Edit queued message", exact=True).click()
+    expect(entry).to_have_value("Queued changes")
+    expect(page.locator(".scout-queued-message")).to_have_count(0)
+    entry.press("Enter")
+    page.get_by_role("button", name="Delete queued message", exact=True).click()
+    expect(page.locator(".scout-queued-message")).to_have_count(0)
     expect(results.locator(".scout-result-content")).to_have_attribute("data-phase", "template")
     expect(results.locator(".scout-template-sheet")).to_contain_text("example_articles")
     expect(page.get_by_role("button", name="Confirm Template", exact=True)).to_be_visible()
@@ -127,42 +146,55 @@ with sync_playwright() as p:
     dot_bounds = page.locator(".ai-chat-dot").bounding_box()
     assert abs(bounds["width"] - root_bounds["width"] / 2) < 1
     assert abs(bounds["x"] + bounds["width"] - chat_bounds["x"]) < 1
-    assert abs(dot_bounds["x"] + dot_bounds["width"] / 2 - bounds["x"] - bounds["width"] / 2) < 2
-    assert abs(dot_bounds["y"] + dot_bounds["height"] / 2 - bounds["y"] - bounds["height"] / 2) < 2
-    stages = page.get_by_role("navigation", name="Stage results")
-    expect(stages.get_by_role("button")).to_have_count(6)
-    composer = page.locator(".scout-persistent-composer").bounding_box()
-    tray = stages.bounding_box()
-    assert tray["x"] >= chat_bounds["x"]
-    assert 0 <= composer["y"] - tray["y"] - tray["height"] < 20
-    assert results.get_by_role("navigation", name="Stage results").count() == 0
-    expect(stages.get_by_role("button", name="View Sample data", exact=True)).to_have_attribute(
-        "aria-busy", "false"
+    assert abs(dot_bounds["x"] + dot_bounds["width"] / 2 - bounds["x"] - bounds["width"]) < 2
+    assert abs(dot_bounds["y"] + dot_bounds["height"] / 2 - root_bounds["y"] - 37) < 2
+    divider = page.locator(".scout-chat-preview").evaluate(
+        "e=>{const s=getComputedStyle(e,'::after');return [s.content,s.width,s.backgroundColor]}"
     )
-    expect(page.locator(".scout-artifact-flight")).to_have_count(0)
-    assert results.locator("header, h2, .scout-result-toolbar").count() == 0
-    assert results.evaluate("e=>getComputedStyle(e).borderRightWidth") == "0px"
-    assert "blur" in results.locator(".scout-workspace-frost").evaluate(
-        "e=>getComputedStyle(e).backdropFilter"
-    )
-    stages.get_by_role("button", name="View Request brief", exact=True).click()
-    expect(results.locator(".scout-result-content")).to_have_attribute("data-phase", "brief")
+    assert divider[0] != "none" and divider[1] == "1px"
+    assert context.bounding_box()["x"] >= chat_bounds["x"] + chat_bounds["width"]
+    assert page.get_by_role("navigation", name="Stage results").count() == 0
+    assert results.locator(".scout-result-actions,.scout-result-sample,header,h2").count() == 0
+    assert results.get_by_role("button", name="Copy adapter.py").count() == 0
+    assert results.get_by_role("button", name="Download adapter.py").count() == 0
+    expect(
+        context.get_by_role("button", name="Open template.yaml", exact=True).locator("img")
+    ).to_have_attribute("src", "/file-icons/yaml.svg")
+    expect(
+        context.get_by_role("button", name="Open adapter.py", exact=True).locator("img")
+    ).to_have_attribute("src", "/file-icons/python.svg")
+    assert context.locator("img").first.evaluate("e=>e.complete && e.naturalWidth>0")
+    context.get_by_role("button", name="Open request source", exact=True).click()
     expect(results.locator(".scout-result-brief")).to_contain_text("Plan a collection")
-    stages.get_by_role("button", name="View template.yaml", exact=True).click()
-    expect(results.locator(".scout-template-sheet")).to_contain_text("example_articles")
-    stages.get_by_role("button", name="View Sample data", exact=True).click()
+    context.get_by_role("button", name="Inspect Validating the adapter", exact=True).click()
     expect(results.get_by_role("table")).to_be_visible()
-    stages.get_by_role("button", name="View Collection plan", exact=True).click()
+    context.get_by_role("button", name="Inspect Reviewing the collection plan", exact=True).click()
     expect(results.locator(".scout-result-brief")).to_contain_text("title, url")
-    stages.get_by_role("button", name="View adapter.py", exact=True).click()
-    results.get_by_role("button", name="Copy adapter.py").click()
-    adapter = page.evaluate("navigator.clipboard.readText()")
-    assert "def normalize_article" in adapter and "yield record" in adapter
-    with page.expect_download() as download_event:
-        results.get_by_role("button", name="Download adapter.py").click()
-    download = download_event.value
-    assert download.suggested_filename == "adapter.py"
-    assert Path(download.path()).read_text(encoding="utf-8") == adapter.replace("\r\n", "\n")
+    context.get_by_role("button", name="Open template.yaml", exact=True).click()
+    expect(results.locator(".scout-result-content")).to_have_attribute("data-phase", "template")
+    context.get_by_role("button", name="Open adapter.py", exact=True).click()
+    expect(results.locator(".scout-result-content")).to_have_attribute("data-phase", "adapter")
+    context.get_by_role("button", name="Changes", exact=True).click()
+    expect(context.get_by_role("button", name="Open adapter.py", exact=True)).to_be_hidden()
+    context.get_by_role("button", name="Changes", exact=True).click()
+    expect(context.get_by_role("button", name="Open adapter.py", exact=True)).to_be_visible()
+    context.get_by_role("button", name="Inspect Writing the adapter", exact=True).click()
+    expect(results.locator(".scout-result-content")).to_have_attribute("data-phase", "adapter")
+    context.locator('input[type="file"]').set_input_files(
+        {"name": "source-notes.txt", "mimeType": "text/plain", "buffer": b"Collection source notes"}
+    )
+    context.get_by_role("button", name="Preview source source-notes.txt", exact=True).click()
+    dialog = page.get_by_role("dialog", name="source-notes.txt")
+    expect(dialog).to_contain_text("Collection source notes")
+    dialog.get_by_role("button", name="Close dialog").click()
+    context.get_by_role("button", name="View all", exact=True).click()
+    expect(context.get_by_role("button", name="Show less", exact=True)).to_be_visible()
+    context.get_by_role("button", name="Close context panel").click()
+    expect(context).to_be_hidden()
+    expect(page.get_by_role("button", name="Conversation context", exact=True)).to_be_focused()
+    page.get_by_role("button", name="Conversation context", exact=True).click()
+    expect(context).to_be_visible()
+    page.wait_for_timeout(700)
     rail = page.get_by_role("complementary", name="Conversation history")
     bars = rail.get_by_role("button")
     rail_bounds = rail.bounding_box()
@@ -174,22 +206,13 @@ with sync_playwright() as p:
     expect(
         results.locator(".scout-template-sheet").get_by_text("fields", exact=True)
     ).to_be_visible()
-    results.get_by_role("button", name="Copy template.yaml").click()
-    assert "name: example_articles" in page.evaluate("navigator.clipboard.readText()")
     bars.nth(2).click()
     expect(results.get_by_text("Ideas worth collecting.", exact=True)).to_be_visible()
     bars.nth(4).click()
     expect(results.locator(".scout-result-code")).to_contain_text("def adapt_page")
-    results.locator(".scout-result-sample summary").click()
-    expect(results.get_by_role("table")).to_be_visible()
-    expect(results.get_by_role("row")).to_have_count(3)
     assert results.locator(".scout-step-content").count() == 0
     page.locator(".scout-worked-toggle").first.click()
-    page.get_by_role("button", name="Hide collection results").click()
-    expect(results).to_be_hidden()
-    page.get_by_role("button", name="Show collection results").click()
-    expect(results).to_be_visible()
-    page.wait_for_timeout(700)
+    assert page.get_by_role("button", name="Hide collection results").count() == 0
     release = page.get_by_role("region", name="Release options")
     release.get_by_role("button", name="Draft", exact=True).click()
     release.get_by_role("button", name="Save Draft", exact=True).click()
@@ -306,16 +329,45 @@ with sync_playwright() as p:
     page.set_viewport_size({"width": 390, "height": 844})
     page.wait_for_timeout(700)
     expect(rail).to_be_visible()
+    expect(page.locator(".scout-dot-host")).to_be_hidden()
+    expect(context).to_be_hidden()
+    page.get_by_role("button", name="Conversation context", exact=True).click()
+    expect(context).to_be_visible()
+    assert context.bounding_box()["x"] >= 0
+    context.get_by_role("button", name="Close context panel").click()
     expect(results).to_be_visible()
     bounds = results.bounding_box()
     chat_bounds = page.locator(".scout-chat-messages").bounding_box()
     assert abs(bounds["y"] + bounds["height"] - chat_bounds["y"]) < 1
     box = page.locator(".scout-persistent-composer").bounding_box()
     assert box["x"] >= 0 and box["x"] + box["width"] <= 390
+    page.locator("#scout-turn-2").get_by_role("button", name="Archive", exact=True).click()
+    expect(
+        page.locator("#scout-turn-2").get_by_role("button", name="Archive Template", exact=True)
+    ).to_be_visible()
+    page.set_viewport_size({"width": 1440, "height": 800})
+    page.wait_for_timeout(700)
+    entry.fill("Queue lifecycle")
+    entry.press("Enter")
+    expect(page.locator(".scout-chat-turn")).to_have_count(3)
+    entry.fill("Automatic followup")
+    entry.press("Enter")
+    expect(page.locator(".scout-queued-message")).to_have_count(1)
+    choose("Ready")
+    expect(page.locator(".scout-chat-turn")).to_have_count(4)
+    expect(page.locator("#scout-turn-4 .scout-user-message")).to_contain_text("Automatic followup")
+    expect(page.locator(".scout-queued-message")).to_have_count(0)
+    entry.fill("Immediate followup")
+    entry.press("Enter")
+    page.get_by_role("button", name="Send queued message now", exact=True).click()
+    expect(page.locator(".scout-chat-turn")).to_have_count(5)
+    expect(page.locator("#scout-turn-5 .scout-user-message")).to_contain_text("Immediate followup")
+    expect(page.locator(".scout-queued-message")).to_have_count(0)
+    choose("Ready")
     assert not posts, posts
     assert not errors, errors
     print(
-        "Historical template/adapter confirmations, original code highlighting, Dot delivery animation, artifact tray, release preview and chat controls passed",
+        "Homepage single-line and conversation multiline composer, attachments/queue, context navigation, top-divider Dot, clean result canvas and code highlighting passed",
         flush=True,
     )
     b.close()
