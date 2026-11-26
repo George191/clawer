@@ -375,7 +375,7 @@
 .source-layer-bindings h3 { margin: 0 0 4px; font-size: 14px; }
 .source-layer-bindings p { margin: 0; color: var(--ontology-muted); overflow-wrap: anywhere; }
 .source-layer-bindings label { display: grid; gap: 4px; min-width: 0; }
-.source-layer-bindings .ui-input { width: 100%; min-width: 0; }
+.source-layer-bindings .ui-native-select { width: 100%; min-width: 0; }
 .source-layer-bindings__note, .source-layer-bindings [role="alert"] { grid-column: 1 / -1; }
 .source-detail-advanced { border: 1px solid var(--ontology-border); border-radius: 5px; background: var(--ontology-bg); }
 .source-detail-advanced > summary { padding: 10px 14px; cursor: pointer; font-weight: 600; }

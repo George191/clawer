@@ -49,6 +49,39 @@ async function mount(component, saved, api, extraProps = {}) {
   render(); await ui.settle(); return ui;
 }
 
+test('logical layer choices come from the registry and save the selected assignment', async () => {
+  const saved = source('postgresql');
+  const rows = [
+    { layer: 'analytics', connectionId: null, name: null, executionMode: 'catalog_only' },
+    { layer: 'warehouse', connectionId: saved.id, name: 'Saved source', executionMode: 'postgres_worker' },
+  ];
+  const ui = await mount('LayerConnectionBindingForm', saved, {
+    fetchLayerBindings: async () => rows,
+    bindLayerConnection: async layer => ({ ...rows[0], layer, connectionId: saved.id }),
+  });
+  assert.deepEqual(ui.nodes().filter(node => node.type === 'option').map(node => node.props.value), ['', 'analytics', 'warehouse']);
+  assert.ok(ui.text().includes('Assigned here: warehouse'));
+  ui.select('Logical layer', 'warehouse'); assert.equal(ui.button('Bind to this connection').props.disabled, true);
+  ui.select('Logical layer', 'analytics'); assert.equal(ui.button('Bind to this connection').props.disabled, false);
+  await ui.button('Bind to this connection').props.onClick(); await ui.settle();
+  assert.deepEqual(ui.calls.find(call => call.key === 'bindLayerConnection').args, ['analytics', saved, null]);
+  assert.equal(ui.button('Bind to this connection').props.disabled, true);
+  ui.close();
+});
+
+test('empty and failed layer queries do not offer hardcoded layer choices', async () => {
+  for (const fail of [false, true]) {
+    const ui = await mount('LayerConnectionBindingForm', source('postgresql'), {
+      fetchLayerBindings: async () => { if (fail) throw new Error('Unavailable'); return []; },
+    });
+    assert.equal(ui.nodes().find(node => node.type === 'NativeSelect').props.disabled, true);
+    assert.deepEqual(ui.nodes().filter(node => node.type === 'option').map(node => node.props.value), ['']);
+    assert.equal(ui.button('Bind to this connection').props.disabled, true);
+    if (fail) assert.ok(ui.nodes().find(node => node.props.role === 'alert'));
+    ui.close();
+  }
+});
+
 test('capture operations report busy state to keep the enclosing dialog open', async () => {
   for (const [component, engine, fetchName, createName, status] of [
     ['SourceObjectEvents', 's3', 'fetchSourceObjectEvents', 'createSourceObjectEvents', { state: 'unconfigured', configurationHash: 'a'.repeat(64), notification: null }],
