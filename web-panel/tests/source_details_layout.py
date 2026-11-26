@@ -1,4 +1,4 @@
-"""Regression: source detail disclosures and diagnostics must not move the surrounding layout.
+"""Regression: disclosures size to content, animate and preserve the upper layout.
 
 Run against a loopback Vite frontend: python tests/source_details_layout.py http://127.0.0.1:3107 --channel msedge
 """
@@ -97,6 +97,42 @@ runtime = dict(
     ),
 )
 GEOMETRY = """() => Object.fromEntries(['.ontology-connections-modal .ui-modal-content','.ontology-connections-detail > header','.source-detail-navigation','.source-layer-bindings','.source-detail-start','.ontology-connections-summary','.source-detail-advanced','.ontology-connections-modal .ui-modal-footer'].map(s=>{const r=document.querySelector(s).getBoundingClientRect();return [s,[r.x,r.y,r.width,r.height]]}))"""
+
+
+def assert_upper_unchanged(before, after):
+    for selector in before:
+        if selector.endswith(".ui-modal-footer"):
+            continue
+        values = (
+            3
+            if selector.endswith((".ui-modal-content", ".source-detail-advanced"))
+            else 4
+        )
+        assert all(
+            abs(a - b) < 1
+            for a, b in zip(before[selector][:values], after[selector][:values])
+        ), (selector, before, after)
+
+
+def animate_toggle(page):
+    initial = page.locator(".source-detail-advanced").bounding_box()["height"]
+    page.locator(".source-detail-advanced > summary").click()
+    sample = page.evaluate(
+        """async () => {
+      const node = document.querySelector('.source-detail-advanced');
+      node.getBoundingClientRect();
+      await new Promise(requestAnimationFrame);
+      await new Promise(resolve => setTimeout(resolve, 70));
+      const middle = node.getBoundingClientRect().height;
+      await new Promise(resolve => setTimeout(resolve, 240));
+      return {middle, final: node.getBoundingClientRect().height};
+    }"""
+    )
+    assert (
+        min(initial, sample["final"]) < sample["middle"] < max(initial, sample["final"])
+    ), sample
+
+
 with sync_playwright() as p:
     b = p.chromium.launch(channel=args.channel, args=["--no-proxy-server"])
     for width, height, identity_state in [
@@ -142,6 +178,12 @@ with sync_playwright() as p:
         page.get_by_role("button", name="Fixture source", exact=False).first.click()
         page.get_by_role("combobox", name="Logical layer", exact=True).click()
         page.get_by_role("option", name="ods", exact=True).click()
+        expect(
+            page.get_by_role("combobox", name="Logical layer", exact=True)
+        ).to_contain_text("Select a layer")
+        expect(
+            page.get_by_text("ods is already bound to this connection.", exact=True)
+        ).to_be_visible()
         control = page.get_by_role(
             "combobox", name="Logical layer", exact=True
         ).bounding_box()
@@ -158,7 +200,11 @@ with sync_playwright() as p:
             < 1
         ), (control, button)
         before = page.evaluate(GEOMETRY)
-        page.locator(".source-detail-advanced > summary").click()
+        summary_height = page.locator(
+            ".source-detail-advanced > summary"
+        ).bounding_box()["height"]
+        assert before[".source-detail-advanced"][3] <= summary_height + 2
+        animate_toggle(page)
         for label in ["Live CDC and Kafka", "Feature availability", "Source identity"]:
             page.get_by_role("tab", name=label, exact=True).click()
             if label == "Source identity":
@@ -171,7 +217,15 @@ with sync_playwright() as p:
                     else page.get_by_role("region", name="Source identity", exact=True)
                 ).to_be_visible()
             after = page.evaluate(GEOMETRY)
-            assert before == after, (label, before, after)
+            assert_upper_unchanged(before, after)
+            assert (
+                after[".ontology-connections-modal .ui-modal-content"][3]
+                <= min(940, height - 48) + 1
+            )
+            assert (
+                after[".ontology-connections-modal .ui-modal-content"][3]
+                > before[".ontology-connections-modal .ui-modal-content"][3]
+            )
             dims = page.locator(".is-overview").evaluate(
                 "(e)=>[e.clientHeight,e.scrollHeight,e.clientWidth,e.scrollWidth]"
             )
@@ -195,6 +249,7 @@ with sync_playwright() as p:
                 pane["y"] + pane["height"] <= advanced["y"] + advanced["height"] + 1
             ), (pane, advanced)
         page.get_by_role("tab", name="Live CDC and Kafka", exact=True).click()
+        expanded = page.evaluate(GEOMETRY)
         page.get_by_role(
             "button", name="Kafka consumer lag · cluster-wide", exact=True
         ).click()
@@ -203,10 +258,40 @@ with sync_playwright() as p:
         )
         expect(dialog).to_be_visible()
         expect(dialog.locator("tbody tr")).to_have_count(5)
-        assert before == page.evaluate(GEOMETRY)
+        assert expanded == page.evaluate(GEOMETRY)
         dialog.get_by_role("button", name="Done", exact=True).click()
-        page.locator(".source-detail-advanced > summary").click()
-        assert before == page.evaluate(GEOMETRY)
+        animate_toggle(page)
+        closed = page.evaluate(GEOMETRY)
+        assert_upper_unchanged(before, closed)
+        assert (
+            abs(
+                before[".ontology-connections-modal .ui-modal-content"][3]
+                - closed[".ontology-connections-modal .ui-modal-content"][3]
+            )
+            < 1
+        )
         assert not errors, errors
+        if (width, height, identity_state) == (1366, 768, "unverified"):
+            page.set_viewport_size({"width": width, "height": 600})
+            page.emulate_media(reduced_motion="reduce")
+            page.locator(".source-detail-advanced > summary").click()
+            bounded = page.locator(
+                ".ontology-connections-modal .ui-modal-content"
+            ).bounding_box()
+            assert bounded["height"] <= 552 + 1, bounded
+            assert bounded["y"] + bounded["height"] <= 600, bounded
+            expect(
+                page.locator(
+                    ".ontology-connections-modal .ui-modal-footer"
+                ).get_by_role("button", name="Done", exact=True)
+            ).to_be_visible()
+            overflow = page.locator(".is-overview").evaluate(
+                "(e)=>e.scrollHeight > e.clientHeight"
+            )
+            assert overflow, "Long content must scroll inside the capped modal"
+            duration = page.locator(".source-detail-advanced").evaluate(
+                '(e)=>getComputedStyle(e,"::details-content").transitionDuration'
+            )
+            assert duration == "0s", duration
         page.close()
     b.close()

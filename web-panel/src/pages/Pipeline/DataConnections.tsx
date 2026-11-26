@@ -585,7 +585,7 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
   useExplorerErrorToast(visibleConnector && !visibleConnector.driverAvailable ? visibleConnector.prerequisite : undefined, 'Connector unavailable');
 
   return <>
-    {detailsOpen && viewedSource && <Modal className="flow-surface-modal ontology-connectors ontology-connections-modal" title="Source details" open centered width={1280}
+    {detailsOpen && viewedSource && <Modal className="flow-surface-modal ontology-connectors ontology-connections-modal" title="Source details" open centered width={1280} styles={{ wrapper: { alignItems: 'flex-start' } }}
         onCancel={() => showSource()} closable={!pending && !captureBusy} keyboard={!pending && !captureBusy && !confirmation} maskClosable={false}
         footer={<Button disabled={pending || captureBusy} onClick={() => showSource()}>Done</Button>}>
       <section className="ontology-connections-detail" aria-label="Source details" aria-busy={pending || captureBusy}>

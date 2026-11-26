@@ -11,7 +11,8 @@ const source = engine => ({ id: 'source-id', engine, updatedAt: '2026-11-24T00:0
 
 async function mount(component, saved, api, extraProps = {}) {
   let cursor = 0, tree;
-  const state = [], effects = [], scheduled = [], calls = [];
+  const state = [], effects = [], scheduled = [], calls = [], notices = [];
+  const message = Object.fromEntries(['info', 'warning', 'error', 'success'].map(kind => [kind, value => notices.push({ kind, ...value })]));
   const react = {
     useState(initial) { const i = cursor++; if (!(i in state)) state[i] = initial; return [state[i], next => { state[i] = typeof next === 'function' ? next(state[i]) : next; }]; },
     useEffect(effect, deps) { const i = cursor++; if (!effects[i] || deps.some((value, j) => !Object.is(value, effects[i].deps[j]))) scheduled.push([i, effect, deps]); },
@@ -19,7 +20,7 @@ async function mount(component, saved, api, extraProps = {}) {
   const require = name => {
     if (name === 'react') return react;
     if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx, Fragment: 'Fragment' };
-    if (name === '@/components/ui') return { Button: 'Button', Checkbox: 'Checkbox', Input: 'Input', NativeSelect: 'NativeSelect', Modal: 'Modal' };
+    if (name === '@/components/ui') return { Button: 'Button', Checkbox: 'Checkbox', Input: 'Input', NativeSelect: 'NativeSelect', Modal: 'Modal', message };
     if (name === '../../services/api') return Object.fromEntries(Object.entries(api).map(([key, value]) => [key, (...args) => { calls.push({ key, args }); return value(...args); }]));
     if (name.endsWith('.css')) return {};
     throw new Error('Unexpected dependency ' + name);
@@ -36,7 +37,7 @@ async function mount(component, saved, api, extraProps = {}) {
     for (const [i, effect, deps] of scheduled) { effects[i]?.cleanup?.(); effects[i] = { deps, cleanup: effect() }; }
   };
   const ui = {
-    calls,
+    calls, notices,
     nodes: () => nodes(tree), text: () => text(tree),
     button: label => nodes(tree).find(node => node.type === 'Button' && text(node.props.children) === label),
     fill(label, value) { const parent = nodes(tree).find(node => node.type === 'label' && text(node).startsWith(label)); assert.ok(parent, 'Missing field ' + label); nodes(parent).find(node => node.type === 'Input').props.onChange({ target: { value } }); render(); },
@@ -62,10 +63,14 @@ test('logical layer choices come from the registry and save the selected assignm
   assert.deepEqual(ui.nodes().filter(node => node.type === 'option').map(node => node.props.value), ['', 'analytics', 'warehouse']);
   assert.ok(ui.text().includes('Assigned here: warehouse'));
   ui.select('Logical layer', 'warehouse'); assert.equal(ui.button('Bind to this connection').props.disabled, true);
+  assert.equal(ui.nodes().find(node => node.type === 'NativeSelect').props.value, '');
+  assert.match(ui.notices.at(-1).content, /already bound/);
   ui.select('Logical layer', 'analytics'); assert.equal(ui.button('Bind to this connection').props.disabled, false);
   await ui.button('Bind to this connection').props.onClick(); await ui.settle();
   assert.deepEqual(ui.calls.find(call => call.key === 'bindLayerConnection').args, ['analytics', saved, null]);
   assert.equal(ui.button('Bind to this connection').props.disabled, true);
+  assert.equal(ui.nodes().find(node => node.type === 'NativeSelect').props.value, '');
+  assert.equal(ui.notices.at(-1).kind, 'success');
   ui.close();
 });
 
@@ -76,10 +81,44 @@ test('empty and failed layer queries do not offer hardcoded layer choices', asyn
     });
     assert.equal(ui.nodes().find(node => node.type === 'NativeSelect').props.disabled, true);
     assert.deepEqual(ui.nodes().filter(node => node.type === 'option').map(node => node.props.value), ['']);
-    assert.equal(ui.button('Bind to this connection').props.disabled, true);
-    if (fail) assert.ok(ui.nodes().find(node => node.props.role === 'alert'));
+    if (fail) { assert.ok(ui.button('Reload layers')); assert.equal(ui.notices.at(-1).kind, 'error'); }
+    else assert.equal(ui.button('Bind to this connection').props.disabled, true);
+    assert.equal(ui.nodes().some(node => node.props.role === 'alert'), false);
     ui.close();
   }
+});
+
+test('disallowed layer selections reset to no selection and report every attempt through toast', async () => {
+  const saved = source('postgresql');
+  const ui = await mount('LayerConnectionBindingForm', saved, {
+    fetchLayerBindings: async () => [{ layer: 'ods', connectionId: saved.id }, { layer: 'Invalid Layer', connectionId: null }],
+  });
+  for (const layer of ['ods', 'ods', 'missing', 'Invalid Layer']) {
+    ui.select('Logical layer', layer);
+    assert.equal(ui.nodes().find(node => node.type === 'NativeSelect').props.value, '');
+    assert.equal(ui.button('Bind to this connection').props.disabled, true);
+  }
+  assert.equal(ui.notices.length, 4);
+  assert.ok(ui.notices.every(notice => notice.className === 'explorer-toast'));
+  assert.equal(ui.calls.some(call => call.key === 'bindLayerConnection'), false);
+  assert.equal(ui.text().includes('Currently assigned'), false);
+  ui.close();
+});
+
+test('failed layer binding clears selection and reports through toast with an explicit reload action', async () => {
+  const ui = await mount('LayerConnectionBindingForm', source('postgresql'), {
+    fetchLayerBindings: async () => [{ layer: 'ods', connectionId: null }],
+    bindLayerConnection: async () => { throw new Error('Binding changed'); },
+  });
+  ui.select('Logical layer', 'ods');
+  await ui.button('Bind to this connection').props.onClick(); await ui.settle();
+  assert.equal(ui.nodes().find(node => node.type === 'NativeSelect').props.value, '');
+  assert.equal(ui.notices.at(-1).kind, 'error');
+  assert.equal(ui.nodes().some(node => node.props.role === 'alert'), false);
+  ui.button('Reload layers').props.onClick(); await ui.settle();
+  assert.equal(ui.calls.filter(call => call.key === 'fetchLayerBindings').length, 2);
+  assert.equal(ui.nodes().find(node => node.type === 'NativeSelect').props.disabled, false);
+  ui.close();
 });
 
 test('live status shows only this source CDC and WAL, with explicitly cluster-wide Kafka lag', async () => {
