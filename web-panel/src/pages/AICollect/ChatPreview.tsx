@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Input } from '@/components/ui';
+import { Dropdown, Input } from '@/components/ui';
 import { ArrowUpOutlined, AudioOutlined, CopyOutlined, GlobalOutlined, StopOutlined } from '@/components/ui/icons';
 import { DOT_ACTIVITIES, type DotActivity } from '@/components/NativeDot';
+import { useThemeStore } from '@/stores/settings';
 import './chatPreview.css';
 
 const steps: Array<{ activity: DotActivity; title: string; detail: string }> = [
@@ -13,6 +14,7 @@ const steps: Array<{ activity: DotActivity; title: string; detail: string }> = [
   { activity: 'Ready', title: 'Ready to review', detail: 'Review the outline and describe what to change.' },
 ];
 const labels: Record<DotActivity, string> = { None: 'Idle', Working: 'Working', Searching: 'Searching', Creating: 'Creating', Payment: 'Payment', Thinking: 'Thinking', NeedsInput: 'Needs input', Ready: 'Ready', Paused: 'Paused', Error: 'Error' };
+const feedbackPath = 'M7 10H4a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h3m0-10 4-7a2.4 2.4 0 0 1 2.2 2.8L12.5 10h6a1.7 1.7 0 0 1 1.6 2.2l-2 6.5a1.8 1.8 0 0 1-1.7 1.3H7V10Z';
 const outlineReply = 'A collection outline is ready to review. Tell me which sources, fields, and schedule you have in mind, and we can shape the next step together.';
 type Turn = { id: number; prompt: string; step: number; reply: string; complete: boolean; vote?: 'up' | 'down' };
 
@@ -24,11 +26,26 @@ export default function ChatPreview({ entered, userName, onEnter }: { entered: b
   const [copied, setCopied] = useState<number | null>(null);
   const [speaking, setSpeaking] = useState<number | null>(null);
   const [notice, setNotice] = useState('');
+  const [speechError, setSpeechError] = useState(false);
+  const [hoveredHistory, setHoveredHistory] = useState<number | null>(null);
+  const [selectedHistory, setSelectedHistory] = useState<string | null>(null);
+  const [reveal, setReveal] = useState({ turn: 0, sequence: 0 });
+  const language = useThemeStore((state) => state.language);
+  const goodLabel = language === 'zh-CN' ? '回复优秀' : 'Good response';
+  const badLabel = language === 'zh-CN' ? '回复不佳' : 'Bad response';
+  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const historyTimer = useRef<number>();
   const nextId = useRef(0);
   const input = useRef<HTMLInputElement>(null);
   const thread = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
   const latest = turns[turns.length - 1];
+  const dotActivity = running ? activity : speaking !== null ? 'Working' : speechError ? 'Error' : activity;
+  const history = turns.flatMap((turn) => [
+    { key: `turn-${turn.id}`, turn: turn.id, target: `scout-turn-${turn.id}`, title: turn.prompt || 'Message' },
+    ...steps.slice(0, turn.step + 1).map((step, index) => ({ key: `step-${turn.id}-${index}`, turn: turn.id, target: `scout-step-${turn.id}-${index}`, title: step.title })),
+  ]);
+  const currentHistory = selectedHistory ?? history[history.length - 1]?.key;
 
   useEffect(() => {
     if (!running || !latest) return;
@@ -43,6 +60,7 @@ export default function ChatPreview({ entered, userName, onEnter }: { entered: b
         const step = latest.step + 1;
         setTurns((prev) => prev.map((turn) => turn.id === latest.id ? { ...turn, step } : turn));
         setActivity(step === steps.length - 1 ? 'Creating' : steps[step].activity);
+        if (step === 4) setRunning(false);
       }
     }, writing ? 28 : 1100);
     return () => window.clearTimeout(timer);
@@ -55,59 +73,123 @@ export default function ChatPreview({ entered, userName, onEnter }: { entered: b
     const timer = window.setTimeout(() => { setNotice(''); setCopied(null); }, 1800);
     return () => window.clearTimeout(timer);
   }, [notice]);
-  useEffect(() => () => { window.speechSynthesis?.cancel(); }, []);
+  useEffect(() => () => {
+    window.clearTimeout(historyTimer.current);
+    utteranceRef.current = null;
+    window.speechSynthesis?.cancel();
+  }, []);
 
-  function submit() {
-    if (running) { setRunning(false); setActivity('Paused'); return; }
-    const prompt = draft;
+  function stopReading() {
+    utteranceRef.current = null;
+    window.speechSynthesis?.cancel();
+    setSpeaking(null);
+    setSpeechError(false);
+  }
+  function startTurn(prompt: string) {
+    stopReading();
     setDraft('');
-    setTurns((prev) => [...prev, { id: ++nextId.current, prompt, step: 0, reply: '', complete: false }]);
+    const id = ++nextId.current;
+    setTurns((prev) => [...prev, { id, prompt, step: 0, reply: '', complete: false }]);
     setActivity('Thinking');
     setRunning(true);
+    setSelectedHistory(null);
     follow.current = true;
     onEnter();
     input.current?.focus();
   }
+  function selectActivity(value: DotActivity) {
+    stopReading();
+    setActivity(value);
+    const index = steps.findIndex((step) => step.activity === value);
+    const executing = ['Thinking', 'Searching', 'Working', 'Creating'].includes(value);
+    setRunning(executing && Boolean(latest));
+    if (!latest) return;
+    setTurns((prev) => prev.map((turn) => turn.id !== latest.id ? turn : {
+      ...turn, step: value === 'Ready' ? 5 : index >= 0 ? index : turn.step,
+      reply: value === 'Ready' ? outlineReply : '', complete: value === 'Ready', vote: undefined,
+    }));
+  }
+  function resume() {
+    if (!latest) return;
+    stopReading();
+    const step = latest.step === 4 ? 5 : latest.step;
+    setTurns((prev) => prev.map((turn) => turn.id === latest.id ? { ...turn, step } : turn));
+    setActivity(step === 5 ? 'Creating' : steps[step].activity);
+    setRunning(true);
+  }
+  function jumpHistory(entry: typeof history[number]) {
+    setSelectedHistory(entry.key);
+    setReveal((prev) => ({ turn: entry.turn, sequence: prev.sequence + 1 }));
+    follow.current = false;
+    window.clearTimeout(historyTimer.current);
+    historyTimer.current = window.setTimeout(() => {
+      const node = document.getElementById(entry.target);
+      const scroll = thread.current;
+      if (node && scroll) scroll.scrollTo({ top: scroll.scrollTop + node.getBoundingClientRect().top - scroll.getBoundingClientRect().top - 16, behavior: 'smooth' });
+    }, window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 260);
+  }
+
+  function submit() {
+    if (running) { stopReading(); setRunning(false); setActivity('Paused'); return; }
+    startTurn(draft);
+  }
   async function copy(turn: Turn) {
     try { await navigator.clipboard.writeText(turn.reply); setCopied(turn.id); setNotice('Copied to clipboard'); }
-    catch { setNotice('Clipboard is unavailable. Select the response to copy it.'); }
+    catch { setCopied(null); setNotice('Clipboard is unavailable. Select the response to copy it.'); }
   }
   function vote(id: number, value: 'up' | 'down') {
     setTurns((prev) => prev.map((turn) => turn.id === id ? { ...turn, vote: turn.vote === value ? undefined : value } : turn));
   }
   function read(turn: Turn) {
-    window.speechSynthesis.cancel();
-    if (speaking === turn.id) { setSpeaking(null); return; }
+    const stopping = speaking === turn.id;
+    stopReading();
+    if (stopping) return;
     const utterance = new SpeechSynthesisUtterance(turn.reply);
     utterance.lang = 'en-US';
-    utterance.onend = () => setSpeaking(null);
-    utterance.onerror = () => { setSpeaking(null); setNotice('Read aloud could not start.'); };
+    utteranceRef.current = utterance;
+    utterance.onend = () => { if (utteranceRef.current === utterance) { utteranceRef.current = null; setSpeaking(null); } };
+    utterance.onerror = (event) => {
+      if (utteranceRef.current !== utterance) return;
+      utteranceRef.current = null;
+      setSpeaking(null);
+      if (!['canceled', 'interrupted'].includes(event.error)) { setSpeechError(true); setNotice('Read aloud could not start.'); }
+    };
     setSpeaking(turn.id);
-    window.speechSynthesis.speak(utterance);
+    try { window.speechSynthesis.speak(utterance); }
+    catch { utteranceRef.current = null; setSpeaking(null); setSpeechError(true); setNotice('Read aloud could not start.'); }
   }
 
   return <section className={`scout-chat-preview ${entered ? 'is-entered' : ''}`} aria-label="Scout conversation">
-    <div className={`ai-chat-dot ${!entered ? 'is-landing' : ''}`} data-activity={activity} />
+    <div className={`ai-chat-dot ${!entered ? 'is-landing' : ''}`} data-activity={dotActivity} />
     <h1 className="scout-chat-greeting ai-prompt-title" aria-hidden={entered}>Hi{userName ? <>, <span className="ai-prompt-name">{userName}</span></> : null}, any new ideas?</h1>
-    {entered && <details className="scout-activity-menu"><summary aria-label="Dot activity">···</summary><div role="group" aria-label="Dot states">{(Object.keys(DOT_ACTIVITIES) as DotActivity[]).map((value) => <button key={value} type="button" aria-pressed={activity === value} onClick={() => { setRunning(false); setActivity(value); }}>{labels[value]}</button>)}</div></details>}
+    {entered && <div className="scout-activity-menu"><Dropdown trigger={['click']} placement="bottomRight" overlayClassName="scout-dot-state-menu" menu={{ selectedKeys: [activity], items: (Object.keys(DOT_ACTIVITIES) as DotActivity[]).map((value) => ({ key: value, label: labels[value] })), onClick: ({ key }) => selectActivity(key as DotActivity) }}><button type="button" aria-label="Dot activity"><MoreIcon /></button></Dropdown></div>}
+    {entered && <aside className="scout-history-rail" aria-label="Conversation history" onMouseLeave={() => setHoveredHistory(null)} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setHoveredHistory(null); }}>
+      <div className="ai-session-stage-bars">{history.map((entry, index) => {
+        const distance = hoveredHistory === null ? -1 : Math.abs(index - hoveredHistory);
+        const width = distance === 0 ? 30 : distance === 1 ? 18 : distance === 2 ? 11 : 6;
+        return <button key={entry.key} type="button" className={`ai-session-stage-bar ${currentHistory === entry.key ? 'is-active' : ''}`} aria-label={entry.title} title={entry.title} aria-current={currentHistory === entry.key ? 'step' : undefined} onMouseEnter={() => setHoveredHistory(index)} onFocus={() => setHoveredHistory(index)} onClick={() => jumpHistory(entry)} style={{ '--ai-stage-bar-width': `${width}px`, '--ai-stage-bar-height': distance === 0 ? '1.8px' : '1.4px', '--ai-stage-bar-color': distance === 0 ? '#fff' : currentHistory === entry.key ? '#D9E0EA' : 'rgba(204,211,221,.38)' } as React.CSSProperties}><span /></button>;
+      })}</div>
+    </aside>}
     <div ref={thread} className="scout-chat-messages" role="log" aria-label="Conversation" aria-live="polite" onScroll={() => { const node = thread.current; if (node) follow.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; }}>
-      {turns.map((turn) => <article className="scout-chat-turn" key={turn.id}>
+      {turns.map((turn) => <article id={`scout-turn-${turn.id}`} className="scout-chat-turn" key={turn.id}>
         <div className="scout-user-message">{turn.prompt}</div>
         <div className="scout-assistant-message">
-          <details className="scout-worked" open={!turn.complete}>
-            <summary><span className={`scout-step-orb ${running && turn.id === latest?.id ? 'is-active' : ''}`} />{turn.complete ? 'Worked through 6 steps' : turn.step === steps.length - 1 ? 'Writing response' : steps[turn.step].title}<span className="scout-step-chevron">⌄</span></summary>
-            <ol>{steps.slice(0, turn.step + 1).map((step, index) => <li key={step.activity}><button type="button" onClick={() => { setRunning(false); setActivity(step.activity); }}><span className="scout-step-mark">{index < turn.step || turn.complete ? '✓' : '·'}</span><span>{step.title}<small>{step.detail}</small></span></button></li>)}</ol>
-          </details>
+          <StepProgress turn={turn} running={running && turn.id === latest?.id} current={turn.id === latest?.id} activity={activity} expandSignal={reveal.turn === turn.id ? reveal.sequence : 0} />
           {turn.reply && <p className="scout-reply">{turn.reply}</p>}
           {turn.complete && <><div className="scout-response-actions" aria-label="Response actions">
             <button type="button" title={copied === turn.id ? 'Copied' : 'Copy'} aria-label="Copy response" onClick={() => void copy(turn)}>{copied === turn.id ? <span>✓</span> : <CopyOutlined />}</button>
-            <button type="button" title="Good response" aria-label="Like response" aria-pressed={turn.vote === 'up'} onClick={() => vote(turn.id, 'up')}><FeedbackIcon /></button>
-            <button type="button" title="Bad response" aria-label="Dislike response" aria-pressed={turn.vote === 'down'} onClick={() => vote(turn.id, 'down')}><FeedbackIcon down /></button>
+            <Dropdown trigger={['click']} placement="bottomLeft" overlayClassName="scout-feedback-menu" menu={{ selectedKeys: turn.vote ? [turn.vote] : [], items: [{ key: 'up', label: goodLabel, icon: <FeedbackIcon /> }, { key: 'down', label: badLabel, icon: <FeedbackIcon down /> }], onClick: ({ key }) => vote(turn.id, key as 'up' | 'down') }}>
+              <button type="button" title={turn.vote === 'up' ? goodLabel : turn.vote === 'down' ? badLabel : 'Rate response'} aria-label="Rate response" aria-pressed={Boolean(turn.vote)}>{turn.vote ? <FeedbackIcon down={turn.vote === 'down'} /> : <FeedbackControlIcon />}</button>
+            </Dropdown>
             <button type="button" title={'speechSynthesis' in window ? 'Read aloud' : 'Read aloud is unavailable in this browser'} aria-label={speaking === turn.id ? 'Stop reading' : 'Read aloud'} aria-pressed={speaking === turn.id} disabled={!('speechSynthesis' in window)} onClick={() => read(turn)}><svg viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4V5Zm4 3a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14" /></svg></button>
+            <Dropdown trigger={['click']} placement="bottomLeft" overlayClassName="scout-response-more-menu" menu={{ items: [{ key: 'steps', label: 'Show steps' }, { key: 'replay', label: 'Replay response' }], onClick: ({ key }) => { if (key === 'steps') jumpHistory(history.find((entry) => entry.key === `step-${turn.id}-0`)!); else startTurn(turn.prompt); } }}><button type="button" aria-label="More response actions" title="More"><MoreIcon /></button></Dropdown>
           </div></>}
         </div>
       </article>)}
-      {entered && activity === 'Paused' && latest && !latest.complete && <button type="button" className="scout-resume" onClick={() => { setActivity(steps[latest.step].activity); setRunning(true); }}>Continue</button>}
+      {entered && !running && latest && !latest.complete && <div className="scout-interruption" role="status">
+        <span>{activity === 'Error' ? 'Response interrupted.' : activity === 'NeedsInput' ? 'Confirm the outline to continue.' : activity === 'Payment' ? 'Waiting for confirmation.' : activity === 'None' ? 'Ready when you are.' : 'Response paused.'}</span>
+        <button type="button" className="scout-resume" onClick={resume}>{activity === 'Error' ? 'Retry' : activity === 'NeedsInput' ? 'Confirm and continue' : 'Continue'}</button>
+      </div>}
     </div>
     <form className="scout-persistent-composer" onSubmit={(event) => { event.preventDefault(); submit(); }}>
       <span className="scout-composer-leading" aria-hidden="true"><GlobalOutlined /></span>
@@ -120,5 +202,22 @@ export default function ChatPreview({ entered, userName, onEnter }: { entered: b
 }
 
 function FeedbackIcon({ down = false }: { down?: boolean }) {
-  return <svg viewBox="0 0 24 24" style={down ? { transform: 'rotate(180deg)' } : undefined}><path d="M7 10v10H3V10h4Zm0 0 5-7c2 0 2 2 1 6h6c2 0 2 2 1 5l-2 6H7" /></svg>;
+  return <svg viewBox="0 0 24 24" style={down ? { transform: 'rotate(180deg)' } : undefined}><path d={feedbackPath} /></svg>;
+}
+
+function MoreIcon() {
+  return <svg viewBox="0 0 24 24" className="scout-more-icon" aria-hidden="true"><circle cx="5" cy="12" r="1.3" /><circle cx="12" cy="12" r="1.3" /><circle cx="19" cy="12" r="1.3" /></svg>;
+}
+function FeedbackControlIcon() {
+  return <svg viewBox="0 0 28 24" className="scout-feedback-control" aria-hidden="true"><path d={feedbackPath} transform="translate(0 0) scale(.68)" vectorEffect="non-scaling-stroke" /><path d={feedbackPath} transform="translate(28 24) rotate(180) scale(.68)" vectorEffect="non-scaling-stroke" /></svg>;
+}
+function StepProgress({ turn, running, current, activity, expandSignal }: { turn: Turn; running: boolean; current: boolean; activity: DotActivity; expandSignal: number }) {
+  const [open, setOpen] = useState(!turn.complete);
+  useEffect(() => { setOpen(!turn.complete); }, [turn.complete]);
+  useEffect(() => { if (expandSignal) setOpen(true); }, [expandSignal]);
+  const title = turn.complete ? 'Worked through 6 steps' : !current ? 'Response stopped' : !running ? labels[activity] : turn.step === steps.length - 1 ? 'Writing response' : steps[turn.step].title;
+  return <section className={`scout-worked ${open ? 'is-open' : ''}`}>
+    <button type="button" className="scout-worked-toggle" aria-expanded={open} aria-controls={`scout-steps-${turn.id}`} onClick={() => setOpen((value) => !value)}><span className={`scout-step-orb ${running ? 'is-active' : ''}`} /><span>{title}</span><span className="scout-step-chevron"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg></span></button>
+    <div id={`scout-steps-${turn.id}`} className="scout-step-content" aria-hidden={!open}><div className="scout-step-content-inner"><ol>{steps.slice(0, turn.step + 1).map((step, index) => <li id={`scout-step-${turn.id}-${index}`} key={step.activity}><span className="scout-step-mark">{index < turn.step || turn.complete ? '✓' : '·'}</span><span>{step.title}<small>{step.detail}</small></span></li>)}</ol></div></div>
+  </section>;
 }
