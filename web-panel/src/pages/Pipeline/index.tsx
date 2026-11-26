@@ -45,7 +45,7 @@ import SandboxIndexPreview from './SandboxIndexPreview';
 import { activeExplorerFilters, appendAndFilters, blankExplorerFilter, cellFilterRows, countFilterTerms, exactCellValue, explorerFilterTerms, hasExplorerFilterInput } from './explorerFilters';
 import type { ExplorerFilter } from './explorerFilters';
 import { firstIncompleteExplorerFilter } from './explorerFilterDraft';
-import { fetchCurrentUserContext, fetchLayers, fetchLayerTables, fetchTableData, fetchHandlerCode, queryExplorerPreview, fetchRowPreviewPolicy, fetchEtlTableColumns, fetchTableStream, fetchLayerScript, setTableOffset, validateHandlerCode, saveHandlerCode, updateEtlRow, deleteEtlRow, fetchEtlApis, createEtlApi, updateEtlApi, renameEtlApi, deleteEtlApi, fetchVulnerabilityKeywords, uploadVulnerabilityKeywords, activateVulnerabilityKeywordVersion, downloadVulnerabilityKeywordVersion, downloadCurrentVulnerabilityKeywords } from '../../services/api';
+import { fetchCurrentUserContext, fetchLayers, fetchLayerTables, fetchEtlRuntimeTable, fetchTableData, fetchHandlerCode, queryExplorerPreview, fetchRowPreviewPolicy, fetchEtlTableColumns, fetchTableStream, fetchLayerScript, setTableOffset, validateHandlerCode, saveHandlerCode, updateEtlRow, deleteEtlRow, fetchEtlApis, createEtlApi, updateEtlApi, renameEtlApi, deleteEtlApi, fetchVulnerabilityKeywords, uploadVulnerabilityKeywords, activateVulnerabilityKeywordVersion, downloadVulnerabilityKeywordVersion, downloadCurrentVulnerabilityKeywords } from '../../services/api';
 import type { RowPreviewMode, EtlDataQuery, EtlPublishedApi, VulnerabilityKeywordConfig } from '../../services/api';
 import  type  {  LayerNode,  LayerTable,  QueryResult,  ExplorerPreviewResult,  EtlStreamState  }  from  '../../services/types';
 
@@ -126,6 +126,9 @@ const DataLayersWorkspace: React.FC = () => {
     const catalogController = useRef<AbortController>();
     const tablesController = useRef<AbortController>();
     const policyController = useRef<AbortController>();
+    const runtimeController = useRef<AbortController>();
+    const [runtime, setRuntime] = useState<{ key: string; item: LayerTable }>();
+    const [runtimeLoading, setRuntimeLoading] = useState(false);
     const [catalogLoading, setCatalogLoading] = useState(false);
     const [policyLoading, setPolicyLoading] = useState(false);
     const queryStarted = useRef(0);
@@ -133,10 +136,11 @@ const DataLayersWorkspace: React.FC = () => {
     const [queryCancelled, setQueryCancelled] = useState(false);
     const [queryStatusVisible, setQueryStatusVisible] = useState(false);
     const cancelQuery = () => {
-        const metadataLoading = catalogLoading || tablesLoading;
+        const metadataLoading = catalogLoading || tablesLoading || runtimeLoading;
         catalogRequest.current++; tableRequest.current++;
         catalogController.current?.abort(); tablesController.current?.abort();
         policyController.current?.abort(); setPolicyLoading(false);
+        runtimeController.current?.abort(); setRuntimeLoading(false);
         if (policyLoading) setPolicy({ key: policyKey, mode: 'unavailable' });
         queryController.current?.abort();
         setQueryElapsed(performance.now() - queryStarted.current);
@@ -148,7 +152,7 @@ const DataLayersWorkspace: React.FC = () => {
     const [previewRevision, setPreviewRevision] = useState(0);
     const [repairFields, setRepairFields] = useState<string[]>([]);
     const [tablesLoading, setTablesLoading] = useState(false);
-    const explorerLoading = loading || catalogLoading || tablesLoading || policyLoading;
+    const explorerLoading = loading || catalogLoading || tablesLoading || policyLoading || runtimeLoading;
     useEffect(() => {
         if (explorerLoading) {
             queryStarted.current = performance.now(); setQueryElapsed(0); setQueryCancelled(false); setQueryStatusVisible(true);
@@ -360,19 +364,20 @@ const DataLayersWorkspace: React.FC = () => {
         } catch (error) { message.error(errorText(error)); } finally { setKeywordDownload(undefined); }
     };
     const requestedConnection = new URLSearchParams(search).get('connectionId');
+    const requestedSchema = new URLSearchParams(search).get('schema');
+    const requestedTable = new URLSearchParams(search).get('table');
+    const runtimeKey = JSON.stringify([getSessionState().identity, requestedConnection, requestedSchema, requestedTable, refreshVersion]);
+    const runtimeItem = runtime?.key === runtimeKey ? runtime.item : undefined;
     const matchingSchemas = schemas.filter(item => item.key === selectedSchema && (!requestedConnection || item.connectionId === requestedConnection));
     const schemaNode = matchingSchemas.length === 1 ? matchingSchemas[0] : undefined;
+    const activeConnectionId = runtimeItem?.connectionId || requestedConnection || schemaNode?.connectionId;
     const canCreateTable = canManage && schemaNode?.engine === 'postgresql' && !!schemaNode.connectionId;
     const creationSchema = createTableScope && schemas.find(node => node.key === createTableScope.schema &&
         node.connectionId === createTableScope.connectionId && node.engine === 'postgresql');
-    const requestedSchema = new URLSearchParams(search).get('schema');
-    const schemaScope = JSON.stringify([schemaNode?.connectionId, selectedSchema]);
-    const selectedSchemaAvailable = catalogLoaded && !!schemaNode && requestedSchema === selectedSchema;
-    const requestedTable = new URLSearchParams(search).get('table');
-    const loadExplorerCatalog = !!requestedSchema || catalogOpen;
-    const selectedTableAvailable = selectedSchemaAvailable && tablesLoadedSchema === schemaScope
-        && !!requestedTable && requestedTable === table.name
-        && serverTables.some((item) => item.name === table.name);
+    const schemaScope = JSON.stringify([activeConnectionId, selectedSchema]);
+    const selectedSchemaAvailable = (!!runtimeItem || catalogLoaded && !!schemaNode) && requestedSchema === selectedSchema;
+    const loadExplorerCatalog = catalogOpen;
+    const selectedTableAvailable = !!runtimeItem && requestedSchema === selectedSchema && requestedTable === table.name;
     const requestedResource = (requestedView === 'schema' || requestedView === 'stream' || requestedView === 'api' || requestedView === 'evidence') ? requestedView : 'preview';
     const scriptDirty = scriptLoaded && script !== savedScript;
     const openTool = useRef<{ view: typeof requestedResource; previewKey?: string }>();
@@ -442,7 +447,7 @@ const DataLayersWorkspace: React.FC = () => {
     const previewVisible = requestedResource === 'preview' || !!location.state?.previewKey;
     const previewRequested = previewVisible && !indexPreviewAsset;
     const policyKey = previewIdentity && selectedTableAvailable && previewRequested ?
-        JSON.stringify([previewIdentity, pathname, selectedSchema, table.name, refreshVersion, policyRetry]) : '';
+        JSON.stringify([previewIdentity, pathname, selectedSchema, table.name, activeConnectionId, refreshVersion, policyRetry]) : '';
     const policyMode = policyKey && policy?.key === policyKey ? policy.mode : undefined;
     const showIndexPreview = previewVisible && indexPreviewAsset;
     const showPreview = policyMode === 'classic';
@@ -456,7 +461,7 @@ const DataLayersWorkspace: React.FC = () => {
             const session = getSessionState();
             return !read.signal.aborted && session.authenticated && !session.locked && session.identity === previewIdentity;
         };
-        void fetchRowPreviewPolicy(selectedSchema, table.name, read.signal, schemaNode?.connectionId).then(value => {
+        void fetchRowPreviewPolicy(selectedSchema, table.name, read.signal, activeConnectionId).then(value => {
             if (current()) setPolicy({ key: policyKey, mode: value?.mode === 'classic' || value?.mode === 'indexed_id_required' || value?.mode === 'indexed_projection_required' ? value.mode : 'unavailable' });
         }).catch(error => { if (current() && error?.code !== 'ERR_CANCELED') setPolicy({ key: policyKey, mode: 'unavailable', error: errorText(error) }); })
             .finally(() => { if (current()) setPolicyLoading(false); });
@@ -692,10 +697,32 @@ const DataLayersWorkspace: React.FC = () => {
         if (!loadExplorerCatalog || catalogLoaded) return;
         refreshCatalog().catch((error) => { if (workspaceActive.current) setRequestError(errorText(error)); });
     }, [loadExplorerCatalog, catalogLoaded]);
+    useEffect(() => {
+        const read = new AbortController();
+        const identity = getSessionState().identity;
+        fetchCurrentUserContext(read.signal).then(context => {
+            if (read.signal.aborted || identity !== getSessionState().identity) return;
+            adminPreviewIdentity.current = context.user.is_superuser ? identity : '';
+            setCanManage(context.user.is_superuser === true);
+        }).catch(error => { if (!read.signal.aborted) setRequestError(errorText(error)); });
+        return () => read.abort();
+    }, [previewIdentity]);
+    useEffect(() => {
+        const read = new AbortController(); runtimeController.current = read;
+        const identity = getSessionState().identity;
+        const current = () => !read.signal.aborted && identity === getSessionState().identity;
+        if (!requestedSchema || !requestedTable || !previewIdentity) { setRuntimeLoading(false); return () => read.abort(); }
+        setRuntimeLoading(true); setRequestError('');
+        fetchEtlRuntimeTable(requestedSchema, requestedTable, read.signal, requestedConnection || undefined).then(item => {
+            if (current()) { setRuntime({ key: runtimeKey, item }); setTable(item); }
+        }).catch(error => { if (current()) setRequestError(errorText(error)); })
+            .finally(() => { if (current()) setRuntimeLoading(false); });
+        return () => read.abort();
+    }, [runtimeKey, previewIdentity]);
     const refreshWorkspace = () => {
         if (mutationPending.current || editingRowKey || scriptDirty || apisDirty) { message.warning('Save or cancel current changes before refreshing'); return; }
         setRefreshVersion((value) => value + 1);
-        refreshCatalog().catch((error) => { if (workspaceActive.current) setRequestError(errorText(error)); });
+        if (catalogOpen) refreshCatalog().catch((error) => { if (workspaceActive.current) setRequestError(errorText(error)); });
     };
     useExplorerErrorToast(requestError !== 'Loading cancelled' ? requestError : '', 'Unable to load Explorer', refreshWorkspace);
     useExplorerErrorToast(savedError, 'Unable to open saved item', () => setSavedRetry(value => value + 1));
@@ -703,11 +730,10 @@ const DataLayersWorkspace: React.FC = () => {
     useExplorerErrorToast(streamError, 'Stream status unavailable');
     useExplorerErrorToast(policy?.key === policyKey ? policy.error : '', 'Unable to check preview policy', () => setPolicyRetry(value => value + 1));
     useEffect(() => {
-        if (!catalogLoaded) return;
         const params = new URLSearchParams(search);
         const requested = params.get('schema');
-        setSelectedSchema(schemas.find(item => item.key === requested)?.key || '');
-    }, [search, schemas, catalogLoaded]);
+        setSelectedSchema(requested || '');
+    }, [search]);
     useEffect(() => {
         const version = ++tableRequest.current;
         const controller = new AbortController(); tablesController.current = controller;
@@ -716,6 +742,7 @@ const DataLayersWorkspace: React.FC = () => {
             const session = getSessionState();
             return version === tableRequest.current && !controller.signal.aborted && session.authenticated && !session.locked && session.identity === identity;
         };
+        if (!catalogOpen) { setTablesLoading(false); return () => { tableRequest.current++; controller.abort(); }; }
         if (!selectedSchemaAvailable) {
             loadedSchema.current = '';
             setTablesLoading(false); setTablesLoadedSchema(undefined); setServerTables([]);
@@ -725,12 +752,11 @@ const DataLayersWorkspace: React.FC = () => {
         setTablesLoading(true); setTablesLoadedSchema(undefined); setRequestError('');
         if (loadedSchema.current !== selectedSchema) {
             loadedSchema.current = selectedSchema;
-            setServerTables([]); setTable({ name: '', rowCount: 0, size: '', updatedAt: '' });
-            setPartition(undefined); setPageNumber(1); setEditingRowKey(undefined); setEditingDraft(null); setData(undefined); setStream(undefined); setOffsets([]); setInputTopics([]); setScript(''); setOpenApis([]);
+            setServerTables([]);
         }
-        fetchLayerTables(selectedSchema, undefined, controller.signal, undefined, schemaNode?.connectionId).then((items) => { if (current()) { setServerTables(items); setTablesLoadedSchema(schemaScope); } }).catch((error) => { if (current() && error?.code !== 'ERR_CANCELED') setRequestError(errorText(error)); }).finally(() => { if (version === tableRequest.current) setTablesLoading(false); });
+        fetchLayerTables(selectedSchema, undefined, controller.signal, undefined, activeConnectionId).then((items) => { if (current()) { setServerTables(items); setTablesLoadedSchema(schemaScope); } }).catch((error) => { if (current() && error?.code !== 'ERR_CANCELED') setRequestError(errorText(error)); }).finally(() => { if (version === tableRequest.current) setTablesLoading(false); });
         return () => { tableRequest.current++; controller.abort(); };
-    }, [selectedSchema, refreshVersion, selectedSchemaAvailable, schemaNode?.connectionId]);
+    }, [selectedSchema, refreshVersion, selectedSchemaAvailable, activeConnectionId, catalogOpen]);
     useEffect(() => {
         const params = new URLSearchParams(search);
         if (tablesLoadedSchema !== schemaScope || (params.get('schema') && params.get('schema') !== selectedSchema)) return;
@@ -824,7 +850,7 @@ const DataLayersWorkspace: React.FC = () => {
         const timer = window.setTimeout(async () => {
             try {
                 if (!current()) return;
-                const result = await queryExplorerPreview(selectedSchema, table.name, query, controller.signal, schemaNode?.connectionId);
+                const result = await queryExplorerPreview(selectedSchema, table.name, query, controller.signal, activeConnectionId);
                 if (!current()) return;
                 setData(result); setPreviewPage({ offset, limit: pageSize, result });
             } catch (error) {
@@ -846,7 +872,7 @@ const DataLayersWorkspace: React.FC = () => {
     useEffect(() => {
         if (!showPreview || !selectedTableAvailable || !previewError || filterFields.length) return;
         const controller = new AbortController();
-        fetchEtlTableColumns(selectedSchema, table.name, controller.signal, schemaNode?.connectionId).then((columns) => {
+        fetchEtlTableColumns(selectedSchema, table.name, controller.signal, activeConnectionId).then((columns) => {
             if (!controller.signal.aborted) setRepairFields(columns.map((column) => column.name));
         }).catch(() => { /* The original preview failure has already been reported. */ });
         return () => controller.abort();
@@ -1076,8 +1102,8 @@ setMode: setWorkbenchMode,
 clearSelection: () => { setWorkbenchRows([]); setSelectionEpoch(n => n + 1); },
 filterButton: showPreview && <ExplorerFilterButton open={filterOpen} count={filterCount + sortCount} onClick={() => { if (workbenchMode === 'explore') { setWorkbenchMode('results'); setFilterOpen(true); } else activateTool('filter'); }} />} : undefined}>
 
-                    {!selectedTableAvailable ? <div className="flow-inspector-body" aria-busy={explorerLoading || !catalogLoaded}>
-                        {requestError ? <div className="flow-schema-state" role="alert"><strong>Unable to open this object type</strong><p>{requestError}</p><Button onClick={refreshWorkspace}>Retry</Button></div>
+                    {!selectedTableAvailable ? <div className="flow-inspector-body" aria-busy={!requestError && (explorerLoading || !runtimeItem)}>
+                        {requestError ? <div className="flow-schema-state" role={requestError === 'Loading cancelled' ? 'status' : 'alert'}><strong>{requestError === 'Loading cancelled' ? 'Loading cancelled' : 'Unable to open this object type'}</strong>{requestError !== 'Loading cancelled' && <p>{requestError}</p>}<Button onClick={refreshWorkspace}>Retry</Button></div>
                           : explorerLoading || !catalogLoaded ? <Table className="flow-data-table" size="small" pagination={false} columns={dataColumns} dataSource={[]}
                               locale={{ emptyText: <div className="flow-schema-state" role="status"><Spin size="small" /><span>{previewColumns.length ? 'Loading object data…' : 'Loading object columns…'}</span></div> }} />
                           : <div className="flow-schema-state" role="status">{requestedSchema && requestedTable ? 'Object type is unavailable.' : 'Choose an object type from the catalog.'}</div>}
@@ -1171,7 +1197,7 @@ footer: previewPage && <ExplorerResultsFooter offset={previewPage.offset} rowCou
                         bodyClassName={`explorer-resource-view explorer-resource-view--${resourceView}`}
                         onClose={() => selectResourceView('preview')}>
                         {resourceView === 'schema' && <ExplorerTableSchema key={`${selectedSchema}.${table.name}`} schema={selectedSchema} table={table.name} canManage={canManage} onDirtyChange={setMappingDirty} onSaved={() => setPreviewRevision(v=>v+1)} />}
-                        {resourceView === 'evidence' && <ExplorerTableEvidence connectionId={schemaNode?.connectionId} key={tableDescription} schema={selectedSchema} table={table.name} canManage={canManage} />}
+                        {resourceView === 'evidence' && <ExplorerTableEvidence connectionId={activeConnectionId} key={tableDescription} schema={selectedSchema} table={table.name} canManage={canManage} />}
                         {resourceView === 'stream' && <section className="flow-schema-details flow-explorer-stream" aria-label="Stream status">
                             <header>
                                 <div><h3>Stream</h3><p>Kafka input topic and consumer group positions. Shared topics include traffic for other tables.</p></div>

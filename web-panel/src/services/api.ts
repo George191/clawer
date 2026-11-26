@@ -318,6 +318,9 @@ export const fetchLayerTables = (layer: string, tableRole?: 'current' | 'history
 export const fetchEtlTableColumns = (layer: string, table: string, signal?: AbortSignal, connectionId?: string): Promise<EtlTableColumn[]> =>
   client.get(`/etl/${encodeURIComponent(layer)}/${encodeURIComponent(table)}/columns`, { signal, params: { connectionId } }).then((r) => unwrap<EtlTableColumn[]>(r.data));
 
+export const fetchEtlRuntimeTable = (schema: string, table: string, signal?: AbortSignal, connectionId?: string): Promise<LayerTable> =>
+  client.get(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/runtime-table`, { signal, params: { connectionId } }).then(r => unwrap<LayerTable>(r.data));
+
 export type ColumnPlannerStatistic = { status: 'unavailable' } |
   { status: 'observed'; nullFraction: number; observedAt: string };
 export const fetchColumnPlannerStatistic = (schema: string, table: string, column: string, signal?: AbortSignal): Promise<ColumnPlannerStatistic> =>

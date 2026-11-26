@@ -2035,6 +2035,16 @@ async def table_lineage_common_downstream(
     return await get_etl_layers().lineage_common_downstream(layer, table, targetSchema, targetTable)
 
 
+@read.get("/{layer}/{table}/runtime-table")
+async def runtime_table(layer: str, table: str, connectionId: UUID | None = None,
+                        current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+    target = await get_etl_layers().runtime_table(
+        layer, table, include_hidden=bool(getattr(current_user, "is_superuser", False)),
+        connection_id=str(connectionId) if connectionId else None,
+    )
+    return {**target, "rowCount": 0, "rowCountAvailable": False, "size": "", "updatedAt": ""}
+
+
 @read.get("/{layer}/{table}/columns")
 async def table_columns(layer: str, table: str, connectionId: UUID | None = None) -> list[dict[str, Any]]:
     return await get_etl_layers().columns(layer, table, connection_id=str(connectionId) if connectionId else None)

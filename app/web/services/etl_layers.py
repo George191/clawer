@@ -1235,6 +1235,11 @@ class EtlLayers:
         require_ordinary_table(schema, table)
         quote_identifier(table)
         connection_id = await self.selected_connection_id(schema, table, connection_id)
+        external = await self._external_object(schema, table, include_hidden=include_hidden, connection_id=connection_id)
+        if external:
+            return {"schemaName": schema, "name": table, "registryId": str(external["id"]),
+                    "layer": external["layer"], "tableRole": external["table_role"], "dataType": external["data_type"],
+                    "connectionId": external["connectionId"], "engine": external["engine"]}
         async with self.session(schema=schema, table=table, connection_id=connection_id) as session:
             row = (await session.execute(text(f"""
                 SELECT n.nspname AS "schemaName", c.relname AS name,
