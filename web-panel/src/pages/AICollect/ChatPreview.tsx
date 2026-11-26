@@ -26,6 +26,7 @@ export default function ChatPreview({ entered, userName, onEnter }: { entered: b
   const [running, setRunning] = useState(false);
   const [resultsOpen, setResultsOpen] = useState(false);
   const [resultTurnId, setResultTurnId] = useState<number | null>(null);
+  const [resultStep, setResultStep] = useState<number | undefined>();
   const [copied, setCopied] = useState<number | null>(null);
   const [speaking, setSpeaking] = useState<number | null>(null);
   const [notice, setNotice] = useState('');
@@ -46,8 +47,8 @@ export default function ChatPreview({ entered, userName, onEnter }: { entered: b
   const resultTurn = turns.find((turn) => turn.id === resultTurnId) ?? latest;
   const dotActivity = running ? activity : speaking !== null ? 'Working' : speechError ? 'Error' : activity;
   const history = turns.flatMap((turn) => [
-    { key: `turn-${turn.id}`, turn: turn.id, target: `scout-turn-${turn.id}`, title: turn.prompt || 'Message' },
-    ...steps.slice(0, turn.step + 1).map((step, index) => ({ key: `step-${turn.id}-${index}`, turn: turn.id, target: `scout-step-${turn.id}-${index}`, title: step.title })),
+    { key: `turn-${turn.id}`, turn: turn.id, target: `scout-turn-${turn.id}`, step: 0, title: turn.prompt || 'Message' },
+    ...steps.slice(0, turn.step + 1).map((step, index) => ({ key: `step-${turn.id}-${index}`, turn: turn.id, target: `scout-step-${turn.id}-${index}`, step: index, title: step.title })),
   ]);
   const currentHistory = selectedHistory ?? history[history.length - 1]?.key;
 
@@ -106,6 +107,7 @@ export default function ChatPreview({ entered, userName, onEnter }: { entered: b
     setRunning(true);
     setResultsOpen(true);
     setResultTurnId(null);
+    setResultStep(undefined);
     setSelectedHistory(null);
     follow.current = true;
     onEnter();
@@ -113,6 +115,7 @@ export default function ChatPreview({ entered, userName, onEnter }: { entered: b
   }
   function selectActivity(value: DotActivity) {
     stopReading();
+    setResultStep(undefined);
     setActivity(value);
     const index = steps.findIndex((step) => step.activity === value);
     const executing = ['Thinking', 'Searching', 'Working', 'Creating'].includes(value);
@@ -137,6 +140,7 @@ export default function ChatPreview({ entered, userName, onEnter }: { entered: b
   function jumpHistory(entry: typeof history[number]) {
     setSelectedHistory(entry.key);
     setResultTurnId(entry.turn);
+    setResultStep(entry.step);
     setResultsOpen(true);
     setReveal((prev) => ({ turn: entry.turn, sequence: prev.sequence + 1 }));
     follow.current = false;
@@ -183,7 +187,7 @@ export default function ChatPreview({ entered, userName, onEnter }: { entered: b
     <h1 className="scout-chat-greeting ai-prompt-title" aria-hidden={entered}>Hi{userName ? <>, <span className="ai-prompt-name">{userName}</span></> : null}, any new ideas?</h1>
     {entered && <button type="button" className="scout-results-toggle" aria-label={resultsOpen ? 'Hide collection results' : 'Show collection results'} aria-expanded={resultsOpen} aria-controls="scout-collection-results" onClick={() => setResultsOpen((value) => !value)}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M9 4v16m4-11h4m-4 6h4" /></svg></button>}
     <aside id="scout-collection-results" className="scout-collection-results" aria-label="Collection results" aria-hidden={!entered || !resultsOpen}>
-      <PreviewResults turn={resultTurn} running={running && resultTurn?.id === latest?.id} onNotice={setNotice} />
+      <PreviewResults turn={resultTurn} step={resultStep} running={running && resultTurn?.id === latest?.id} onNotice={setNotice} />
     </aside>
     {entered && <div className="scout-activity-menu"><Dropdown trigger={['click']} placement="bottomRight" overlayClassName="scout-dot-state-menu" menu={{ selectedKeys: [activity], items: (Object.keys(DOT_ACTIVITIES) as DotActivity[]).map((value) => ({ key: value, label: labels[value] })), onClick: ({ key }) => selectActivity(key as DotActivity) }}><button type="button" aria-label="Dot activity"><MoreIcon /></button></Dropdown></div>}
     {entered && <aside className="scout-history-rail" aria-label="Conversation history" onMouseLeave={() => setHoveredHistory(null)} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setHoveredHistory(null); }}>

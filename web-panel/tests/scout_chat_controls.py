@@ -61,14 +61,13 @@ with sync_playwright() as p:
     entry.press("Enter")
     results = page.get_by_role("complementary", name="Collection results")
     expect(results).to_be_visible()
-    expect(results.get_by_role("tab", name="Webpage")).to_have_attribute("aria-selected", "true")
+    expect(results.locator(".scout-result-content")).to_have_attribute("data-phase", "source")
     expect(page.locator(".scout-worked-toggle").first).to_contain_text("Analyzing the webpage")
-    expect(results.get_by_role("tab", name="template.yaml")).to_have_attribute(
-        "aria-selected", "true"
-    )
-    expect(results.locator(".scout-result-code")).to_contain_text("name: example_articles")
-    expect(results.get_by_role("tab", name="adapter.py")).to_have_attribute("aria-selected", "true")
-    expect(results.locator(".scout-result-file-status")).to_have_text("Writing…")
+    expect(results.locator(".scout-result-content")).to_have_attribute("data-phase", "template")
+    expect(results.locator(".scout-template-sheet")).to_contain_text("example_articles")
+    expect(results.locator(".scout-result-content")).to_have_attribute("data-phase", "adapter")
+    expect(results.locator(".scout-result-caret")).to_be_visible()
+    assert results.get_by_role("tab").count() == 0
     canvas = page.frame_locator(".scout-dot-host iframe").locator("canvas")
     expect(canvas).to_have_attribute("data-ready", "true", timeout=90000)
     expect(page.get_by_role("button", name="Confirm and continue")).to_be_visible()
@@ -93,16 +92,24 @@ with sync_playwright() as p:
     download = download_event.value
     assert download.suggested_filename == "adapter.py"
     assert Path(download.path()).read_text(encoding="utf-8") == adapter.replace("\r\n", "\n")
-    results.get_by_role("tab", name="template.yaml").click()
-    expect(results.locator(".scout-result-code")).to_contain_text("adapter: adapter.py")
+    rail = page.get_by_role("complementary", name="Conversation history")
+    bars = rail.get_by_role("button")
+    rail_bounds = rail.bounding_box()
+    assert chat_bounds["x"] <= rail_bounds["x"] < chat_bounds["x"] + 56
+    bars.nth(3).click()
+    expect(results.locator(".scout-result-content")).to_have_attribute("data-phase", "template")
+    expect(results.locator(".scout-template-sheet").get_by_text("fields", exact=True)).to_be_visible()
     results.get_by_role("button", name="Copy template.yaml").click()
     assert "name: example_articles" in page.evaluate("navigator.clipboard.readText()")
-    results.get_by_role("tab", name="Sample data").click()
+    bars.nth(2).click()
+    expect(results.get_by_text("Ideas worth collecting.", exact=True)).to_be_visible()
+    bars.nth(4).click()
+    expect(results.locator(".scout-result-code")).to_contain_text("def adapt_page")
+    results.locator(".scout-result-sample summary").click()
     expect(results.get_by_role("table")).to_be_visible()
     expect(results.get_by_role("row")).to_have_count(3)
     assert results.locator(".scout-step-content").count() == 0
-    results.get_by_role("tab", name="Webpage").click()
-    expect(results.get_by_text("Ideas worth collecting.", exact=True)).to_be_visible()
+    page.locator(".scout-worked-toggle").first.click()
     page.get_by_role("button", name="Hide collection results").click()
     expect(results).to_be_hidden()
     page.get_by_role("button", name="Show collection results").click()
@@ -226,7 +233,7 @@ with sync_playwright() as p:
     assert not posts, posts
     assert not errors, errors
     print(
-        "Artifact output/streaming, file copy/download, equal split panels, Dot alignment, chat progress, history, feedback, clipboard and speech passed",
+        "Automatic result stages, historical template/code views, right-side history rail, file copy/download, chat controls and Dot states passed",
         flush=True,
     )
     b.close()
