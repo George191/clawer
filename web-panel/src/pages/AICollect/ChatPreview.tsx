@@ -4,6 +4,7 @@ import { ArrowUpOutlined, AudioOutlined, CopyOutlined, GlobalOutlined, StopOutli
 import { DOT_ACTIVITIES, type DotActivity } from '@/components/NativeDot';
 import { useThemeStore } from '@/stores/settings';
 import PreviewResults, { previewAdapter, previewTemplate } from './PreviewResults';
+import StageArtifacts, { type StageArtifact } from './StageArtifacts';
 import './chatPreview.css';
 
 const steps: Array<{ activity: DotActivity; title: string; detail: string }> = [
@@ -11,13 +12,13 @@ const steps: Array<{ activity: DotActivity; title: string; detail: string }> = [
   { activity: 'Searching', title: 'Analyzing the webpage', detail: 'Inspect page structure, pagination, and candidate data sources.' },
   { activity: 'Working', title: 'Generating the template', detail: 'Map source fields and extraction rules into template.yaml.' },
   { activity: 'Creating', title: 'Writing the adapter', detail: 'Draft adapter.py with extraction, pagination, and normalization.' },
-  { activity: 'NeedsInput', title: 'Reviewing the collection plan', detail: 'Confirm the source, fields, and adapter approach before validation.' },
+  { activity: 'Working', title: 'Reviewing the collection plan', detail: 'Review the confirmed template, adapter, and sample output together.' },
   { activity: 'Ready', title: 'Validating the adapter', detail: 'Review sample output, required fields, and collection readiness.' },
 ];
 const labels: Record<DotActivity, string> = { None: 'Idle', Working: 'Working', Searching: 'Searching', Creating: 'Creating', Payment: 'Payment', Thinking: 'Thinking', NeedsInput: 'Needs input', Ready: 'Ready', Paused: 'Paused', Error: 'Error' };
 const feedbackPath = 'M7 10H4a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h3m0-10 4-7a2.4 2.4 0 0 1 2.2 2.8L12.5 10h6a1.7 1.7 0 0 1 1.6 2.2l-2 6.5a1.8 1.8 0 0 1-1.7 1.3H7V10Z';
 const outlineReply = 'The example template and adapter are ready in the results panel. Review template.yaml, adapter.py, and the sample data, or describe what you would like to change.';
-type Turn = { id: number; prompt: string; step: number; reply: string; template: string; adapter: string; complete: boolean; vote?: 'up' | 'down' };
+type Turn = { id: number; prompt: string; step: number; reply: string; template: string; adapter: string; done: number; waiting?: 'template' | 'adapter'; complete: boolean; vote?: 'up' | 'down' };
 
 export default function ChatPreview({ entered, userName, userLoading, onEnter }: { entered: boolean; userName: string; userLoading: boolean; onEnter: () => void }) {
   const [draft, setDraft] = useState('');
@@ -50,6 +51,8 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
     { key: `turn-${turn.id}`, turn: turn.id, target: `scout-turn-${turn.id}`, step: 0, title: turn.prompt || 'Message' },
     ...steps.slice(0, turn.step + 1).map((step, index) => ({ key: `step-${turn.id}-${index}`, turn: turn.id, target: `scout-step-${turn.id}-${index}`, step: index, title: step.title })),
   ]);
+  const artifacts = turns.flatMap((turn) => steps.slice(0, turn.done).map((_, step) => ({ key: `${turn.id}-${step}`, turn: turn.id, step })));
+  const selectedArtifact = resultStep === undefined ? undefined : `${resultTurn?.id}-${resultStep}`;
   const currentHistory = selectedHistory ?? history[history.length - 1]?.key;
 
   useEffect(() => { setResultStep(undefined); setResultTurnId(null); }, [latest?.id, latest?.step]);
@@ -61,23 +64,22 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
     const timer = window.setTimeout(() => {
       if (artifact) {
         const source = artifact === 'template' ? previewTemplate : previewAdapter;
-        const content = source.slice(0, latest[artifact].length + 36);
+        // The historical editor pumps a character queue, rather than replacing complete lines.
+        const content = source.slice(0, latest[artifact].length + 4);
         const complete = content.length === source.length;
-        const step = complete ? latest.step + 1 : latest.step;
-        setTurns((prev) => prev.map((turn) => turn.id === latest.id ? { ...turn, [artifact]: content, step } : turn));
-        if (complete) { setActivity(steps[step].activity); if (step === 4) setRunning(false); }
+        setTurns((prev) => prev.map((turn) => turn.id === latest.id ? { ...turn, [artifact]: content, done: complete ? latest.step + 1 : turn.done, waiting: complete ? artifact : undefined } : turn));
+        if (complete) { setActivity('NeedsInput'); setRunning(false); }
       } else if (writing) {
         const reply = outlineReply.slice(0, latest.reply.length + 4);
         const complete = reply.length === outlineReply.length;
-        setTurns((prev) => prev.map((turn) => turn.id === latest.id ? { ...turn, reply, complete } : turn));
+        setTurns((prev) => prev.map((turn) => turn.id === latest.id ? { ...turn, reply, complete, done: complete ? steps.length : turn.done } : turn));
         if (complete) { setRunning(false); setActivity('Ready'); }
       } else {
         const step = latest.step + 1;
-        setTurns((prev) => prev.map((turn) => turn.id === latest.id ? { ...turn, step } : turn));
+        setTurns((prev) => prev.map((turn) => turn.id === latest.id ? { ...turn, step, done: step } : turn));
         setActivity(step === steps.length - 1 ? 'Working' : steps[step].activity);
-        if (step === 4) setRunning(false);
       }
-    }, writing || artifact ? 28 : 1100);
+    }, artifact ? 48 : writing ? 44 : latest.step === 0 ? 1800 : latest.step === 1 ? 4200 : 2600);
     return () => window.clearTimeout(timer);
   }, [running, latest?.id, latest?.step, latest?.reply, latest?.template, latest?.adapter]);
   useEffect(() => {
@@ -104,7 +106,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
     stopReading();
     setDraft('');
     const id = ++nextId.current;
-    setTurns((prev) => [...prev, { id, prompt, step: 0, reply: '', template: '', adapter: '', complete: false }]);
+    setTurns((prev) => [...prev, { id, prompt, step: 0, reply: '', template: '', adapter: '', done: 0, complete: false }]);
     setActivity('Thinking');
     setRunning(true);
     setResultsOpen(true);
@@ -124,18 +126,20 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
     setRunning(executing && Boolean(latest));
     if (!latest) return;
     setTurns((prev) => prev.map((turn) => turn.id !== latest.id ? turn : {
-      ...turn, step: value === 'Ready' ? 5 : index >= 0 ? index : turn.step,
+      ...turn, step: value === 'Ready' ? 5 : value === 'NeedsInput' ? 2 : index >= 0 ? index : turn.step,
+      done: value === 'Ready' ? 6 : value === 'NeedsInput' ? 3 : index >= 0 ? index : turn.done,
+      waiting: value === 'NeedsInput' ? 'template' : undefined,
       reply: value === 'Ready' ? outlineReply : '',
-      template: index < 0 ? turn.template : index > 2 ? previewTemplate : index === 2 ? turn.template : '',
-      adapter: index < 0 ? turn.adapter : index > 3 ? previewAdapter : index === 3 ? turn.adapter : '',
+      template: value === 'NeedsInput' ? previewTemplate : index < 0 ? turn.template : index > 2 ? previewTemplate : '',
+      adapter: index < 0 ? turn.adapter : index > 3 ? previewAdapter : '',
       complete: value === 'Ready', vote: undefined,
     }));
   }
   function resume() {
     if (!latest) return;
     stopReading();
-    const step = latest.step === 4 ? 5 : latest.step;
-    setTurns((prev) => prev.map((turn) => turn.id === latest.id ? { ...turn, step } : turn));
+    const step = latest.waiting ? latest.step + 1 : latest.step;
+    setTurns((prev) => prev.map((turn) => turn.id === latest.id ? { ...turn, step, waiting: undefined } : turn));
     setActivity(step === 5 ? 'Working' : steps[step].activity);
     setRunning(true);
   }
@@ -189,7 +193,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
     <h1 className="scout-chat-greeting ai-prompt-title" aria-hidden={entered}>Hi{userLoading || userName ? <>, <span className="scout-greeting-name">{userLoading ? <span className="native-dot-loading scout-profile-loading" role="status" aria-label="Loading your profile"><i /><i /><i /></span> : <span key={userName} className="ai-prompt-name scout-loaded-name">{userName}</span>}</span></> : null}, any new ideas?</h1>
     {entered && <button type="button" className="scout-results-toggle" aria-label={resultsOpen ? 'Hide collection results' : 'Show collection results'} aria-expanded={resultsOpen} aria-controls="scout-collection-results" onClick={() => setResultsOpen((value) => !value)}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M9 4v16m4-11h4m-4 6h4" /></svg></button>}
     <aside id="scout-collection-results" className="scout-collection-results" aria-label="Collection results" aria-hidden={!entered || !resultsOpen}>
-      <PreviewResults turn={resultTurn} step={resultStep} running={running && resultTurn?.id === latest?.id} onSelectStep={setResultStep} onNotice={setNotice} />
+      <PreviewResults turn={resultTurn} step={resultStep} running={running && resultTurn?.id === latest?.id} onNotice={setNotice} />
     </aside>
     {entered && <div className="scout-activity-menu"><Dropdown trigger={['click']} placement="bottomRight" overlayClassName="scout-dot-state-menu" menu={{ selectedKeys: [activity], items: (Object.keys(DOT_ACTIVITIES) as DotActivity[]).map((value) => ({ key: value, label: labels[value] })), onClick: ({ key }) => selectActivity(key as DotActivity) }}><button type="button" aria-label="Dot activity"><MoreIcon /></button></Dropdown></div>}
     {entered && <aside className="scout-history-rail" aria-label="Conversation history" onMouseLeave={() => setHoveredHistory(null)} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setHoveredHistory(null); }}>
@@ -205,6 +209,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
         <div className="scout-assistant-message">
           <StepProgress turn={turn} running={running && turn.id === latest?.id} current={turn.id === latest?.id} activity={activity} expandSignal={reveal.turn === turn.id ? reveal.sequence : 0} />
           {turn.reply && <p className="scout-reply">{turn.reply}</p>}
+          {turn.complete && <ReleasePreview />}
           {turn.complete && <><div className="scout-response-actions" aria-label="Response actions">
             <button type="button" title={copied === turn.id ? 'Copied' : 'Copy'} aria-label="Copy response" onClick={() => void copy(turn)}>{copied === turn.id ? <span>✓</span> : <CopyOutlined />}</button>
             <Dropdown trigger={['click']} placement="bottomLeft" overlayClassName="scout-feedback-menu" menu={{ selectedKeys: turn.vote ? [turn.vote] : [], items: [{ key: 'up', label: goodLabel, icon: <FeedbackIcon /> }, { key: 'down', label: badLabel, icon: <FeedbackIcon down /> }], onClick: ({ key }) => vote(turn.id, key as 'up' | 'down') }}>
@@ -216,10 +221,11 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
         </div>
       </article>)}
       {entered && !running && latest && !latest.complete && <div className="scout-interruption" role="status">
-        <span>{activity === 'Error' ? 'Response interrupted.' : activity === 'NeedsInput' ? 'Confirm the outline to continue.' : activity === 'Payment' ? 'Waiting for confirmation.' : activity === 'None' ? 'Ready when you are.' : 'Response paused.'}</span>
-        <button type="button" className="scout-resume" onClick={resume}>{activity === 'Error' ? 'Retry' : activity === 'NeedsInput' ? 'Confirm and continue' : 'Continue'}</button>
+        <span>{activity === 'Error' ? 'Response interrupted.' : latest.waiting === 'template' ? 'Review the template before starting adapter generation.' : latest.waiting === 'adapter' ? 'Review the adapter before preparing the collection plan.' : activity === 'NeedsInput' ? 'Waiting for your confirmation.' : activity === 'Payment' ? 'Waiting for confirmation.' : activity === 'None' ? 'Ready when you are.' : 'Response paused.'}</span>
+        <button type="button" className="scout-resume" onClick={resume}>{activity === 'Error' ? 'Retry' : latest.waiting === 'template' ? 'Confirm Template' : latest.waiting === 'adapter' ? 'Confirm Adapter' : 'Continue'}</button>
       </div>}
     </div>
+    {entered && <StageArtifacts artifacts={artifacts} selected={selectedArtifact} onView={(artifact: StageArtifact) => { setResultTurnId(artifact.turn); setResultStep(artifact.step); setResultsOpen(true); }} />}
     <form className="scout-persistent-composer" onSubmit={(event) => { event.preventDefault(); submit(); }}>
       <span className="scout-composer-leading" aria-hidden="true"><GlobalOutlined /></span>
       <Input ref={input} className="scout-message-input" aria-label="Message Scout" placeholder={entered ? 'Message Scout…' : 'Ask anything or describe what you want to collect'} value={draft} onChange={(event) => setDraft(event.target.value.replace(/[\r\n]+/g, ''))} onKeyDown={(event) => { if (event.key === 'Enter' && event.nativeEvent.isComposing) event.preventDefault(); }} />
@@ -247,6 +253,26 @@ function StepProgress({ turn, running, current, activity, expandSignal }: { turn
   const title = turn.complete ? 'Worked through 6 steps' : !current ? 'Response stopped' : !running ? labels[activity] : turn.step === steps.length - 1 ? 'Writing response' : steps[turn.step].title;
   return <section className={`scout-worked ${open ? 'is-open' : ''}`}>
     <button type="button" className="scout-worked-toggle" aria-expanded={open} aria-controls={`scout-steps-${turn.id}`} onClick={() => setOpen((value) => !value)}><span className={`scout-step-orb ${running ? 'is-active' : ''}`} /><span>{title}</span><span className="scout-step-chevron"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg></span></button>
-    <div id={`scout-steps-${turn.id}`} className="scout-step-content" aria-hidden={!open}><div className="scout-step-content-inner"><ol>{steps.slice(0, turn.step + 1).map((step, index) => <li id={`scout-step-${turn.id}-${index}`} key={step.activity}><span className="scout-step-mark">{index < turn.step || turn.complete ? '✓' : '·'}</span><span>{step.title}<small>{step.detail}</small></span></li>)}</ol></div></div>
+    <div id={`scout-steps-${turn.id}`} className="scout-step-content" aria-hidden={!open}><div className="scout-step-content-inner"><ol>{steps.slice(0, turn.step + 1).map((step, index) => <li id={`scout-step-${turn.id}-${index}`} key={step.title}><span className="scout-step-mark">{index < turn.done ? '✓' : '·'}</span><span>{step.title}<small>{step.detail}</small>{index === 3 && <AdapterBuildProgress code={turn.adapter} complete={turn.done > 3} />}</span></li>)}</ol></div></div>
   </section>;
+}
+
+function AdapterBuildProgress({ code, complete }: { code: string; complete: boolean }) {
+  const fraction = code.length / previewAdapter.length;
+  const current = complete ? 3 : fraction < .25 ? 0 : fraction < .8 ? 1 : 2;
+  const [expanded, setExpanded] = useState<number | null>(current);
+  useEffect(() => { setExpanded(current < 3 ? current : null); }, [current]);
+  const plan = [
+    { title: 'GET request contract', detail: 'Bind the confirmed source, request inputs, and page contract.' },
+    { title: '2 field mapping', detail: 'Normalize title and URL, check required values, and deduplicate records.' },
+    { title: 'Finalize adapter.py', detail: 'Complete the parser entry and review the generated file.' },
+  ];
+  return <div className="scout-adapter-milestones">{plan.map((item, index) => <section key={item.title} className={expanded === index ? 'is-expanded' : ''}><button type="button" aria-expanded={expanded === index} onClick={() => setExpanded((prev) => prev === index ? null : index)}><span>{index < current ? '✓' : index === current ? '·' : '○'}</span><span>{item.title}</span><small>{index < current ? 'Completed' : index === current ? 'Writing' : 'Queued'}</small></button><div className="scout-build-details"><div><p>{item.detail}</p></div></div></section>)}</div>;
+}
+
+function ReleasePreview() {
+  const [action, setAction] = useState('publish');
+  const [createTask, setCreateTask] = useState(true);
+  const [prepared, setPrepared] = useState(false);
+  return <section className="scout-release-preview" aria-label="Release options"><div role="group" aria-label="Template action">{['draft', 'archive', 'publish'].map((item) => <button key={item} type="button" aria-pressed={action === item} onClick={() => { setAction(item); setPrepared(false); }}>{item === 'draft' ? 'Draft' : item === 'archive' ? 'Archive' : 'Publish'}</button>)}</div>{action === 'publish' && <label><input type="checkbox" checked={createTask} onChange={(event) => { setCreateTask(event.target.checked); setPrepared(false); }} />Create collection task</label>}<button type="button" className="scout-resume" onClick={() => setPrepared(true)}>{action === 'draft' ? 'Save Draft' : action === 'archive' ? 'Archive Template' : createTask ? 'Publish & Create Task' : 'Publish Template'}</button><small role="status">{prepared ? 'Example release prepared. No template was published and no task was created.' : 'Product preview · release actions are simulated.'}</small></section>;
 }

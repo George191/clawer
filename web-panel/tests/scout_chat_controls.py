@@ -84,17 +84,40 @@ with sync_playwright() as p:
     results = page.get_by_role("complementary", name="Collection results")
     expect(results).to_be_visible()
     expect(results.locator(".scout-result-content")).to_have_attribute("data-phase", "source")
-    expect(page.locator(".scout-worked-toggle").first).to_contain_text("Analyzing the webpage")
+    flight = page.locator(".scout-artifact-flight").first
+    expect(flight).to_be_visible()
+    origin = page.locator(".scout-dot-host").bounding_box()
+    assert (
+        abs(
+            float(flight.evaluate("e=>e.style.left").removesuffix("px"))
+            + 18
+            - origin["x"]
+            - origin["width"] / 2
+        )
+        < 2
+    )
+    brief = page.get_by_role("button", name="View Request brief", exact=True)
+    expect(brief).to_have_attribute("aria-busy", "false")
     expect(results.locator(".scout-result-content")).to_have_attribute("data-phase", "template")
     expect(results.locator(".scout-template-sheet")).to_contain_text("example_articles")
+    expect(page.get_by_role("button", name="Confirm Template", exact=True)).to_be_visible()
+    assert page.get_by_role("button", name="View adapter.py", exact=True).count() == 0
+    page.get_by_role("button", name="Confirm Template", exact=True).click()
     expect(results.locator(".scout-result-content")).to_have_attribute("data-phase", "adapter")
     expect(results.locator(".scout-result-caret")).to_be_visible()
-    assert results.get_by_role("tab").count() == 0
+    keyword = results.locator(".ai-session-python-token.is-keyword").first
+    function = results.locator(".ai-session-python-token.is-function-name").first
+    string = results.locator(".ai-session-python-token.is-string").first
+    expect(keyword).to_be_visible()
+    expect(function).to_be_visible()
+    assert keyword.evaluate("e=>getComputedStyle(e).color") == "rgb(255, 121, 198)"
+    assert function.evaluate("e=>getComputedStyle(e).color") == "rgb(80, 250, 123)"
+    assert string.evaluate("e=>getComputedStyle(e).color") == "rgb(241, 250, 140)"
+    expect(page.get_by_role("button", name="Confirm Adapter", exact=True)).to_be_visible()
     canvas = page.frame_locator(".scout-dot-host iframe").locator("canvas")
     expect(canvas).to_have_attribute("data-ready", "true", timeout=90000)
-    expect(page.get_by_role("button", name="Confirm and continue")).to_be_visible()
     expect(canvas).to_have_attribute("data-activity", "NeedsInput")
-    page.get_by_role("button", name="Confirm and continue").click()
+    page.get_by_role("button", name="Confirm Adapter", exact=True).click()
     expect(page.get_by_role("button", name="Copy response")).to_be_visible()
     expect(canvas).to_have_attribute("data-activity", "Ready")
     expect(results.locator(".scout-result-code")).to_contain_text("def adapt_page")
@@ -104,11 +127,19 @@ with sync_playwright() as p:
     dot_bounds = page.locator(".ai-chat-dot").bounding_box()
     assert abs(bounds["width"] - root_bounds["width"] / 2) < 1
     assert abs(bounds["x"] + bounds["width"] - chat_bounds["x"]) < 1
-    assert bounds["x"] <= dot_bounds["x"] < bounds["x"] + bounds["width"] / 2
-    assert bounds["y"] <= dot_bounds["y"] <= bounds["y"] + 32
-    stages = results.get_by_role("navigation", name="Stage results")
+    assert abs(dot_bounds["x"] + dot_bounds["width"] / 2 - bounds["x"] - bounds["width"] / 2) < 2
+    assert abs(dot_bounds["y"] + dot_bounds["height"] / 2 - bounds["y"] - bounds["height"] / 2) < 2
+    stages = page.get_by_role("navigation", name="Stage results")
     expect(stages.get_by_role("button")).to_have_count(6)
-    assert stages.bounding_box()["x"] >= dot_bounds["x"] + dot_bounds["width"]
+    composer = page.locator(".scout-persistent-composer").bounding_box()
+    tray = stages.bounding_box()
+    assert tray["x"] >= chat_bounds["x"]
+    assert 0 <= composer["y"] - tray["y"] - tray["height"] < 20
+    assert results.get_by_role("navigation", name="Stage results").count() == 0
+    expect(stages.get_by_role("button", name="View Sample data", exact=True)).to_have_attribute(
+        "aria-busy", "false"
+    )
+    expect(page.locator(".scout-artifact-flight")).to_have_count(0)
     assert results.locator("header, h2, .scout-result-toolbar").count() == 0
     assert results.evaluate("e=>getComputedStyle(e).borderRightWidth") == "0px"
     assert "blur" in results.locator(".scout-workspace-frost").evaluate(
@@ -135,6 +166,8 @@ with sync_playwright() as p:
     rail = page.get_by_role("complementary", name="Conversation history")
     bars = rail.get_by_role("button")
     rail_bounds = rail.bounding_box()
+    chat_bounds = page.locator(".scout-chat-messages").bounding_box()
+    assert page.locator(".ai-collect-workbench").evaluate("e=>[e.scrollLeft,e.scrollTop]") == [0, 0]
     assert chat_bounds["x"] <= rail_bounds["x"] < chat_bounds["x"] + 56
     bars.nth(3).click()
     expect(results.locator(".scout-result-content")).to_have_attribute("data-phase", "template")
@@ -157,6 +190,13 @@ with sync_playwright() as p:
     page.get_by_role("button", name="Show collection results").click()
     expect(results).to_be_visible()
     page.wait_for_timeout(700)
+    release = page.get_by_role("region", name="Release options")
+    release.get_by_role("button", name="Draft", exact=True).click()
+    release.get_by_role("button", name="Save Draft", exact=True).click()
+    expect(release.get_by_role("status")).to_contain_text("Example release prepared")
+    release.get_by_role("button", name="Publish", exact=True).click()
+    release.get_by_role("checkbox", name="Create collection task").uncheck()
+    expect(release.get_by_role("button", name="Publish Template", exact=True)).to_be_visible()
     toggle = page.locator(".scout-worked-toggle").first
     panel = page.locator(".scout-step-content").first
     expect(toggle).to_have_attribute("aria-expanded", "false")
@@ -224,7 +264,7 @@ with sync_playwright() as p:
         expect(canvas).to_have_attribute("data-activity", activity)
     for label, activity, button in [
         ("Paused", "Paused", "Continue"),
-        ("Needs input", "NeedsInput", "Confirm and continue"),
+        ("Needs input", "NeedsInput", "Confirm Template"),
         ("Payment", "Payment", "Continue"),
         ("Error", "Error", "Retry"),
         ("Idle", "None", "Continue"),
@@ -275,7 +315,7 @@ with sync_playwright() as p:
     assert not posts, posts
     assert not errors, errors
     print(
-        "Profile loading, centered composer, floating workspace Dot, clickable stage artifacts, automatic stages and existing chat controls passed",
+        "Historical template/adapter confirmations, original code highlighting, Dot delivery animation, artifact tray, release preview and chat controls passed",
         flush=True,
     )
     b.close()
