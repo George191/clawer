@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import text
 
-from app.etl.schema.catalogs import current_insert_sql, current_table_ddl
+from app.etl.schema.catalogs import current_insert_sql
 from app.etl.source_fences import snapshot_matches
 
 ETL_VERSION = "orbital-v1"
@@ -47,31 +47,20 @@ def event_lineage(meta: dict) -> dict:
                 source_observed_at=observed, etl_version=ETL_VERSION)
 
 
-def history_ddl() -> list[str]:
-    return [
-        "CREATE SCHEMA IF NOT EXISTS ts_ods",
-        current_table_ddl("ods", "orbital"),
-    ]
-
-
-async def ensure_history_schema(pg) -> None:
-    await pg.init_schema(history_ddl())
-
-
-async def write_orbital_output(session, payload: dict, columns: dict) -> dict:
+async def write_orbital_output(session, payload: dict, columns: dict, *, table_ref: str) -> dict:
     """Append each immutable event/version exactly once, including late revisions."""
     identity = {name: payload[name] for name in ("record_id", "data_source", "data_type")}
     await session.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:name, 0))"),
                           {"name": "orbital:" + json.dumps(identity, sort_keys=True)})
     same_revision = (await session.execute(text(
-        "SELECT source_event_id FROM ts_ods.ods_orbital WHERE record_id=:record_id "
+        f"SELECT source_event_id FROM {table_ref} WHERE record_id=:record_id "
         "AND data_source=:data_source AND data_type=:data_type AND source_revision=:source_revision LIMIT 1"
     ), payload)).mappings().first()
     if same_revision and same_revision["source_event_id"] != payload["source_event_id"]:
         raise ValueError("Orbital revision reused with a different event identity")
-    await session.execute(text(current_insert_sql("ods", "orbital", columns)), payload)
+    await session.execute(text(current_insert_sql("ods", "orbital", columns, table_ref=table_ref)), payload)
     existing = (await session.execute(text(
-        "SELECT * FROM ts_ods.ods_orbital WHERE source_observed_at=:source_observed_at "
+        f"SELECT * FROM {table_ref} WHERE source_observed_at=:source_observed_at "
         "AND source_event_id=:source_event_id AND etl_version=:etl_version"
     ), payload)).mappings().first()
     expected = {name: json.loads(value) if columns[name].split()[0].lower() == "jsonb" and isinstance(value, str)

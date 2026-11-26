@@ -22,6 +22,7 @@ from app.config.settings import settings
 from app.logger import get_logger
 from app.records.values import require_canonical_record
 from app.etl.schema.catalogs import validate_table_name
+from app.etl.schema.layout import sql_identifier
 
 logger = get_logger(__name__)
 
@@ -33,8 +34,8 @@ class TableSyncConfig:
     定义一张 RDS 表到 ES 索引的同步规则。
     """
 
-    table_name: str                           # RDS 表名（不含 schema 前缀）, 如 "patent"
-    schema_name: str = "ts_rds"               # RDS schema 名
+    table_name: str                           # 已登记的 RDS data_type，例如 "patent"
+    schema_name: str | None = None            # 可选：校验实际登记的 schema
     target_index: str = ""                    # ES 索引名（空则用 index_prefix + table_name）
     watermark_column: str = "updated_at"      # 增量水位线列
     doc_id_field: str | None = None           # 空值使用三元业务身份，自定义字段显式覆盖
@@ -48,16 +49,12 @@ class TableSyncConfig:
     )
 
     def __post_init__(self) -> None:
-        names = [self.table_name, self.schema_name, self.watermark_column]
+        validate_table_name(self.table_name)
+        sql_identifier(self.watermark_column)
         if self.doc_id_field is not None:
-            names.append(self.doc_id_field)
-        for name in names:
-            validate_table_name(name)
-
-    @property
-    def source_table(self) -> str:
-        """源表全名（schema.table）。"""
-        return f"{self.schema_name}.rds_{self.table_name}"
+            sql_identifier(self.doc_id_field)
+        if self.schema_name is not None:
+            sql_identifier(self.schema_name, schema=True)
 
     @property
     def index_name(self) -> str:
@@ -156,7 +153,7 @@ class SyncConfig:
             for table_data in data["tables"]:
                 config.tables.append(TableSyncConfig(
                     table_name=table_data["table_name"],
-                    schema_name=table_data.get("schema_name", "ts_rds"),
+                    schema_name=table_data.get("schema_name"),
                     target_index=table_data.get("target_index", ""),
                     watermark_column=table_data.get("watermark_column", "updated_at"),
                     doc_id_field=table_data.get("doc_id_field"),

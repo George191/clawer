@@ -7,16 +7,22 @@ import json
 import re
 
 from app.etl.schema.catalogs import RECORD_IDENTITY_COLUMNS, TABLE_DEFINITIONS, lineage_columns
-from app.etl.schema.layout import default_table_layout
+from app.etl.schema.layout import PG_SCHEMA_PATTERN, qualified_table_name
 
+_SQL_NAME = r"[A-Za-z_][A-Za-z0-9_]*"
+_CREATE_HEAD = (
+    r"^\s*CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+"
+    rf'(?P<table_ref>(?P<schema>{_SQL_NAME}|"{PG_SCHEMA_PATTERN}")\s*\.\s*(?P<table>{_SQL_NAME}|"{_SQL_NAME}"))\s*'
+)
 _CREATE_TABLE_RE = re.compile(
     r"(?P<statement>"
-    r"CREATE TABLE(?:\s+IF NOT EXISTS)?\s+(?P<table_ref>[A-Za-z0-9_\".]+)\s*"
+    + _CREATE_HEAD +
     r"\((?P<body>.*?)\)\s*"
     r"(?:PARTITION BY\s+(?P<partition_type>RANGE|HASH)\s*"
     r"\((?P<partition_column>[^)]+)\))?\s*;)",
-    re.IGNORECASE | re.DOTALL,
+    re.IGNORECASE | re.DOTALL | re.MULTILINE,
 )
+_CREATE_TABLE_HEAD_RE = re.compile(_CREATE_HEAD + r"\(", re.IGNORECASE | re.MULTILINE)
 _RECORD_ID_INLINE_PK_RE = re.compile(
     r"(^\s*record_id\s+TEXT)\s+PRIMARY\s+KEY(\s*,?\s*$)",
     re.IGNORECASE | re.MULTILINE,
@@ -52,9 +58,14 @@ def ddl_checksum(
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _current_table_ref(layer: str, logical_table: str) -> str:
-    layout = default_table_layout(layer, logical_table, "current")
-    return f"{layout.schema_name}.{layout.table_name}"
+def ddl_creates_table(ddl_sql: str, schema_name: str, table_name: str) -> bool:
+    qualified_table_name(schema_name, table_name)
+    create = _CREATE_TABLE_HEAD_RE.search(ddl_sql)
+    if create is None:
+        return False
+    identity = tuple(value[1:-1] if value.startswith('"') else value.lower()
+                     for value in create.group("schema", "table"))
+    return identity == (schema_name, table_name)
 
 
 def _parse_create_table_statement(ddl_sql: str) -> dict[str, str | None]:
@@ -133,15 +144,15 @@ def build_current_ddl(
     partition_type: str,
     partition_column: str | None,
 ) -> str:
-    current_ref = _current_table_ref(layer, logical_table)
     create_table = _parse_create_table_statement(current_ddl_sql)
+    current_ref = str(create_table["table_ref"])
     body = str(create_table["body"])
     for column in lineage_columns(layer):
         if not re.search(rf'(?mi)^\s*"?{column}"?\s+', body):
             body = _append_table_constraint(body, f"{column} TEXT")
     is_export_ddl = bool(
         re.search(
-            r"CREATE TABLE\s+\"[^\"]+\"\.\"[^\"]+\"",
+            r"CREATE TABLE\s+\"[^\"]+\"\s*\.\s*\"[^\"]+\"",
             current_ddl_sql,
             re.IGNORECASE,
         )

@@ -16,8 +16,8 @@ export function isCommittedMonthlyJob(job: { slot: string; id: string; state: st
 
 const identifier = (value: string) => typeof value === 'string' && /^[a-z_][a-z0-9_]{0,62}$/.test(value);
 
-export default function MonthlyCommittedRun({ planId, job, identity, disabled }: {
-  planId: string; job: MonthlyJob; identity: string; disabled?: boolean;
+export default function MonthlyCommittedRun({ planId, sourceSchema, targetSchema, job, identity, disabled }: {
+  planId: string; sourceSchema: string; targetSchema: string; job: MonthlyJob; identity: string; disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [result, setResult] = useState<Run>();
@@ -41,7 +41,7 @@ export default function MonthlyCommittedRun({ planId, job, identity, disabled }:
       if (!live(read.signal)) return;
       if (value.kind !== 'monthly_utc' || value.planId !== planId || value.jobId !== job.id || value.receiptId !== job.receiptId ||
         value.slot !== job.slot || !Number.isFinite(Date.parse(value.slot)) || value.scheduleDayOfMonthUtc !== job.scheduleDayOfMonthUtc ||
-        value.sourceSchema !== 'ts_transfer_sandbox' || value.targetSchema !== 'ts_transfer_sandbox' ||
+        value.sourceSchema !== sourceSchema || value.targetSchema !== targetSchema ||
         value.sourceTable === value.targetTable || ![value.sourceTable, value.targetTable].every(identifier) ||
         !Number.isSafeInteger(value.rowsAffected) || value.rowsAffected < 0 || !Number.isFinite(Date.parse(value.recordedAt))) {
         setUnavailable(true); return;

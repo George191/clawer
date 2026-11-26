@@ -114,6 +114,7 @@ class LayerScriptChat(CodePayload):
 
 class SqlQuery(BaseModel):
     sql: str = Field(min_length=1, max_length=50_000)
+    connectionId: UUID | None = None
 
 
 class KeywordVersion(BaseModel):

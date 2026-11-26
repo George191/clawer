@@ -9,7 +9,7 @@ from sqlalchemy import text
 
 from app.etl.schema.catalogs import TABLE_DEFINITIONS
 from app.etl.schema.ddl import ddl_checksum
-from app.etl.schema.layout import logical_table_name, physical_table_name
+from app.etl.schema.layout import normalize_table_role, sql_identifier
 
 ONTOLOGY_OBJECTS_TABLE = "app.ontology_objects"
 ONTOLOGY_PROPERTIES_TABLE = "app.ontology_object_properties"
@@ -85,7 +85,7 @@ ONTOLOGY_PROPERTIES_DDL = """CREATE TABLE IF NOT EXISTS app.ontology_object_prop
     UNIQUE (object_id, ordinal_position)
 )"""
 ONTOLOGY_INDEX_DDL_STATEMENTS = (
-    "CREATE UNIQUE INDEX IF NOT EXISTS uq_ontology_objects_identity ON app.ontology_objects (schema_name, table_name)",
+    "CREATE INDEX IF NOT EXISTS ix_ontology_objects_physical_identity ON app.ontology_objects (schema_name, table_name)",
     "CREATE UNIQUE INDEX IF NOT EXISTS uq_ontology_objects_table ON app.ontology_objects (layer, table_role, schema_name, table_name)",
     "CREATE INDEX IF NOT EXISTS idx_ontology_objects_lookup ON app.ontology_objects (layer, table_role, schema_name, table_name, version DESC)",
 )
@@ -107,19 +107,6 @@ def resource_group(layer: str) -> str:
 def _catalog_text(value: Any) -> str:
     decoded = bytes(value).decode("utf-8") if isinstance(value, (bytes, bytearray, memoryview)) else str(value or "")
     return decoded.rstrip("\x00")
-
-
-def _identity(schema: str, table: str) -> tuple[str, str]:
-    if any(not isinstance(value, str) or not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", value) for value in (schema, table)):
-        raise ValueError("Invalid Ontology object schema or table")
-    if not schema.startswith("ts_") or schema in {"ts_meta", "ts_meta_hist"}:
-        raise ValueError("This schema is not a business Ontology schema")
-    return (schema[3:-5], "history") if schema.endswith("_hist") else (schema[3:], "current")
-
-
-def _known_data_type(layer: str, table: str) -> str:
-    logical = logical_table_name(layer, table)
-    return logical if logical in TABLE_DEFINITIONS.get(layer, {}) and physical_table_name(layer, logical) == table else ""
 
 
 def _constant_type(expression: str | None) -> str:
@@ -162,12 +149,16 @@ async def sync_declared_object_properties(session, object_id: int, layer: str,
 
 
 async def sync_object_metadata(session, schema: str, table: str, *, catalog_session,
+        layer: str | None = None, table_role: str | None = None,
         data_type: str | None = None, data_type_source: str | None = None,
         description: str | None = None, description_source: str | None = None,
         provenance: str = "pg_catalog", ddl_sql: str | None = None,
         allow_missing: bool = False) -> dict[str, Any] | None:
     """Inspect the warehouse catalog and synchronize metadata within the caller's transactions."""
-    layer, role = _identity(schema, table)
+    sql_identifier(schema, schema=True)
+    sql_identifier(table)
+    if schema in {"app", "ts_meta", "ts_meta_hist", "information_schema"} or schema.startswith("pg_"):
+        raise ValueError("This schema is reserved for system metadata")
     identity = {"schema": schema, "table": table}
     result = await catalog_session.execute(text("""
         SELECT c.oid, obj_description(c.oid, 'pg_class') AS comment, p.partstrat::text AS partstrat,
@@ -200,19 +191,32 @@ async def sync_object_metadata(session, schema: str, table: str, *, catalog_sess
     """), {"oid": physical["oid"]})
     properties = [{**dict(row), "identity_kind": _catalog_text(row["identity_kind"]),
                    "generated_kind": _catalog_text(row["generated_kind"])} for row in result.mappings()]
-    current = (await session.execute(text("SELECT * FROM ontology_objects WHERE schema_name = :schema AND table_name = :table FOR UPDATE"), identity)).mappings().first()
-    current = dict(current) if current else {}
+    scope = ""
+    if layer is not None or table_role is not None:
+        if not layer or not table_role:
+            raise ValueError("Ontology metadata requires both layer and table role")
+        table_role = normalize_table_role(table_role)
+        scope = " AND layer = :layer AND table_role = :role"
+    matches = list((await session.execute(text(
+        "SELECT * FROM ontology_objects WHERE schema_name = :schema AND table_name = :table"
+        + scope + " LIMIT 2 FOR UPDATE"
+    ), {**identity, **({"layer": layer, "role": table_role} if scope else {})})).mappings())
+    if len(matches) > 1:
+        raise ValueError("Multiple Ontology objects share this physical name; specify the layer and table role")
+    current = dict(matches[0]) if matches else {}
+    layer = layer if layer is not None else current.get("layer")
+    table_role = table_role if table_role is not None else current.get("table_role")
+    if not layer or not table_role:
+        raise ValueError("New Ontology objects require an explicit layer and table role")
+    role = normalize_table_role(table_role)
     if data_type is not None:
         semantic_type, type_source = data_type, data_type_source or ("registration" if data_type else "not_configured")
-    elif current.get("data_type") and current.get("data_type_source") == "registration":
+    elif current.get("data_type") and current.get("data_type_source") != "column_default":
         semantic_type, type_source = current["data_type"], current["data_type_source"]
     else:
         expression = next((row["default_expression"] for row in properties if row["name"] == "data_type"), None)
         semantic_type = _constant_type(expression)
         type_source = "column_default" if semantic_type else "not_configured"
-        if role == "current" and expression is None and not semantic_type and (current.get("ddl_sql") or ddl_sql):
-            semantic_type = _known_data_type(layer, table)
-            type_source = "table_definition" if semantic_type else "not_configured"
     physical_comment = physical["comment"] or ""
     declared_description = description if description is not None else current.get("description") or ""
     if physical_comment.strip():
@@ -257,8 +261,8 @@ async def sync_object_metadata(session, schema: str, table: str, *, catalog_sess
         VALUES (:layer, :role, :schema, :table, :ddl_sql, :version, :checksum, :partition_type,
             :partition_column, :partition_granularity, :partition_count, :data_type,
             :data_type_source, :description, :description_source, :provenance, :resource_group)
-        ON CONFLICT (schema_name, table_name) DO UPDATE SET layer = EXCLUDED.layer,
-            table_role = EXCLUDED.table_role, ddl_sql = EXCLUDED.ddl_sql, version = EXCLUDED.version,
+        ON CONFLICT (layer, table_role, schema_name, table_name) DO UPDATE SET
+            ddl_sql = EXCLUDED.ddl_sql, version = EXCLUDED.version,
             checksum = EXCLUDED.checksum, partition_type = EXCLUDED.partition_type,
             partition_column = EXCLUDED.partition_column, partition_granularity = EXCLUDED.partition_granularity,
             partition_count = EXCLUDED.partition_count, data_type = EXCLUDED.data_type,

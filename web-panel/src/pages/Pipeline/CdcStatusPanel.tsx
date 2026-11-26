@@ -20,6 +20,7 @@ function Probe({ title, probe }: { title: string; probe: CdcProbe }) {
 }
 
 function CdcDetails({ status }: { status: CdcStatus }) {
+  const postgresTargets = new Map(status.postgres.targets?.map((target) => [target.connectionId, target]));
   return <>
     <Alert showIcon type={cdcNeedsAttention(status) ? 'warning' : 'info'} message={status.outputMode === 'direct'
       ? 'ETL workers publish layer output directly. The probes below show the observed infrastructure state.'
@@ -31,6 +32,9 @@ function CdcDetails({ status }: { status: CdcStatus }) {
       <Probe title="PostgreSQL WAL" probe={status.postgres} />
       <Probe title="CDC consumer offsets" probe={status.kafka} />
     </div>
+    {!!postgresTargets.size && <div className="cdc-probes">
+      {[...postgresTargets.values()].map((target) => <Probe key={target.connectionId} title={target.database} probe={target} />)}
+    </div>}
     <Table size="small" rowKey="name" pagination={false} dataSource={status.connect.connectors}
       locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No connectors available for inspection" /> }}
       columns={[
@@ -44,9 +48,10 @@ function CdcDetails({ status }: { status: CdcStatus }) {
         { title: 'Partitions', dataIndex: 'partitions', width: 90 },
         { title: 'Committed offset lag (messages)', dataIndex: 'lag', width: 180, render: (lag: number) => lag.toLocaleString('en-US') },
       ]} />}
-    {!!status.postgres.slots.length && <Table size="small" rowKey="name" pagination={false}
+    {!!status.postgres.slots.length && <Table size="small" rowKey={(slot) => `${slot.connectionId ?? ''}:${slot.name}`} pagination={false}
       dataSource={status.postgres.slots} columns={[
-        { title: 'WAL replication slot', dataIndex: 'name', render: (name: string) => <>{name}{name === status.postgres.expectedSlot && <Tag>This project</Tag>}</> },
+        { title: 'Database', key: 'database', render: (_, slot) => postgresTargets.get(slot.connectionId ?? '')?.database ?? '—' },
+        { title: 'WAL replication slot', dataIndex: 'name', render: (name: string, slot) => <>{name}{name === (postgresTargets.get(slot.connectionId ?? '')?.expectedSlot ?? status.postgres.expectedSlot) && <Tag>ETL relay</Tag>}</> },
         { title: 'Reader connection', dataIndex: 'active', render: (active: boolean) => active ? 'Active' : 'Disconnected' },
         { title: 'Retained WAL', dataIndex: 'retainedBytes', render: formatWalBytes },
         { title: 'Unconfirmed WAL', dataIndex: 'unconfirmedBytes', render: formatWalBytes },

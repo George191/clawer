@@ -155,8 +155,10 @@ class VisibilityWorkspaceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((actual["visibility"], actual["updated_by"]), (visibility, "user:42"))
         await instance.set_object_visibility("custom", "custom_items", "hidden", "user:42")
         async with pg.session() as session:
-            await ontology.sync_object_metadata(session, "ts_custom", "custom_items", catalog_session=session)
-        await registry.save_registered_ddl(pg, layer="custom", table="items", ddl_sql="CREATE TABLE ts_custom.custom_items (id BIGINT)")
+            await ontology.sync_object_metadata(session, "ts_custom", "custom_items", catalog_session=session,
+                                                 layer="custom", table_role="current", data_type="items")
+        await registry.save_registered_ddl(pg, layer="custom", table="items", catalog_pg=pg,
+                                           ddl_sql="CREATE TABLE ts_custom.custom_items (id BIGINT)")
         self.assertEqual(pg.objects[("ts_custom", "custom_items")]["visibility"], "hidden")
         self.assertEqual(pg.catalog, original_catalog)
         self.assertFalse(any(sql.startswith(("CREATE", "ALTER", "DROP")) for sql, _ in pg.calls))
@@ -181,6 +183,7 @@ class VisibilityWorkspaceTests(unittest.IsolatedAsyncioTestCase):
         async with pg.session() as session:
             await ontology.sync_object_metadata(
                 session, "ts_custom", "custom_items", catalog_session=session, provenance="preserve:original",
+                layer="custom", table_role="current",
             )
         before = deepcopy((pg.objects, pg.properties))
         with patch("app.web.services.etl_workspace.sync_object_metadata", new=AsyncMock()) as sync:

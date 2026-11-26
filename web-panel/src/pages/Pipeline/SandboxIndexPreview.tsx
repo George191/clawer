@@ -5,8 +5,6 @@ import type { SandboxIndexPreviewQuery, SandboxIndexPreviewResult } from '../../
 import { useSandboxIdentity } from './SandboxMarkings';
 import './sandbox-index-preview.css';
 
-export const INDEX_PREVIEW_SCHEMA = 'ts_index_preview_sandbox';
-export const INDEX_PREVIEW_TABLE = 'records';
 
 const isBigint = (value: string) => /^(0|-?[1-9]\d{0,18})$/.test(value) &&
   BigInt(value) >= -9223372036854775808n && BigInt(value) <= 9223372036854775807n;
@@ -18,9 +16,9 @@ const failureLabels: Record<SandboxIndexPreviewResult['reason'], string> = {
   query_unavailable: 'The bounded query could not be completed.',
 };
 
-export default function SandboxIndexPreview() {
+export default function SandboxIndexPreview({ schema, table }: { schema: string; table: string }) {
   const identity = useSandboxIdentity();
-  return identity ? <IndexPreviewWorkspace key={identity} /> : null;
+  return identity ? <IndexPreviewWorkspace key={identity} schema={schema} table={table} /> : null;
 }
 
 type Action = 'explain' | 'first' | 'next' | 'restart';
@@ -29,7 +27,7 @@ const isVerifiedPage = (value: SandboxIndexPreviewResult, expected: number) =>
   (value.paginationStatus === 'more' ? expected < 10 && value.hasMore === true && typeof value.nextCursor === 'string' && value.nextCursor.length > 0
     : value.paginationStatus === 'end' ? value.hasMore === false : value.paginationStatus === 'capped' && expected === 10 && value.hasMore === true);
 
-function IndexPreviewWorkspace() {
+function IndexPreviewWorkspace({ schema, table }: { schema: string; table: string }) {
   const [available, setAvailable] = useState<boolean>();
   const [rangePagination, setRangePagination] = useState(false);
   const [availabilityError, setAvailabilityError] = useState(false);
@@ -123,7 +121,7 @@ function IndexPreviewWorkspace() {
   };
 
   return <section className="flow-schema-details flow-index-preview" aria-label="Index-aware sandbox preview">
-    <header><h3>Index-aware sandbox preview</h3><p>Fixed relation: <code>{INDEX_PREVIEW_SCHEMA}.{INDEX_PREVIEW_TABLE}</code>. No generic preview fallback.</p></header>
+    <header><h3>Index-aware sandbox preview</h3><p>Fixed relation: <code>{schema}.{table}</code>. No generic preview fallback.</p></header>
     {availabilityError ? <><p role="alert">Sandbox preview availability could not be checked.</p>
       <Button size="small" onClick={() => setRevision(value => value + 1)}>Retry availability</Button></>
       : available === undefined ? <p role="status">Checking sandbox preview availability…</p>

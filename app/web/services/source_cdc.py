@@ -16,9 +16,9 @@ from aiokafka import AIOKafkaConsumer
 from fastapi import HTTPException
 
 from app.config.settings import settings
+from app.etl.cdc import postgres_table_pattern
 from app.web.api.models.data_connections import DataConnectionPayload
 from app.web.api.models.source_cdc import SourceCdcCreate
-
 
 CONNECTORS = {
     "postgresql": "io.debezium.connector.postgresql.PostgresConnector",
@@ -102,7 +102,10 @@ def build_config(identifier, source, password, payload: SourceCdcCreate, generat
     engine, cfg = source.engine, source.config
     if engine not in CONNECTORS:
         raise HTTPException(422, "This source does not support continuous CDC")
-    if engine in {"mysql", "mongodb", "milvus"} and any(name.split(".")[0] != cfg.database for name in payload.tables):
+    objects = [name.rsplit(".", 1) for name in payload.tables]
+    if engine != "postgresql" and any("." in namespace for namespace, _ in objects):
+        raise HTTPException(422, "Only PostgreSQL CDC supports a namespace containing literal dots")
+    if engine in {"mysql", "mongodb", "milvus"} and any(namespace != cfg.database for namespace, _ in objects):
         raise HTTPException(422, "Every selected table or collection must belong to the saved database")
     if ((engine != "postgresql" and payload.publication is not None)
             or (engine != "mysql" and payload.serverId is not None)):
@@ -136,7 +139,7 @@ def build_config(identifier, source, password, payload: SourceCdcCreate, generat
             "milvus.etcd.endpoints": ",".join(payload.milvus.etcdEndpoints),
             "milvus.etcd.root.path": payload.milvus.etcdRoot,
             "milvus.pchannel.name": payload.milvus.pchannels[0],
-            "milvus.collection.include.list": ",".join(re.escape(name.split(".", 1)[1]) for name in payload.tables),
+            "milvus.collection.include.list": ",".join(re.escape(collection) for _, collection in objects),
         })
         return config
     if engine == "mongodb":
@@ -154,6 +157,7 @@ def build_config(identifier, source, password, payload: SourceCdcCreate, generat
         if not payload.publication:
             raise HTTPException(422, "Provide the preconfigured PostgreSQL publication")
         config.update({"database.dbname": cfg.database, "plugin.name": "pgoutput",
+                       "table.include.list": ",".join(map(postgres_table_pattern, payload.tables)),
                        "database.sslmode": "verify-full" if cfg.tls else "disable",
                        "publication.name": payload.publication, "publication.autocreate.mode": "disabled",
                        "slot.name": f"spider_{generation}", "slot.drop.on.stop": "false"})
@@ -210,6 +214,23 @@ async def check_milvus_channels(selection):
         await consumer.stop()
 
 
+async def check_postgres_selection(registry, row, selection):
+    """Verify the requested change streams on the saved PostgreSQL database."""
+    requested = [tuple(name.rsplit(".", 1)) for name in selection.tables]
+    schemas, tables = zip(*requested, strict=True)
+    async with registry._postgres_catalog_row(row) as connection:
+        published = await connection.fetch("""
+            SELECT p.schemaname AS schema_name, p.tablename AS table_name
+            FROM pg_catalog.pg_publication_tables p
+            JOIN unnest($2::text[], $3::text[]) AS selected(schema_name, table_name)
+              ON p.schemaname::text COLLATE "C" = selected.schema_name
+             AND p.tablename::text COLLATE "C" = selected.table_name
+            WHERE p.pubname::text COLLATE "C" = $1
+        """, selection.publication, schemas, tables)
+    if {(table["schema_name"], table["table_name"]) for table in published} != set(requested):
+        raise HTTPException(422, "The PostgreSQL publication must capture every selected table on this saved database")
+
+
 class SourceCdc:
     def __init__(self, registry):
         self.registry = registry
@@ -260,6 +281,8 @@ class SourceCdc:
             source = SimpleNamespace(engine=source.engine, config=source.config, cdc_revision=row["updated_at"].isoformat())
             secret = credentials["token"] if source.config.auth == "token" else credentials["password"]
             config = build_config(identifier, source, secret, payload, uuid4().hex)
+            if source.engine == "postgresql":
+                await check_postgres_selection(self.registry, row, payload)
             plugin = config["connector.class"]
             captures = channel_configs(connector_name(identifier), config)
             for _, channel in captures:

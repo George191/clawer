@@ -1,7 +1,7 @@
 """SQL 智能提示引擎 — 为 ETL 数据浏览器提供 SQL 补全与安全校验。
 
 特性：
-- Schema 缓存：启动时扫描 ts_rds/ts_ods/ts_task/ts_dwd/ts_dws/ts_dim 表结构
+- Schema 缓存：从已注册本体对象加载表结构
 - 上下文感知补全：根据光标位置智能推荐关键字/表名/列名
 - 预定义模板：常用查询模板一键插入
 - 安全分析：只读 SQL 校验，拦截危险写操作
@@ -19,9 +19,6 @@ if TYPE_CHECKING:
     from app.storage.postgres_client import PostgresClient
 
 logger = get_logger(__name__)
-
-# ── ETL Schema 列表 ──────────────────────────────────────────
-_ETL_SCHEMAS = ["ts_rds", "ts_ods", "ts_task", "ts_dwd", "ts_dws", "ts_dim"]
 
 # ── SQL 关键字（用于补全） ──────────────────────────────────
 _SQL_KEYWORDS: list[str] = [
@@ -113,7 +110,7 @@ _RE_MULTI_LINE_COMMENT = re.compile(r'/\*.*?\*/', re.DOTALL)
 def _current_token(sql: str, position: int) -> tuple[str, int, int]:
     """返回光标所在 token 及起止位置。
 
-    例如: sql="SELECT * FROM ts_r", position=16 → ("ts_r", 14, 18)
+    例如: sql="SELECT * FROM inv", position=16 → ("inv", 14, 18)
     """
     if position < 0 or position > len(sql):
         return "", 0, 0
@@ -142,7 +139,7 @@ def _last_clause(sql: str, position: int) -> str:
 def _extract_tables(sql: str) -> list[str]:
     """从 SQL 中提取所有 FROM/JOIN 后的表引用（忽略子查询）。
 
-    返回 ["ts_rds.rds_raw_records", ...] 形式。
+    返回 ["inventory.shipments", ...] 形式。
     """
     tables: list[str] = []
     # 追踪子查询深度
@@ -207,27 +204,17 @@ class SQLHintEngine:
 
     async def refresh_schema(self) -> None:
         """刷新 schema 缓存 — 从 information_schema 重新加载。"""
-        from app.storage.business_database import get_business_pg_client
+        from app.storage.postgres_client import get_pg_client
 
-        pg = get_business_pg_client()
+        pg = get_pg_client()
         await pg.connect()
-
+        rows = await pg.fetch_all("""
+            SELECT o.schema_name AS table_schema, o.table_name, p.name AS column_name, p.sql_type AS data_type
+            FROM app.ontology_objects o JOIN app.ontology_object_properties p ON p.object_id=o.id
+            WHERE o.is_active AND o.visibility <> 'hidden'
+            ORDER BY o.schema_name, o.table_name, p.ordinal_position
+        """)
         self._schema = {}
-        self._all_tables = []
-
-        query = """
-            SELECT
-                table_schema,
-                table_name,
-                column_name,
-                data_type,
-                ordinal_position
-            FROM information_schema.columns
-            WHERE table_schema = ANY(:schemas)
-            ORDER BY table_schema, table_name, ordinal_position
-        """
-        rows = await pg.fetch_all(query, {"schemas": _ETL_SCHEMAS})
-
         for row in rows:
             s = row["table_schema"]
             t = row["table_name"]
@@ -353,7 +340,7 @@ class SQLHintEngine:
             s, t = table.split(".", 1)
             columns = self._schema.get(s, {}).get(t, [])
         else:
-            for s in _ETL_SCHEMAS:
+            for s in self._schema:
                 cols = self._schema.get(s, {}).get(table, [])
                 if cols:
                     columns = cols

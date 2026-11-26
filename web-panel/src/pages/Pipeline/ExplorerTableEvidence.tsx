@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui';
 import { ReloadOutlined } from '@/components/ui/icons';
 import { fetchExplorerTableEvidence, type ExplorerTableEvidenceSnapshot, type TransferRunReceipt } from '../../services/api';
-import TableExportEvidence, { TABLE_EXPORT_SOURCE } from './TableExportEvidence';
+import TableExportEvidence from './TableExportEvidence';
 import ExplorerAssetFreshness from './ExplorerAssetFreshness';
 import ExplorerCdcCapture from './ExplorerCdcCapture';
 import ExplorerDailyJobQuality from './ExplorerDailyJobQuality';
@@ -11,19 +11,17 @@ import ExplorerFieldFreshness from './ExplorerFieldFreshness';
 import ExplorerMinimumRowHealth from './ExplorerMinimumRowHealth';
 import ExplorerAssetStatistics from './ExplorerAssetStatistics';
 import ExplorerTransferTimeline from './ExplorerTransferTimeline';
-import { INDEX_PREVIEW_SCHEMA, INDEX_PREVIEW_TABLE } from './SandboxIndexPreview';
 import useExplorerErrorToast from './useExplorerErrorToast';
 import './table-evidence.css';
 
-export default function ExplorerTableEvidence({ schema, table, canManage }: { schema: string; table: string; canManage: boolean }) {
+export default function ExplorerTableEvidence({ schema, table, connectionId, canManage }: { connectionId?: string; schema: string; table: string; canManage: boolean }) {
     const [version, setVersion] = useState(0);
     const [snapshot, setSnapshot] = useState<ExplorerTableEvidenceSnapshot>();
     const [failed, setFailed] = useState(false);
     const [latestCurrentReceipt, setLatestCurrentReceipt] = useState<TransferRunReceipt | null>(null);
-    const showReceipts = canManage && schema === 'ts_transfer_sandbox';
-    const showExport = canManage && schema === TABLE_EXPORT_SOURCE.schema && table === TABLE_EXPORT_SOURCE.table;
-    const tableLineage = showReceipts || schema !== 'ts_transfer_sandbox' && !schema.endsWith('_hist') &&
-        (schema !== INDEX_PREVIEW_SCHEMA || table !== INDEX_PREVIEW_TABLE);
+    const showReceipts = canManage && snapshot?.transferSandbox;
+    const showExport = canManage && snapshot?.exportSource;
+    const tableLineage = showReceipts || (!snapshot?.transferSandbox && !snapshot?.indexPreview && snapshot?.tableRole === 'current');
     const refresh = () => {
         setSnapshot(undefined);
         setFailed(false);
@@ -35,11 +33,11 @@ export default function ExplorerTableEvidence({ schema, table, canManage }: { sc
     useEffect(() => {
         const request = new AbortController();
         setSnapshot(undefined); setFailed(false);
-        fetchExplorerTableEvidence(schema, table, request.signal)
+        fetchExplorerTableEvidence(schema, table, request.signal, connectionId)
             .then((value) => { if (!request.signal.aborted) setSnapshot(value); })
             .catch(() => { if (!request.signal.aborted) setFailed(true); });
         return () => request.abort();
-    }, [schema, table, version]);
+    }, [schema, table, connectionId, version]);
 
     const observed = showReceipts && latestCurrentReceipt && latestCurrentReceipt.rowsAffected > 0 &&
         latestCurrentReceipt.targetSchema === schema && latestCurrentReceipt.targetTable === table && latestCurrentReceipt;
@@ -74,15 +72,15 @@ export default function ExplorerTableEvidence({ schema, table, canManage }: { sc
                             <dl><div><dt>Checked at</dt><dd><time dateTime={snapshot.observedAt}>{new Date(snapshot.observedAt).toLocaleString()}</time></dd></div></dl>
                             {showReceipts && <ExplorerAssetStatistics schema={schema} table={table} version={version} />}
                         </section>
-                        {showReceipts && table === 'field_freshness_fixture' && <>
-                            <ExplorerFieldFreshness version={version} /><ExplorerMinimumRowHealth version={version} />
+                        {showReceipts && snapshot.fieldPolicy && <>
+                            <ExplorerFieldFreshness schema={schema} table={table} version={version} /><ExplorerMinimumRowHealth schema={schema} table={table} version={version} />
                         </>}
                         {showReceipts && <>
                             <ExplorerDailyJobQuality schema={schema} table={table} version={version} />
                             <ExplorerDailyJobQuality schema={schema} table={table} version={version} cadence="weekly" />
                         </>}
                         {showReceipts && <ExplorerAssetFreshness key={`${schema}.${table}`} schema={schema} table={table} version={version} />}
-                        {/^ts_(rds|ods|task|dwd|dim|dws|ads)$/.test(schema) && <ExplorerCdcCapture schema={schema} table={table} version={version} />}
+                        <ExplorerCdcCapture connectionId={connectionId} schema={schema} table={table} version={version} />
                         {showExport ? <TableExportEvidence mode="explorer" version={version} /> : <>
                         {showReceipts ? <ExplorerTransferTimeline key={`${schema}.${table}:${version}`} schema={schema} table={table} onLatestCurrentReceipt={setLatestCurrentReceipt} />
                         : <section className="flow-evidence-card" aria-labelledby="table-evidence-history">
@@ -112,10 +110,9 @@ export default function ExplorerTableEvidence({ schema, table, canManage }: { sc
                                 </div>
                                 <p>The migration code writes directly from MongoDB to each destination. This is not an observed RDS-to-ODS flow and does not verify a specific run or downstream consumer.</p>
                             </> : <p>No table-to-table transfer receipt was returned for this asset.</p>}
-                            {schema.startsWith('ts_') && schema !== 'ts_meta' &&
-                                <Link className="flow-evidence-lineage-link" to={`/ontology/lineage?${new URLSearchParams({
+                            <Link className="flow-evidence-lineage-link" to={`/ontology/lineage?${new URLSearchParams({
                                     schema, ...(tableLineage ? { table, tableLineage: '1' } : {}),
-                                })}`}>{tableLineage ? 'Open table in Lineage' : 'Open schema in Lineage'}</Link>}
+                                })}`}>{tableLineage ? 'Open table in Lineage' : 'Open schema in Lineage'}</Link>
                         </section>
                         </>}
                     </div>}

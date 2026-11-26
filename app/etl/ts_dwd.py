@@ -25,6 +25,7 @@
 
 from __future__ import annotations
 
+from contextlib import AsyncExitStack
 import json
 from datetime import datetime, timezone
 from typing import Any
@@ -33,14 +34,16 @@ from sqlalchemy import text
 
 from app.config.settings import settings
 from app.etl.base import ETLBase, extract_meta
+from app.etl.layer_dependencies import DWD_SOURCE_LAYERS
 from app.etl.schema.catalogs import validate_table_name
 from app.etl.source_fences import current_ods_revision, source_snapshot_current, source_snapshot_revision
 from app.logger import get_logger
+from app.storage.business_database import get_layer_pg_client
 
 logger = get_logger(__name__)
 
 DWD_PATENT_UPDATE_ODS = """
-UPDATE ts_dwd.dwd_patent SET
+UPDATE {table_ref} SET
     title = :title,
     publication_number = :publication_number,
     application_number = :application_number,
@@ -68,7 +71,7 @@ RETURNING *
 """
 
 DWD_PATENT_UPDATE_TASK = """
-UPDATE ts_dwd.dwd_patent SET
+UPDATE {table_ref} SET
     task_results = CAST(:task_results AS jsonb),
     task_revision = :source_revision,
     updated_at = CAST(:updated_at AS timestamptz)
@@ -77,7 +80,7 @@ RETURNING *
 """
 
 DWD_PATENT_INSERT_ODS = """
-INSERT INTO ts_dwd.dwd_patent (
+INSERT INTO {table_ref} (
     data_source, data_type, record_id,
     title, publication_number, application_number, assignee, inventor,
     publication_date, filing_date, priority_date, grant_date,
@@ -99,7 +102,7 @@ RETURNING *
 """
 
 DWD_PATENT_INSERT_TASK = """
-INSERT INTO ts_dwd.dwd_patent (
+INSERT INTO {table_ref} (
     data_source, data_type, record_id,
     task_results,
     created_at, updated_at, task_revision
@@ -112,7 +115,7 @@ RETURNING *
 """
 
 DWD_EXISTS = """
-SELECT 1 FROM ts_dwd.dwd_patent
+SELECT 1 FROM {table_ref}
 WHERE record_id = :record_id AND data_source = :data_source
 LIMIT 1
 """
@@ -125,6 +128,7 @@ def graph_record_complete(row: dict[str, Any]) -> bool:
 
 class TsDwd(ETLBase):
     _layer = "dwd"
+    _source_layers = DWD_SOURCE_LAYERS
     _consumer_topics = [settings.etl_ods_topic, settings.etl_task_topic]
     _consumer_group = settings.etl_dwd_consumer_group
     _producer_topic = settings.etl_graph_topic
@@ -234,18 +238,23 @@ class TsDwd(ETLBase):
 
             now = datetime.now(timezone.utc)
             lock_key = "dwd:" + json.dumps([record_id, data_source, data_type])
-            async with self._pg.locked_transaction(lock_key) as session:
+            ods_ref = await self._upstream_ref("ods", data_type)
+            async with AsyncExitStack() as sessions:
+                ods_session = await sessions.enter_async_context(get_layer_pg_client("ods").session())
                 if is_ods_source:
-                    revision = await source_snapshot_revision(session, "ods", message)
+                    revision = await source_snapshot_revision(ods_session, "ods", message, table_ref=ods_ref)
                 else:
                     revision = message.get("source_revision")
-                    if not revision or revision != await current_ods_revision(session, message):
+                    if not revision or revision != await current_ods_revision(ods_session, message, table_ref=ods_ref):
                         return True
-                    if not await source_snapshot_current(session, "task", message):
+                    task_ref = await self._upstream_ref("task", data_type)
+                    task_session = await sessions.enter_async_context(get_layer_pg_client("task").session())
+                    if not await source_snapshot_current(task_session, "task", message, table_ref=task_ref):
                         return True
                 if revision is None:
                     return True
-                result, is_new = await self._merge_patent(session, message, is_ods_source, now, revision)
+                target = await sessions.enter_async_context(self._pg.locked_transaction(lock_key))
+                result, is_new = await self._merge_patent(target, message, is_ods_source, now, revision)
 
             emitted = await self._emit_if_complete(
                 result, record_id=record_id,
@@ -270,7 +279,8 @@ class TsDwd(ETLBase):
     async def _merge_patent(self, session, message, is_ods_source, now, revision):
         """Merge one verified upstream snapshot while holding the DWD identity lock."""
         identity = {name: message[name] for name in ("record_id", "data_source", "data_type")}
-        existing = (await session.execute(text(DWD_EXISTS), identity)).mappings().first()
+        table_ref = self._table_fqn(identity["data_type"])
+        existing = (await session.execute(text(DWD_EXISTS.format(table_ref=table_ref)), identity)).mappings().first()
         params = {**identity, "updated_at": now, "source_revision": revision}
         if existing is None:
             params["created_at"] = now
@@ -280,5 +290,5 @@ class TsDwd(ETLBase):
         else:
             params["task_results"] = self._build_task_results(message)
             sql = DWD_PATENT_INSERT_TASK if existing is None else DWD_PATENT_UPDATE_TASK
-        row = (await session.execute(text(sql), params)).mappings().first()
+        row = (await session.execute(text(sql.format(table_ref=table_ref)), params)).mappings().first()
         return dict(row) if row else None, existing is None

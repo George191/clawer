@@ -1,7 +1,7 @@
 import client, { type DataSource } from './api';
 
 export type OntologyConnection = Pick<DataSource, 'id' | 'name' | 'engine'>;
-export type SemanticSource = { mode: 'existing' | 'none'; schema?: string; table?: string; upstreamConnectionId?: string | null };
+export type SemanticSource = { mode: 'existing' | 'none'; schema?: string; table?: string; connectionId?: string | null; upstreamConnectionId?: string | null };
 export type SemanticProperty = { id: string; name: string; type: string; sourceColumn?: string; required: boolean };
 export type Principal = { kind: 'user' | 'group' | 'organization'; id: string };
 export type SemanticAction = { kind: 'create' | 'modify' | 'delete'; submitters: Principal[]; fields: string[] };

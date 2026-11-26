@@ -40,6 +40,7 @@ class Source(Payload):
     mode: Literal["existing", "none"]
     schema_name: Identifier | None = Field(default=None, alias="schema")
     table: Identifier | None = None
+    connectionId: UUID | None = None
     upstreamConnectionId: UUID | None = None
 
 

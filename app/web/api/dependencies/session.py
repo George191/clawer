@@ -32,3 +32,27 @@ async def _business_db() -> AsyncGenerator[AsyncSession, None]:
 
 def get_business_db() -> AbstractAsyncContextManager[AsyncSession]:
     return _business_db()
+
+
+@asynccontextmanager
+async def _registered_business_db(schema: str, table: str) -> AsyncGenerator[AsyncSession, None]:
+    from app.etl.schema.catalog_metadata import catalog_logical_layers
+    from app.web.services.etl_layers import get_etl_layers, require_ordinary_table, resolve_schema
+
+    require_ordinary_table(resolve_schema(schema), table)
+    try:
+        pg, layers = await get_etl_layers().scoped_postgres(schema, table)
+        token = catalog_logical_layers.set(layers)
+        try:
+            async with pg.session() as session:
+                yield session
+        finally:
+            catalog_logical_layers.reset(token)
+    except BusinessDatabaseNotConfigured as error:
+        raise HTTPException(409, str(error)) from None
+    except (ConnectionError, OSError, TimeoutError, DBAPIError):
+        raise HTTPException(503, "Database access is unavailable; verify the Ontology layer connection") from None
+
+
+def get_registered_business_db(schema: str, table: str) -> AbstractAsyncContextManager[AsyncSession]:
+    return _registered_business_db(schema, table)

@@ -12,7 +12,8 @@ from app.web.api.models.indexed_id_sample import (
 from app.web.core.config import settings
 from app.web.core.config.indexed_sample import IndexedCompoundSampleScope, IndexedSampleScope
 from app.web.services.etl_layers import (
-    _LINEAGE_METADATA_JOIN, _LINEAGE_SCOPE, _LINEAGE_VISIBLE_SQL, quote_identifier, requires_indexed_projection,
+    _LINEAGE_METADATA_JOIN, _LINEAGE_SCOPE, _LINEAGE_VISIBLE_SQL, quote_identifier, quote_schema_identifier,
+    requires_indexed_projection,
 )
 from app.web.services.index_preview_sandbox import _approved_plan, _release_preview_transaction
 
@@ -126,7 +127,7 @@ async def indexed_sample_capability(session: AsyncSession, schema: str, table: s
 
 
 def _qualified(scope: IndexedCompoundSampleScope) -> str:
-    return f"{quote_identifier(scope.schema_name)}.{quote_identifier(scope.table)}"
+    return f"{quote_schema_identifier(scope.schema_name)}.{quote_identifier(scope.table)}"
 
 
 def _compiled(scope: IndexedSampleScope, request: IndexedSampleRequest) -> tuple[str, dict[str, int]]:

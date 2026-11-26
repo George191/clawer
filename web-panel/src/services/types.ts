@@ -37,7 +37,7 @@ export interface DashboardMetrics {
 /** Pipeline topology node */
 export interface PipelineNodeData {
   name: string;
-  status: 'running' | 'stopped' | 'error';
+  status: 'registered' | 'running' | 'stopped' | 'error';
   throughput: number;
   lag: number;
 }
@@ -56,6 +56,13 @@ export interface LayerThroughputPoint {
 
 // ==================== ETL Layers ====================
 export interface LayerNode {
+  connectionId?: string;
+  engine?: string;
+  logicalLayers?: string[];
+  upstreamSchemaRefs?: {connectionId: string; schemaName: string}[];
+  upstreamSchemas?: string[];
+  transferSandbox?: boolean;
+  exportTable?: string;
   ontologySource?: boolean;
   schemaName?: string;
   alias?: string;
@@ -64,7 +71,7 @@ export interface LayerNode {
   key: string;
   label: string;
   icon: string;
-  status: 'running' | 'stopped' | 'error';
+  status: 'registered' | 'running' | 'stopped' | 'error';
   rateIn: number;
   rateOut: number;
   lag: number;
@@ -72,6 +79,11 @@ export interface LayerNode {
 }
 
 export interface LayerTable {
+  rowCountAvailable?: boolean;
+  connectionId?: string;
+  engine?: string;
+  layer?: string;
+  indexPreview?: boolean;
   ontologySource?: boolean;
   name: string;
   dataType?: string;
@@ -89,6 +101,9 @@ export interface EtlObjectFavorites { ids: string[]; }
 export interface EtlObjectFavoriteMembership { id: string; favorite: boolean; }
 
 export interface EtlObjectType {
+  connectionId?: string;
+  engine?: string;
+  objectCountAvailable?: boolean;
   id: string;
   schema: string;
   table: string;
@@ -465,7 +480,8 @@ export interface CdcStatus {
   postgres: CdcProbe & {
     walLevel?: string | null;
     expectedSlot?: string | null;
-    slots: { name: string; active: boolean; retainedBytes: number | null; unconfirmedBytes: number | null }[];
+    targets?: (CdcProbe & { database: string; connectionId: string; expectedSlot: string; walLevel?: string | null })[];
+    slots: { name: string; active: boolean; connectionId?: string | null; retainedBytes: number | null; unconfirmedBytes: number | null }[];
   };
   kafka: CdcProbe & { consumers: { group: string; lag: number; partitions: number }[] };
 }

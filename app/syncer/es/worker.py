@@ -18,8 +18,10 @@ from aiokafka.admin import AIOKafkaAdminClient
 from app.config.settings import settings
 from app.base.kafka import build_admin_client_kwargs, build_consumer_kwargs
 from app.logger import get_logger
-from app.storage.postgres_client import PostgresClient
-from app.storage.business_database import get_business_pg_client
+from app.etl.schema.layout import sql_identifier
+from app.etl.schema.registry import object_table_ref, require_registered_object
+from app.storage.postgres_client import PostgresClient, get_pg_client
+from app.storage.business_database import get_layer_pg_client, layer_binding_lease, selected_layer_connection
 from app.syncer.es.config import SyncConfig, TableSyncConfig, build_doc_from_row
 from app.syncer.es.metrics import SyncMetrics
 from app.syncer.es.watermark import BackfillCursor, WatermarkStore
@@ -52,23 +54,46 @@ class EsSyncWorker:
         config: SyncConfig | None = None,
         pg: PostgresClient | None = None,
         es: Any = None,
+        *,
+        metadata_pg: PostgresClient | None = None,
     ) -> None:
         self._config = config or SyncConfig.from_settings()
         self._config.__post_init__()
         self._pg = pg
         self._es = es
-        self._watermark_store = WatermarkStore(pg=pg)
+        self._metadata_pg = metadata_pg or get_pg_client()
+        self._watermark_store = WatermarkStore(pg=self._metadata_pg)
         self._metrics = SyncMetrics(syncer_name=self._config.syncer_name)
         self._running = False
         self._consumer = None
         self._ready_indices: set[str] = set()
+        self._source_objects: dict[str, dict[str, Any]] = {}
+        self._bindings = None
 
     # ── 依赖管理（与 SyncWorker 一致的延迟初始化） ────────────────────
 
     def _get_pg(self) -> PostgresClient:
         if self._pg is None:
-            self._pg = get_business_pg_client()
+            self._pg = get_layer_pg_client("rds")
         return self._pg
+
+    async def _resolve_sources(self) -> None:
+        sources = {}
+        for config in self._config.tables:
+            data_type = config.table_name
+            if data_type in sources:
+                raise ValueError(f"Duplicate ES RDS data type: {data_type}")
+            record = await require_registered_object(self._metadata_pg, "rds", data_type)
+            if config.schema_name not in (None, record["schema_name"]):
+                raise ValueError(f"Configured ES schema disagrees with the Ontology binding for rds/current/{data_type}")
+            sources[data_type] = record
+        if not sources:
+            raise ValueError("ES requires configured RDS data types")
+        self._source_objects = sources
+
+    def _checkpoint_source(self, table: TableSyncConfig) -> str:
+        record = self._source_objects[table.table_name]
+        return f"{self._bindings['rds'][0]}/{record['id']}"
 
     def _get_es(self) -> Any:
         if self._es is None:
@@ -86,8 +111,6 @@ class EsSyncWorker:
     async def _run_cdc(self) -> None:
         """Project committed RDS messages into ES, acknowledging only complete batches."""
         routes = {f"{settings.etl_rds_topic}-{table.table_name}": table for table in self._config.tables}
-        if not routes or any(table.schema_name != "ts_rds" for table in self._config.tables):
-            raise ValueError("ES CDC requires configured RDS source tables")
         await self._validate_source_topics(set(routes))
         if not await self._get_es().ping():
             raise ConnectionError("Elasticsearch health check failed")
@@ -103,22 +126,26 @@ class EsSyncWorker:
             logger.info("ES CDC consumer assigned; create-only backfill may now fill missing documents")
             while self._running:
                 batches = await self._consumer.getmany(timeout_ms=1000, max_records=self._config.batch_size)
-                for partition, messages in batches.items():
-                    if not messages:
-                        continue
-                    try:
-                        rows = [message.value for message in messages]
-                        if any(_cdc_version(row) is None for row in rows):
-                            logger.error("ES CDC rejected unversioned messages; initialize a new cutover group and rebuild the index")
-                            raise ValueError("ES CDC messages must carry a committed source LSN")
-                        await self._bulk_upsert_with_retry(routes[partition.topic], rows)
-                        await self._consumer.commit({partition: messages[-1].offset + 1})
-                    except Exception as exc:
-                        logger.error("ES CDC batch retained topic=%s offset=%s error=%s",
-                                     partition.topic, messages[0].offset, type(exc).__name__)
-                        if partition in self._consumer.assignment():
-                            self._consumer.seek(partition, messages[0].offset)
-                        await asyncio.sleep(self._config.poll_interval)
+                async with layer_binding_lease(("rds",), expected=self._bindings, pg=self._metadata_pg):
+                    for partition, messages in batches.items():
+                        if not messages:
+                            continue
+                        try:
+                            rows = [message.value for message in messages]
+                            route = routes[partition.topic]
+                            if any(row.get("data_type") != route.table_name for row in rows):
+                                raise ValueError("ES CDC data type disagrees with its RDS binding")
+                            if any(_cdc_version(row) is None for row in rows):
+                                logger.error("ES CDC rejected unversioned messages; initialize a new cutover group and rebuild the index")
+                                raise ValueError("ES CDC messages must carry a committed source LSN")
+                            await self._bulk_upsert_with_retry(route, rows)
+                            await self._consumer.commit({partition: messages[-1].offset + 1})
+                        except Exception as exc:
+                            logger.error("ES CDC batch retained topic=%s offset=%s error=%s",
+                                         partition.topic, messages[0].offset, type(exc).__name__)
+                            if partition in self._consumer.assignment():
+                                self._consumer.seek(partition, messages[0].offset)
+                            await asyncio.sleep(self._config.poll_interval)
         finally:
             await self.stop()
 
@@ -137,17 +164,23 @@ class EsSyncWorker:
         """启动同步主循环。"""
         if settings.etl_output_mode != "debezium":
             raise ValueError("Continuous ES sync requires Debezium LSNs; direct rollback needs an isolated index rebuild")
+        async with layer_binding_lease(("rds",), pg=self._metadata_pg) as self._bindings:
+            await selected_layer_connection("rds", engine="postgresql")
+            await self._resolve_sources()
         await self._run_cdc()
 
     async def run_once(self) -> None:
         """Drain a bounded keyset backfill; existing documents are never overwritten."""
-        await self._init_dependencies()
+        async with layer_binding_lease(("rds",), pg=self._metadata_pg) as self._bindings:
+            await self._init_dependencies()
         for table_config in self._config.tables:
-            upper_bound = await self._backfill_bound(table_config)
+            async with layer_binding_lease(("rds",), expected=self._bindings, pg=self._metadata_pg):
+                upper_bound = await self._backfill_bound(table_config)
             if upper_bound is None:
                 continue
             while True:
-                count = await self._sync_table(table_config, upper_bound=upper_bound, raise_on_error=True)
+                async with layer_binding_lease(("rds",), expected=self._bindings, pg=self._metadata_pg):
+                    count = await self._sync_table(table_config, upper_bound=upper_bound, raise_on_error=True)
                 if count < self._config.batch_size:
                     break
 
@@ -155,6 +188,7 @@ class EsSyncWorker:
         """初始化依赖（PG/ES/水位线/指标）。"""
         pg = self._get_pg()
         await pg.connect()
+        await self._resolve_sources()
         await self._watermark_store.ensure_table()
         es = self._get_es()
         if not await es.ping():
@@ -162,10 +196,10 @@ class EsSyncWorker:
 
         # 初始化指标
         for table_config in self._config.tables:
-            metrics = self._metrics.get_or_create_table(table_config)
+            metrics = self._metrics.get_or_create_table(table_config, self._checkpoint_source(table_config))
             metrics.target_index = table_config.resolve_index_name(self._config.es_index_prefix)
             watermark = await self._watermark_store.get(
-                self._config.syncer_name, table_config.source_table
+                self._config.syncer_name, self._checkpoint_source(table_config)
             )
             metrics.initial_watermark = watermark
             metrics.last_watermark = watermark
@@ -180,7 +214,7 @@ class EsSyncWorker:
             metrics = self._metrics.tables[tc.table_name]
             logger.info(
                 "[ES-Syncer]   %s → %s (watermark=%s)",
-                tc.source_table, tc.resolve_index_name(self._config.es_index_prefix),
+                self._checkpoint_source(tc), tc.resolve_index_name(self._config.es_index_prefix),
                 metrics.last_watermark.isoformat() if metrics.last_watermark else "initial",
             )
 
@@ -207,7 +241,7 @@ class EsSyncWorker:
         Returns:
             本批次同步的记录数
         """
-        metrics = self._metrics.get_or_create_table(table_config)
+        metrics = self._metrics.get_or_create_table(table_config, self._checkpoint_source(table_config))
         metrics.target_index = table_config.resolve_index_name(self._config.es_index_prefix)
         start_time = time.monotonic()
         pending_count = 0  # 已取出但尚未确认写入 ES 的记录数
@@ -225,7 +259,7 @@ class EsSyncWorker:
             # 3. 更新水位线
             await self._watermark_store.update(
                 syncer_name=self._config.syncer_name,
-                source_table=table_config.source_table,
+                source_table=self._checkpoint_source(table_config),
                 target_index=table_config.resolve_index_name(self._config.es_index_prefix),
                 watermark=cursor.watermark,
                 cursor_identity=cursor.identity,
@@ -264,9 +298,13 @@ class EsSyncWorker:
 
     async def _backfill_bound(self, table: TableSyncConfig) -> BackfillCursor | None:
         """Capture a finite upper tuple before reading batches, even during concurrent writes."""
+        relation = object_table_ref(self._source_objects[table.table_name])
+        watermark = sql_identifier(table.watermark_column)
         row = await self._get_pg().fetch_one(
-            f"SELECT {table.watermark_column}, record_id, data_source, data_type FROM {table.source_table} "
-            f"ORDER BY {table.watermark_column} DESC, record_id DESC, data_source DESC, data_type DESC LIMIT 1",
+            f"SELECT {watermark}, record_id, data_source, data_type FROM {relation} "
+            "WHERE data_type = :source_type "
+            f"ORDER BY {watermark} DESC, record_id DESC, data_source DESC, data_type DESC LIMIT 1",
+            {"source_type": table.table_name},
         )
         return self._cursor(table, row) if row else None
 
@@ -276,24 +314,26 @@ class EsSyncWorker:
         """Read stable timestamp/identity pages; legacy checkpoints replay the whole boundary."""
         pg = self._get_pg()
         cursor = await self._watermark_store.get_cursor(
-            self._config.syncer_name, table_config.source_table,
+            self._config.syncer_name, self._checkpoint_source(table_config),
             target_index=table_config.resolve_index_name(self._config.es_index_prefix),
         )
 
+        relation = object_table_ref(self._source_objects[table_config.table_name])
+        watermark = sql_identifier(table_config.watermark_column)
         sql = f"""
             SELECT record_id, data_source, data_type, raw_data,
                    kafka_offset, kafka_partition, kafka_topic,
-                   created_at, updated_at, {table_config.watermark_column} AS backfill_watermark
-            FROM {table_config.source_table}
+                   created_at, updated_at, {watermark} AS backfill_watermark
+            FROM {relation}
         """
-        params: dict[str, Any] = {"limit": self._config.batch_size}
+        params: dict[str, Any] = {"limit": self._config.batch_size, "source_type": table_config.table_name}
 
-        conditions = []
-        columns = f"({table_config.watermark_column}, record_id, data_source, data_type)"
+        conditions = ["data_type = :source_type"]
+        columns = f"({watermark}, record_id, data_source, data_type)"
         if cursor is not None:
             params["watermark"] = cursor.watermark
             if cursor.identity is None:
-                conditions.append(f"{table_config.watermark_column} >= :watermark")
+                conditions.append(f"{watermark} >= :watermark")
             else:
                 conditions.append(f"{columns} > (:watermark, :record_id, :data_source, :data_type)")
                 params.update(zip(("record_id", "data_source", "data_type"), cursor.identity, strict=True))
@@ -301,9 +341,8 @@ class EsSyncWorker:
             conditions.append(f"{columns} <= (:upper_watermark, :upper_record_id, :upper_data_source, :upper_data_type)")
             params.update(zip(("upper_record_id", "upper_data_source", "upper_data_type"), upper_bound.identity, strict=True))
             params["upper_watermark"] = upper_bound.watermark
-        if conditions:
-            sql += " WHERE " + " AND ".join(conditions)
-        sql += f" ORDER BY {table_config.watermark_column}, record_id, data_source, data_type LIMIT :limit"
+        sql += " WHERE " + " AND ".join(conditions)
+        sql += f" ORDER BY {watermark}, record_id, data_source, data_type LIMIT :limit"
 
         rows = await pg.fetch_all(sql, params)
         if not rows:

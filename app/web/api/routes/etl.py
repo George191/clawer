@@ -18,10 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.ai_settings import ai_settings
 from app.etl.tasks.extractors.keyword_files import MAX_FILE_SIZE
 from app.web.api.dependencies.common import CurrentActiveSuperuser, SessionDep, get_current_active_superuser, get_current_user
-from app.web.api.dependencies.session import get_db, get_business_db
+from app.web.api.dependencies.session import get_db, get_registered_business_db
 from app.web.api.models.column_planner_statistic import ColumnPlannerStatistic
-from app.web.api.models.data_connections import BusinessDatabaseSelection
+from app.web.api.models.data_connections import BusinessDatabaseSelection, LayerConnectionSelection
 from app.web.api.models.lineage_column_mapping_paths import ColumnMappingPaths
+from app.web.api.models.layer_lineage import LayerLineage
 from app.web.api.models.lineage_neighbors import (
     LineageColumnReferences, LineageCommonDownstream, LineageCommonUpstream, LineageDirection, LineageNeighbors, LineagePath,
     LineagePathTargets, ObservedLineage,
@@ -132,11 +133,12 @@ from app.web.services.asset_freshness import (
     preview_schema_baseline, put_asset_freshness,
 )
 from app.web.services.index_preview_sandbox import (
-    index_range_pagination_available, index_sandbox_available, run_bounded_index_query, run_index_preview_until_disconnect,
+    INDEX_SANDBOX_SCHEMA, INDEX_SANDBOX_TABLE, index_range_pagination_available, index_sandbox_available, run_bounded_index_query, run_index_preview_until_disconnect,
 )
 from app.web.services.asset_field_freshness import (
-    acknowledge_field_freshness, read_field_freshness, review_field_freshness,
+    TABLE as FIELD_POLICY_TABLE, acknowledge_field_freshness, read_field_freshness, review_field_freshness,
 )
+from app.web.services.table_export_source import SOURCE_LABEL as EXPORT_SOURCE
 from app.web.services.asset_min_rows import acknowledge_min_rows, read_min_rows, review_min_rows
 from app.web.services.asset_job_quality import acknowledge_daily_job, read_job_quality, review_job_quality
 from app.web.services.asset_weekly_job_quality import (
@@ -833,7 +835,32 @@ async def published_data(
 
 @read.get("/layers")
 async def layers() -> list[dict[str, Any]]:
-    return await get_data_connections().warehouse(WAREHOUSE_CONNECTION_ID).layers()
+    rows = await get_data_connections().warehouse(WAREHOUSE_CONNECTION_ID).layers()
+    export_schema, export_table = EXPORT_SOURCE.split(".", 1)
+    sandbox_connection = await get_data_connections().sandbox_connection_id()
+    for row in rows:
+        is_sandbox_connection = sandbox_connection is not None and row.get("connectionId") == sandbox_connection
+        row["transferSandbox"] = is_sandbox_connection and row["schemaName"] == SANDBOX
+        if is_sandbox_connection and row["schemaName"] == export_schema:
+            row["exportTable"] = export_table
+    return rows
+
+
+@read.get("/lineage/layers")
+async def layer_lineage(response: Response, current_user: Any = Depends(get_current_user)) -> LayerLineage:
+    response.headers["Cache-Control"] = "private, no-store"
+    return await get_etl_layers().layer_lineage(can_manage=current_user.is_superuser)
+
+
+@write.get("/data-connections/layer-bindings")
+async def layer_bindings(current_user: Any = Depends(get_current_active_superuser)) -> list[dict]:
+    return await get_data_connections().layer_bindings()
+
+
+@write.put("/data-connections/layer-bindings/{layer}")
+async def bind_layer(layer: str, payload: LayerConnectionSelection,
+                     current_user: Any = Depends(get_current_active_superuser)) -> dict:
+    return await get_data_connections().bind_layer(layer, payload)
 
 
 @read.get("/data-connections/warehouse")
@@ -855,12 +882,14 @@ async def object_types(schema: str | None = None, search: str = Query("", max_le
                        offset: int = Query(0, ge=0, le=1_000_000),
                        ids: str | None = Query(None, max_length=26_000),
                        includeHidden: bool = False, current_user: Any = Depends(get_current_user),
-                       favoritesOnly: bool = False, connection_id: str = WAREHOUSE_CONNECTION_ID) -> dict[str, Any]:
+                       favoritesOnly: bool = False, connection_id: str = WAREHOUSE_CONNECTION_ID,
+                       connectionId: UUID | None = None) -> dict[str, Any]:
     if includeHidden and not getattr(current_user, "is_superuser", False):
         raise HTTPException(403, "Only administrators can include hidden object types")
     return await get_data_connections().warehouse(connection_id).object_types(
         schema, search, group, limit, offset, ids, include_hidden=includeHidden,
         favorite_user_id=str(current_user.id) if favoritesOnly else None,
+        connection_id=str(connectionId) if connectionId else None,
     )
 
 
@@ -1724,8 +1753,17 @@ async def delete_schema(schema: str) -> dict[str, Any]:
 
 @read.get("/{layer}/tables")
 @read.get("/data-connections/{connection_id}/layers/{layer}/tables", name="connection_layer_tables")
-async def tables(layer: str, tableRole: str = "current", connection_id: str = WAREHOUSE_CONNECTION_ID) -> list[dict[str, Any]]:
-    return await get_data_connections().warehouse(connection_id).tables(layer, tableRole)
+async def tables(layer: str, tableRole: str | None = None, connection_id: str = WAREHOUSE_CONNECTION_ID,
+                 connectionId: UUID | None = None, current_user: Any = Depends(get_current_user)) -> list[dict[str, Any]]:
+    rows = await get_data_connections().warehouse(connection_id).tables(
+        layer, tableRole, include_hidden=current_user.is_superuser, connection_id=str(connectionId) if connectionId else None,
+    )
+    if layer == INDEX_SANDBOX_SCHEMA:
+        sandbox_connection = await get_data_connections().sandbox_connection_id()
+        for row in rows:
+            row["indexPreview"] = (sandbox_connection is not None and row.get("connectionId") == sandbox_connection
+                                   and row["name"] == INDEX_SANDBOX_TABLE)
+    return rows
 
 
 @write.post("/{layer}/tables")
@@ -1735,14 +1773,14 @@ async def create_table(layer: str, payload: dict[str, Any]) -> dict[str, Any]:
 
 @read.get("/{layer}/{table}/row-preview-policy", response_model=RowPreviewPolicy)
 async def get_row_preview_policy(
-    layer: str, table: str, request: Request, response: Response,
+    layer: str, table: str, request: Request, response: Response, connectionId: UUID | None = None,
 ) -> RowPreviewPolicy | JSONResponse:
     headers = {"Cache-Control": "private, no-store"}
     response.headers.update(headers)
-    if request.query_params:
-        return JSONResponse({"detail": "Row preview policy accepts no query parameters"}, status_code=422, headers=headers)
+    if any(name != "connectionId" for name in request.query_params) or len(request.query_params.getlist("connectionId")) > 1:
+        return JSONResponse({"detail": "Row preview policy accepts only one connectionId"}, status_code=422, headers=headers)
     try:
-        return await get_etl_layers().row_preview_policy(layer, table)
+        return await get_etl_layers().row_preview_policy(layer, table, connection_id=str(connectionId) if connectionId else None)
     except HTTPException as error:
         return JSONResponse({"detail": error.detail}, status_code=error.status_code, headers=headers)
 
@@ -1750,23 +1788,27 @@ async def get_row_preview_policy(
 @read.get("/{layer}/{table}/data")
 async def table_data(layer: str, table: str, limit: int = Query(50, ge=1, le=500),
                      offset: int = Query(0, ge=0, le=1_000_000),
-                     partition: str | None = None) -> dict[str, Any]:
-    return await get_etl_layers().data(layer, table, {"limit": limit, "offset": offset, "partition": partition})
+                     partition: str | None = None, connectionId: UUID | None = None) -> dict[str, Any]:
+    return await get_etl_layers().data(layer, table, {"limit": limit, "offset": offset, "partition": partition},
+                                       connection_id=str(connectionId) if connectionId else None)
 
 
 @read.get("/{layer}/{table}/preview")
 @read.get("/data-connections/{connection_id}/object-types/{layer}/{table}/preview", name="connection_object_preview")
 async def object_preview(layer: str, table: str, includeHidden: bool = False,
-                         current_user: Any = Depends(get_current_user), connection_id: str = WAREHOUSE_CONNECTION_ID) -> dict[str, Any]:
+                         current_user: Any = Depends(get_current_user), connection_id: str = WAREHOUSE_CONNECTION_ID,
+                         connectionId: UUID | None = None) -> dict[str, Any]:
     if includeHidden and not getattr(current_user, "is_superuser", False):
         raise HTTPException(403, "Only administrators can include hidden object types")
-    return await get_data_connections().warehouse(connection_id).preview(layer, table, include_hidden=includeHidden)
+    return await get_data_connections().warehouse(connection_id).preview(
+        layer, table, include_hidden=includeHidden, connection_id=str(connectionId) if connectionId else None,
+    )
 
 
 @write.get("/{schema}/{table}/indexed-compound-id-sample")
 async def get_indexed_compound_id_sample(
     schema: WarehouseSchema, table: TableName, request: Request, response: Response,
-    session: Annotated[AbstractAsyncContextManager[AsyncSession], Depends(get_business_db, use_cache=False)],
+    session: Annotated[AbstractAsyncContextManager[AsyncSession], Depends(get_registered_business_db, use_cache=False)],
 ) -> IndexedSampleCapability:
     if request.query_params:
         raise HTTPException(422, "Indexed compound ID sample capability accepts no query parameters")
@@ -1778,7 +1820,7 @@ async def get_indexed_compound_id_sample(
 @write.post("/{schema}/{table}/indexed-compound-id-sample")
 async def post_indexed_compound_id_sample(
     schema: WarehouseSchema, table: TableName, payload: IndexedCompoundSampleRequest, request: Request, response: Response,
-    session: Annotated[AbstractAsyncContextManager[AsyncSession], Depends(get_business_db, use_cache=False)],
+    session: Annotated[AbstractAsyncContextManager[AsyncSession], Depends(get_registered_business_db, use_cache=False)],
 ) -> IndexedSampleResult:
     if request.query_params:
         raise HTTPException(422, "Indexed compound ID sample accepts only its fixed predicate body")
@@ -1799,7 +1841,7 @@ async def post_indexed_compound_id_sample(
 @write.get("/{schema}/{table}/indexed-projection-preview", response_model=IndexedProjectionCapability)
 async def get_indexed_projection_preview(
     schema: WarehouseSchema, table: TableName, request: Request, response: Response,
-    session: Annotated[AbstractAsyncContextManager[AsyncSession], Depends(get_business_db, use_cache=False)],
+    session: Annotated[AbstractAsyncContextManager[AsyncSession], Depends(get_registered_business_db, use_cache=False)],
 ) -> IndexedProjectionCapability | JSONResponse:
     response.headers["Cache-Control"] = "private, no-store"
     if request.query_params:
@@ -1812,7 +1854,7 @@ async def get_indexed_projection_preview(
 @write.post("/{schema}/{table}/indexed-projection-preview", response_model=IndexedProjectionResult)
 async def post_indexed_projection_preview(
     schema: WarehouseSchema, table: TableName, request: Request, response: Response,
-    session: Annotated[AbstractAsyncContextManager[AsyncSession], Depends(get_business_db, use_cache=False)],
+    session: Annotated[AbstractAsyncContextManager[AsyncSession], Depends(get_registered_business_db, use_cache=False)],
 ) -> IndexedProjectionResult | JSONResponse:
     response.headers["Cache-Control"] = "private, no-store"
     try:
@@ -1839,7 +1881,7 @@ async def post_indexed_projection_preview(
 @write.get("/{schema}/{table}/indexed-id-sample")
 async def get_indexed_id_sample(
     schema: WarehouseSchema, table: TableName, request: Request, response: Response,
-    session: Annotated[AbstractAsyncContextManager[AsyncSession], Depends(get_business_db, use_cache=False)],
+    session: Annotated[AbstractAsyncContextManager[AsyncSession], Depends(get_registered_business_db, use_cache=False)],
 ) -> IndexedSampleCapability:
     if request.query_params:
         raise HTTPException(422, "Indexed ID sample capability accepts no query parameters")
@@ -1851,7 +1893,7 @@ async def get_indexed_id_sample(
 @write.post("/{schema}/{table}/indexed-id-sample")
 async def post_indexed_id_sample(
     schema: WarehouseSchema, table: TableName, payload: IndexedSampleRequest, request: Request, response: Response,
-    session: Annotated[AbstractAsyncContextManager[AsyncSession], Depends(get_business_db, use_cache=False)],
+    session: Annotated[AbstractAsyncContextManager[AsyncSession], Depends(get_registered_business_db, use_cache=False)],
 ) -> IndexedSampleResult:
     if request.query_params:
         raise HTTPException(422, "Indexed ID sample accepts only exact ID or range bounds in the body")
@@ -1872,7 +1914,7 @@ async def post_indexed_id_sample(
 @read.post("/{schema}/{table}/preview-index-coverage")
 async def get_preview_index_coverage(
     schema: WarehouseSchema, table: TableName, payload: PreviewIndexCoverageInput, request: Request, response: Response,
-    session: Annotated[AbstractAsyncContextManager[AsyncSession], Depends(get_business_db, use_cache=False)],
+    session: Annotated[AbstractAsyncContextManager[AsyncSession], Depends(get_registered_business_db, use_cache=False)],
 ) -> PreviewIndexCoverage:
     if request.query_params:
         raise HTTPException(422, "Index coverage accepts only a filter or sort shape in the body")
@@ -1897,7 +1939,7 @@ async def table_observed_transfer_lineage(
 )
 async def table_column_planner_statistic(
     schema: str, table: str, request: Request, response: Response,
-    session: Annotated[AbstractAsyncContextManager[AsyncSession], Depends(get_business_db, use_cache=False)],
+    session: Annotated[AbstractAsyncContextManager[AsyncSession], Depends(get_registered_business_db, use_cache=False)],
 ) -> ColumnPlannerStatistic | JSONResponse:
     response.headers["Cache-Control"] = "private, no-store"
     denied = JSONResponse({"detail": "Column planner statistic unavailable"}, status_code=404,
@@ -1914,7 +1956,7 @@ async def table_column_planner_statistic(
 @write.get("/{schema}/{table}/lineage-column-mapping-paths", response_model=ColumnMappingPaths)
 async def table_lineage_column_mapping_paths(
     schema: str, table: str, request: Request, response: Response,
-    session: Annotated[AbstractAsyncContextManager[AsyncSession], Depends(get_business_db, use_cache=False)],
+    session: Annotated[AbstractAsyncContextManager[AsyncSession], Depends(get_registered_business_db, use_cache=False)],
 ) -> ColumnMappingPaths | JSONResponse:
     response.headers["Cache-Control"] = "private, no-store"
     denied = JSONResponse({"detail": "Column mapping path unavailable"}, status_code=404,
@@ -1935,7 +1977,7 @@ async def table_lineage_column_mapping_paths(
 @read.get("/{schema}/{table}/lineage-column-references")
 async def table_lineage_column_references(
     schema: WarehouseSchema, table: TableName, column: TableName, direction: LineageDirection,
-    request: Request, response: Response, session: Annotated[AbstractAsyncContextManager[AsyncSession], Depends(get_business_db, use_cache=False)],
+    request: Request, response: Response, session: Annotated[AbstractAsyncContextManager[AsyncSession], Depends(get_registered_business_db, use_cache=False)],
 ) -> LineageColumnReferences:
     if set(request.query_params) != {"column", "direction"} or len(request.query_params.multi_items()) != 2:
         raise HTTPException(422, "Specify exactly one column and reference direction")
@@ -1994,16 +2036,24 @@ async def table_lineage_common_downstream(
 
 
 @read.get("/{layer}/{table}/columns")
-async def table_columns(layer: str, table: str) -> list[dict[str, Any]]:
-    return await get_etl_layers().columns(layer, table)
+async def table_columns(layer: str, table: str, connectionId: UUID | None = None) -> list[dict[str, Any]]:
+    return await get_etl_layers().columns(layer, table, connection_id=str(connectionId) if connectionId else None)
 
 
 @read.get("/{layer}/{table}/evidence")
 async def table_evidence(layer: str, table: str,
+                         connectionId: UUID | None = None,
                          current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
-    return await get_etl_layers().evidence(
+    result = await get_etl_layers().evidence(
         layer, table, include_hidden=bool(getattr(current_user, "is_superuser", False)),
+        connection_id=str(connectionId) if connectionId else None,
     )
+    sandbox_connection = await get_data_connections().sandbox_connection_id() if layer in {SANDBOX, INDEX_SANDBOX_SCHEMA, EXPORT_SOURCE.split(".")[0]} else None
+    matches = sandbox_connection is not None and result.get("connectionId") == sandbox_connection
+    return {**result, "transferSandbox": matches and layer == SANDBOX,
+            "fieldPolicy": matches and (layer, table) == (SANDBOX, FIELD_POLICY_TABLE),
+            "exportSource": matches and f"{layer}.{table}" == EXPORT_SOURCE,
+            "indexPreview": matches and (layer, table) == (INDEX_SANDBOX_SCHEMA, INDEX_SANDBOX_TABLE)}
 
 
 @write.put("/{layer}/{table}/visibility")
@@ -2025,14 +2075,17 @@ async def unfavorite_object(layer: str, table: str, payload: FavoriteMutation | 
 
 
 @read.post("/{layer}/{table}/data")
-async def filtered_data(layer: str, table: str, payload: DataQuery, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+async def filtered_data(layer: str, table: str, payload: DataQuery, connectionId: UUID | None = None,
+                        current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
     if payload.forEditing:
         get_current_active_superuser(current_user)
-    return await get_etl_layers().data(layer, table, payload.model_dump())
+    return await get_etl_layers().data(layer, table, payload.model_dump(), include_hidden=current_user.is_superuser,
+                                       connection_id=str(connectionId) if connectionId else None)
 
 
 @read.post("/{layer}/{table}/preview-rows")
-async def table_preview_rows(layer: str, table: str, payload: PreviewRowsQuery, request: Request, current_user: Any = Depends(get_current_user), session: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def table_preview_rows(layer: str, table: str, payload: PreviewRowsQuery, request: Request, connectionId: UUID | None = None,
+                             current_user: Any = Depends(get_current_user), session: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     if payload.forEditing:
         get_current_active_superuser(current_user)
     row_keys = None
@@ -2059,6 +2112,7 @@ async def table_preview_rows(layer: str, table: str, payload: PreviewRowsQuery, 
 
     query = asyncio.create_task(get_etl_layers().data(
         layer, table, payload.model_dump(exclude={"savedListId"}), preview_rows=True, row_keys=row_keys,
+        connection_id=str(connectionId) if connectionId else None, include_hidden=current_user.is_superuser,
     ))
     watcher = asyncio.create_task(wait_for_disconnect())
     try:
@@ -2173,8 +2227,8 @@ async def delete_row(layer: str, table: str, payload: dict[str, Any]) -> dict[st
 
 
 @read.get("/{layer}/{table}/partitions")
-async def partitions(layer: str, table: str) -> list[dict[str, Any]]:
-    return await get_etl_layers().partitions(layer, table)
+async def partitions(layer: str, table: str, connectionId: UUID | None = None) -> list[dict[str, Any]]:
+    return await get_etl_layers().partitions(layer, table, connection_id=str(connectionId) if connectionId else None)
 
 
 @read.get("/{layer}/{table}/stream")
@@ -2185,11 +2239,13 @@ async def stream(layer: str, table: str, topic: str | None = None,
 
 @read.get("/{layer}/{table}/cdc-evidence")
 async def capture_evidence(layer: str, table: str, response: Response,
+                           connectionId: UUID | None = None,
                            current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
     from app.web.services.etl_capture import capture
 
     response.headers["Cache-Control"] = "no-store"
-    return await capture(layer, table, include_hidden=current_user.is_superuser)
+    return await capture(layer, table, include_hidden=current_user.is_superuser,
+                         connection_id=str(connectionId) if connectionId else None)
 
 
 @write.put("/{layer}/{table}/offset")
@@ -2204,7 +2260,7 @@ async def script(layer: str, table: str) -> dict[str, Any]:
 
 @write.post("/query")
 async def query(payload: SqlQuery) -> dict[str, Any]:
-    return await get_etl_layers().query(payload.sql)
+    return await get_etl_layers().query(payload.sql, connection_id=str(payload.connectionId) if payload.connectionId else None)
 
 
 @read.get("/handlers/{layer}/{table}")

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.web.api.models.lineage_column_mapping_paths import ColumnMappingNode, ColumnMappingPath, ColumnMappingPaths
 from app.web.api.models.lineage_neighbors import LineageDirection
-from app.web.services.etl_layers import _LINEAGE_METADATA_JOIN, _LINEAGE_SCOPE, _LINEAGE_VISIBLE_SQL
+from app.web.services.etl_layers import _LINEAGE_METADATA_JOIN, _LINEAGE_SCOPE, _LINEAGE_VISIBLE_SQL, is_ordinary_schema
 from app.storage.postgres_client import get_pg_client
 from app.etl.schema.catalog_metadata import RELATION_RECORDS, catalog_parameters
 
@@ -25,7 +25,7 @@ _MAX_HOPS = 3
 _MAX_NODES = 20
 _MAX_PEERS = 6
 _MAX_FIELDS = 64
-_FIELD = r"^[a-z_][a-z0-9_]{0,62}$"
+_FIELD = r"^[A-Za-z_][A-Za-z0-9_]{0,62}$"
 
 _READABLE_REGISTRY = text("""
     SELECT c.oid::bigint FROM pg_catalog.pg_class c
@@ -129,7 +129,7 @@ class _WalkNode:
 async def read_column_mapping_paths(
     session: AsyncSession, schema: str, table: str, column: str, direction: LineageDirection,
 ) -> ColumnMappingPaths:
-    if (direction not in ("incoming", "outgoing") or re.fullmatch(r"ts_[a-z0-9_]{1,60}", schema, re.ASCII) is None
+    if (direction not in ("incoming", "outgoing") or not is_ordinary_schema(schema)
         or any(re.fullmatch(_FIELD, name, re.ASCII) is None for name in (table, column))):
         raise ColumnMappingRootUnavailable()
     scope = {**_LINEAGE_SCOPE, "schema": schema, "table": table, "column": column}

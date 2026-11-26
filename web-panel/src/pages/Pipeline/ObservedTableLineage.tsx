@@ -9,12 +9,12 @@ import { useSandboxIdentity } from './SandboxMarkings';
 const horizonMs = 7 * 86_400_000;
 const name = ({ schema, table }: TableLineageIdentity) => `${schema}.${table}`;
 
-export default function ObservedTableLineage({ table, version }: { table: string; version: number }) {
+export default function ObservedTableLineage({ schema, table, version }: { schema: string; table: string; version: number }) {
   const identity = useSandboxIdentity();
-  return identity ? <Workspace key={JSON.stringify([identity, table, version])} table={table} /> : null;
+  return identity ? <Workspace key={JSON.stringify([identity, schema, table, version])} schema={schema} table={table} /> : null;
 }
 
-function Workspace({ table }: { table: string }) {
+function Workspace({ schema, table }: { schema: string; table: string }) {
   const title = useId();
   const [open, setOpen] = useState(false);
   const [direction, setDirection] = useState<TableLineageDirection>('incoming');
@@ -29,13 +29,13 @@ function Workspace({ table }: { table: string }) {
         setDirection(event.target.value === 'outgoing' ? 'outgoing' : 'incoming')}>
         <option value="incoming">Incoming</option><option value="outgoing">Outgoing</option>
       </NativeSelect></label>
-      <ObservedDirection key={direction} table={table} direction={direction} />
+      <ObservedDirection key={direction} schema={schema} table={table} direction={direction} />
     </>}
   </section>;
 }
 
-function ObservedDirection({ table, direction }: { table: string; direction: TableLineageDirection }) {
-  const source = { schema: 'ts_transfer_sandbox', table };
+function ObservedDirection({ schema, table, direction }: { schema: string; table: string; direction: TableLineageDirection }) {
+  const source = { schema, table };
   const [snapshot, setSnapshot] = useState<Observation>();
   const [failed, setFailed] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -47,7 +47,7 @@ function ObservedDirection({ table, direction }: { table: string; direction: Tab
       else setFailed(true);
     }).catch(() => { if (!request.signal.aborted) setFailed(true); });
     return () => request.abort();
-  }, [table, direction]);
+  }, [schema, table, direction]);
 
   useEffect(() => {
     if (!snapshot?.available) return;

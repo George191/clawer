@@ -59,12 +59,13 @@ class CatalogSession:
         return self.results.pop(0)
 
 
-def service(*results, ontology_installed=True, relations_installed=True):
+def service(*results, ontology_installed=True, relations_installed=True, registered=(), counts=None):
     instance = object.__new__(EtlLayers)
+    instance._pg = object()
     session = CatalogSession(*results, ontology_installed=ontology_installed)
 
     @asynccontextmanager
-    async def context(*, repeatable_read: bool = False, query_timeout: bool = True):
+    async def context(**_scope):
         yield session
 
     instance.session = context
@@ -74,6 +75,8 @@ def service(*results, ontology_installed=True, relations_installed=True):
             sql = str(query)
             if "to_regclass" in sql:
                 return Result(scalar=ontology_installed if "ontology_objects" in sql else relations_installed)
+            if "FROM app.ontology_objects o WHERE o.is_active" in sql:
+                return Result(sorted(registered, key=lambda row: (row["schema_name"], row["table_name"])))
             return Result([])
 
         async def scalar(self, query, params=None):
@@ -83,13 +86,22 @@ def service(*results, ontology_installed=True, relations_installed=True):
     async def metadata_context():
         yield MetadataSession()
 
-    instance._metadata_pg = SimpleNamespace(session=metadata_context, fetch_all=AsyncMock(return_value=[]))
+    bindings = [{"layer": layer, "id": "b982c980-9f88-4490-bef1-4720b18eafb5", "engine": "postgresql", "name": "Test"}
+                for layer in {row["layer"] for row in registered}]
+    instance._metadata_pg = SimpleNamespace(session=metadata_context, connect=AsyncMock(), fetch_all=AsyncMock(return_value=bindings))
+    instance._page_counts = AsyncMock(return_value=counts or {})
     return instance, session
 
 
 def summary(schema="ts_ods", table="objects", **changes):
     return {"oid": 101, "schema": schema, "name": table, "description": "Actual PG table comment",
             "data_type": "catalog classification", "object_count": 23, "properties_count": 3, "visibility": "normal", **changes}
+
+
+def registered(schema, table, group, identifier, **changes):
+    return {"id": identifier, "schema_name": schema, "table_name": table, "layer": "test",
+            "table_role": "current", "resource_group": group, "data_type": "catalog classification",
+            "description": "Registered object", "properties_count": 3, "visibility": "normal", **changes}
 
 
 def column(name, type="text", primary=False, position=None, nullable=True, comment=None):
@@ -107,70 +119,63 @@ def foreign(name="fk_owner", source_schema="ts_ods", source_table="objects",
 
 class ObjectCatalogTests(unittest.IsolatedAsyncioTestCase):
     async def test_catalog_pagination_and_facets_are_real_metadata_counts(self):
-        instance, session = service(Result([
-            {"schema": "ts_ods", "resource_group": "ingestion", "count": 5},
-            {"schema": "ts_custom", "resource_group": "other", "count": 3},
-        ]), Result([summary()]))
+        assets = [registered("DataCenter", f"i{i}", "other", i) for i in range(2)] + [
+            registered("DataCenter", "objects", "other", 2, description="My registered description")
+        ] + [registered("ts_ods", f"i{i}", "ingestion", i) for i in range(3, 8)]
+        instance, session = service(registered=assets, counts={2: 23})
         result = await instance.object_types(limit=1, offset=2)
         self.assertEqual((result["total"], result["limit"], result["offset"]), (8, 1, 2))
-        self.assertEqual(result["schemaCounts"], {"ts_ods": 5, "ts_custom": 3})
+        self.assertEqual(result["schemaCounts"], {"ts_ods": 5, "DataCenter": 3})
         self.assertEqual(result["groupCounts"], {"ingestion": 5, "processing": 0, "serving": 0, "other": 3})
         self.assertEqual(result["groupSchemaCounts"], {
-            "ingestion": {"ts_ods": 5}, "processing": {}, "serving": {}, "other": {"ts_custom": 3},
+            "ingestion": {"ts_ods": 5}, "processing": {}, "serving": {}, "other": {"DataCenter": 3},
         })
         item = result["items"][0]
-        self.assertEqual(item["id"], "ts_ods.objects")
+        self.assertEqual(item["id"], "DataCenter.objects")
+        self.assertEqual(item["registryId"], "2")
         self.assertEqual(item["displayName"], "objects")
-        self.assertEqual(item["description"], "Actual PG table comment")
+        self.assertEqual(item["description"], "My registered description")
         self.assertEqual(item["objectCount"], 23)
         self.assertTrue(item["objectCountEstimated"])
         self.assertEqual(item["propertiesCount"], 3)
         self.assertIsNone(item["titleProperty"])
         self.assertEqual(item["visibility"], "normal")
         self.assertNotIn("oid", item)
-        sql, params = session.calls[-1]
-        self.assertEqual((params["limit"], params["offset"]), (1, 2))
-        self.assertIn("pg_stat_get_live_tuples", sql)
-        self.assertIn("WITH RECURSIVE descendants", sql)
-        self.assertNotIn("SELECT t.*", sql)
+        self.assertEqual(session.calls, [])
+        self.assertEqual([row["id"] for row in instance._page_counts.await_args.args[0]], [2])
 
-    async def test_schema_search_ids_are_bound_and_group_does_not_change_facets(self):
-        instance, session = service(Result([
-            {"schema": "ts_ods_hist", "resource_group": "ingestion", "count": 4},
-            {"schema": "ts_custom", "resource_group": "other", "count": 2},
-        ]), Result([summary("ts_ods_hist", data_type=None)]))
+    async def test_schema_search_filters_exact_ids_and_group_does_not_change_facets(self):
         needle = "O'Reilly %_ ; DROP TABLE things"
-        result = await instance.object_types("ods_hist", needle, "ingestion", 1, 0,
-                                             "ts_ods_hist.objects,ts_custom.second")
-        self.assertEqual(result["total"], 4)
+        instance, session = service(registered=[
+            registered("HistStore", "objects", "ingestion", 1, description=needle, data_type=None, table_role="history"),
+            registered("OtherStore", "Second", "other", 2, description=needle),
+            registered("HistStore", "ignored", "ingestion", 3, description=needle),
+        ])
+        result = await instance.object_types("HistStore", needle, "ingestion", 1, 0, "HistStore.objects,OtherStore.Second")
+        self.assertEqual(result["total"], 1)
         self.assertEqual(result["groupCounts"]["other"], 0)
-        self.assertEqual(result["schemaCounts"], {"ts_ods_hist": 4})
-        self.assertEqual(result["groupSchemaCounts"]["other"], {"ts_custom": 2})
+        self.assertEqual(result["schemaCounts"], {"HistStore": 1})
+        self.assertEqual(result["groupSchemaCounts"]["other"], {"OtherStore": 1})
         self.assertEqual(result["items"][0]["dataType"], "")
-        count_sql, params = next((sql, params) for sql, params in session.calls if params and "search" in params and "count(*)" in sql)
-        self.assertNotIn(needle, count_sql)
-        self.assertEqual(params["search"], needle)
-        self.assertEqual(params["schema"], "ts_ods_hist")
-        self.assertEqual(params["ids"], ["ts_ods_hist.objects", "ts_custom.second"])
-        self.assertNotIn("group", params)
-        self.assertNotIn("n.nspname = :schema", count_sql)
-        self.assertIn("n.nspname = :schema", session.calls[-1][0])
-        self.assertEqual(session.calls[-1][1]["group"], "ingestion")
-        self.assertIn("o.data_type", session.calls[-1][0])
+        self.assertEqual(result["items"][0]["tableRole"], "history")
+        self.assertIsNone(result["items"][0]["objectCount"])
+        self.assertFalse(result["items"][0]["objectCountAvailable"])
+        self.assertEqual(session.calls, [])
 
     async def test_empty_or_out_of_range_page_retains_counts_without_fetching_rows(self):
-        instance, session = service(Result([{"schema": "ts_task", "resource_group": "processing", "count": 2}]))
+        instance, session = service(registered=[registered("ts_task", f"i{i}", "processing", i) for i in range(2)])
         result = await instance.object_types(offset=2)
         self.assertEqual(result["items"], [])
         self.assertEqual(result["total"], 2)
-        self.assertEqual(sum("count(*) AS count" in sql for sql, _ in session.calls), 1)
+        self.assertEqual(session.calls, [])
+        instance._page_counts.assert_awaited_once_with([])
 
     async def test_schema_navigation_facets_keep_other_schemas_when_current_group_is_empty(self):
-        instance, session = service(Result([
-            {"schema": "ts_ods", "resource_group": "ingestion", "count": 5},
-            {"schema": "ts_dim", "resource_group": "serving", "count": 2},
-            {"schema": "ts_custom", "resource_group": "ingestion", "count": 3},
-        ]))
+        assets = [registered(schema, f"i{i}", group, i)
+                  for schema, group, count in (("ts_ods", "ingestion", 5), ("ts_dim", "serving", 2),
+                                               ("ts_custom", "ingestion", 3))
+                  for i in range(count)]
+        instance, session = service(registered=assets)
         result = await instance.object_types(schema="ts_ods", group="serving", limit=1)
         self.assertEqual(result["items"], [])
         self.assertEqual(result["total"], 0)
@@ -178,20 +183,23 @@ class ObjectCatalogTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["groupCounts"], {"ingestion": 5, "processing": 0, "serving": 0, "other": 0})
         self.assertEqual(result["groupSchemaCounts"]["ingestion"], {"ts_ods": 5, "ts_custom": 3})
         self.assertEqual(result["groupSchemaCounts"]["serving"], {"ts_dim": 2})
-        self.assertEqual(sum("count(*) AS count" in sql for sql, _ in session.calls), 1)
+        self.assertEqual(session.calls, [])
 
     async def test_catalog_and_preview_exclude_internal_schemas_and_all_child_tables(self):
-        instance, session = service(Result([{ "schema": "ts_ods", "resource_group": "ingestion", "count": 1}]),
-                                    Result([summary()]))
-        await instance.object_types()
-        scoped = [sql for sql, _ in session.calls if "FROM pg_class c" in sql]
-        self.assertEqual(len(scoped), 2)
-        for sql in scoped:
-            self.assertIn("n.nspname <> 'ts_meta'", sql)
-            self.assertIn("n.nspname <> 'ts_meta_hist'", sql)
-            self.assertIn("n.nspname ~ '^ts_[a-z0-9_]+$'", sql)
-            self.assertIn("NOT c.relispartition", sql)
-            self.assertIn("child.inhrelid = c.oid", sql)
+        assets = [registered(schema, "Objects", "ingestion", i)
+                  for i, schema in enumerate(("DataCenter", "app", "ts_meta", "ts_meta_hist"))]
+        instance, session = service(Result([{"id": 0, "rows": 23}]), registered=assets)
+        result = await instance.object_types()
+        self.assertEqual([row["id"] for row in result["items"]], ["DataCenter.Objects"])
+        session.allowed_prefixes = ("WITH RECURSIVE",)
+        self.assertEqual(await instance._connection_counts("selected", assets[:1]), {0: 23})
+        sql, params = session.calls[0]
+        self.assertIn("'ts_meta'", sql)
+        self.assertIn("'ts_meta_hist'", sql)
+        self.assertIn("NOT c.relispartition", sql)
+        self.assertIn("child.inhrelid = c.oid", sql)
+        self.assertIn("has_table_privilege", sql)
+        self.assertIn("DataCenter", params["selected"])
 
     async def test_invalid_schema_identifier_group_and_pagination_fail_before_querying(self):
         instance, session = service()
@@ -199,7 +207,7 @@ class ObjectCatalogTests(unittest.IsolatedAsyncioTestCase):
                   ({"schema": "ods; drop table x"}, 400),
                   ({"group": "invented"}, 400), ({"limit": 0}, 400), ({"limit": 501}, 400),
                   ({"offset": -1}, 400), ({"offset": 1_000_001}, 400),
-                  ({"ids": "public.objects"}, 400), ({"ids": "ts_ods.bad;query"}, 400),
+                  ({"ids": "objects"}, 400), ({"ids": "ts_ods.bad;query"}, 400),
                   ({"ids": ",".join(f"ts_ods.t{i}" for i in range(201))}, 400),
                   ({"search": "x" * 1001}, 400)]
         for kwargs, code in inputs:
@@ -241,7 +249,7 @@ class ObjectCatalogTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(linked["ts_ods.objects"]["direction"], "both")
         self.assertEqual([item["direction"] for item in linked["ts_ods.objects"]["relationships"]], ["outgoing", "incoming"])
 
-    async def test_incoming_and_outgoing_fk_never_expose_non_ts_or_metadata_schema(self):
+    async def test_incoming_and_outgoing_fk_require_registered_ordinary_objects(self):
         links = [foreign("public_in", "public", "private", "ts_ods", "objects"),
                  foreign("meta_out", target_schema="ts_meta"),
                  foreign("meta_history_out", target_schema="ts_meta_hist"),
@@ -251,12 +259,15 @@ class ObjectCatalogTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["linkedObjectTypes"], [])
         sql = next(sql for sql, _ in session.calls if "FROM pg_constraint" in sql)
         for side, table in (("sn", "sc"), ("tn", "tc")):
-            self.assertIn(f"{side}.nspname <> 'ts_meta'", sql)
-            self.assertIn(f"{side}.nspname <> 'ts_meta_hist'", sql)
-            self.assertIn(f"{side}.nspname ~ '^ts_[a-z0-9_]+$'", sql)
+            self.assertIn(f"{side}.nspname NOT IN", sql)
+            self.assertIn(f"has_schema_privilege({side}.oid, 'USAGE')", sql)
             self.assertIn(f"NOT {table}.relispartition", sql)
             self.assertIn(f"child.inhrelid = {table}.oid", sql)
         self.assertIn("con.conparentid = 0", sql)
+        self.assertIn("'ts_meta'", sql)
+        self.assertIn("'ts_meta_hist'", sql)
+        self.assertIn("AND so.is_active", sql)
+        self.assertIn("AND target_object.is_active", sql)
 
     async def test_missing_or_partition_child_table_returns_404_and_does_not_query_business_data(self):
         instance, session = service(Result([]))
@@ -274,12 +285,11 @@ class ObjectCatalogTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sum("FROM pg_attribute a JOIN pg_class c" in sql for sql, _ in session.calls), 0)
 
     async def test_same_schema_metadata_groups_accumulate_facets_and_description_search(self):
-        instance, session = service(Result([
-            {"schema": "ts_custom", "resource_group": "ingestion", "count": 2},
-            {"schema": "ts_custom", "resource_group": "serving", "count": 3},
-        ]), Result([summary("ts_custom", description="Persisted metadata description",
-                            resource_group="serving", data_type="organization",
-                            data_type_source="registry", description_source="registry")]))
+        records = [registered("ts_custom", f"i{i}", "ingestion" if i < 2 else "serving", i,
+                              description="Persisted metadata description", data_type="organization",
+                              data_type_source="registry", description_source="registry") for i in range(5)]
+        records.append(registered("ts_custom", "unrelated", "serving", 5))
+        instance, session = service(registered=records)
         result = await instance.object_types(search="metadata description", group="serving")
         self.assertEqual(result["schemaCounts"], {"ts_custom": 5})
         self.assertEqual(result["groupCounts"], {"ingestion": 2, "processing": 0, "serving": 3, "other": 0})
@@ -290,10 +300,7 @@ class ObjectCatalogTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((item["description"], item["dataType"], item["resourceGroup"]),
                          ("Persisted metadata description", "organization", "serving"))
         self.assertEqual(item["descriptionSource"], "registry")
-        queries = [(sql, params) for sql, params in session.calls if params and "search" in params]
-        self.assertTrue(all("o.description" in sql for sql, _ in queries))
-        self.assertTrue(all(params["search"] == "metadata description" for _, params in queries))
-        self.assertNotIn("metadata description", queries[0][0])
+        self.assertEqual(session.calls, [])
 
     async def test_missing_ontology_is_503_for_preview_empty_and_out_of_range_catalog_without_writes(self):
         for operation in ("preview", "empty", "out_of_range"):
@@ -317,7 +324,7 @@ class ObjectCatalogTests(unittest.IsolatedAsyncioTestCase):
         logical = [{**row, "relationship_kind": "association", "cardinality": "many_to_many", "description": "", "provenance": "test"} for row in links]
         instance, session = service(Result([summary(properties_count=0, data_type="organization")]),
                                     Result(links), Result(logical))
-        result = await instance.preview("ods", "objects")
+        result = await instance.preview("ts_ods", "objects")
         self.assertEqual(result["dataType"], "organization")
         self.assertEqual(result["linkedObjectTypes"][0]["dataType"], "company")
         self.assertEqual(result["linkedObjectTypes"][0]["direction"], "both")
@@ -456,7 +463,7 @@ class ObjectCatalogTests(unittest.IsolatedAsyncioTestCase):
         partitions = [{"name": "objects_p0", "schema": "ts_ods", "bounds": "FOR VALUES WITH (modulus 2, remainder 0)"}]
         instance, session = service(Result([column("id", comment="Identifier comment")]), Result(partitions))
         session.allowed_prefixes = ("SELECT", "WITH")
-        self.assertEqual(await instance.partitions("ods", "objects"), partitions)
+        self.assertEqual(await instance.partitions("ts_ods", "objects"), partitions)
         self.assertEqual(session.calls[-1][1]["qualified"], '"ts_ods"."objects"')
 
 
@@ -464,25 +471,22 @@ class ObjectRouteTests(unittest.TestCase):
     def setUp(self):
         self.app = FastAPI()
         self.app.include_router(etl.router, prefix="/api/v1")
-        self.app.dependency_overrides[get_current_user] = lambda: {"id": "ordinary-user"}
+        self.app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id="ordinary-user", is_superuser=False)
         @asynccontextmanager
         async def business_session():
             yield object()
-        self.app.dependency_overrides[etl.get_business_db] = lambda: business_session()
+        self.app.dependency_overrides[etl.get_registered_business_db] = lambda: business_session()
         self.client = TestClient(self.app)
 
     def test_warehouse_descriptor_catalog_and_preview_use_the_same_registered_connection(self):
-        instance, _ = service(Result([]),
-                              Result([summary(properties_count=0)]), Result([]), Result([]))
+        instance, _ = service(Result([summary(properties_count=0)]), Result([]), Result([]))
         pg = object()
-        business_pg = object()
         connection_id = "3fa21f72-6f83-46bd-af04-6f221ed68ca8"
         with patch.object(data_connections, "get_pg_client", return_value=pg):
             registry = data_connections.DataConnections()
         with (patch.object(etl, "get_data_connections", return_value=registry),
               patch.object(data_connections, "selected_business_connection", new_callable=AsyncMock,
                            return_value={"id": connection_id, "name": "Selected business source", "config": {"database": "warehouse_fixture"}}),
-              patch.object(data_connections, "get_business_pg_client", return_value=business_pg),
               patch.object(data_connections, "EtlLayers", return_value=instance) as layers):
             warehouse = "/api/v1/etl/data-connections/warehouse"
             response = self.client.get(warehouse)
@@ -500,7 +504,7 @@ class ObjectRouteTests(unittest.TestCase):
             self.assertEqual(self.client.get(unrelated + "/object-types").status_code, 404)
             self.assertEqual(self.client.get(unrelated + "/layers/ts_ods/tables").status_code, 404)
             self.assertEqual(layers.call_count, 2)
-            self.assertTrue(all(call.kwargs == {"pg": business_pg, "metadata_pg": pg} for call in layers.call_args_list))
+            self.assertTrue(all(call.kwargs == {"metadata_pg": pg} for call in layers.call_args_list))
 
     def test_missing_ontology_is_explicit_503_on_both_get_routes(self):
         instance, session = service(Result([]), ontology_installed=False)
@@ -524,7 +528,7 @@ class ObjectRouteTests(unittest.TestCase):
         self.assertEqual(response.json(), fields)
         self.assertEqual(len(session.calls), 1)
         sql, params = session.calls[0]
-        self.assertEqual(params, {"schema": "ts_ods", "table": "objects"})
+        self.assertEqual(params, {"schema": "ts_ods", "table": "objects", "include_hidden": False, "object_metadata": "[]"})
         self.assertIn('a.attnum AS "ordinalPosition"', sql)
         self.assertIn("FROM pg_attribute", sql)
         self.assertIn("ORDER BY a.attnum", sql)
@@ -557,7 +561,7 @@ class ObjectRouteTests(unittest.TestCase):
             self.assertEqual(instance.data.await_args.args[2]["limit"], 50)
             self.assertEqual(self.client.post("/api/v1/etl/ods/objects/data",
                                               json={"limit": 101, "offset": 2001}).status_code, 200)
-            self.assertFalse(instance.data.await_args.kwargs)
+            self.assertEqual(instance.data.await_args.kwargs, {"include_hidden": False, "connection_id": None})
 
     def test_indexed_sample_is_admin_only_and_does_not_accept_generic_filters(self):
         path = "/api/v1/etl/ts_ods/objects/indexed-id-sample"
@@ -661,7 +665,7 @@ class ObjectRouteTests(unittest.TestCase):
         selected = "?column=id&direction=incoming"
         result = {"column": "id", "direction": "incoming", "references": [], "truncated": False}
         with patch.object(etl, "read_lineage_column_references", new=AsyncMock(return_value=result)) as read:
-            for query in ("", "?column=id", "?column=ID&direction=incoming", "?column=id&direction=sideways",
+            for query in ("", "?column=id", "?column=ID-bad&direction=incoming", "?column=id&direction=sideways",
                           selected + "&column=other", selected + "&hidden=true"):
                 self.assertEqual(self.client.get(url + query).status_code, 422)
             read.assert_not_called()

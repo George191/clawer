@@ -76,8 +76,8 @@ data/             批量采集参数与本地数据文件
 与 `downloader/adapters` 的资源提取、响应校验职责分开。依赖方向为业务模块 → 客户端 → 驱动，
 客户端不导入业务模块。
 
-ETL 按职责组织：`etl/schema/layout.py` 定义表布局与分区规则，`baselines.py` 保存基线 DDL，
-`ddl.py` 负责纯 DDL 生成和校验和计算，`registry.py` 通过 PostgreSQL 客户端维护注册表。
+ETL 通过 `etl/schema/registry.py` 按层级、角色和语义类型解析 `app.ontology_objects` 中登记的物理表。
+`layout.py` 提供分区时间范围规则，`ddl.py` 负责 DDL 生成和校验和计算。
 `etl/state/offsets.py` 通过 Redis 客户端管理消费位点与恢复状态；`normalizers/` 和 `tasks/`
 分别承担标准化和业务处理。Schema 的纯规则模块不依赖数据库客户端，Worker 组合这些能力。
 
@@ -173,8 +173,7 @@ npm install
 首次启用登录时，在服务器 `.env` 中设置 `FIRST_SUPERUSER`（邮箱）、
 `FIRST_SUPERUSER_PASSWORD` 和 `FIRST_SUPERUSER_PHONE`。这些配置需要初始化后才会成为可登录账号。
 `SPIDER_PG_URL` 只配置系统数据库 `www.astral.io`，系统表位于 `app` schema。
-在 Data Connections 中保存 PostgreSQL 连接并选择 **Use for ETL**，RDS/ODS/TASK/DWD 等 Workers 使用所选业务库读写数据；未选择时明确拒绝启动，不会使用系统库作为业务库。
-切换业务库前先停止 Workers 与旧 PostgreSQL CDC 捕获、排空旧消息；为新业务库准备并注册 CDC 后，再重启 Workers 和 relay。
+在 Data Connections 中为每个使用的 ETL 层绑定连接。Workers 使用对应层的业务连接，缺少必要绑定时启动失败。切换 PostgreSQL 连接前停止相关 Workers 与旧 CDC 捕获并排空旧消息，为新业务库准备并注册 CDC 后，再重启 Workers 和 relay。
 连接地址必须在容器内可达。容器中的 `localhost` 指容器自身，不能沿用开发机的本地转发地址。
 构建 Web 镜像后执行一次：
 
@@ -373,7 +372,7 @@ MongoDB 与 PostgreSQL 的出站统一由 Debezium Connect 捕获，Python Worke
 
 资源下载按模板 `download` 与适配器生成的下载项比较输入签名，普通标题等业务字段更新不重下文件；URL、资源版本、目标资源字段等输入变化时失效对应旧路径并重新排队。纯输入计划随记录冻结到 `_meta.download_plan`，同名模板发布新版本不会改写旧任务；缓存按 `SPIDER_DOWNLOAD_TEMPLATE_CACHE_SECONDS` 刷新，摘要不匹配时立即验证。模板可声明 `version_selector`，适配器可提供 `DownloadItem.version`；同 URL 内容变化而来源未提供版本信息时，系统无法自动判断。历史无签名的文件会安全重验一次；无冻结计划且无法验证历史摘要的记录会保留错误并由补扫持续触发，直到输入修复或重新采集，不会假报完成。下载认领、资源输入和对象路径均隔离旧版本，业务 ACK 仍使用 `write_token` 与下载版本检查。并发资源更新使用 CAS，仅冲突记录重读，资源变化路径会增加单条数据库请求，不能把离线微基准当成实际数据库吞吐。
 
-PG 各实际已实现层的 current 表写入经 WAL → Debezium → 原始 CDC topic → `postgres-cdc-syncer` → 原业务 topic。relay 在同一 Kafka 事务中发送输出与提交源位点，下游消费者使用 `read_committed`；这不等于数据库、算法调用及所有外部系统之间具备端到端 exactly-once。RDS/ODS/TASK/DWD 已存在的业务逻辑保留；DWS/DIM 没有业务 handler、ADS 没有 worker 的部分不被宣称为已实现功能。PG 适配使用事件本身的完整 `after`，不回读最新数据库冒充历史快照；JSONB、金额、微秒时间和空间字段按 Connect schema 解析。缺失 TOAST 数据或无契约的物理删除会阻止位点推进并报告错误，业务软删除仍正常传播。
+PG 各已实现层的 current 表写入经 WAL → Debezium → 原始 CDC topic → `postgres-cdc-syncer` → 原业务 topic。共享同一个已保存 PostgreSQL 连接的 ETL 层使用同一个内部 connector、publication 和 relay 消费组。内部 publication 显式包含已登记、具备完整业务身份列的 current 父表，保留物理 schema 和表名的大小写。relay 在同一 Kafka 事务中发送输出与提交源位点，下游消费者使用 `read_committed`。PG 适配使用事件本身的完整 `after`，按 Connect schema 解析 JSONB、金额、微秒时间和空间字段。缺失 TOAST 数据或无契约的物理删除会阻止位点推进，业务软删除仍正常传播。Data Connections 的来源 CDC 使用各自保存的表选择、publication、topic 和 slot，由该连接的 CDC 操作管理。
 
 工作台在 CDC 模式下拒绝 current 表的物理行删除，防止一个受支持的 UI 操作把 relay 卡在无删除契约的事件上；应通过业务软删除表达失效。普通历史/自定义 schema 继续使用既有主键及权限校验。直接在数据库执行破坏性操作仍需遵守迁移/恢复流程。
 
@@ -395,18 +394,19 @@ docker compose run --rm --no-deps syncer python -m app.syncer.mongo_cdc --connec
 
 注册采用 `snapshot.mode=no_data`，不全量重发已同步记录，历史待下载/待同步记录由现有扫描补偿处理。确认 connector 正常后，通过现有发布流程重建并重启 crawler、`downloader` 和 `syncer`。从分类型部署切换时，先停止旧的分类型或定向下载器、同步器，再启动通用实例，避免同一范围重复处理。验证新增记录、业务更新、下载回写均能到达原业务 topic，并检查同步 ACK/下载心跳没有产生业务消息循环。暂停并恢复 Connect 后应从内部 offset topic 续接；停机超过 oplog 保留窗口时需检查 connector 状态并恢复采集，期间 Mongo 补偿继续处理当前待处理状态。不要删除内部 topic 来重置正常位点。
 
-PG 首次切换须先暂停 ETL 写入并排空旧发送路径，按以下顺序准备。`--prepare` 会修改 publication、REPLICA IDENTITY 与 lineage 列；`--check` 只读，不能与 `--prepare` 同用。准备、检查和注册均使用 Data Connections 中选定的 PostgreSQL 业务连接，账号须具有相应的建表、发布及复制权限；`SPIDER_PG_URL` 仅用于读取系统连接注册表。
+PG 首次切换须先暂停 ETL 写入。由旧 connector 把已提交 WAL 发送到 Kafka，再用旧 relay 排空新发布范围将移除的原始 topic。准备、检查和注册默认遍历各层绑定的 PostgreSQL 连接，可追加 `--layer <层>` 将操作限定在该层绑定的连接。`--prepare` 保存内部 CDC 身份并准备 publication、REPLICA IDENTITY 与 lineage 列。收窄既有 publication 时，它核对待移除 topic 的分区位点并在有积压时停止。保留范围内的 topic 继续由原消费组接续。`--check` 只读。业务库账号须具有准备和复制所需权限，`SPIDER_PG_URL` 用于系统数据库中的连接和 CDC 身份注册表。
 
 ```bash
 docker compose build syncer rds-worker ods-worker task-worker
-docker compose run --rm --no-deps rds-worker python -m app.etl.main --init-schema
 docker compose run --rm --no-deps syncer python -m app.syncer.postgres_cdc --prepare
 docker compose run --rm --no-deps syncer python -m app.syncer.postgres_cdc --check
 docker compose run --rm --no-deps syncer python -m app.syncer.postgres_cdc --connect-url http://mongo-cdc-syncer:8083
 docker compose up -d postgres-cdc-syncer
 ```
 
-确认 PG connector/task 为 RUNNING 且 slot 位点有效后再启动 ETL。`SPIDER_ETL_OUTPUT_MODE=debezium` 为默认模式；未具备 publication/slot 时 ETL 会拒绝消费输入，避免先写库而没有变更捕获。默认 `no_data` 只接续注册后的变化，首次注册前的历史数据必须单独回填，不能依赖不存在的旧 slot 补回；若需初始快照可显式选择 `--snapshot-mode initial`，先估算数据库和 Kafka 负载。原始 PG topic 为 `${SPIDER_KAFKA_TOPIC}-postgres-cdc.<schema>.<table>`，不要删除内部位点 topic 或直接重置复制槽。复制槽保留 WAL，须对保留字节、未确认字节及磁盘空间设置部署环境告警。
+确认 PG connector/task 为 RUNNING 且 slot 位点有效后再启动 ETL。默认 `SPIDER_ETL_OUTPUT_MODE=debezium`，ETL 在缺少可用 publication 或 slot 时拒绝消费输入。`no_data` 从注册后的变更接续，早于首次注册的数据须单独回填。`--snapshot-mode initial` 可对已发布的父表执行初始快照。原始 PG topic 格式为 `<已保存 topic prefix>.<物理 schema>.<物理表名>`。保留 Kafka Connect 内部位点 topic、复制槽和 relay 消费组。复制槽保留 WAL，监控保留字节、未确认字节及磁盘空间。
+
+数据库改名前先完成系统 Alembic 迁移 `79cd69463f21`，并核对正在运行的内部 connector 名、`topic.prefix`、`slot.name`、`publication.name` 与 `app.etl_postgres_cdc_bindings` 中的保存值。旧部署采用了不同于原默认命名的实际身份时，在升级前用 Alembic 的 `-x legacy_cdc_connector_name=... -x legacy_cdc_topic_prefix=... -x legacy_cdc_slot_name=... -x legacy_cdc_publication_name=...` 提供原值。改名后更新同一条 Data Connection 的物理数据库配置并重跑内部注册，核对同一 slot 和消费组从原位点续接。变更物理 schema 或表名会改变原始 topic 的对应名称，切换前先排空旧 topic。
 
 TASK 的 `source_revision` 与 DWD 的 `ods_revision`/`task_revision` 保存完整上游 ODS 输入的规范摘要。算法在锁外执行，落库前验证当前源行；ODS 换版清除不匹配的旧算法结果，图谱仅发布 revision 一致的完整记录。算法没有声明输入字段契约，因此摘要保留所有持久输入字段，包括审计时间，可能增加重算次数，需要压测。历史 NULL lineage 代表关联未知，不能据此发布图谱；须从最新 ODS 显式重算 TASK/DWD，`no_data` 不会代替这项迁移。RDS 同业务版本只接受同 topic/partition 的 offset 有序更新；跨流同版本但内容冲突会阻断，切换 topic 时必须先排空并核对版本，不能通过静默跳过规避。
 
@@ -481,7 +481,7 @@ RDS 使用一个正则订阅 Consumer 接收旧 `SPIDER_ETL_RAW_TOPIC` 和 `${SP
 - `ODS_FIELDS = {"新输出类型": {"字段": "TEXT"}}`：新表声明业务字段类型；身份、审计、主键、分区由通用执行器管理。现有表使用 `_CATALOG_FIELDS`，不要重复维护 SQL。字段仅允许基础 SQL 类型，不接受任意 DDL 片段。
 - 特殊采集身份、合并或拆分逻辑可导出 `RECORD_ADAPTERS`，继承 `RecordAdapter`；普通来源直接使用通用 Mongo 仓储。
 
-产物可以只有 ETL 导出，无需为此添加空的爬虫适配器类。运行时按业务 `data_source` 查询产物所有者（包括集合别名），每 60 秒刷新缓存；不从原始 `_meta.template` 重算业务来源。首次遇到新类型自动注册和建表；同一类型出现不一致字段声明时明确失败，不自动修改已有表或历史数据。
+产物可以只有 ETL 导出，无需为此添加空的爬虫适配器类。运行时按业务 `data_source` 查询产物所有者（包括集合别名），每 60 秒刷新缓存。发布新类型前，在 Ontology 为该类型登记各层使用的现有表或 DDL。缺少有效绑定、存在多个活跃绑定或字段声明不一致时，Worker 明确报错。
 通用仓储只读取已发布产物的 `RECORD_ADAPTERS`，未声明时使用通用规则，不维护来源专用回退注册表。SEC、Twitter、SAM 等采集规则保留在各自 MinIO 产物中；本地不再保留 SEC/Twitter 数据处理辅助模块。Twitter 采集适配器独立保存账号并剥离推文内作者，ODS social normalizer 仅消费规范字段和稳定身份，不重复采集转换、查询 Mongo 或从推文再次生成账号记录。
 
 部署时先暂停相关采集、下载、Syncer、旧 RDS 和旧 ODS，再启动新版进程。
@@ -490,14 +490,24 @@ RDS 使用一个正则订阅 Consumer 接收旧 `SPIDER_ETL_RAW_TOPIC` 和 `${SP
 组织改名时的历史记录按原身份置为待同步，从 `organization` topic 重放。
 
 各 topic 内仍按顺序逐条处理、成功后提交，数据库连接池由 RDS 统一管理。
-RDS 按实际目标表输出到 `${SPIDER_ETL_RDS_TOPIC}-<表名后缀>`，例如 `rds_news` 对应 `etl-rds-news`、`rds_financial_fact` 对应 `etl-rds-financial_fact`（以配置的 topic 前缀为准）。
+RDS 按 `data_type` 输出到 `${SPIDER_ETL_RDS_TOPIC}-<类型>`，例如 `news` 对应 `etl-rds-news`，`financial_fact` 对应 `etl-rds-financial_fact`。
 上线前创建这些 RDS 输出 topic，并先更新 ODS 再更新 RDS；ODS 订阅带类型后缀的 RDS topic，逐条处理并输出到配置的公共 ODS topic。
 切换时先排空旧输入 topic，再开放新 Syncer，避免新旧 topic 的同一记录并发写入导致旧版本覆盖。
 Syncer 需要重建 `docker/syncer.Dockerfile` 镜像，RDS 需要重建 `docker/etl.Dockerfile` 镜像。
 
 ## ETL
 
-ETL Worker 依赖 Kafka 与 PostgreSQL/TimescaleDB。常用启动方式：
+ETL Worker 依赖 Kafka。内置业务转换以 PostgreSQL 或 TimescaleDB 为目标，使用 PostgreSQL 的 UPSERT、JSONB、分区及行锁。轨道 ODS 对象需要 TimescaleDB，包含地理字段的对象需要 PostGIS。其他引擎的目录能力以 Data Connections 标注为准，当前这些引擎需要各自的写入、版本校验与变更捕获实现才能作为业务转换目标。
+
+RDS、ODS、TASK 和 DWD 可以分别使用不同的 PostgreSQL 数据库。跨层处理通过各自的连接读取源数据，校验源记录版本，并在目标事务提交前保持源记录的共享锁。每层的写入都在该层数据库内提交。修改物理表或连接绑定后重启相关 Workers 和 relay。
+
+MongoDB 可以作为 RDS 持久化源，ODS 使用独立的 PostgreSQL 连接。将 RDS 绑定到生产 canonical 记录的 MongoDB，确认该库的 Mongo SyncWorker 继续向 Kafka 发布 `${SPIDER_KAFKA_TOPIC}-<类型>`。对每个启用的来源运行 `python tools/ontology_mongo_rds.py <来源> <类型>` 核对实际集合，然后加 `--apply` 注册。启动 ODS Worker 前准备 PostgreSQL Debezium 输出和相应输入 topic。此模式直接消费 Mongo 持久化源的消息，要求非轨道记录携带已持久化的写入令牌与源时间。ODS 会在目标事务内复核源版本及内容，重放相同归一化结果时不重写目标。RDS PostgreSQL Worker 和依赖 PostgreSQL LSN 的 ES 投影适用于 PostgreSQL RDS 绑定。
+
+ES 同步配置的 `table_name` 指 RDS 的语义类型，`schema_name` 可用于核对注册位置。历史回填通过 RDS 层连接读取登记表并在系统库记录位点。迁移 RDS 到另一个 PostgreSQL 集群后，用新的索引和 `syncer_name` 建立位点，避免沿用旧集群的 LSN 版本。
+
+升级旧安装时先绑定各层的原业务库，再运行 `python tools/ontology_etl_bindings.py` 检查旧 Worker 对象缺少的语义类型。预览通过后加 `--apply` 更新已验证的注册行，保留对象 ID 和物理表。请先解决报告中的冲突或缺失绑定，再启动新版 Worker。
+
+常用启动方式：
 
 ```bash
 python -m app.etl.main --layer rds
@@ -526,7 +536,7 @@ spider-crawler（旧 topic）     -> RDS -> 按实际写入表拆分输出    �
 - 匹配 ODS 的 `description`、`descriptions`、`affected`、`weaknesses`、`configurations` 中的字符串值，忽略大小写并使用单词边界；不匹配字段名、引用链接或系统元数据。原 CVE 规则之外，补充支持 NVD 的受影响产品配置。
 - 仅命中记录写入 `ts_task.task_vulnerability.result`（JSONB 数组，例如 `["satellite", "satellite modem", "GPS"]`），`result_type=json`；同一来源 record/task 更新最新命中结果，无命中视为处理成功并提交消费进度，不写库、不发送下游消息，不复制 ODS 内容。
 
-Compose 中的 `task-worker` 使用 `python -m app.etl.main --layer task --table vulnerability`，仅处理漏洞并在启动时自动建结果表。部署时重建 Web API 和 TASK worker，并在前端上传首个词表。已有记录不会因配置变化自动重算；需要重跑对应 ODS 消息。文件接口位于 `/etl/task-config/vulnerability-keywords`（API 前缀按部署配置）：`GET` 查询当前词表和版本，`POST /versions` 上传文件（multipart `file`），`PUT /current` 启用版本（`{"version": "UUID"}`），`GET /versions/{version}/file` 下载历史文件，`GET /current/file` 下载当前 MinIO 文件（未启用词表时返回 404），原 `GET /example` 路径兼容返回当前文件。
+Compose 中的 `task-worker` 使用 `python -m app.etl.main --layer task --table vulnerability`，仅处理漏洞并按注册信息初始化结果表。部署时重建 Web API 和 TASK worker，并在前端上传首个词表。已有记录不会因配置变化自动重算；需要重跑对应 ODS 消息。文件接口位于 `/etl/task-config/vulnerability-keywords`（API 前缀按部署配置）：`GET` 查询当前词表和版本，`POST /versions` 上传文件（multipart `file`），`PUT /current` 启用版本（`{"version": "UUID"}`），`GET /versions/{version}/file` 下载历史文件，`GET /current/file` 下载当前 MinIO 文件（未启用词表时返回 404），原 `GET /example` 路径兼容返回当前文件。
 
 ## Web API
 

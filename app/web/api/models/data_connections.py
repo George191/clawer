@@ -121,6 +121,10 @@ class BusinessDatabaseSelection(BaseModel):
     expectedUpdatedAt: AwareDatetime
 
 
+class LayerConnectionSelection(BusinessDatabaseSelection):
+    previousConnectionId: UUID | None
+
+
 class ConnectionDependency(BaseModel):
     type: Literal["business_database", "batch_sync", "transfer_plan", "object_type", "cdc", "object_events", "dameng_cdc"]
     id: str

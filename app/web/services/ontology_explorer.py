@@ -13,7 +13,7 @@ from sqlalchemy.exc import DBAPIError
 
 from app.web.api.models.ontology_runtime import OntologyRuntimeRecord as Record
 from app.web.services import ontology_registry as registry
-from app.web.services.etl_layers import get_etl_layers, quote_identifier
+from app.web.services.etl_layers import get_etl_layers, quote_identifier, quote_schema_identifier
 from app.web.services.ontology_action_runtime import _available_actions, _definition_access, _project_record, _record_history_events
 from app.web.services.ontology_graph import live_records
 from app.web.services.ontology_graph_sets import filters
@@ -87,13 +87,15 @@ async def object_source(session, grant, query):
         yield session, source
         return
     source = definition.source
-    if source.schema_name not in registry.WAREHOUSE_SCHEMAS or not registry.COLUMN.fullmatch(source.table or ""):
+    if not registry.is_ordinary_schema(source.schema_name) or not registry.COLUMN.fullmatch(source.table or ""):
         raise HTTPException(409, "Invalid warehouse binding")
     props = [prop for prop in definition.properties if prop.id in fields]
     if any(not registry.IDENTIFIER.fullmatch(prop.id) or not registry.COLUMN.fullmatch(prop.sourceColumn or "") for prop in props):
         raise HTTPException(409, "Invalid published property mapping")
-    async with get_etl_layers().session() as warehouse:
-        relation = f"{quote_identifier(source.schema_name)}.{quote_identifier(source.table)}"
+    async with get_etl_layers().session(
+        schema=source.schema_name, table=source.table, connection_id=registry.source_connection_id(row),
+    ) as warehouse:
+        relation = f"{quote_schema_identifier(source.schema_name)}.{quote_identifier(source.table)}"
         try:
             await warehouse.execute(text(f"LOCK TABLE {relation} IN ACCESS SHARE MODE"))
         except DBAPIError as exc:

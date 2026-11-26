@@ -23,6 +23,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import re
 from datetime import datetime
 from typing import Any, Awaitable, Callable, ClassVar, TypeVar
 
@@ -38,17 +40,19 @@ from app.base.kafka import (
     get_brokers,
 )
 from app.config.settings import settings
-from app.etl.schema.layout import partition_bounds, schema_name_for
+from app.etl.schema.ddl import ddl_creates_table
+from app.etl.schema.layout import partition_bounds, qualified_table_name, sql_identifier
 from app.etl.schema.ontology import sync_object_metadata
 from app.etl.schema.registry import (
     ensure_ontology_tables,
-    get_registered_ddl,
-    get_registered_ddl_record,
+    list_registered_data_types,
+    object_table_ref,
+    require_registered_object,
 )
 from app.etl.state.offsets import get_offset_manager
 from app.logger import get_logger
 from app.storage.postgres_client import get_pg_client
-from app.storage.business_database import get_business_pg_client
+from app.storage.business_database import LayerBindingChanged, get_layer_pg_client, layer_binding_lease
 
 logger = get_logger(__name__)
 
@@ -81,6 +85,7 @@ class _OffsetRestoreListener(ConsumerRebalanceListener):
 
 class ETLBase:
     _layer: ClassVar[str] = ""
+    _source_layers: ClassVar[tuple[str, ...]] = ()
     _table_role: ClassVar[str] = "current"
     _consumer_topics: ClassVar[list[str]] = []
     _consumer_pattern: ClassVar[str] = ""
@@ -94,11 +99,14 @@ class ETLBase:
         self._handlers = self._discover_handlers()
         self._consumer: AIOKafkaConsumer | None = None
         self._producer: AIOKafkaProducer | None = None
-        self._pg = get_business_pg_client()
+        self._pg = get_layer_pg_client(self._layer)
         self._metadata_pg = get_pg_client()
+        self._binding_layers = (self._layer, *self._source_layers)
+        self._bindings = None
         self._running = False
         self._pending_offsets: dict[str, int] = {}
         self._assignment_epoch = 0
+        self._table_records: dict[tuple[str, str], dict[str, Any]] = {}
 
     async def _close_consumer(self) -> None:
         if not self._consumer:
@@ -169,38 +177,36 @@ class ETLBase:
         return handlers
 
     def _table_fqn(self, table: str, table_role: str | None = None) -> str:
-        role = table_role or self._table_role
-        return f"{schema_name_for(self._layer, role)}.{self._layer}_{table}"
+        return object_table_ref(self._table_records[(table, table_role or self._table_role)])
+
+    def _table_location(self, table: str, table_role: str) -> dict[str, str]:
+        row = self._table_records[(table, table_role)]
+        return {"schema_name": row["schema_name"], "table_name": row["table_name"]}
+
+    def _partition_name(self, table: str, role: str, suffix: str) -> str:
+        location = self._table_location(table, role)
+        name = f"{location['table_name']}_{suffix}"
+        if len(name) > 63:
+            digest = hashlib.sha256(name.encode()).hexdigest()[:12]
+            name = f"{name[:50]}_{digest}"
+        return qualified_table_name(location["schema_name"], name)
+
+    async def _upstream_ref(self, layer: str, table: str) -> str:
+        return object_table_ref(await require_registered_object(self._metadata_pg, layer, table))
 
     # =================================================================
     #  Schema & 分区表
     # =================================================================
     async def _on_init_schema(self) -> None:
-        await self._pg.execute(
-            f"CREATE SCHEMA IF NOT EXISTS {schema_name_for(self._layer, self._table_role)}"
-        )
-        await self._pg.execute("CREATE EXTENSION IF NOT EXISTS postgis")
         await ensure_ontology_tables(self._metadata_pg)
-        for table in self._handlers:
-            if await get_registered_ddl(self._metadata_pg, self._layer, table, self._table_role):
-                await self._ensure_registered_table(table, self._table_role, create_partitions=False)
-
-    async def _ddl_for_table(self, table: str) -> str:
-        ddl_from_registry = await get_registered_ddl(
-            self._metadata_pg,
-            self._layer,
-            table,
-            self._table_role,
-        )
-        if ddl_from_registry:
-            return ddl_from_registry
-
-        logger.warning(
-            "%s No DDL defined for table '%s' in registry",
-            self._log_prefix,
-            table,
-        )
-        return ""
+        types = ([self._table_name] if self._table_name else
+                 await list_registered_data_types(self._metadata_pg, self._layer, self._table_role))
+        if self._layer in {"rds", "ods"}:
+            tables = types
+        else:
+            tables = [data_type for data_type in types if data_type in self._handlers]
+        for table in tables:
+            await self._ensure_registered_table(table, self._table_role, create_partitions=False)
 
     async def _ensure_registered_table(
         self,
@@ -209,58 +215,61 @@ class ETLBase:
         *,
         create_partitions: bool = True,
     ) -> None:
-        ddl_record = await get_registered_ddl_record(
+        ddl_record = await require_registered_object(
             self._metadata_pg,
             self._layer,
             table,
             table_role,
         )
-        if not ddl_record:
-            if table_role == self._table_role:
-                await self._ddl_for_table(table)
-            return
-
-        await self._pg.execute(
-            f"CREATE SCHEMA IF NOT EXISTS {schema_name_for(self._layer, table_role)}"
+        schema_name, table_name = ddl_record["schema_name"], ddl_record["table_name"]
+        table_ref = object_table_ref(ddl_record)
+        existing = await self._pg.fetch_one(
+            "SELECT to_regclass(:table_name) AS relation",
+            {"table_name": table_ref},
         )
-        existing = None
-        if self._layer in {"rds", "ods"} and table_role == "current":
-            existing = await self._pg.fetch_one(
-                "SELECT to_regclass(:table_name) AS relation",
-                {"table_name": self._table_fqn(table, table_role)},
-            )
         # Existing current tables were checked before activation; do not rebuild
         # optional indexes over their historical data on every worker startup.
         if not existing or existing["relation"] is None:
-            await self._pg.init_schema([ddl_record["ddl_sql"]])
-        schema_name, table_name = self._table_fqn(table, table_role).split(".")
+            ddl = ddl_record["ddl_sql"]
+            if not ddl or not ddl_creates_table(ddl, schema_name, table_name):
+                raise ValueError(f"Missing matching registered DDL for {table_ref}")
+            if re.search(r"\b(?:geography|geometry)\s*\(", ddl, re.IGNORECASE):
+                await self._pg.execute("CREATE EXTENSION IF NOT EXISTS postgis")
+            await self._pg.execute(f"CREATE SCHEMA IF NOT EXISTS {sql_identifier(schema_name, schema=True)}")
+            await self._pg.init_schema([ddl])
         async with self._pg.session() as catalog_session:
             async with self._metadata_pg.session() as session:
-                await sync_object_metadata(session, schema_name, table_name, catalog_session=catalog_session)
+                await sync_object_metadata(
+                    session, schema_name, table_name, catalog_session=catalog_session,
+                    layer=self._layer, table_role=table_role,
+                    data_type=ddl_record["data_type"], data_type_source=ddl_record["data_type_source"],
+                )
         if table_role == "current" and settings.etl_output_mode == "debezium":
-            await self._ensure_cdc_identity(self._table_fqn(table, table_role))
+            await self._ensure_cdc_identity(schema_name, table_name, table)
+        self._table_records[(table, table_role)] = ddl_record
         logger.info(
             "%s Table ensured: %s",
             self._log_prefix,
-            self._table_fqn(table, table_role),
+            table_ref,
         )
         if create_partitions:
             await self._create_partitions(table, table_role=table_role, ddl_record=ddl_record)
 
-    async def _ensure_cdc_identity(self, table_name: str) -> None:
+    async def _ensure_cdc_identity(self, schema_name: str, table_name: str, data_type: str) -> None:
         """Ensure complete CDC images before an existing table receives new writes."""
         from app.syncer.postgres_cdc import cdc_table_enabled, ensure_table_publication
 
-        if not cdc_table_enabled(*table_name.split(".")):
+        if not cdc_table_enabled(self._layer, data_type):
             return
+        table_ref = qualified_table_name(schema_name, table_name)
         row = await self._pg.fetch_one(
             "SELECT relreplident = 'f' AS has_full_identity "
             "FROM pg_class WHERE oid=to_regclass(:table_name)",
-            {"table_name": table_name},
+            {"table_name": table_ref},
         )
         if row and not row["has_full_identity"]:
-            await self._pg.execute(f"ALTER TABLE {table_name} REPLICA IDENTITY FULL")
-        await ensure_table_publication(self._pg, table_name)
+            await self._pg.execute(f"ALTER TABLE {table_ref} REPLICA IDENTITY FULL")
+        await ensure_table_publication(self._pg, schema_name, table_name)
 
     async def _create_partition(self, sql: str, table_name: str, table_role: str) -> None:
         """Publish a new partition only after its full-row identity is configured."""
@@ -280,14 +289,7 @@ class ETLBase:
     ) -> None:
         role = table_role or self._table_role
         if ddl_record is None:
-            ddl_record = await get_registered_ddl_record(
-                self._metadata_pg,
-                self._layer,
-                table,
-                role,
-            )
-        if not ddl_record:
-            return
+            ddl_record = self._table_records[(table, role)]
 
         partition_type = ddl_record.get("partition_type")
         if partition_type == "hash":
@@ -320,8 +322,7 @@ class ETLBase:
             return
 
         range_start, range_end, suffix = partition_bounds(partition_value, granularity)
-        schema_name = schema_name_for(self._layer, role)
-        partition_name = f"{schema_name}.{self._layer}_{table}_{suffix}"
+        partition_name = self._partition_name(table, role, suffix)
         range_bound = (
             f"FOR VALUES FROM ('{range_start:%Y-%m-%d}') TO ('{range_end:%Y-%m-%d}')"
         )
@@ -384,7 +385,6 @@ class ETLBase:
             )
             return
 
-        schema_name = schema_name_for(self._layer, table_role)
         parent_table = self._table_fqn(table, table_role)
         width = max(2, len(str(partition_count - 1)))
         existing_bounds = await self._partition_bounds_map(table, table_role)
@@ -410,9 +410,7 @@ class ETLBase:
                     existing_bounds[hash_bound],
                 )
                 continue
-            partition_name = (
-                f"{schema_name}.{self._layer}_{table}_p{remainder:0{width}d}"
-            )
+            partition_name = self._partition_name(table, table_role, f"p{remainder:0{width}d}")
             partition_sql = (
                 f"CREATE TABLE IF NOT EXISTS {partition_name} "
                 f"PARTITION OF {parent_table} "
@@ -432,15 +430,14 @@ class ETLBase:
         partition_column: str,
     ) -> None:
         existing_bounds = await self._partition_bounds_map(table, table_role)
-        default_table = existing_bounds.get("DEFAULT")
-        if not default_table:
+        default_table_fqn = existing_bounds.get("DEFAULT")
+        if not default_table_fqn:
             raise RuntimeError(
                 f"{self._table_fqn(table, table_role)} default partition not found while creating {partition_name}"
             )
 
         parent_table = self._table_fqn(table, table_role)
-        schema_name = schema_name_for(self._layer, table_role)
-        default_table_fqn = f"{schema_name}.{default_table}"
+        partition_column = sql_identifier(partition_column)
         column_sql = await self._partition_table_column_sql(table, table_role)
         lock_key = f"partition-range:{parent_table}:{range_start:%Y%m%d}:{range_end:%Y%m%d}"
 
@@ -535,14 +532,14 @@ class ETLBase:
             SELECT remainder
             FROM generate_series(0, :partition_count - 1) AS remainder
             WHERE satisfies_hash_partition(
-                '{parent_table}'::regclass,
+                to_regclass(:parent_table),
                 :partition_count,
                 remainder,
                 {args_sql}
             )
             LIMIT 1
         """
-        params: dict[str, Any] = {"partition_count": partition_count}
+        params: dict[str, Any] = {"parent_table": parent_table, "partition_count": partition_count}
         for index, column in enumerate(key_columns):
             params[f"value_{index}"] = str(payload.get(column) or "")
 
@@ -558,19 +555,17 @@ class ETLBase:
         rows = await self._pg.fetch_all(
             """
             SELECT
-                child.relname AS child_table,
+                format('%I.%I', child_ns.nspname, child.relname) AS child_table,
                 pg_get_expr(child.relpartbound, child.oid) AS part_bound
             FROM pg_inherits inh
             JOIN pg_class parent ON parent.oid = inh.inhparent
             JOIN pg_namespace parent_ns ON parent_ns.oid = parent.relnamespace
             JOIN pg_class child ON child.oid = inh.inhrelid
+            JOIN pg_namespace child_ns ON child_ns.oid = child.relnamespace
             WHERE parent_ns.nspname = :schema_name
               AND parent.relname = :table_name
             """,
-            {
-                "schema_name": schema_name_for(self._layer, role),
-                "table_name": f"{self._layer}_{table}",
-            },
+            self._table_location(table, role),
         )
         bounds: dict[str, str] = {}
         for row in rows:
@@ -588,16 +583,13 @@ class ETLBase:
         role = table_role or self._table_role
         rows = await self._pg.fetch_all(
             """
-            SELECT column_name
+            SELECT quote_ident(column_name) AS column_name
             FROM information_schema.columns
             WHERE table_schema = :schema_name
               AND table_name = :table_name
             ORDER BY ordinal_position
             """,
-            {
-                "schema_name": schema_name_for(self._layer, role),
-                "table_name": f"{self._layer}_{table}",
-            },
+            self._table_location(table, role),
         )
         return ", ".join(str(row["column_name"]) for row in rows)
 
@@ -684,10 +676,7 @@ class ETLBase:
               AND c.relname = :table_name
             LIMIT 1
             """,
-            {
-                "schema_name": schema_name_for(self._layer, role),
-                "table_name": f"{self._layer}_{table}",
-            },
+            self._table_location(table, role),
         )
         return row is not None
 
@@ -850,19 +839,8 @@ class ETLBase:
     # =================================================================
     async def run(self) -> None:
         self._running = True
-
-        logger.info("%s Connecting to Postgres...", self._log_prefix)
-        await self._pg.connect()
-        logger.info("%s Postgres connected", self._log_prefix)
-
-        logger.info("%s Initializing schema...", self._log_prefix)
-        await self._on_init_schema()
-        if settings.etl_output_mode == "debezium":
-            from app.syncer.postgres_cdc import check_database
-
-            # No input is consumed before WAL retention/position is ready. A
-            # no_data connector registered later would lose this startup window.
-            await check_database(self._pg, require_slot=True, require_replication=False)
+        async with layer_binding_lease(self._binding_layers, pg=self._metadata_pg) as self._bindings:
+            await self._initialize_target()
 
         logger.info("%s Connecting to Kafka...", self._log_prefix)
         await self._connect_consumer()
@@ -876,6 +854,20 @@ class ETLBase:
         )
 
         await self._consume_loop()
+
+    async def _initialize_target(self) -> None:
+        logger.info("%s Connecting to Postgres...", self._log_prefix)
+        await self._pg.connect()
+        logger.info("%s Postgres connected", self._log_prefix)
+
+        logger.info("%s Initializing schema...", self._log_prefix)
+        await self._on_init_schema()
+        if settings.etl_output_mode == "debezium":
+            from app.syncer.postgres_cdc import check_database
+
+            # No input is consumed before WAL retention/position is ready. A
+            # no_data connector registered later would lose this startup window.
+            await check_database(self._pg, require_slot=True, require_replication=False)
 
     def _batch_owned(self, owner, partition) -> bool:
         consumer, epoch = owner
@@ -913,70 +905,73 @@ class ETLBase:
                     records = await poll_consumer.getmany(timeout_ms=5000, max_records=50)
                 owner = (poll_consumer, self._assignment_epoch)
                 retry_needed = False
-                for _tp, msgs in records.items():
-                    if batch_commit and not self._batch_owned(owner, _tp):
-                        continue
-                    batch_result = await self._dispatch_batch(msgs, owner, _tp)
-                    if batch_result is not None:
-                        if self._batch_owned(owner, _tp):
-                            if batch_result:
-                                await self._commit_and_save(_tp.topic, _tp.partition, msgs[-1].offset, owner=owner)
-                            else:
-                                self._consumer.seek(_tp, msgs[0].offset)
-                                retry_needed = True
-                        continue
-                    if batch_commit and not self._batch_owned(owner, _tp):
-                        continue
-                    last_successful_offset = None
-                    for msg in msgs:
+                async with layer_binding_lease(self._binding_layers, expected=self._bindings, pg=self._metadata_pg):
+                    for _tp, msgs in records.items():
                         if batch_commit and not self._batch_owned(owner, _tp):
-                            last_successful_offset = None
-                            break
-                        if msg.value is None:
                             continue
-                        success = False
-                        try:
-                            msg.value["_kafka_meta"] = {
-                                "kafka_offset": msg.offset,
-                                "kafka_partition": msg.partition,
-                                "kafka_topic": msg.topic,
-                            }
-                            success = await self._dispatch(msg.value)
-                            if batch_commit and not self._batch_owned(owner, _tp):
-                                last_successful_offset = None
-                                break
-                            if success:
-                                if batch_commit:
-                                    last_successful_offset = msg.offset
+                        batch_result = await self._dispatch_batch(msgs, owner, _tp)
+                        if batch_result is not None:
+                            if self._batch_owned(owner, _tp):
+                                if batch_result:
+                                    await self._commit_and_save(_tp.topic, _tp.partition, msgs[-1].offset, owner=owner)
                                 else:
-                                    await self._commit_and_save(msg.topic, msg.partition, msg.offset)
-                        except Exception:
-                            success = False
-                            logger.exception("%s Handler error", self._log_prefix)
+                                    self._consumer.seek(_tp, msgs[0].offset)
+                                    retry_needed = True
+                            continue
                         if batch_commit and not self._batch_owned(owner, _tp):
-                            last_successful_offset = None
-                            break
-                        if not success:
-                            if batch_commit and last_successful_offset is not None:
-                                await self._commit_and_save(
-                                    _tp.topic, _tp.partition, last_successful_offset, owner=owner
-                                )
-                                last_successful_offset = None
+                            continue
+                        last_successful_offset = None
+                        for msg in msgs:
                             if batch_commit and not self._batch_owned(owner, _tp):
+                                last_successful_offset = None
                                 break
-                            self._consumer.seek(_tp, msg.offset)
-                            logger.warning(
-                                "%s Retrying topic=%s partition=%d offset=%d",
-                                self._log_prefix, msg.topic, msg.partition, msg.offset,
+                            if msg.value is None:
+                                continue
+                            success = False
+                            try:
+                                msg.value["_kafka_meta"] = {
+                                    "kafka_offset": msg.offset,
+                                    "kafka_partition": msg.partition,
+                                    "kafka_topic": msg.topic,
+                                }
+                                success = await self._dispatch(msg.value)
+                                if batch_commit and not self._batch_owned(owner, _tp):
+                                    last_successful_offset = None
+                                    break
+                                if success:
+                                    if batch_commit:
+                                        last_successful_offset = msg.offset
+                                    else:
+                                        await self._commit_and_save(msg.topic, msg.partition, msg.offset)
+                            except Exception:
+                                success = False
+                                logger.exception("%s Handler error", self._log_prefix)
+                            if batch_commit and not self._batch_owned(owner, _tp):
+                                last_successful_offset = None
+                                break
+                            if not success:
+                                if batch_commit and last_successful_offset is not None:
+                                    await self._commit_and_save(
+                                        _tp.topic, _tp.partition, last_successful_offset, owner=owner
+                                    )
+                                    last_successful_offset = None
+                                if batch_commit and not self._batch_owned(owner, _tp):
+                                    break
+                                self._consumer.seek(_tp, msg.offset)
+                                logger.warning(
+                                    "%s Retrying topic=%s partition=%d offset=%d",
+                                    self._log_prefix, msg.topic, msg.partition, msg.offset,
+                                )
+                                retry_needed = True
+                                break
+                        if batch_commit and last_successful_offset is not None:
+                            await self._commit_and_save(
+                                _tp.topic, _tp.partition, last_successful_offset, owner=owner
                             )
-                            retry_needed = True
-                            break
-                    if batch_commit and last_successful_offset is not None:
-                        await self._commit_and_save(
-                            _tp.topic, _tp.partition, last_successful_offset, owner=owner
-                        )
                 if retry_needed:
                     await asyncio.sleep(1)
+            except LayerBindingChanged:
+                raise
             except KAFKA_RETRYABLE_ERRORS as exc:
                 logger.warning(
                     "%s Consumer connection lost, reconnecting: %s",
@@ -1001,6 +996,8 @@ class ETLBase:
         # fallback 通用 handler: _handler_{data_type}
         handler = self._handlers.get(data_type)
         if handler:
+            if (data_type, self._table_role) not in self._table_records:
+                await self._ensure_registered_table(data_type, self._table_role)
             return await handler(message)
 
         logger.warning(

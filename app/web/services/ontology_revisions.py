@@ -222,10 +222,12 @@ async def _bound_table(row, current):
     if source.mode == "none":
         yield None
         return
-    if source.schema_name not in registry.WAREHOUSE_SCHEMAS or not registry.COLUMN.fullmatch(source.table or ""):
+    if not registry.is_ordinary_schema(source.schema_name) or not registry.COLUMN.fullmatch(source.table or ""):
         raise HTTPException(409, "Invalid warehouse binding")
-    relation = f"{registry.quote_identifier(source.schema_name)}.{registry.quote_identifier(source.table)}"
-    async with registry.get_etl_layers().session() as warehouse:
+    relation = f"{registry.quote_schema_identifier(source.schema_name)}.{registry.quote_identifier(source.table)}"
+    async with registry.get_etl_layers().session(
+        schema=source.schema_name, table=source.table, connection_id=registry.source_connection_id(row),
+    ) as warehouse:
         try:
             await warehouse.execute(text("SET LOCAL lock_timeout = '1500ms'"))
             await warehouse.execute(text(f"LOCK TABLE {relation} IN ACCESS SHARE MODE"))

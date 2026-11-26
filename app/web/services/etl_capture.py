@@ -1,7 +1,9 @@
 """Bounded, read-only observation of a physical table's Debezium topic."""
 
 import asyncio
+import re
 from datetime import datetime, timezone
+from urllib.parse import quote
 
 from aiokafka import AIOKafkaConsumer
 from aiokafka.admin import AIOKafkaAdminClient
@@ -10,12 +12,20 @@ from sqlalchemy import text
 
 from app.base.kafka import build_admin_client_kwargs, build_consumer_kwargs
 from app.config.settings import settings
-from app.etl.cdc import cdc_schemas
 from app.etl.orbital_history import event_lineage
-from app.syncer.postgres_cdc import cdc_table_enabled, postgres_cdc_identity
+from app.etl.schema.registry import get_registered_object, object_table_ref
+from app.storage.business_database import BusinessDatabaseNotConfigured, get_layer_pg_client
+from app.storage.postgres_client import get_pg_client
+from app.syncer.postgres_cdc import (
+    cdc_table_enabled,
+    connector_config,
+    postgres_cdc_identity,
+    published_cdc_objects,
+)
 from app.web.services.etl_layers import get_etl_layers
 from app.web.services.etl_runtime import topic_partitions
 from app.web.services.monitor_snapshots import MonitorSnapshots
+from app.web.services.source_cdc import request as connect_request
 
 _CAPTURE = MonitorSnapshots(ttl=30, concurrent=4, capacity=64)
 _ORBITAL = MonitorSnapshots(ttl=30, concurrent=1, capacity=1)
@@ -73,70 +83,116 @@ async def _latest(identity, schema, table):
         await asyncio.gather(reader.stop(), admin.close())
 
 
-async def _capture(schema, table):
-    if schema not in cdc_schemas() or not table.startswith(schema[3:] + "_") or not cdc_table_enabled(schema, table):
-        return {"state": "outside_capture", "reason": "This table is outside the PostgreSQL CDC connector's capture rules."}
+async def _selected_capture(pg, schema, table, layer, data_type, *, connection_id=None):
+    await pg.connect(max_retries=1)
+    if connection_id is not None and pg.connection_id != connection_id:
+        return {"state": "outside_capture", "reason": "The table's saved connection is no longer assigned to this ETL layer."}
+    identity = await postgres_cdc_identity(pg)
+    selected = await published_cdc_objects(pg, identity)
+    if selected.get((schema, table)) != (layer, data_type):
+        return {"state": "outside_capture", "reason": "This table is outside the internal ETL publication."}
+    if settings.cdc_connect_url:
+        config = await connect_request("GET", f"/connectors/{quote(identity['connector'], safe='')}/config", missing=True)
+        expected = connector_config(pg, identity)
+        keys = ("connector.class", "database.hostname", "database.port", "database.dbname", "publication.name", "topic.prefix")
+        if config is None or any(config.get(key) != expected[key] for key in keys):
+            return {"state": "unconfigured", "reason": "The internal ETL connector is missing or targets a different publication."}
+        for kind, name in (("schema", schema), ("table", f"{schema}.{table}")):
+            included = config.get(f"{kind}.include.list")
+            excluded = config.get(f"{kind}.exclude.list")
+            if ((included and not any(re.fullmatch(pattern, name, re.IGNORECASE) for pattern in included.split(",")))
+                    or (excluded and any(re.fullmatch(pattern, name, re.IGNORECASE) for pattern in excluded.split(",")))):
+                return {"state": "outside_capture", "reason": "The internal ETL connector excludes this table."}
+    return await _latest(identity, schema, table)
+
+
+async def _capture(pg, schema, table, layer, data_type, *, connection_id):
+    if settings.etl_output_mode != "debezium" or not data_type or not cdc_table_enabled(layer, data_type):
+        return {"state": "outside_capture", "reason": "This table is outside internal PostgreSQL ETL capture."}
     if not settings.kafka_brokers:
         return {"state": "unconfigured", "reason": "The Web monitor has no Kafka broker configured."}
     try:
-        result = await asyncio.wait_for(_latest(postgres_cdc_identity(), schema, table), timeout=13)
+        result = await asyncio.wait_for(_selected_capture(pg, schema, table, layer, data_type,
+                                                          connection_id=connection_id), timeout=13)
     except Exception:
         result = {"state": "unavailable", "reason": "The Web monitor could not inspect the CDC topic. Check broker connectivity, TLS and read access."}
     return {**result, "checkedAt": datetime.now(timezone.utc).isoformat()}
 
 
-async def _orbital_reference():
+async def _orbital_reference(source, target):
     # The ODS hypertable stores the immutable RDS event's identity separately
     # from its normalized business ID. Use the time index and the RDS primary key.
-    async with get_etl_layers().session() as session:
+    source_ref, target_ref = object_table_ref(source), object_table_ref(target)
+    source_pg, target_pg = get_layer_pg_client("rds"), get_layer_pg_client("ods")
+    await asyncio.gather(source_pg.connect(max_retries=1), target_pg.connect(max_retries=1))
+    if source_pg.connection_id != source["connection_id"] or target_pg.connection_id != target["connection_id"]:
+        raise BusinessDatabaseNotConfigured("Orbital connection assignment changed while checking the source reference")
+    async with target_pg.session() as session:
         await session.execute(text("SET LOCAL statement_timeout = '2s'"))
-        result = (await session.execute(text("""
-            WITH target AS MATERIALIZED (
-                SELECT source_event_id, source_revision, source_observed_at, etl_version,
-                       record_id, data_source, data_type
-                FROM ts_ods.ods_orbital
-                WHERE source_observed_at BETWEEN now() - interval '24 hours' AND now()
-                ORDER BY source_observed_at DESC LIMIT 1
-            )
-            SELECT o.source_event_id, o.source_revision, o.source_observed_at, o.etl_version,
-                   o.record_id, r.raw_data->'_meta' AS meta
-            FROM target o JOIN ts_rds.rds_orbital r
-              ON r.record_id = o.source_event_id AND r.data_source = o.data_source
-                 AND r.data_type = o.data_type AND o.data_type = 'orbital'
+        result = (await session.execute(text(f"""
+            SELECT source_event_id, source_revision, source_observed_at, etl_version,
+                   record_id, data_source, data_type
+            FROM {target_ref}
+            WHERE data_type = 'orbital' AND source_observed_at BETWEEN now() - interval '24 hours' AND now()
+            ORDER BY source_observed_at DESC LIMIT 1
         """))).mappings().first()
-    if result and isinstance(result["meta"], dict):
+    if result:
+        async with source_pg.session() as session:
+            await session.execute(text("SET LOCAL statement_timeout = '2s'"))
+            meta = await session.scalar(text(f"""
+                SELECT raw_data->'_meta' FROM {source_ref}
+                WHERE record_id=:source_event_id AND data_source=:data_source AND data_type=:data_type
+            """), dict(result))
         try:
-            ref = event_lineage(result["meta"])
+            ref = event_lineage(meta) if isinstance(meta, dict) else None
         except (ValueError, OverflowError):
             ref = None
-        if ref and all(result[k] == v for k, v in ref.items()) and result["record_id"] == result["meta"]["record_id"]:
+        if ref and all(result[k] == v for k, v in ref.items()) and result["record_id"] == meta.get("record_id"):
             return {
-                "state": "matched", "source": "ts_rds.rds_orbital", "target": "ts_ods.ods_orbital",
+                "state": "matched", "source": f"{source['schema_name']}.{source['table_name']}",
+                "target": f"{target['schema_name']}.{target['table_name']}",
                 "eventTime": ref["source_observed_at"].isoformat(),
                 "checkedAt": datetime.now(timezone.utc).isoformat(),
             }
     return {"state": "no_sample", "reason": "No matching immutable source reference was found in the latest 24-hour sample."}
 
 
-async def capture(layer, table, *, include_hidden):
+async def capture(layer, table, *, include_hidden, connection_id=None):
     layers = get_etl_layers()
-    asset = await layers.runtime_table(layer, table, include_hidden=include_hidden)
-    schema = asset["schemaName"]
-    result = await _CAPTURE.read((schema, table), lambda: _capture(schema, table))
-    orbital = {("ts_rds", "rds_orbital"), ("ts_ods", "ods_orbital")}
-    if (schema, table) in orbital:
-        counterpart = (orbital - {(schema, table)}).pop()
+    asset = await layers.runtime_table(layer, table, include_hidden=include_hidden, connection_id=connection_id)
+    schema, resolved_layer, data_type = asset["schemaName"], asset.get("layer"), asset.get("dataType")
+    pg = get_layer_pg_client(resolved_layer) if resolved_layer else None
+    asset_connection = asset.get("connectionId")
+    if asset.get("tableRole") == "current":
+        key = (asset_connection, schema, table, resolved_layer, data_type)
+        result = await _CAPTURE.read(key, lambda: _capture(pg, schema, table, resolved_layer, data_type,
+                                                          connection_id=asset_connection))
+    else:
+        result = {"state": "outside_capture", "reason": "This table is outside internal PostgreSQL ETL capture."}
+    if data_type == "orbital" and resolved_layer in {"rds", "ods"} and asset.get("tableRole") == "current":
+        peer_layer = "ods" if resolved_layer == "rds" else "rds"
+        peer = await get_registered_object(get_pg_client(), peer_layer, "orbital", "current")
+        if peer is None:
+            return result
         try:
-            await layers.runtime_table(*counterpart, include_hidden=include_hidden)
+            peer_pg = get_layer_pg_client(peer_layer)
+            await peer_pg.resolve()
+            await layers.runtime_table(peer["schema_name"], peer["table_name"], include_hidden=include_hidden,
+                                       connection_id=peer_pg.connection_id)
+        except BusinessDatabaseNotConfigured:
+            return {**result, "recordLink": {"state": "unavailable", "reason": "The orbital counterpart connection is unavailable."}}
         except HTTPException as exc:
             if exc.status_code != 404:
                 raise
         else:
+            current = {"schema_name": schema, "table_name": table, "connection_id": asset_connection}
+            peer = {**peer, "connection_id": peer_pg.connection_id}
+            source, target = (current, peer) if resolved_layer == "rds" else (peer, current)
+            key = (asset_connection, peer_pg.connection_id, schema, table,
+                   peer["schema_name"], peer["table_name"])
             try:
-                reference = await _ORBITAL.read("orbital", _orbital_reference)
-            except HTTPException as exc:
-                if exc.status_code != 503:
-                    raise
+                reference = await _ORBITAL.read(key, lambda: asyncio.wait_for(_orbital_reference(source, target), timeout=8))
+            except Exception:
                 reference = {"state": "unavailable", "reason": "The bounded source-reference query was unavailable."}
             result = {**result, "recordLink": reference}
     return result

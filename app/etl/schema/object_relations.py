@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+
+from app.etl.schema.layout import PG_SCHEMA_PATTERN, is_schema_identifier
 from typing import Any
 
 from sqlalchemy import text
@@ -18,6 +20,12 @@ RELATION_IMPORT_FIELDS_CHECK = """cardinality(source_fields) = cardinality(targe
         (array_ndims(source_fields) = 1 AND array_ndims(target_fields) = 1))
     AND array_position(source_fields, NULL) IS NULL
     AND array_position(target_fields, NULL) IS NULL"""
+RELATION_SCHEMA_CHECKS = {
+    side: f"""length({side}_schema) <= 63 AND {side}_schema ~ '^{PG_SCHEMA_PATTERN}$'
+        AND left({side}_schema, 3) <> 'pg_'
+        AND {side}_schema NOT IN ('app','information_schema','ts_meta','ts_meta_hist')"""
+    for side in ("source", "target")
+}
 OBJECT_RELATIONS_DDL_STATEMENTS = (
     "CREATE SCHEMA IF NOT EXISTS app",
     f"""CREATE TABLE IF NOT EXISTS app.ontology_object_relations (
@@ -36,12 +44,10 @@ OBJECT_RELATIONS_DDL_STATEMENTS = (
         enabled BOOLEAN NOT NULL DEFAULT TRUE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        CHECK (source_schema ~ '^ts_[a-z0-9_]{{1,60}}$'
-            AND source_schema NOT IN ('ts_meta','ts_meta_hist')),
-        CHECK (target_schema ~ '^ts_[a-z0-9_]{{1,60}}$'
-            AND target_schema NOT IN ('ts_meta','ts_meta_hist')),
-        CHECK (source_table ~ '^[a-z_][a-z0-9_]{{0,62}}$'),
-        CHECK (target_table ~ '^[a-z_][a-z0-9_]{{0,62}}$'),
+        CONSTRAINT ontology_object_relations_source_schema_check CHECK ({RELATION_SCHEMA_CHECKS["source"]}),
+        CONSTRAINT ontology_object_relations_target_schema_check CHECK ({RELATION_SCHEMA_CHECKS["target"]}),
+        CHECK (source_table ~ '^[A-Za-z_][A-Za-z0-9_]{{0,62}}$'),
+        CHECK (target_table ~ '^[A-Za-z_][A-Za-z0-9_]{{0,62}}$'),
         CONSTRAINT ck_ontology_relation_import_fields CHECK ({RELATION_IMPORT_FIELDS_CHECK}),
         CHECK (cardinality IN ('one_to_one','one_to_many','many_to_one','many_to_many')),
         CHECK (length(provenance) > 0)
@@ -78,13 +84,14 @@ def validate_definition(value: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Invalid relationship relationship_kind")
     for side in ("source", "target"):
         schema, table = row.get(f"{side}_schema"), row.get(f"{side}_table")
-        if not isinstance(schema, str) or not re.fullmatch(r"ts_[a-z0-9_]{1,60}", schema) or schema in {"ts_meta", "ts_meta_hist"}:
+        if (not is_schema_identifier(schema)
+            or schema.startswith("pg_") or schema in {"app", "information_schema", "ts_meta", "ts_meta_hist"}):
             raise ValueError(f"Invalid relationship {side} schema")
-        if not isinstance(table, str) or not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", table):
+        if not isinstance(table, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,62}", table):
             raise ValueError(f"Invalid relationship {side} table")
         fields = row.get(f"{side}_fields")
         if not isinstance(fields, list) or not fields or any(not isinstance(field, str) or
-                not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", field) for field in fields) or len(fields) != len(set(fields)):
+                not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,62}", field) for field in fields) or len(fields) != len(set(fields)):
             raise ValueError(f"Invalid ordered relationship {side} fields")
     if len(row["source_fields"]) != len(row["target_fields"]):
         raise ValueError("Relationship field lists must have equal lengths")
@@ -119,14 +126,14 @@ async def read_object_relations(session, schema: str, table: str, *, catalog_ses
         JOIN pg_class sc ON sc.relnamespace = sn.oid AND sc.relname = r.source_table
         JOIN pg_namespace tn ON tn.nspname = r.target_schema
         JOIN pg_class tc ON tc.relnamespace = tn.oid AND tc.relname = r.target_table
-        LEFT JOIN {OBJECT_RELATION} so ON so.schema_name = sn.nspname
+        JOIN {OBJECT_RELATION} so ON so.schema_name = sn.nspname
             AND so.table_name = sc.relname AND so.is_active
-        LEFT JOIN {OBJECT_RELATION} target_object ON target_object.schema_name = tn.nspname
+        JOIN {OBJECT_RELATION} target_object ON target_object.schema_name = tn.nspname
             AND target_object.table_name = tc.relname AND target_object.is_active
         WHERE r.enabled AND ((r.source_schema = :schema AND r.source_table = :table)
                          OR (r.target_schema = :schema AND r.target_table = :table))
-          AND sn.nspname ~ '^ts_[a-z0-9_]+$' AND sn.nspname NOT IN ('ts_meta','ts_meta_hist')
-          AND tn.nspname ~ '^ts_[a-z0-9_]+$' AND tn.nspname NOT IN ('ts_meta','ts_meta_hist')
+          AND has_schema_privilege(sn.oid, 'USAGE') AND has_table_privilege(sc.oid, 'SELECT')
+          AND has_schema_privilege(tn.oid, 'USAGE') AND has_table_privilege(tc.oid, 'SELECT')
           AND sc.relkind IN ('r','p') AND tc.relkind IN ('r','p')
           AND NOT sc.relispartition AND NOT tc.relispartition
           AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = sc.oid)

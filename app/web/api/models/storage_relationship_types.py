@@ -2,6 +2,8 @@
 
 from typing import Literal
 
+from app.etl.schema.layout import PG_SCHEMA_PATTERN
+
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
 
 
@@ -28,8 +30,8 @@ class StorageRelationshipTypeUpdate(StorageRelationshipMetadata):
 class StorageRelationshipTarget(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema: StrictStr = Field(pattern=r"^ts_[a-z0-9_]{1,60}$")
-    table: StrictStr = Field(pattern=r"^[a-z_][a-z0-9_]{0,62}$")
+    schema: StrictStr = Field(max_length=63, pattern=f"^{PG_SCHEMA_PATTERN}$")
+    table: StrictStr = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
 
 
 class StorageRelationshipTypeCreate(StorageRelationshipMetadata):

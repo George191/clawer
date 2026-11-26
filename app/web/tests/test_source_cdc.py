@@ -3,6 +3,7 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import json
+import re
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
@@ -39,12 +40,19 @@ async def session():
     yield object()
 
 
-def registry(engine="postgresql"):
+def registry(engine="postgresql", *, published=("example.records",)):
     value = source(engine)
     row = {"name": "External", "engine": engine, "updated_at": REVISION,
            "config": value.config.model_dump(), "credentials_ciphertext": "encrypted"}
-    return SimpleNamespace(_session=session, _stored=AsyncMock(return_value=row),
-                           _credentials=AsyncMock(return_value={"password": "private-password"}))
+    connection = SimpleNamespace(fetch=AsyncMock(return_value=[{"schema_name": schema, "table_name": table} for schema, table in (name.rsplit(".", 1) for name in published)]))
+
+    @asynccontextmanager
+    async def catalog(saved_row):
+        assert saved_row is row
+        yield connection
+
+    return SimpleNamespace(_session=session, _stored=AsyncMock(return_value=row), _postgres_catalog_row=catalog,
+                           _credentials=AsyncMock(return_value={"password": "private-password"}), catalog=connection)
 
 
 class SourceCdcConfigTests(unittest.TestCase):
@@ -57,13 +65,25 @@ class SourceCdcConfigTests(unittest.TestCase):
 
     def test_postgres_capture_does_not_use_internal_etl_schemas(self):
         config = cdc.build_config(IDENTIFIER, source(), "secret", payload(publication="external_pub"), "a" * 32)
-        self.assertEqual(config["table.include.list"], r"example\.records")
+        self.assertEqual(config["table.include.list"], r"^(?-i:example\.records)$")
         self.assertEqual(config["publication.autocreate.mode"], "disabled")
         self.assertEqual(config["database.sslmode"], "verify-full")
         self.assertEqual(config["snapshot.mode"], "initial")
         self.assertEqual(config["slot.name"], "spider_" + "a" * 32)
         self.assertEqual(config["tombstones.on.delete"], "true")
         self.assertNotIn("schema.include.list", config)
+
+    def test_postgres_selection_uses_case_sensitive_exact_patterns_and_saves_spelling(self):
+        table = "OddWarehouse.DailyRollup"
+        selection = SourceCdcCreate(expectedUpdatedAt=REVISION, tables=[table], publication="existing_pub")
+        config = cdc.build_config(IDENTIFIER, source(database="MixedDatabase"), "secret", selection, "a" * 32)
+        self.assertEqual(config["database.dbname"], "MixedDatabase")
+        self.assertEqual(json.loads(config["spider.capture.selection"])["tables"], [table])
+        pattern = config["table.include.list"]
+        self.assertIsNotNone(re.search(pattern, table, re.IGNORECASE))
+        for invalid in ("oddwarehouse.DailyRollup", "OddWarehouse.dailyrollup", "OddWarehouseXDailyRollup",
+                        "Other.OddWarehouse.DailyRollup", "OddWarehouse.DailyRollupExtra"):
+            self.assertIsNone(re.search(pattern, invalid, re.IGNORECASE))
 
     def test_new_capture_has_new_topics_and_slot(self):
         first = cdc.build_config(IDENTIFIER, source(), "secret", payload(publication="pub"), "a" * 32)
@@ -140,6 +160,18 @@ class SourceCdcLifecycleTests(unittest.IsolatedAsyncioTestCase):
         config = call.call_args_list[-1].kwargs["json"]["config"]
         self.assertEqual(config["database.password"], "private-password")
         self.assertEqual(saved._stored.call_args.kwargs["lock"], " FOR UPDATE")
+        self.assertEqual(saved.catalog.fetch.await_args.args[1:], ("pub", ("example",), ("records",)))
+
+    async def test_postgres_publication_must_cover_exact_selected_table_before_registration(self):
+        selection = SourceCdcCreate(expectedUpdatedAt=REVISION, tables=["OddWarehouse.DailyRollup"], publication="pub")
+        saved = registry(published=["oddwarehouse.DailyRollup"])
+        call = AsyncMock(return_value=None)
+        with patch.object(cdc, "request", call), patch.object(cdc.settings, "cdc_connect_url", "http://connect"), \
+             self.assertRaises(HTTPException) as failure:
+            await cdc.SourceCdc(saved).create(IDENTIFIER, selection)
+        self.assertEqual(failure.exception.status_code, 422)
+        self.assertEqual([item.args[0] for item in call.call_args_list], ["GET"])
+        self.assertEqual(saved.catalog.fetch.await_args.args[1:], ("pub", ("OddWarehouse",), ("DailyRollup",)))
 
     async def test_existing_task_blocks_source_mutation(self):
         with patch.object(cdc, "request", AsyncMock(return_value={})), \

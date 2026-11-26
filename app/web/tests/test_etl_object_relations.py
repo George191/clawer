@@ -334,7 +334,7 @@ class ObjectRelationTests(unittest.IsolatedAsyncioTestCase):
             validate_definition({**SEEDS[0], "relationship_kind": "所属企业"})
 
     async def test_invalid_identifiers_fields_cardinality_and_provenance_fail_before_database(self):
-        mutations = [{"source_schema": "public"}, {"target_schema": "ts_meta"},
+        mutations = [{"source_schema": "pg_catalog"}, {"target_schema": "ts_meta"},
                      {"target_schema": "ts_meta_hist"}, {"source_table": "x; DROP TABLE x"},
                      {"source_fields": []}, {"target_fields": ["a", "b"]},
                      {"source_fields": ["cik", "cik"], "target_fields": ["a", "b"]},
@@ -379,7 +379,7 @@ class ObjectRelationTests(unittest.IsolatedAsyncioTestCase):
     async def test_preview_includes_outgoing_logical_links_without_claiming_a_physical_constraint(self):
         instance, _ = service(Result([summary("ts_ods", "ods_organization", properties_count=0)]),
                               Result([]), Result([logical(row) for row in SEEDS[:2]]))
-        result = await instance.preview("ods", "ods_organization")
+        result = await instance.preview("ts_ods", "ods_organization")
         self.assertEqual(len(result["linkedObjectTypes"]), 2)
         linked = result["linkedObjectTypes"][0]
         self.assertEqual(linked["direction"], "outgoing")
@@ -420,7 +420,8 @@ class ObjectRelationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(params, {"schema": "ts_ods", "table": "ods_filing", "object_metadata": "[]", "relation_metadata": "[]"})
         for requirement in ("WHERE r.enabled", "NOT sc.relispartition", "NOT tc.relispartition",
                             "a.attnum > 0 AND NOT a.attisdropped", "unnest(r.source_fields)",
-                            "unnest(r.target_fields)", "('ts_meta','ts_meta_hist')", "pg_inherits"):
+                            "unnest(r.target_fields)", "so.is_active", "target_object.is_active",
+                            "has_schema_privilege(sn.oid, 'USAGE')", "has_schema_privilege(tn.oid, 'USAGE')", "pg_inherits"):
             self.assertIn(requirement, sql)
 
     async def test_foreign_key_wins_over_same_reverse_mapping_and_declared_cardinality_is_reversed(self):

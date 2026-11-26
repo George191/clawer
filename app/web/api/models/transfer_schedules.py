@@ -35,6 +35,8 @@ class TransferSchedule(BaseModel):
 
 
 class TransferScheduleSummary(TransferSchedule):
+    sourceSchema: str
+    targetSchema: str
     planId: UUID
     planName: str
     sourceTable: str

@@ -5,6 +5,6 @@ export function exactTransferReceiptFocus(params: URLSearchParams, schema: strin
     return occurrences.length === 1 && occurrences[0] === expected;
   };
   const receipts = params.getAll('transferReceipt');
-  return schema === 'ts_transfer_sandbox' && exact('schema', schema) && exact('table', table) && exact('view', 'evidence') &&
+  return exact('schema', schema) && exact('table', table) && exact('view', 'evidence') &&
     receipts.length === 1 && canonicalTransferReceipt(receipts[0]) ? receipts[0] : undefined;
 }

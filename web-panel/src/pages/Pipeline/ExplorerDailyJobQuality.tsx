@@ -55,7 +55,7 @@ function Time({ value, empty }: { value?: string | null; empty: string }) {
 type Props = { schema: string; table: string; version: number; cadence?: 'daily' | 'weekly' };
 export default function ExplorerDailyJobQuality(props: Props) {
   const identity = useSandboxIdentity();
-  return identity && props.schema === 'ts_transfer_sandbox'
+  return identity
     ? <DailyJobQualityCard key={JSON.stringify([identity, props.schema, props.table, props.version, props.cadence])} {...props} identity={identity} />
     : null;
 }

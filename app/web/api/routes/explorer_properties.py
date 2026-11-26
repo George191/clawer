@@ -18,9 +18,9 @@ from app.web.api.models.ontology_registry import OntologyDefinitionRow, Property
 from app.web.services.etl_layers import get_etl_layers
 from app.web.services.ontology_action_runtime import _definition_access
 from app.web.services.ontology_registry import (
-    WAREHOUSE_SCHEMAS,
     ensure_source_identity,
     published_catalog_statement,
+    source_connection_id,
     warehouse_table,
 )
 from app.web.api.routes.explorer_layouts import can_display
@@ -135,7 +135,7 @@ async def warehouse_asset(layer, table, user):
 async def source(session, user, schema, table, requested):
     if requested is None:
         return None
-    if schema not in WAREHOUSE_SCHEMAS or not user.is_superuser:
+    if not user.is_superuser:
         raise HTTPException(404, "Object type not found")
     model = OntologyDefinitionRow
     binding = model.published_definition["source"]
@@ -151,7 +151,9 @@ async def source(session, user, schema, table, requested):
     row, definition, _, permitted = await _definition_access(session, user, found[0].id)
     if definition.source.schema_name != schema or definition.source.table != table:
         raise HTTPException(409, "The published source changed. Reload the property mapping.")
-    ensure_source_identity(row, definition, await warehouse_table(definition.source))
+    ensure_source_identity(row, definition, await warehouse_table(
+        definition.source, connection_id=source_connection_id(row),
+    ))
     return row, definition, set(permitted)
 
 

@@ -13,6 +13,7 @@ type PhysicalCatalogProps = {
     schemas: LayerNode[];
     tables: LayerTable[];
     selectedSchema: string;
+    selectedConnection?: string;
     selectedTable: string;
     catalogLoaded: boolean;
     tablesLoading: boolean;
@@ -20,7 +21,7 @@ type PhysicalCatalogProps = {
     overlayOpen: boolean;
     onCreateTable?: () => void;
     onRefresh: () => void;
-    onSchema: (schema: string) => void;
+    onSchema: (schema: string, connectionId?: string) => void;
     onTable: (table: LayerTable) => void;
 };
 
@@ -81,7 +82,7 @@ export default function ExplorerCatalog(props: Props) {
     return props.published ? <PublishedCatalogPicker {...props} /> : <PhysicalCatalog {...props} />;
 }
 
-function PhysicalCatalog({ schemas, tables, selectedSchema, selectedTable, catalogLoaded, tablesLoading, requestError, overlayOpen, onDismiss, onCreateTable, onRefresh, onSchema, onTable }: PhysicalCatalogProps) {
+function PhysicalCatalog({ schemas, tables, selectedSchema, selectedConnection, selectedTable, catalogLoaded, tablesLoading, requestError, overlayOpen, onDismiss, onCreateTable, onRefresh, onSchema, onTable }: PhysicalCatalogProps) {
     const [search, setSearch] = useState('');
     const [collapsedSchema, setCollapsedSchema] = useState('');
     const keyword = search.trim().toLowerCase();
@@ -95,17 +96,17 @@ function PhysicalCatalog({ schemas, tables, selectedSchema, selectedTable, catal
                 {!!keyword && <p className="flow-catalog-scope">Searches schema names and tables in {selectedSchema || 'the open schema'}.</p>}
                 <ul className="flow-catalog-list" aria-label="Schemas">
                     {visibleSchemas.map((schema) => {
-                        const selected = schema.key === selectedSchema;
+                        const selected = schema.key === selectedSchema && schema.connectionId === selectedConnection;
                         const expanded = selected && (!!keyword || collapsedSchema !== schema.key);
                         return (
-                            <li key={schema.key}>
+                            <li key={JSON.stringify([schema.connectionId, schema.key])}>
                                 <button type="button" className={`flow-catalog-schema${selected ? ' is-selected' : ''}`} aria-expanded={expanded} onClick={() => {
                                     if (selected) setCollapsedSchema(expanded ? schema.key : '');
-                                    else { setCollapsedSchema(''); onSchema(schema.key); }
+                                    else { setCollapsedSchema(''); onSchema(schema.key, schema.connectionId); }
                                 }}>
                                     {expanded ? <DownOutlined className="flow-catalog-disclosure" /> : <RightOutlined className="flow-catalog-disclosure" />}
                                     <FolderOutlined className="flow-catalog-resource-icon" />
-                                    <strong>{schema.alias || schema.label}</strong>
+                                    <strong>{schema.alias || schema.database || schema.label}</strong>
                                     <code>{schema.key}</code>
                                     <span className="flow-catalog-count">{schema.tables ?? 0}</span>
                                 </button>

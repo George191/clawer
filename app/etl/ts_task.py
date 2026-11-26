@@ -28,31 +28,17 @@ from sqlalchemy import text
 
 from app.config.settings import settings
 from app.etl.base import ETLBase, extract_meta
+from app.etl.layer_dependencies import TASK_SOURCE_LAYERS
 from app.etl.schema.catalogs import validate_table_name
-from app.etl.schema.registry import ensure_ontology_tables, get_registered_ddl, save_registered_ddl
 from app.etl.tasks import get_tasks
 from app.etl.source_fences import source_snapshot_revision
 from app.logger import get_logger
+from app.storage.business_database import get_layer_pg_client
 
 logger = get_logger(__name__)
 
-TASK_VULNERABILITY_DDL = """
-CREATE TABLE IF NOT EXISTS ts_task.task_vulnerability (
-    record_id TEXT NOT NULL,
-    data_source TEXT NOT NULL,
-    data_type TEXT NOT NULL,
-    task TEXT NOT NULL,
-    result JSONB NOT NULL CHECK (jsonb_typeof(result) = 'array'),
-    result_type TEXT NOT NULL,
-    source_revision TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (record_id, data_source, task)
-);
-"""
-
 TASK_VULNERABILITY_INSERT = """
-INSERT INTO ts_task.task_vulnerability (
+INSERT INTO {table_ref} (
     data_source, data_type, record_id,
     task, result, result_type, source_revision, created_at, updated_at
 ) VALUES (
@@ -69,7 +55,7 @@ RETURNING *
 """
 
 TASK_PATENT_INSERT = """
-INSERT INTO ts_task.task_patent (
+INSERT INTO {table_ref} (
     data_source, data_type, record_id,
     task, result, result_type, source_revision,
     created_at
@@ -88,6 +74,7 @@ RETURNING *
 
 class TsTask(ETLBase):
     _layer = "task"
+    _source_layers = TASK_SOURCE_LAYERS
     _consumer_topics = [settings.etl_ods_topic]
     _consumer_group = settings.etl_task_consumer_group
     _producer_topic = settings.etl_task_topic
@@ -104,33 +91,21 @@ class TsTask(ETLBase):
             return True
         return await super()._dispatch(message)
 
-    async def _on_init_schema(self) -> None:
-        await ensure_ontology_tables(self._metadata_pg)
-        if "vulnerability" in self._handlers and not await get_registered_ddl(
-            self._metadata_pg, "task", "vulnerability",
-        ):
-            await save_registered_ddl(
-                self._metadata_pg,
-                layer="task",
-                table="vulnerability",
-                ddl_sql=TASK_VULNERABILITY_DDL,
-                partition_type="none",
-                description="Satellite vulnerability extraction results",
-                updated_by="system:task",
-                allow_update=False,
-            )
-        await super()._on_init_schema()
-
     async def _write_result(
         self, message: dict[str, Any], sql: str, payload: dict[str, Any],
     ) -> dict[str, Any] | None:
         """Validate the current ODS snapshot after computation, then commit its result."""
-        async with self._pg.session() as session:
-            revision = await source_snapshot_revision(session, "ods", message)
+        data_type = payload["data_type"]
+        source_ref = await self._upstream_ref("ods", data_type)
+        target_ref = self._table_fqn(data_type)
+        async with get_layer_pg_client("ods").session() as source_session:
+            revision = await source_snapshot_revision(source_session, "ods", message, table_ref=source_ref)
             if revision is None:
                 return None
-            row = (await session.execute(text(sql), {**payload, "source_revision": revision})).mappings().first()
-            return dict(row) if row else None
+            async with self._pg.session() as session:
+                row = (await session.execute(text(sql.format(table_ref=target_ref)),
+                                             {**payload, "source_revision": revision})).mappings().first()
+                return dict(row) if row else None
 
     async def _handler_vulnerability(self, message: dict[str, Any]) -> bool:
         try:

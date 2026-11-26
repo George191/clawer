@@ -254,20 +254,46 @@ export const getDashboardWsUrl = () => wsUrl('/ws');
 export const fetchLayers = (signal?: AbortSignal): Promise<LayerNode[]> =>
   client.get('/etl/layers', { signal, ...(signal ? { timeout: 0 } : {}) }).then((r) => unwrap<LayerNode[]>(r.data));
 
+export type WorkerLineageLayer = {
+  layer: string;
+  connectionId: string | null;
+  sourceName: string | null;
+  engine: string | null;
+  database: string | null;
+  schemas: { schemaName: string; tables: number }[];
+  objectCount: number;
+};
+
+export type WorkerLineageGraph = {
+  layers: WorkerLineageLayer[];
+  dependencies: { sourceLayer: string; targetLayer: string }[];
+};
+
+export const fetchWorkerLineage = (signal?: AbortSignal): Promise<WorkerLineageGraph> =>
+  client.get('/etl/lineage/layers', { signal }).then((r) => unwrap<WorkerLineageGraph>(r.data));
+
 export type WarehouseConnection = { id: 'warehouse'; engine: 'postgresql'; database: string; connectionId: string; name: string };
 const warehouseConnectionPath = (id: WarehouseConnection['id'] = 'warehouse') => `/etl/data-connections/${encodeURIComponent(id)}`;
 export const fetchWarehouseConnection = (signal?: AbortSignal): Promise<WarehouseConnection> =>
   client.get(warehouseConnectionPath(), { signal }).then((r) => unwrap<WarehouseConnection>(r.data));
 
+export type LayerConnectionBinding = { executionMode: 'postgres_worker' | 'mongo_source' | 'catalog_only'; layer: string; connectionId: string | null; name: string | null; engine: DataConnectorEngine | null };
+export const fetchLayerBindings = (signal?: AbortSignal): Promise<LayerConnectionBinding[]> =>
+  client.get('/etl/data-connections/layer-bindings', { signal }).then(r => unwrap<LayerConnectionBinding[]>(r.data));
+export const bindLayerConnection = (layer: string, source: DataSource, previousConnectionId: string | null): Promise<LayerConnectionBinding> =>
+  client.put(`/etl/data-connections/layer-bindings/${encodeURIComponent(layer)}`, {
+    connectionId: source.id, expectedUpdatedAt: source.updatedAt, previousConnectionId,
+  }).then(r => unwrap<LayerConnectionBinding>(r.data));
+
 export const selectBusinessDatabase = (source: DataSource): Promise<WarehouseConnection> =>
   client.put(warehouseConnectionPath(), { connectionId: source.id, expectedUpdatedAt: source.updatedAt })
     .then((r) => unwrap<WarehouseConnection>(r.data));
 
-export const fetchEtlObjectTypes = (params: { schema?: string; search?: string; group?: string; ids?: string; limit?: number; offset?: number; includeHidden?: boolean; favoritesOnly?: boolean } = {}, signal?: AbortSignal, connectionId?: WarehouseConnection['id']): Promise<EtlObjectCatalog> =>
+export const fetchEtlObjectTypes = (params: { schema?: string; search?: string; group?: string; ids?: string; limit?: number; offset?: number; includeHidden?: boolean; favoritesOnly?: boolean; connectionId?: string } = {}, signal?: AbortSignal, connectionId?: WarehouseConnection['id']): Promise<EtlObjectCatalog> =>
   client.get(`${warehouseConnectionPath(connectionId)}/object-types`, { params, signal }).then((r) => unwrap<EtlObjectCatalog>(r.data));
 
-export const fetchEtlObjectPreview = (schema: string, table: string, includeHidden = false, connectionId?: WarehouseConnection['id']): Promise<EtlObjectPreview> =>
-  client.get(`${warehouseConnectionPath(connectionId)}/object-types/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/preview`, { params: { includeHidden } }).then((r) => unwrap<EtlObjectPreview>(r.data));
+export const fetchEtlObjectPreview = (schema: string, table: string, includeHidden = false, connectionId?: WarehouseConnection['id'], sourceId?: string): Promise<EtlObjectPreview> =>
+  client.get(`${warehouseConnectionPath(connectionId)}/object-types/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/preview`, { params: { includeHidden, connectionId: sourceId } }).then((r) => unwrap<EtlObjectPreview>(r.data));
 
 export const updateEtlObjectVisibility = (schema: string, table: string, visibility: EtlObjectVisibility): Promise<{ schema: string; table: string; visibility: EtlObjectVisibility }> =>
   client.put(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/visibility`, { visibility }).then((r) => unwrap<{ schema: string; table: string; visibility: EtlObjectVisibility }>(r.data));
@@ -286,11 +312,11 @@ export const updateEtlObjectFavorite = (schema: string, table: string, favorite:
 export const fetchCdcStatus = (signal?: AbortSignal): Promise<CdcStatus> =>
   client.get('/cdc/status', { signal, timeout: 22000 }).then((r) => unwrap<CdcStatus>(r.data));
 
-export const fetchLayerTables = (layer: string, tableRole = 'current', signal?: AbortSignal, connectionId?: WarehouseConnection['id']): Promise<LayerTable[]> =>
-  client.get(`${warehouseConnectionPath(connectionId)}/layers/${encodeURIComponent(layer)}/tables`, { params: { tableRole }, signal, ...(signal ? { timeout: 0 } : {}) }).then((r) => unwrap<LayerTable[]>(r.data));
+export const fetchLayerTables = (layer: string, tableRole?: 'current' | 'history', signal?: AbortSignal, warehouseId?: WarehouseConnection['id'], connectionId?: string): Promise<LayerTable[]> =>
+  client.get(`${warehouseConnectionPath(warehouseId)}/layers/${encodeURIComponent(layer)}/tables`, { params: { tableRole, connectionId }, signal, ...(signal ? { timeout: 0 } : {}) }).then((r) => unwrap<LayerTable[]>(r.data));
 
-export const fetchEtlTableColumns = (layer: string, table: string, signal?: AbortSignal): Promise<EtlTableColumn[]> =>
-  client.get(`/etl/${encodeURIComponent(layer)}/${encodeURIComponent(table)}/columns`, { signal }).then((r) => unwrap<EtlTableColumn[]>(r.data));
+export const fetchEtlTableColumns = (layer: string, table: string, signal?: AbortSignal, connectionId?: string): Promise<EtlTableColumn[]> =>
+  client.get(`/etl/${encodeURIComponent(layer)}/${encodeURIComponent(table)}/columns`, { signal, params: { connectionId } }).then((r) => unwrap<EtlTableColumn[]>(r.data));
 
 export type ColumnPlannerStatistic = { status: 'unavailable' } |
   { status: 'observed'; nullFraction: number; observedAt: string };
@@ -368,7 +394,7 @@ export type TransferScheduleJob = {
   scheduleDayOfMonthUtc?: number | null;
 };
 
-export type TransferScheduleSummary = TransferSchedule & { planId: string; planName: string; sourceTable: string; targetTable: string };
+export type TransferScheduleSummary = TransferSchedule & { planId: string; planName: string; sourceSchema: string; targetSchema: string; sourceTable: string; targetTable: string };
 
 export const fetchTransferSchedules = (signal?: AbortSignal): Promise<TransferScheduleSummary[]> =>
   client.get('/etl/transfer-schedules', { signal }).then((r) => unwrap<TransferScheduleSummary[]>(r.data));
@@ -487,6 +513,11 @@ export const deleteTransferPlan = (id: string, expectedUpdatedAt: string): Promi
   client.delete(`/etl/transfer-plans/${encodeURIComponent(id)}`, { params: { expectedUpdatedAt } }).then(() => undefined);
 
 export type ExplorerTableEvidenceSnapshot = {
+  tableRole: string;
+  transferSandbox: boolean;
+  fieldPolicy: boolean;
+  exportSource: boolean;
+  indexPreview: boolean;
   observedAt: string;
   latestFiledDate: string | null;
   observation: 'observed' | 'no_filed_date' | 'safe_plan_unavailable' | 'metadata_only';
@@ -495,8 +526,8 @@ export type ExplorerTableEvidenceSnapshot = {
   lineage: { status: 'unavailable' } | { status: 'declared'; mongoCollection: string; rdsTable: string; odsTable: string };
 };
 
-export const fetchExplorerTableEvidence = (schema: string, table: string, signal?: AbortSignal): Promise<ExplorerTableEvidenceSnapshot> =>
-  client.get(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/evidence`, { signal }).then((r) => unwrap<ExplorerTableEvidenceSnapshot>(r.data));
+export const fetchExplorerTableEvidence = (schema: string, table: string, signal?: AbortSignal, connectionId?: string): Promise<ExplorerTableEvidenceSnapshot> =>
+  client.get(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/evidence`, { signal, params: { connectionId } }).then((r) => unwrap<ExplorerTableEvidenceSnapshot>(r.data));
 
 export type ExplorerRecordDetails = {
   row: Record<string, unknown>; identity: Record<string, string>; primaryKey: string[];
@@ -540,8 +571,8 @@ export type CdcTableCapture = ({
   reason: string; topic?: string;
 }) & { recordLink?: { state: 'matched'; source: string; target: string; eventTime: string; checkedAt: string }
   | { state: 'no_sample' | 'unavailable'; reason: string } };
-export const fetchTableCapture = (schema: string, table: string, signal: AbortSignal) =>
-  client.get(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/cdc-evidence`, { signal, timeout: 20000 })
+export const fetchTableCapture = (schema: string, table: string, signal: AbortSignal, connectionId?: string) =>
+  client.get(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/cdc-evidence`, { signal, params: { connectionId }, timeout: 20000 })
     .then((r) => unwrap<CdcTableCapture>(r.data));
 
 export type SandboxIndexPreviewQuery = {
@@ -737,6 +768,7 @@ export type PushApplyResult = {
   reviewedAcceptedThrough: string; eventsApplied: number; appliedAt: string | null; checkedAt: string | null; hasMoreReviewed: boolean;
 };
 export type PushApplyStatus = {
+  target: string;
   state: 'disabled' | 'unconfigured' | 'unreviewed' | 'ready' | 'blocked'; available: boolean; canReplay: boolean; generation: 1 | null;
   acceptedThrough: string | null; appliedThrough: string | null; reviewedAt: string | null; maxEvents: number; recent: PushApplyResult[];
 };
@@ -1158,8 +1190,8 @@ export const rotateTeamKey = (team:string,id:string) =>
 export const deleteTeamKey = (team:string,id:string) => client.delete('/apikey/'+id,{params:{team_id:team}});
 export const queryEtlTable = (layer: string, table: string, query: EtlDataQuery, signal?: AbortSignal): Promise<QueryResult> =>
   client.post(`/etl/${layer}/${table}/data`, query, { signal }).then((r) => unwrap<QueryResult>(r.data));
-export const queryExplorerPreview = (layer: string, table: string, query: EtlDataQuery, signal?: AbortSignal): Promise<ExplorerPreviewResult> =>
-  client.post(`/etl/${encodeURIComponent(layer)}/${encodeURIComponent(table)}/preview-rows`, query, { signal, timeout: 0 }).then((r) => unwrap<ExplorerPreviewResult>(r.data));
+export const queryExplorerPreview = (layer: string, table: string, query: EtlDataQuery, signal?: AbortSignal, connectionId?: string): Promise<ExplorerPreviewResult> =>
+  client.post(`/etl/${encodeURIComponent(layer)}/${encodeURIComponent(table)}/preview-rows`, query, { signal, params: { connectionId }, timeout: 0 }).then((r) => unwrap<ExplorerPreviewResult>(r.data));
 
 export const fetchEtlConnections = (): Promise<EtlConnection[]> =>
   client.get('/etl/connections').then((r) => unwrap<EtlConnection[]>(r.data));
@@ -1173,8 +1205,10 @@ export const updateEtlSchema = (schema: string, payload: { name: string; alias: 
   client.put(`/etl/schemas/${schema}`, payload).then(() => undefined);
 export const deleteEtlSchema = (schema: string): Promise<void> =>
   client.delete(`/etl/schemas/${schema}`).then(() => undefined);
-export const createEtlTable = (layer: string, payload: Record<string, unknown>): Promise<LayerTable> =>
-  client.post(`/etl/${layer}/tables`, payload).then((r) => unwrap<LayerTable>(r.data));
+export const createEtlTable = (schema: string, payload: Record<string, unknown> & {
+  connectionId: string; logicalLayer: string; tableRole: 'current' | 'history';
+}): Promise<LayerTable> =>
+  client.post(`/etl/${encodeURIComponent(schema)}/tables`, payload).then((r) => unwrap<LayerTable>(r.data));
 export const updateEtlRow = (layer: string, table: string, key: Record<string, unknown>, values: Record<string, unknown>, expectedVersion: string): Promise<void> =>
   client.patch(`/etl/${layer}/${table}/rows`, { key, values, expectedVersion }).then(() => undefined);
 export const deleteEtlRow = (layer: string, table: string, key: Record<string, unknown>, expectedVersion: string): Promise<void> =>
@@ -1209,8 +1243,8 @@ export const downloadVulnerabilityKeywordVersion = (version: string): Promise<Bl
 export const downloadCurrentVulnerabilityKeywords = (): Promise<Blob> =>
   client.get('/etl/task-config/vulnerability-keywords/current/file', { responseType: 'blob' }).then((r) => r.data as Blob);
 
-export const executeQuery = (sql: string): Promise<QueryResult> =>
-  client.post('/etl/query', { sql }).then((r) => unwrap<QueryResult>(r.data));
+export const executeQuery = (sql: string, connectionId?: string): Promise<QueryResult> =>
+  client.post('/etl/query', { sql, connectionId }).then((r) => unwrap<QueryResult>(r.data));
 
 // ============================================================
 //  Handlers
@@ -1488,13 +1522,13 @@ export type FieldFreshness = {
   lagSeconds: number | null; incident: AssetQualityIncident | null;
 };
 export type FieldFreshnessReview = { expectedGeneration: number; policyGeneration: number; maxLagSeconds: number };
-const fieldFreshnessPath = `${assetFreshnessPath('ts_transfer_sandbox', 'field_freshness_fixture')}/field-freshness`;
-export const fetchFieldFreshness = (signal?: AbortSignal): Promise<FieldFreshness> =>
-  client.get(fieldFreshnessPath, { signal }).then(r => unwrap<FieldFreshness>(r.data));
-export const reviewFieldFreshness = (request: FieldFreshnessReview): Promise<FieldFreshness> =>
-  client.put(fieldFreshnessPath, request).then(r => unwrap<FieldFreshness>(r.data));
-export const acknowledgeFieldFreshnessIncident = (id: string, expectedGeneration: number): Promise<AssetQualityIncident> =>
-  client.post(`${fieldFreshnessPath}/incidents/${encodeURIComponent(id)}/acknowledge`, { expectedGeneration }).then(r => unwrap<AssetQualityIncident>(r.data));
+const fieldFreshnessPath = (schema: string, table: string) => `${assetFreshnessPath(schema, table)}/field-freshness`;
+export const fetchFieldFreshness = (schema: string, table: string, signal?: AbortSignal): Promise<FieldFreshness> =>
+  client.get(fieldFreshnessPath(schema, table), { signal }).then(r => unwrap<FieldFreshness>(r.data));
+export const reviewFieldFreshness = (schema: string, table: string, request: FieldFreshnessReview): Promise<FieldFreshness> =>
+  client.put(fieldFreshnessPath(schema, table), request).then(r => unwrap<FieldFreshness>(r.data));
+export const acknowledgeFieldFreshnessIncident = (schema: string, table: string, id: string, expectedGeneration: number): Promise<AssetQualityIncident> =>
+  client.post(`${fieldFreshnessPath(schema, table)}/incidents/${encodeURIComponent(id)}/acknowledge`, { expectedGeneration }).then(r => unwrap<AssetQualityIncident>(r.data));
 
 export type ObservedTableLineage = {
   available: boolean; direction: TableLineageDirection; truncated: boolean;
@@ -1517,8 +1551,8 @@ export const checkPreviewIndexCoverage = (
       { field: request.field, operator: request.operator }, { signal }).then(r => unwrap<{ state: PreviewIndexCoverageState }>(r.data));
 
 export type RowPreviewMode = 'classic' | 'indexed_id_required' | 'indexed_projection_required';
-export const fetchRowPreviewPolicy = (schema: string, table: string, signal?: AbortSignal): Promise<{ mode: RowPreviewMode }> =>
-  client.get(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/row-preview-policy`, { signal, timeout: 0 })
+export const fetchRowPreviewPolicy = (schema: string, table: string, signal?: AbortSignal, connectionId?: string): Promise<{ mode: RowPreviewMode }> =>
+  client.get(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/row-preview-policy`, { signal, params: { connectionId }, timeout: 0 })
     .then(r => unwrap<{ mode: RowPreviewMode }>(r.data));
 
 export type IndexedIdSamplePredicate = { idEquals: string } | { idFrom: string; idTo: string };
@@ -1572,13 +1606,13 @@ export type MinimumRowHealth = {
   receiptRecordedAt: string | null; checkedAt: string | null; validUntil: string | null; incident: AssetQualityIncident | null;
 };
 export type MinimumRowHealthReview = { expectedGeneration: number; policyGeneration: number; minimumRows: number };
-const minimumRowHealthPath = `${assetFreshnessPath('ts_transfer_sandbox', 'field_freshness_fixture')}/min-rows`;
-export const fetchMinimumRowHealth = (signal?: AbortSignal): Promise<MinimumRowHealth> =>
-  client.get(minimumRowHealthPath, { signal }).then(r => unwrap<MinimumRowHealth>(r.data));
-export const reviewMinimumRowHealth = (request: MinimumRowHealthReview): Promise<MinimumRowHealth> =>
-  client.put(minimumRowHealthPath, request).then(r => unwrap<MinimumRowHealth>(r.data));
-export const acknowledgeMinimumRowHealthIncident = (id: string, expectedGeneration: number): Promise<AssetQualityIncident> =>
-  client.post(`${minimumRowHealthPath}/incidents/${encodeURIComponent(id)}/acknowledge`, { expectedGeneration }).then(r => unwrap<AssetQualityIncident>(r.data));
+const minimumRowHealthPath = (schema: string, table: string) => `${assetFreshnessPath(schema, table)}/min-rows`;
+export const fetchMinimumRowHealth = (schema: string, table: string, signal?: AbortSignal): Promise<MinimumRowHealth> =>
+  client.get(minimumRowHealthPath(schema, table), { signal }).then(r => unwrap<MinimumRowHealth>(r.data));
+export const reviewMinimumRowHealth = (schema: string, table: string, request: MinimumRowHealthReview): Promise<MinimumRowHealth> =>
+  client.put(minimumRowHealthPath(schema, table), request).then(r => unwrap<MinimumRowHealth>(r.data));
+export const acknowledgeMinimumRowHealthIncident = (schema: string, table: string, id: string, expectedGeneration: number): Promise<AssetQualityIncident> =>
+  client.post(`${minimumRowHealthPath(schema, table)}/incidents/${encodeURIComponent(id)}/acknowledge`, { expectedGeneration }).then(r => unwrap<AssetQualityIncident>(r.data));
 
 export type SandboxHandoffSink = { id: 'synthetic-review-sink'; label: string; generation: string };
 export type SandboxHandoffCapability = { available: boolean; sink?: SandboxHandoffSink; copyAvailable?: true; senderProofAvailable?: true };

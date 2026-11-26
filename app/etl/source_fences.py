@@ -119,11 +119,11 @@ def snapshot_revision(row: Mapping[str, Any]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-async def _source_row(session, layer: str, message: Mapping[str, Any]) -> Mapping[str, Any]:
+async def _source_row(session, layer: str, message: Mapping[str, Any], *, table_ref: str) -> Mapping[str, Any]:
     """Lock one current direct upstream row around a derived result transaction."""
     if layer not in {"ods", "task"}:
         raise ValueError("Unsupported derived source layer")
-    data_type = validate_table_name(message.get("data_type"))
+    validate_table_name(message.get("data_type"))
     parameters = {name: message.get(name) for name in RECORD_IDENTITY_COLUMNS}
     if not all(parameters.values()):
         raise ValueError("Derived source identity is missing")
@@ -137,7 +137,7 @@ async def _source_row(session, layer: str, message: Mapping[str, Any]) -> Mappin
         # Some task tables retain result history in their created_at key.
         order = " ORDER BY created_at DESC LIMIT 1"
     result = await session.execute(text(
-        f"SELECT * FROM ts_{layer}.{layer}_{data_type} WHERE {predicate}{order} FOR SHARE"
+        f"SELECT * FROM {table_ref} WHERE {predicate}{order} FOR SHARE"
     ), parameters)
     current = result.mappings().first()
     if current is None:
@@ -145,15 +145,15 @@ async def _source_row(session, layer: str, message: Mapping[str, Any]) -> Mappin
     return current
 
 
-async def source_snapshot_current(session, layer: str, message: Mapping[str, Any]) -> bool:
-    return snapshot_matches(await _source_row(session, layer, message), message)
+async def source_snapshot_current(session, layer: str, message: Mapping[str, Any], *, table_ref: str) -> bool:
+    return snapshot_matches(await _source_row(session, layer, message, table_ref=table_ref), message)
 
 
-async def source_snapshot_revision(session, layer: str, message: Mapping[str, Any]) -> str | None:
-    current = await _source_row(session, layer, message)
+async def source_snapshot_revision(session, layer: str, message: Mapping[str, Any], *, table_ref: str) -> str | None:
+    current = await _source_row(session, layer, message, table_ref=table_ref)
     return snapshot_revision(current) if snapshot_matches(current, message) else None
 
 
-async def current_ods_revision(session, message: Mapping[str, Any]) -> str:
+async def current_ods_revision(session, message: Mapping[str, Any], *, table_ref: str) -> str:
     """Lock ODS before TASK to keep source lock ordering consistent with task writes."""
-    return snapshot_revision(await _source_row(session, "ods", message))
+    return snapshot_revision(await _source_row(session, "ods", message, table_ref=table_ref))

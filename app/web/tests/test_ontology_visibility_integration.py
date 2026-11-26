@@ -48,7 +48,10 @@ class OntologyVisibilityIntegration(unittest.IsolatedAsyncioTestCase):
             for table in NAMES:
                 extra = f", owner_id BIGINT REFERENCES {SCHEMA}.visibility_hidden(id)" if table.endswith("prominent") else ""
                 await session.execute(text(f"CREATE TABLE {SCHEMA}.{table} (id BIGINT PRIMARY KEY{extra})"))
-                await ontology.sync_object_metadata(session, SCHEMA, table, catalog_session=session)
+                await ontology.sync_object_metadata(
+                    session, SCHEMA, table, catalog_session=session, layer="visibility", table_role="current",
+                    data_type=table.removeprefix("visibility_"),
+                )
             await session.execute(text(f"INSERT INTO {SCHEMA}.visibility_normal VALUES (42)"))
             # Reproduce the deployed public catalog before this migration, without revisiting ddlregistry.
             await session.execute(text("ALTER TABLE app.ontology_objects DROP COLUMN visibility"))
@@ -102,7 +105,7 @@ class OntologyVisibilityIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(after, before)
         async with self.pg.session() as session:
             await ontology.sync_object_metadata(session, SCHEMA, "visibility_normal", catalog_session=session)
-        await registry.save_registered_ddl(self.pg, layer="visibility", table="normal",
+        await registry.save_registered_ddl(self.pg, layer="visibility", table="normal", catalog_pg=self.pg,
             ddl_sql=f"CREATE TABLE {SCHEMA}.visibility_normal (id BIGINT PRIMARY KEY)")
         row = await self.pg.fetch_one("SELECT visibility FROM app.ontology_objects WHERE table_name='visibility_normal'")
         self.assertEqual(row["visibility"], "hidden")
@@ -112,7 +115,8 @@ class OntologyVisibilityIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.pg.fetch_all(f"SELECT * FROM {SCHEMA}.visibility_normal"), [{"id": 42}])
         async with self.pg.session() as session:
             await session.execute(text(f"CREATE TABLE {SCHEMA}.visibility_new (id BIGINT)"))
-            await ontology.sync_object_metadata(session, SCHEMA, "visibility_new", catalog_session=session)
+            await ontology.sync_object_metadata(session, SCHEMA, "visibility_new", catalog_session=session,
+                                                 layer="visibility", table_role="current")
         self.assertEqual((await self.pg.fetch_one("SELECT visibility FROM app.ontology_objects WHERE table_name='visibility_new'"))["visibility"], "normal")
 
     async def test_hidden_ids_facets_pagination_sort_and_logical_link_preview(self):

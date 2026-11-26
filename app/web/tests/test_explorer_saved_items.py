@@ -146,7 +146,7 @@ async def test_saved_list_preview_filters_sorts_pages_and_keeps_metadata(saved_i
     assert page["rows"] == [{"id": 3, "category": "a", "source": "local"}]
     assert page["columns"] == ["id", "category", "source"]
     assert page["primaryKey"] == ["id"] and page["columnTypes"]["id"] == "integer"
-    assert page["rowIdentities"] == [{"id": "3"}] and len(page["rowVersions"][0]) == 64
+    assert page["rowIdentities"] == [{"id": "3"}] and len(page["rowVersions"][0].split(":")[1]) == 64
     assert page["rowActions"]["edit"] and page["hasMore"] and page["stableOrder"]
     second = await c.post(base + "/preview-rows", headers=admin, json={**query, "offset": 1})
     assert second.status_code == 200, second.text

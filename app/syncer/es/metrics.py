@@ -89,13 +89,13 @@ class SyncMetrics:
     total_records_failed: int = 0
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
-    def get_or_create_table(self, table_config: Any) -> TableMetrics:
+    def get_or_create_table(self, table_config: Any, source_table: str) -> TableMetrics:
         """获取或创建表级指标。"""
         key = table_config.table_name
         if key not in self.tables:
             self.tables[key] = TableMetrics(
                 table_name=table_config.table_name,
-                source_table=table_config.source_table,
+                source_table=source_table,
                 target_index=table_config.index_name,
             )
         return self.tables[key]

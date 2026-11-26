@@ -10,7 +10,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.web.api.models.column_planner_statistic import ColumnPlannerStatistic
-from app.web.services.etl_layers import _LINEAGE_METADATA_JOIN, _LINEAGE_SCOPE, _LINEAGE_VISIBLE_SQL
+from app.web.services.etl_layers import _LINEAGE_METADATA_JOIN, _LINEAGE_SCOPE, _LINEAGE_VISIBLE_SQL, is_ordinary_schema
 
 
 class ColumnPlannerStatisticUnavailable(Exception):
@@ -93,5 +93,5 @@ async def _read_options(session: AsyncSession) -> None:
 
 
 def _canonical(schema: str, table: str, column: str) -> bool:
-    return (len(schema) <= 63 and re.fullmatch(r"ts_[a-z0-9_]+", schema, re.ASCII) is not None
-            and all(re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", name, re.ASCII) is not None for name in (table, column)))
+    return (is_ordinary_schema(schema)
+            and all(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,62}", name, re.ASCII) is not None for name in (table, column)))

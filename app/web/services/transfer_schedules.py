@@ -176,7 +176,8 @@ async def list_transfer_schedules(session: AsyncSession) -> list[TransferSchedul
     statement = (select(TransferPlanRow, TransferScheduleRow)
                  .join(TransferScheduleRow, TransferScheduleRow.plan_id == TransferPlanRow.id)
                  .order_by(TransferScheduleRow.updated_at.desc(), TransferPlanRow.id).limit(TICK_LIMIT))
-    return [TransferScheduleSummary(planId=plan.id, planName=plan.name, sourceTable=plan.source_table,
+    return [TransferScheduleSummary(planId=plan.id, planName=plan.name, sourceSchema=plan.source_schema,
+                                    targetSchema=plan.target_schema, sourceTable=plan.source_table,
                                     targetTable=plan.target_table, **_response(plan, binding).model_dump())
             for plan, binding in (await session.execute(statement)).all()]
 

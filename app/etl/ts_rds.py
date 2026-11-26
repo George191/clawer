@@ -11,17 +11,10 @@ from sqlalchemy import text
 from app.config.settings import settings
 from app.etl.base import ETLBase, extract_meta
 from app.etl.orbital_history import event_lineage, immutable_event_payload
-from app.etl.schema.baselines import RDS_CURRENT_BASELINE_DDLS
 from app.etl.schema.catalogs import (
     current_insert_sql,
-    current_table_ddl,
     table_columns,
     validate_table_name,
-)
-from app.etl.schema.registry import (
-    ensure_ontology_tables,
-    get_registered_ddl,
-    save_registered_ddl,
 )
 from app.logger import get_logger
 from app.records.values import require_canonical_record
@@ -47,23 +40,10 @@ class TsRds(ETLBase):
             self._consumer_topics = [f"{settings.kafka_topic}-{table_name}"]
             self._consumer_pattern = ""
 
-    async def _on_init_schema(self) -> None:
-        await self._pg.execute("CREATE SCHEMA IF NOT EXISTS ts_rds")
-        await self._pg.execute("CREATE EXTENSION IF NOT EXISTS postgis")
-        await ensure_ontology_tables(self._metadata_pg)
-        for table in RDS_CURRENT_BASELINE_DDLS:
-            if not self._table_name or table == self._table_name:
-                await self._ensure_registered_table(table, "current", create_partitions=False)
-
     async def _ensure_type(self, table: str) -> None:
         validate_table_name(table)
         if table in self._ready_types:
             return
-        if not await get_registered_ddl(self._metadata_pg, "rds", table, "current"):
-            await save_registered_ddl(
-                self._metadata_pg, layer="rds", table=table,
-                ddl_sql=current_table_ddl("rds", table), updated_by="system:rds", allow_update=False,
-            )
         await self._ensure_registered_table(table, "current")
         self._ready_types.add(table)
 
@@ -85,7 +65,8 @@ class TsRds(ETLBase):
         payload: dict[str, Any],
     ) -> dict[str, Any] | None:
         current_sql = current_insert_sql(
-            "rds", table, table_columns("rds", table), replay_equal=settings.etl_output_mode == "direct",
+            "rds", table, table_columns("rds", table), table_ref=self._table_fqn(table),
+            replay_equal=settings.etl_output_mode == "direct",
         )
 
         async with self._pg.session() as session:
@@ -95,7 +76,7 @@ class TsRds(ETLBase):
             current_row = result.mappings().first()
             if table == "orbital" and current_row is None:
                 existing = (await session.execute(text(
-                    "SELECT *, raw_data = CAST(:raw_data AS jsonb) AS identical FROM ts_rds.rds_orbital "
+                    f"SELECT *, raw_data = CAST(:raw_data AS jsonb) AS identical FROM {self._table_fqn(table)} "
                     "WHERE record_id=:record_id AND data_source=:data_source AND data_type=:data_type FOR SHARE"
                 ), payload)).mappings().first()
                 if existing is None or not existing["identical"]:
@@ -108,7 +89,7 @@ class TsRds(ETLBase):
     async def _check_skipped_stream(self, session, table: str, payload: dict[str, Any]) -> None:
         """A cross-topic equal-version collision must stop, rather than silently skip."""
         current = (await session.execute(text(
-            f"SELECT raw_data,kafka_topic,kafka_partition,kafka_offset FROM ts_rds.rds_{table} "
+            f"SELECT raw_data,kafka_topic,kafka_partition,kafka_offset FROM {self._table_fqn(table)} "
             "WHERE record_id=:record_id AND data_source=:data_source AND data_type=:data_type FOR SHARE"
         ), {name: payload[name] for name in ("record_id", "data_source", "data_type")})).mappings().first()
         if current is not None:
@@ -183,7 +164,8 @@ class TsRds(ETLBase):
             if not self._batch_owned(owner, partition):
                 return False
             current_sql = text(current_insert_sql(
-                "rds", table, table_columns("rds", table), replay_equal=settings.etl_output_mode == "direct",
+                "rds", table, table_columns("rds", table), table_ref=self._table_fqn(table),
+                replay_equal=settings.etl_output_mode == "direct",
             ))
             results = []
             async with self._pg.session() as session:
@@ -200,7 +182,8 @@ class TsRds(ETLBase):
                         for key, value in payload.items()
                     }
                     sql = current_insert_sql(
-                        "rds", table, table_columns("rds", table), row_count=len(ordered),
+                        "rds", table, table_columns("rds", table), table_ref=self._table_fqn(table),
+                        row_count=len(ordered),
                         replay_equal=settings.etl_output_mode == "direct",
                     )
                     rows = (await session.execute(text(sql), parameters)).mappings().all()

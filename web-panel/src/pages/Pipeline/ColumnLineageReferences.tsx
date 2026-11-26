@@ -1,3 +1,4 @@
+import { isPhysicalSchema } from '../../services/explorerNavigation';
 import { useEffect, useRef, useState } from 'react';
 import { Button, NativeSelect } from '@/components/ui';
 import { getSessionState } from '../../services/session';
@@ -5,7 +6,7 @@ import { fetchColumnLineageReferences, traceColumnMappingPaths } from '../../ser
 import type { ColumnLineageReferences as References, ColumnMappingPaths, TableLineageDirection, TableLineageIdentity } from '../../services/api';
 import { useSandboxIdentity } from './SandboxMarkings';
 
-export const canonColumn = (value: string) => /^[a-z_][a-z0-9_]{0,62}$/.test(value);
+export const canonColumn = (value: string) => /^[a-z_][a-z0-9_]{0,62}$/i.test(value);
 const name = (item: TableLineageIdentity & { column: string }) => `${item.schema}.${item.table}.${item.column}`;
 const types = { foreign_key: 'Foreign key', object_relation: 'Declared object relation' };
 type Scope = TableLineageIdentity & { column: string };
@@ -59,7 +60,7 @@ function Results({ scope, direction }: { scope: Scope; direction: TableLineageDi
 
 const sameNode = (left: Scope, right: Scope) =>
   left.schema === right.schema && left.table === right.table && left.column === right.column;
-const validNode = (node: Scope) => node && typeof node.schema === 'string' && /^ts_[a-z0-9_]{1,60}$/.test(node.schema) &&
+const validNode = (node: Scope) => node && typeof node.schema === 'string' && isPhysicalSchema(node.schema) &&
   typeof node.table === 'string' && canonColumn(node.table) && typeof node.column === 'string' && canonColumn(node.column);
 
 function validTrace(result: ColumnMappingPaths, scope: Scope, direction: TableLineageDirection) {

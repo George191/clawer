@@ -4,11 +4,16 @@ from contextlib import asynccontextmanager
 from copy import deepcopy
 from pathlib import Path
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 
+from fastapi import HTTPException
 from app.etl.schema import ontology, registry
 from app.etl.schema.catalogs import TABLE_DEFINITIONS
 from app.etl.schema.ddl import ddl_checksum
+from app.web.api.models.ontology_registry import Source
+from app.web.services import ontology_registry
+from tools import ontology_etl_bindings
 
 
 class Result:
@@ -75,6 +80,16 @@ class MetadataPg:
     async def fetch_all(self, sql, params=None):
         return list((await self.execute(sql, params)).mappings())
 
+    def register(self, schema, table, *, layer, data_type, role="current"):
+        record = {"id": len(self.objects) + 1, "layer": layer, "table_role": role,
+            "schema_name": schema, "table_name": table, "is_active": True,
+            "data_type": data_type, "data_type_source": "registration",
+            "version": 0, "checksum": "", "ddl_sql": "", "description": None,
+            "description_source": "not_configured", "partition_type": "none",
+            "partition_column": None, "partition_granularity": None, "partition_count": None}
+        self.objects[(schema, table)] = record
+        return record
+
     async def execute(self, statement, params=None):
         sql = " ".join(str(statement).split())
         self.calls.append((sql, deepcopy(params)))
@@ -90,12 +105,17 @@ class MetadataPg:
             schema, table = params.get("schema", params.get("schema_name")), params.get("table", params.get("table_name"))
             if schema is not None:
                 rows = [row for row in rows if (row["schema_name"], row["table_name"]) == (schema, table)]
-            if "AND is_active" in sql or "WHERE is_active" in sql:
-                rows = [row for row in rows if row.get("is_active", True) and row.get("ddl_sql")]
-            if params.get("layer") and "AND layer = :layer" in sql:
+            if "is_active" in sql:
+                rows = [row for row in rows if row.get("is_active", True)]
+            if "ddl_sql <> ''" in sql:
+                rows = [row for row in rows if row.get("ddl_sql")]
+            if params.get("layer"):
                 rows = [row for row in rows if row["layer"] == params["layer"]]
-            if params.get("table_role") and "AND table_role = :table_role" in sql:
-                rows = [row for row in rows if row["table_role"] == params["table_role"]]
+            role = params.get("table_role", params.get("role"))
+            if role:
+                rows = [row for row in rows if row["table_role"] == role]
+            if params.get("data_type"):
+                rows = [row for row in rows if row["data_type"] == params["data_type"]]
             return Result(rows)
         if sql.startswith("INSERT INTO ontology_objects"):
             schema, table = params.get("schema", params.get("schema_name")), params.get("table", params.get("table_name"))
@@ -118,23 +138,49 @@ class MetadataPg:
                     raise RuntimeError("Fixture rejects property insertion")
         elif sql.startswith("UPDATE ontology_objects"):
             for record in self.objects.values():
-                if record["id"] == params["id"] and record["data_type_source"] != "registration":
-                    record.update(data_type=params["data_type"], data_type_source="table_definition")
+                if record["id"] == params["id"]:
+                    record.update(ddl_sql=params["ddl_sql"], version=params["version"],
+                                  checksum=params["checksum"], partition_type=params["kind"],
+                                  partition_column=params["column"], partition_granularity=params["granularity"],
+                                  partition_count=params["count"], updated_by=params["updated_by"])
         elif not sql.startswith("CREATE EXTENSION IF NOT EXISTS postgis"):
             raise AssertionError("Unexpected or business SQL: " + sql)
         return Result()
 
 
 class OntologyMetadataTests(unittest.IsolatedAsyncioTestCase):
+    async def test_semantic_draft_looks_up_backing_connection_separately_from_upstream(self):
+        storage_id, upstream_id = uuid4(), uuid4()
+        source = Source(mode="existing", schema="Backing.Data", table="Events",
+                        connectionId=storage_id, upstreamConnectionId=upstream_id)
+        opened = []
+
+        class Layers:
+            @asynccontextmanager
+            async def session(self, **scope):
+                opened.append(scope)
+                yield self
+
+        with patch.object(ontology_registry, "get_etl_layers", return_value=Layers()), \
+             patch.object(ontology_registry, "_warehouse_table", new_callable=AsyncMock,
+                          return_value="warehouse table"):
+            self.assertEqual(await ontology_registry.warehouse_table(source), "warehouse table")
+            with self.assertRaises(HTTPException) as error:
+                await ontology_registry.warehouse_table(source, connection_id=str(upstream_id))
+        self.assertEqual(error.exception.status_code, 409)
+        self.assertEqual(opened, [{"schema": "Backing.Data", "table": "Events", "connection_id": str(storage_id)}])
+
     async def sync(self, pg, **kwargs):
         async with pg.session() as session:
-            return await ontology.sync_object_metadata(session, "ts_custom", "items", catalog_session=session, **kwargs)
+            return await ontology.sync_object_metadata(session, "ts_custom", "items", catalog_session=session,
+                                                       layer="custom", table_role="current", **kwargs)
 
     async def test_separate_catalog_session_keeps_metadata_on_the_system_session(self):
         catalog = MetadataPg()
         system = MetadataPg(physical=False)
         async with system.session() as session:
-            result = await ontology.sync_object_metadata(session, "ts_custom", "items", catalog_session=catalog)
+            result = await ontology.sync_object_metadata(session, "ts_custom", "items", catalog_session=catalog,
+                                                         layer="custom", table_role="current")
 
         self.assertEqual(result["properties_count"], 1)
         self.assertEqual(len(catalog.calls), 2)
@@ -234,7 +280,7 @@ class OntologyMetadataTests(unittest.IsolatedAsyncioTestCase):
                     "partstrat": None, "partition_fields": [], "partition_count": 0}
                 await ontology.sync_object_metadata(
                     session, "ts_custom", "items", catalog_session=session,
-                    ddl_sql="CREATE TABLE ts_custom.items (id bigint);",
+                    layer="custom", table_role="current", ddl_sql="CREATE TABLE ts_custom.items (id bigint);",
                 )
         self.assertEqual((pg.catalog, pg.objects, pg.properties), ({}, {}, {}))
         self.assertEqual((pg.commits, pg.rollbacks), (0, 1))
@@ -250,7 +296,7 @@ class OntologyMetadataTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((pg.objects, pg.properties), before)
 
     async def test_invalid_or_missing_objects_do_not_write(self):
-        for schema, table in [("public", "x"), ("ts_meta", "x"), ("ts_meta_hist", "x"), ("ts_ods;drop", "x"), ("ts_ods", 'x"')]:
+        for schema, table in [("app", "x"), ("ts_meta", "x"), ("ts_meta_hist", "x"), ("ts_ods;drop", "x"), ("ts_ods", 'x"')]:
             pg = MetadataPg(physical=False)
             with self.assertRaises(ValueError):
                 await ontology.sync_object_metadata(pg, schema, table, catalog_session=pg)
@@ -271,20 +317,21 @@ class OntologyMetadataTests(unittest.IsolatedAsyncioTestCase):
                 await self.sync(pg, ddl_sql="CREATE TABLE ts_custom.items (id bigint);")
             self.assertEqual(pg.objects, {})
 
-    async def test_known_uncreated_definitions_store_columns_without_external_ddl_parsing(self):
-        pg = MetadataPg("ts_ods", "ods_organization", physical=False)
-        first = await registry.save_registered_ddl(pg, layer="ods", table="organization", ddl_sql="Trusted baseline DDL")
-        record = pg.objects[("ts_ods", "ods_organization")]
-        self.assertEqual(record["data_type_source"], "table_definition")
+    async def test_explicit_uncreated_binding_stores_declared_columns(self):
+        pg = MetadataPg("warehouse", "business_orgs", physical=False)
+        record = pg.register("warehouse", "business_orgs", layer="ods", data_type="organization")
+        ddl = "CREATE TABLE warehouse.business_orgs (record_id text);"
+        first = await registry.save_registered_ddl(pg, layer="ods", table="organization", ddl_sql=ddl, catalog_pg=pg)
+        self.assertEqual(record["data_type_source"], "registration")
         self.assertEqual(record["data_type"], "organization")
         expected = TABLE_DEFINITIONS["ods"]["organization"]
         self.assertEqual(len(pg.properties[record["id"]]), len(expected["columns"]))
         self.assertTrue(all(row["provenance"] == "table_definition" for row in pg.properties[record["id"]]))
         actual_keys = sorted((row["primary_key_position"], row["name"]) for row in pg.properties[record["id"]] if row["is_primary_key"])
         self.assertEqual([name for _, name in actual_keys], list(expected["primary_key"]))
-        second = await registry.save_registered_ddl(pg, layer="ods", table="organization", ddl_sql="Trusted baseline DDL")
+        second = await registry.save_registered_ddl(pg, layer="ods", table="organization", ddl_sql=ddl, catalog_pg=pg)
         self.assertEqual((first["changed"], second["changed"], second["version"]), (True, False, 1))
-        self.assertEqual(pg.lock_key, "ontology:ts_ods:ods_organization")
+        self.assertEqual(pg.lock_key, "ontology:ods:current:warehouse:business_orgs")
 
     async def test_unknown_or_history_declarations_are_not_guessed(self):
         pg = MetadataPg(physical=False)
@@ -292,79 +339,121 @@ class OntologyMetadataTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(await ontology.sync_declared_object_properties(pg, 1, "ods", "organization", "history"))
         self.assertEqual(pg.calls, [])
 
-    async def test_known_identity_requires_managed_ddl_and_never_overrides_expression_default(self):
+    async def test_legacy_physical_names_do_not_create_semantic_bindings(self):
         pg = MetadataPg("ts_rds", "rds_organization")
-        await ontology.sync_object_metadata(pg, "ts_rds", "rds_organization", catalog_session=pg)
-        record = pg.objects[("ts_rds", "rds_organization")]
-        self.assertEqual(record["data_type"], "")
-        await registry.save_registered_ddl(pg, layer="rds", table="organization", ddl_sql="Trusted current DDL")
-        self.assertEqual(pg.objects[("ts_rds", "rds_organization")]["data_type"], "organization")
-        pg.columns[100].append(property_row("data_type", ordinal_position=2, default_expression="current_user", is_primary_key=False, primary_key_position=None))
-        await ontology.sync_object_metadata(pg, "ts_rds", "rds_organization", catalog_session=pg)
-        self.assertEqual(pg.objects[("ts_rds", "rds_organization")]["data_type_source"], "not_configured")
+        await ontology.sync_object_metadata(pg, "ts_rds", "rds_organization", catalog_session=pg,
+                                             layer="rds", table_role="current")
+        self.assertEqual(pg.objects[("ts_rds", "rds_organization")]["data_type"], "")
+        with self.assertRaisesRegex(ValueError, "No active Ontology binding"):
+            await registry.save_registered_ddl(pg, layer="rds", table="organization", catalog_pg=pg,
+                                               ddl_sql="CREATE TABLE ts_rds.rds_organization (id bigint);")
+        self.assertEqual(pg.objects[("ts_rds", "rds_organization")]["ddl_sql"], "")
 
     async def test_history_keeps_independent_identity_and_uses_real_history_properties(self):
-        pg = MetadataPg("ts_ods_hist", "ods_organization")
+        pg = MetadataPg("warehouse", "old_org_versions")
+        pg.register("warehouse", "old_org_versions", layer="ods", data_type="organization", role="history")
+        ddl = "CREATE TABLE warehouse.old_org_versions (id bigint);"
         await registry.save_registered_ddl(pg, layer="ods", table="organization", table_role="history",
-            ddl_sql="History DDL", partition_type="none")
-        record = pg.objects[("ts_ods_hist", "ods_organization")]
-        self.assertEqual((record["table_role"], record["resource_group"], record["data_type"]), ("history", "ingestion", ""))
+                                           ddl_sql=ddl, partition_type="none", catalog_pg=pg)
+        record = pg.objects[("warehouse", "old_org_versions")]
+        self.assertEqual((record["table_role"], record["resource_group"], record["data_type"]), ("history", "ingestion", "organization"))
         self.assertEqual([row["name"] for row in pg.properties[record["id"]]], ["id"])
-        self.assertEqual(await registry.get_registered_ddl(pg, "ods", "organization", "history"), "History DDL")
+        self.assertEqual(await registry.get_registered_ddl(pg, "ods", "organization", "history"), ddl)
         self.assertIsNone(await registry.get_registered_ddl(pg, "ods", "organization", "current"))
 
     async def test_registry_save_is_atomic_and_review_rejection_preserves_record(self):
-        pg = MetadataPg("ts_ods", "ods_organization")
-        await registry.save_registered_ddl(pg, layer="ods", table="organization", ddl_sql="DDL 1")
+        pg = MetadataPg(physical=False)
+        catalog = MetadataPg()
+        pg.register("ts_custom", "items", layer="custom", data_type="items")
+        base_ddl = "CREATE TABLE ts_custom.items (id bigint);"
+        next_ddl = "CREATE TABLE ts_custom.items (id bigint, body text);"
+        await registry.save_registered_ddl(pg, layer="custom", table="items", ddl_sql=base_ddl, catalog_pg=catalog)
         before = deepcopy((pg.objects, pg.properties))
         with self.assertRaisesRegex(ValueError, "explicit review"):
-            await registry.save_registered_ddl(pg, layer="ods", table="organization", ddl_sql="DDL 2", allow_update=False)
+            await registry.save_registered_ddl(pg, layer="custom", table="items", ddl_sql=next_ddl, catalog_pg=catalog, allow_update=False)
         self.assertEqual((pg.objects, pg.properties), before)
         pg.fail_properties = True
         with self.assertRaises(RuntimeError):
-            await registry.save_registered_ddl(pg, layer="ods", table="organization", ddl_sql="DDL 2")
+            await registry.save_registered_ddl(pg, layer="custom", table="items", ddl_sql=next_ddl, catalog_pg=catalog)
         self.assertEqual((pg.objects, pg.properties), before)
         self.assertEqual(pg.rollbacks, 2)
 
     async def test_catalog_only_record_accepts_first_managed_ddl_without_review(self):
-        pg = MetadataPg("ts_custom", "custom_items")
-        await ontology.sync_object_metadata(pg, "ts_custom", "custom_items", catalog_session=pg)
-        result = await registry.save_registered_ddl(pg, layer="custom", table="items", ddl_sql="DDL", allow_update=False)
+        pg = MetadataPg("warehouse", "registered_items")
+        pg.register("warehouse", "registered_items", layer="custom", data_type="items")
+        result = await registry.save_registered_ddl(pg, layer="custom", table="items", catalog_pg=pg,
+            ddl_sql="CREATE TABLE warehouse.registered_items (id bigint);", allow_update=False)
         self.assertEqual((len(pg.objects), result["version"], result["changed"]), (1, 1, True))
 
     async def test_reads_never_bootstrap_or_return_catalog_only_and_inactive_rows(self):
-        pg = MetadataPg("ts_custom", "custom_items")
-        await ontology.sync_object_metadata(pg, "ts_custom", "custom_items", catalog_session=pg)
+        pg = MetadataPg()
+        pg.register("ts_custom", "items", layer="custom", data_type="items")
         self.assertIsNone(await registry.get_registered_ddl(pg, "custom", "items"))
         self.assertIsNone(await registry.get_registered_ddl_record(pg, "custom", "items"))
         self.assertEqual(await registry.list_registered_ddl_records(pg), [])
-        await registry.save_registered_ddl(pg, layer="custom", table="items", ddl_sql="DDL")
-        self.assertEqual(await registry.get_registered_ddl(pg, "custom", "items"), "DDL")
-        pg.objects[("ts_custom", "custom_items")]["is_active"] = False
+        ddl = "CREATE TABLE ts_custom.items (id bigint);"
+        await registry.save_registered_ddl(pg, layer="custom", table="items", ddl_sql=ddl, catalog_pg=pg)
+        self.assertEqual(await registry.get_registered_ddl(pg, "custom", "items"), ddl)
+        pg.objects[("ts_custom", "items")]["is_active"] = False
         self.assertIsNone(await registry.get_registered_ddl(pg, "custom", "items"))
         self.assertEqual(await registry.list_registered_ddl_records(pg), [])
         self.assertEqual(pg.bootstrap_count, 0)
         self.assertFalse(any(sql.startswith("CREATE") for sql, _ in pg.calls))
 
-    async def test_bootstrap_creates_only_current_ontology_tables_and_skips_existing_objects(self):
+    async def test_startup_checks_registry_without_seeding_objects(self):
         pg = MetadataPg()
-        await self.sync(pg)
+        pg.register("ts_custom", "items", layer="custom", data_type="items")
         before = deepcopy(pg.objects)
-        with patch.object(registry, "_ONTOLOGY_READY", False), patch.object(registry, "baseline_current_ddls", return_value={"custom": {"items": "DDL"}}):
-            # Existing object uses its actual schema.table identity and must remain untouched.
-            pg.objects[("ts_custom", "custom_items")] = {**next(iter(before.values())), "table_name": "custom_items"}
-            expected = deepcopy(pg.objects)
-            await registry.ensure_ontology_tables(pg)
-            await registry.ensure_ontology_tables(pg)
-            self.assertEqual(pg.objects, expected)
-        self.assertEqual(pg.bootstrap_count, 1)
-        ddl = "\n".join(pg.bootstrap_statements)
-        self.assertIn("app.ontology_objects", ddl)
-        self.assertIn("app.ontology_object_properties", ddl)
-        self.assertNotIn("ddlregistry", ddl)
+        await registry.ensure_ontology_tables(pg)
+        self.assertEqual(pg.objects, before)
+        self.assertEqual(pg.bootstrap_count, 0)
+
+    async def test_legacy_binding_backfill_preserves_ids_and_stops_on_ambiguity(self):
+        known = {"id": 14, "layer": "rds", "table_role": "current", "data_type": "",
+                 "schema_name": "ts_rds", "table_name": "rds_patent", "updated_by": "system:rds",
+                 "ddl_sql": "CREATE TABLE ts_rds.rds_patent (id BIGINT)"}
+        ordinary = {**known, "id": 15, "schema_name": "ordinary", "table_name": "rows",
+                    "updated_by": "user:42", "ddl_sql": ""}
+        required = [{**known, "id": index, "layer": layer, "data_type": kind}
+                    for index, ((layer, _, _), (kind, _)) in enumerate(
+                        ontology_etl_bindings._FIXED_LEGACY.items(), start=100)]
+        rows = [known, ordinary, *required]
+        updates = []
+
+        class Metadata:
+            @asynccontextmanager
+            async def session(self):
+                yield self
+
+            async def execute(self, query, params=None):
+                sql = str(query)
+                if "SELECT id, layer" in sql:
+                    return Result(rows)
+                if "UPDATE app.ontology_objects" in sql:
+                    updates.append(params)
+                    return Result(scalar=params["id"])
+                return Result()
+
+        warehouse = MetadataPg()
+        warehouse.close = AsyncMock()
+        warehouse.fetch_all = AsyncMock(return_value=[
+            {"name": name} for name in ontology_etl_bindings._REQUIRED_FIELDS["rds"]
+        ])
+        with patch.object(ontology_etl_bindings, "get_layer_pg_client", return_value=warehouse):
+            preview = await ontology_etl_bindings.backfill(Metadata())
+            self.assertEqual([row["id"] for row in preview["updates"]], [14])
+            self.assertEqual(updates, [])
+            self.assertTrue((await ontology_etl_bindings.backfill(Metadata(), apply=True))["applied"])
+            self.assertEqual([row["id"] for row in updates], [14])
+            rows.append({**known, "id": 22, "data_type": "patent", "schema_name": "active"})
+            blocked = await ontology_etl_bindings.backfill(Metadata(), apply=True)
+        self.assertTrue(blocked["blocked"])
+        self.assertEqual(blocked["conflicts"],
+                         [{"layer": "rds", "table_role": "current", "data_type": "patent", "count": 2}])
+        self.assertEqual([row["id"] for row in updates], [14])
 
     def test_new_ddl_has_unique_physical_identity_and_valid_group_constraint(self):
-        self.assertIn("(schema_name, table_name)", "\n".join(ontology.ONTOLOGY_INDEX_DDL_STATEMENTS))
+        self.assertIn("(layer, table_role, schema_name, table_name)", "\n".join(ontology.ONTOLOGY_INDEX_DDL_STATEMENTS))
         self.assertIn("REFERENCES app.ontology_objects(id) ON DELETE CASCADE", ontology.ONTOLOGY_PROPERTIES_DDL)
         self.assertIn("ontology_objects_resource_group_check", ontology.ONTOLOGY_OBJECTS_DDL)
         self.assertIn("CHECK (resource_group IN", "\n".join(ontology.ONTOLOGY_OBJECT_COLUMNS_ADD_STATEMENTS))

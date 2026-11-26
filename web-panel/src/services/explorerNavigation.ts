@@ -1,3 +1,7 @@
+export function isPhysicalSchema(value: string) {
+  return value.length <= 63 && /^[a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)*$/i.test(value);
+}
+
 type CatalogKind = 'backed' | 'published';
 const connectionId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -60,8 +64,9 @@ export function compactExplorerSearch(search: string, kind: CatalogKind) {
   return params.size ? '?' + params : '';
 }
 
-export function backedExplorerHref(schema: string, table: string, returnTo?: string) {
+export function backedExplorerHref(schema: string, table: string, returnTo?: string, connectionId?: string) {
   const params = new URLSearchParams({ schema, table });
+  if (connectionId) params.set('connectionId', connectionId);
   if (returnTo) params.set('returnTo', returnTo);
   return '/ontology/explorer' + compactExplorerSearch(params.toString(), 'backed');
 }

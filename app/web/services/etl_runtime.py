@@ -39,11 +39,8 @@ CREATE TABLE IF NOT EXISTS app.flow_handler_drafts (
 async def _table(layer: str, table: str) -> tuple[str, str, dict[str, Any]]:
     from app.web.services.etl_layers import get_etl_layers
 
-    row = await get_etl_layers().get_table(layer, table)
-    schema = row["schemaName"]
-    name = schema.removeprefix("ts_").removesuffix("_hist")
-    logical = row["name"].removeprefix(f"{name}_")
-    return name, logical, row
+    row = await get_etl_layers().runtime_table(layer, table, include_hidden=False)
+    return row["layer"], row["dataType"], row
 
 
 def _source(layer: str) -> tuple[Path, str, set[str]]:
@@ -135,11 +132,7 @@ async def stream(layer: str, table: str, topic: str | None = None, *, include_hi
     from app.web.services.etl_layers import get_etl_layers
 
     row = await get_etl_layers().runtime_table(layer, table, include_hidden=include_hidden)
-    layer_name = row["schemaName"].removeprefix("ts_")
-    logical = table.removeprefix(layer_name + "_")
-    group, topics = (
-        _binding(layer_name, logical) if table.startswith(layer_name + "_") else ("", [])
-    )
+    group, topics = _binding(row["layer"], row["dataType"]) if row["tableRole"] == "current" else ("", [])
     selected = topic or (topics[0] if topics else None)
     result: dict[str, Any] = {
         "available": False, "consumerGroup": group, "topics": topics,
@@ -227,7 +220,7 @@ async def script(layer: str, table: str) -> dict[str, Any]:
     source, code, handlers = _source(layer_name)
     if not code:
         return {"available": False, "reason": "Deployed worker source is unavailable", "code": ""}
-    handler_available = (layer_name in {"rds", "ods"} or logical in handlers) and row["schemaName"] == f"ts_{layer_name}"
+    handler_available = row["tableRole"] == "current" and (layer_name in {"rds", "ods"} or logical in handlers)
     return {
         "available": True, "code": code, "language": "python",
         "path": f"app/etl/{source.name}", "sourcePath": f"app/etl/{source.name}",
