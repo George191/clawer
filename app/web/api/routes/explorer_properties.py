@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text, update
 from sqlalchemy.dialects.postgresql import insert
 
+from app.etl.schema.catalog_metadata import OBJECT_RELATION, PROPERTY_RECORDS
 from app.web.api.dependencies.common import CurrentActiveSuperuser, CurrentUser
 from app.web.api.dependencies.session import SessionDep
 from app.web.api.models.explorer_properties import ExplorerPropertyProfile
@@ -97,29 +98,32 @@ def format_allowed(formatter, kind):
     )
 
 
-async def warehouse_asset(layer, table, user):
+async def warehouse_asset(layer, table, user, connection_id=None):
     warehouse = get_etl_layers()
-    target = await warehouse.runtime_table(layer, table, include_hidden=user.is_superuser)
+    target = await warehouse.runtime_table(layer, table, include_hidden=user.is_superuser, connection_id=connection_id)
     schema = target["schemaName"]
-    columns = await warehouse.columns(schema, table)
-    async with warehouse.session() as db:
+    columns = await warehouse.columns(schema, table, connection_id=target["connectionId"], include_hidden=user.is_superuser)
+    async with warehouse.session(schema=schema, table=table, connection_id=target["connectionId"]) as db:
         found = (
             (
                 await db.execute(
                     text(
-                        """
+                        f"""
             SELECT COALESCE(NULLIF(obj_description(c.oid,'pg_class'),''),o.description,'') AS description,
                    COALESCE(o.data_type,'') AS data_type,
                    p.name, p.comment
             FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-            LEFT JOIN app.ontology_objects o ON o.schema_name=n.nspname AND o.table_name=c.relname
-            LEFT JOIN app.ontology_object_properties p ON p.object_id=o.id
+            JOIN {OBJECT_RELATION} ON o.schema_name=n.nspname AND o.table_name=c.relname
+            LEFT JOIN {PROPERTY_RECORDS} ON p.object_id=o.id
             WHERE n.nspname=:schema AND c.relname=:table AND COALESCE(o.is_active,true)
               AND (:admin OR COALESCE(o.visibility,'normal') <> 'hidden')
               AND has_schema_privilege(n.oid,'USAGE') AND has_table_privilege(c.oid,'SELECT')
             """
                     ),
-                    {"schema": schema, "table": table, "admin": user.is_superuser},
+                    await warehouse._catalog_parameters(
+                        {"schema": schema, "table": table, "admin": user.is_superuser},
+                        object_id=int(target["registryId"]),
+                    ),
                 )
             )
             .mappings()
@@ -188,8 +192,8 @@ def present(setting, fields):
 DISPLAY = ("description", "visibility", "summary", "group", "status", "formatter", "presentation")
 
 
-async def resolve(session, user, layer, table, requested):
-    schema, description, data_type, fields = await warehouse_asset(layer, table, user)
+async def resolve(session, user, layer, table, requested, connection_id=None):
+    schema, description, data_type, fields = await warehouse_asset(layer, table, user, connection_id)
     bound = await source(session, user, schema, table, requested)
     source_id = str(bound[0].id) if bound else None
     key = (schema, table, source_id or "physical")
@@ -275,9 +279,10 @@ async def get_properties(
     session: SessionDep,
     response: Response,
     definitionId: UUID | None = None,
+    connectionId: UUID | None = None,
 ):
     response.headers["Cache-Control"] = "private, no-store"
-    return (await resolve(session, user, layer, table, definitionId))[0]
+    return (await resolve(session, user, layer, table, definitionId, str(connectionId) if connectionId else None))[0]
 
 
 def validate(body, fields, current, bound):
@@ -324,9 +329,11 @@ def validate(body, fields, current, bound):
 
 @router.put("/{layer}/{table}/property-mapping")
 async def save_properties(
-    layer: str, table: str, body: Write, user: CurrentActiveSuperuser, session: SessionDep, response: Response
+    layer: str, table: str, body: Write, user: CurrentActiveSuperuser, session: SessionDep, response: Response,
+    connectionId: UUID | None = None,
 ):
-    current, key, stored, fields, bound = await resolve(session, user, layer, table, body.sourceDefinitionId)
+    current, key, stored, fields, bound = await resolve(session, user, layer, table, body.sourceDefinitionId,
+                                                    str(connectionId) if connectionId else None)
     if current["version"] != body.version or current["sourceDefinitionId"] != (
         str(body.sourceDefinitionId) if body.sourceDefinitionId else None
     ):
@@ -376,7 +383,8 @@ async def save_properties(
         )
     if await session.scalar(stmt.returning(model.version)) is None:
         raise HTTPException(409, "Another administrator changed the property mapping")
-    saved = (await resolve(session, user, layer, table, body.sourceDefinitionId))[0]
+    saved = (await resolve(session, user, layer, table, body.sourceDefinitionId,
+                           str(connectionId) if connectionId else None))[0]
     await session.commit()
     response.headers["Cache-Control"] = "private, no-store"
     return saved

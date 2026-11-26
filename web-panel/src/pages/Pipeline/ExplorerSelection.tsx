@@ -168,7 +168,8 @@ export default function ExplorerSelection({
   const refreshState = useRef<{ from: RecordRow[]; keys: Set<string>; active: string }>();
   const reported = useRef<ExplorerPreviewRow[]>([]);
   const presentation = metadata?.presentation;
-  useExplorerErrorToast(metadata?.error ? 'Unable to load object presentation.' : undefined, 'Object presentation unavailable', onRefresh);
+  useExplorerErrorToast(metadata?.error ? `Rows can still be read, but title and property settings could not load. ${metadata.error}` : undefined,
+    'Object details unavailable', metadata?.retry ?? onRefresh);
   const typeName = presentation?.displayName || table;
   const [selection, setSelection] = useState<Selection>();
   const [activeKey, setActiveKey] = useState('');
@@ -378,14 +379,15 @@ export default function ExplorerSelection({
     onRefresh();
   };
   return <div className={`flow-explorer-selection${panelOpen ? ' is-open' : ''}`}>
-    <div ref={attachResults} role="region" aria-label="Object results" className="flow-explorer-selection__results">
+    <div ref={attachResults} role="region" aria-label="Object results" aria-busy={loading} className="flow-explorer-selection__results">
       <div className="flow-explorer-selection__source" {...(overlay?.active ? { inert: '', 'aria-hidden': true } : {})}>
       {current?.collapsed && active && <header className="flow-explorer-selection__results-header">
           <button ref={restore} type="button" className="flow-explorer-selection__control"
             aria-controls={panelId} aria-expanded={false} onClick={show}>Show selection preview</button>
           <Button size="small" disabled={disabled} onClick={clear}>Clear selection</Button>
       </header>}
-      <Table<RecordRow> className="flow-data-table" size="small" loading={loading && !columns.length} pagination={false} rowKey={(record, index = 0) => rowKey(record, index)}
+      <Table<RecordRow> className="flow-data-table" size="small" pagination={false} rowKey={(record, index = 0) => rowKey(record, index)}
+        locale={{ emptyText: loading ? <div className="flow-schema-state" role="status"><ReloadOutlined spin /> Loading object data…</div> : undefined }}
         scroll={{ x: 'max-content' }} dataSource={rows} columns={tableColumns} rowSelection={checkboxProps} onRow={rowProps} />
       {footer}
       </div>
@@ -448,7 +450,8 @@ export default function ExplorerSelection({
               {displayView === 'links' ? renderPublishedRelationships?.(active) ?? renderRelationships?.(active, links.page)
                 : displayView.startsWith('extra:') ? availableViews.find(view => `extra:${view.key}` === displayView)?.render(active)
                 : !metadata ? <p role="status">Loading object presentation…</p>
-                : metadata.error ? <p>Properties are unavailable until the object presentation loads.</p>
+                : metadata.error ? <div role="alert"><strong>Object details could not be loaded</strong><p>{metadata.error}</p>
+                    {metadata.retry && <Button size="small" onClick={metadata.retry}>Retry object details</Button>}</div>
                 : displayView === 'properties'
                   ? <ExplorerProperties key={active.key} row={active} columns={columns} presentation={presentation} presentations={presentations} />
                   : <ExplorerObjectOverview row={active} typeName={typeName} columns={columns}

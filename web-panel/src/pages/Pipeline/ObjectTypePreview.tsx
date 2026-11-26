@@ -45,7 +45,8 @@ export default function ObjectTypePreview({
         <button type="button" className="flow-ontology__icon-button" aria-label="Close asset preview" onClick={onClose}><CloseOutlined /></button>
       </header>
       <div className="flow-ontology__inspector-content" aria-busy={busy}>
-        {loading ? <div className="flow-ontology__empty is-compact" role="status"><ReloadOutlined spin /><span>Loading object type</span></div>
+        {loading ? <section className="flow-ontology__preview-section" role="status"><h3>Object details</h3>
+            <p className="flow-ontology__muted"><ReloadOutlined spin /> Loading {name}…</p></section>
           : error ? <div className="flow-ontology__notice" role="alert"><span>{error}</span>
             {onRetry && <button type="button" onClick={onRetry}>Retry</button>}
             {errorAction && <button type="button" onClick={errorAction.onClick}>{errorAction.label}</button>}

@@ -180,5 +180,6 @@ export function ExplorerValue({ value, text, identity = {}, field, presentation 
   if (parsed !== null && typeof parsed === 'object') return <div className="explorer-json" onClick={event => { if ((event.target as Element).closest('button')) event.stopPropagation(); }}>
     <JsonTreeValue name="" value={parsed} depth={0} comma={false} initiallyOpen />
   </div>;
-  return <span className="flow-explorer-selection__property-value">{text ?? (value == null ? 'null' : String(value))}</span>;
+  return <span className={`flow-explorer-selection__property-value${value == null ? ' flow-explorer-null' : ''}`}
+    title={value == null ? 'SQL NULL: no value' : undefined}>{value == null ? '(Null)' : text ?? String(value)}</span>;
 }

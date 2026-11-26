@@ -49,9 +49,9 @@ export function explorerResultColumns({ layout, sorts, sortFields, filters = [],
         aria-label={`Edit filters for ${field}`} title={`Edit filters for ${label}`} onClick={event => { event.stopPropagation(); openFilter(field); }}
         onDragStart={event => { event.preventDefault(); event.stopPropagation(); }}><FilterOutlined /></button>}</LayoutHeader>,
       render: (value: unknown) => {
-        const shown = value == null ? 'null' : typeof value === 'object' ? JSON.stringify(value) : String(value);
+        const shown = value == null ? '(Null)' : typeof value === 'object' ? JSON.stringify(value) : String(value);
         const scalar = exactCellValue(value, types?.[field]);
-        return scalar === undefined ? shown : <div className="flow-explorer-value"><span title={shown}>{shown || 'Empty'}</span><Dropdown overlayClassName="flow-menu-popup flow-explorer-menu" trigger={['click']} menu={{
+        return scalar === undefined ? shown : <div className="flow-explorer-value"><span className={value == null ? 'flow-explorer-null' : undefined} title={value == null ? 'SQL NULL: no value' : shown}>{shown || 'Empty'}</span><Dropdown overlayClassName="flow-menu-popup flow-explorer-menu" trigger={['click']} menu={{
           items: [{ key: 'include', label: 'Include this value' }, { key: 'exclude', label: 'Exclude this value' }],
           onClick: ({ key }) => filterValue(field, scalar, key === 'exclude'),
         }}><button type="button" className="flow-cell-menu" aria-label={`Filter ${field} by ${shown || 'empty string'}`} title={`Filter ${field} by ${shown || 'empty string'}`}><DownOutlined /></button></Dropdown></div>;

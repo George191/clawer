@@ -50,8 +50,8 @@ export interface ExplorerPropertyMapping {
 const pathFor = (schema: string, table: string) =>
   '/etl/' + encodeURIComponent(schema) + '/' + encodeURIComponent(table) + '/property-mapping';
 
-export async function fetchExplorerProperties(schema: string, table: string, signal?: AbortSignal, definitionId?: string) {
-  return unwrap<ExplorerPropertyMapping>((await client.get(pathFor(schema, table), { signal, params: { definitionId } })).data);
+export async function fetchExplorerProperties(schema: string, table: string, signal?: AbortSignal, definitionId?: string, connectionId?: string) {
+  return unwrap<ExplorerPropertyMapping>((await client.get(pathFor(schema, table), { signal, params: { definitionId, connectionId } })).data);
 }
 
 export async function saveExplorerProperties(schema: string, table: string, mapping: ExplorerPropertyMapping) {

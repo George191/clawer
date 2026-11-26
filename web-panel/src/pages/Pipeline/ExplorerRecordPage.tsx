@@ -109,7 +109,7 @@ function RecordPage({ source, identity }: { source: ExplorerDetailSource; identi
     const metadata: ExplorerPresentationRead | undefined = source.kind === 'published' ? objectType ? { presentation: publishedPresentation(objectType) } : undefined : physicalMetadata;
     useExplorerErrorToast(error, 'Unable to read object', () => reload(value => value + 1));
     useExplorerErrorToast(layoutError, 'Property layout unavailable');
-    useExplorerErrorToast(metadata?.error ? 'Unable to read object presentation.' : undefined, 'Object presentation unavailable');
+    useExplorerErrorToast(metadata?.error, 'Object details unavailable', metadata?.retry);
     useExplorerErrorToast(mutationError, 'Unable to update object');
     const presentation = metadata?.presentation;
     const typeName = presentation?.displayName || table;
@@ -214,7 +214,8 @@ function RecordPage({ source, identity }: { source: ExplorerDetailSource; identi
                 !layouts && !layoutError ? <p role="status">Loading property layout…</p> :
                 layoutError ? null :
                 !metadata ? <p role="status">Loading object presentation…</p> :
-                metadata.error ? null :
+                metadata.error ? <div role="alert"><strong>Object details could not be loaded</strong><p>{metadata.error}</p>
+                    {metadata.retry && <Button size="small" onClick={metadata.retry}>Retry object details</Button>}</div> :
                 currentMode==='properties' ? <ExplorerProperties presentation={presentation} presentations={presentations} row={row}/> :
                 <ExplorerObjectOverview row={row} presentation={presentation} presentations={presentations} typeName={typeName} group={currentGroup}/>)}</div></div>
         </>}

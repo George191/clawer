@@ -23,6 +23,7 @@ type Props<Q extends object = WorkbenchQuery> = {
     source: ExplorerSource;
     label: string;
     available: boolean;
+    loading?: boolean;
     glyph?: ReactNode;
     fields: string[];
     names?: Record<string, string>;
@@ -287,8 +288,8 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
     return <header className="wb-header" ref={root}>
         <div className="wb-line wb-query">
             <button type="button" className="wb-back" onClick={p.backToTypes}><ArrowLeftOutlined /> Back to object types</button>
-            <span className="wb-type">{p.available && <button type="button" className="wb-catalog-toggle wb-type-icon" onClick={p.toggleCatalog} aria-label="Browse object types" title="Browse object types" aria-expanded={p.catalogOpen}><i>{p.glyph ?? <TableOutlined />}</i></button>}<strong title={sourceLabel}>{p.label}</strong></span>
-            {p.available && <><div className="wb-search" ref={propertySearch}>
+            <span className="wb-type">{(p.available || p.loading) && <button type="button" className="wb-catalog-toggle wb-type-icon" onClick={p.toggleCatalog} aria-label="Browse object types" title="Browse object types" aria-expanded={p.catalogOpen}><i>{p.glyph ?? <TableOutlined />}</i></button>}<strong title={sourceLabel}>{p.label}</strong></span>
+            {(p.available || p.loading) && <><div className="wb-search" ref={propertySearch}>
                 <div className="wb-property-search ui-input-surface" onClick={event => event.currentTarget.querySelector('input')?.focus()}><SearchOutlined /><ExplorerSearchCondition search={p.appliedSearch} removeSearch={p.onClearSearch} /><input role="combobox" aria-autocomplete="list" aria-expanded={menu === 'search'} aria-controls={suggestionsId}
                     aria-activedescendant={menu === 'search' && activeSuggestion >= 0 ? `${suggestionsId}-${activeSuggestion}` : undefined}
                     aria-label="Search objects or properties" placeholder="Search objects or properties…" value={search}
@@ -337,7 +338,7 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
             </Dropdown>)}
             <button className="wb-query-action" onClick={() => void openShare(saved)} disabled={p.savedLoading || !!p.savedError}>Share</button><button className="wb-primary wb-query-action" disabled={p.savedLoading || !!p.savedError} onClick={() => beginSave(saved?.kind === 'list' ? 'list' : 'exploration')}>Save</button></>}
         </div>
-        {p.available && <><div className="wb-line wb-tools">
+        {(p.available || p.loading) && <><div className="wb-line wb-tools">
             <div className="wb-left">{p.layoutControl}{p.filterButton}
                 {saved && <div className="wb-active-saved" aria-label="Current saved item"><span className="wb-saved-kind">{saved.kind === 'list' ? <TableOutlined /> : <BarChartOutlined />}{saved.kind === 'list' ? 'List' : 'Exploration'}</span><strong title={saved.name}>{saved.name}</strong><button type="button" aria-label="Return to all rows" title="Return to all rows" onClick={p.closeSavedItem}><CloseOutlined /></button></div>}
                 {!!p.selected.length && <div className="wb-selection-tools" role="toolbar" aria-label="Selected object tools">

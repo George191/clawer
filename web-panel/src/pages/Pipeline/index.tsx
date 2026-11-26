@@ -433,8 +433,9 @@ const DataLayersWorkspace: React.FC = () => {
         setQueryScope(requestedScope);
     }
     const explorerPresentation = useExplorerPresentation(
-        selectedTableAvailable && previewIdentity ? selectedSchema : '', table.name,
+        previewIdentity ? requestedSchema || '' : '', requestedTable || '',
         JSON.stringify([previewIdentity, refreshVersion, previewRevision]),
+        requestedConnection || undefined,
     );
     const [policyRetry, setPolicyRetry] = useState(0);
     const [policy, setPolicy] = useState<{ key: string; mode: RowPreviewMode | 'unavailable'; error?: string }>();
@@ -478,7 +479,8 @@ const DataLayersWorkspace: React.FC = () => {
     }, [data]);
     const showStream = resourceView === 'stream';
 
-    const filterFields = data?.columns.length ? data.columns : repairFields;
+    const previewColumns = data?.columns ?? explorerPresentation?.presentation?.properties.flatMap(property => property.sourceColumn ? [property.sourceColumn] : []) ?? emptyPreviewColumns;
+    const filterFields = previewColumns.length ? previewColumns : repairFields;
     const tableDescription = `${selectedSchema}.${table.name || 'No table selected'}`;
     const dataRows = data?.rows ?? emptyPreviewRows;
     const primaryKey = (row: Record<string, unknown>, index = dataRows.indexOf(row)) => {
@@ -677,7 +679,7 @@ const DataLayersWorkspace: React.FC = () => {
     };
 
     const resultLayout = useResultLayout(selectedTableAvailable && showPreview ? previewIdentity : '',
-        selectedSchema, table.name, data?.columns || [], appliedQuery.sorts, updateExplorerSorts, !requestedSavedId);
+        selectedSchema, table.name, previewColumns, appliedQuery.sorts, updateExplorerSorts, !requestedSavedId);
     const dataColumns: any[] = explorerResultColumns({ layout: resultLayout, sorts: appliedQuery.sorts, filters: appliedQuery.filters, openFilter: openColumnFilter, types: data?.columnTypes,
         addFilter: addColumnFilter, setSort: setHeaderSort, clearSorts: () => { if (requireAppliedSortDraft()) updateExplorerSorts([]); }, filterValue: quickCellFilter,
     });
@@ -1024,8 +1026,9 @@ const DataLayersWorkspace: React.FC = () => {
                 requestError={requestError} overlayOpen={catalogOpen} onCreateTable={canCreateTable ? openTableWizard : undefined} onRefresh={refreshWorkspace} onSchema={selectSchema} onTable={selectTable} />
             <section  className="flow-layer-main">
 
-                <ExplorerWorkbench locked={workbenchLocked} header={requestedSchema && requestedTable ? {source: { kind: 'backed', schema: requestedSchema, table: requestedTable },
+                <ExplorerWorkbench locked={workbenchLocked || !selectedTableAvailable} header={requestedSchema && requestedTable ? {source: { kind: 'backed', schema: requestedSchema, table: requestedTable },
 available: selectedTableAvailable,
+loading: !selectedTableAvailable && !requestError && (explorerLoading || !catalogLoaded),
 backToTypes: backToTypes,
 label: selectedTableAvailable ? mapping?.displayName || requestedTable : requestedTable,
 glyph: <ExplorerTypeIcon compact dataType={selectedTableAvailable ? mapping?.dataType ?? table.dataType : undefined} table={requestedTable} />,
@@ -1073,8 +1076,11 @@ setMode: setWorkbenchMode,
 clearSelection: () => { setWorkbenchRows([]); setSelectionEpoch(n => n + 1); },
 filterButton: showPreview && <ExplorerFilterButton open={filterOpen} count={filterCount + sortCount} onClick={() => { if (workbenchMode === 'explore') { setWorkbenchMode('results'); setFilterOpen(true); } else activateTool('filter'); }} />} : undefined}>
 
-                    {!selectedTableAvailable ? <div className="flow-inspector-body" aria-busy={explorerLoading}>
-                        {!requestError && !explorerLoading && <div className="flow-schema-state" role="status">{requestedSchema && requestedTable ? 'Object type is unavailable.' : 'Choose an object type from the catalog.'}</div>}
+                    {!selectedTableAvailable ? <div className="flow-inspector-body" aria-busy={explorerLoading || !catalogLoaded}>
+                        {requestError ? <div className="flow-schema-state" role="alert"><strong>Unable to open this object type</strong><p>{requestError}</p><Button onClick={refreshWorkspace}>Retry</Button></div>
+                          : explorerLoading || !catalogLoaded ? <Table className="flow-data-table" size="small" pagination={false} columns={dataColumns} dataSource={[]}
+                              locale={{ emptyText: <div className="flow-schema-state" role="status"><Spin size="small" /><span>{previewColumns.length ? 'Loading object data…' : 'Loading object columns…'}</span></div> }} />
+                          : <div className="flow-schema-state" role="status">{requestedSchema && requestedTable ? 'Object type is unavailable.' : 'Choose an object type from the catalog.'}</div>}
                     </div> : <>
                     <div  className="flow-table-header">
                         <div className="flow-table-header-left">
@@ -1101,7 +1107,7 @@ schema: selectedSchema,
 table: table.name,
 dataType: mapping?.dataType ?? table.dataType,
 rows: dataRows,
-columns: data?.columns ?? emptyPreviewColumns,
+columns: previewColumns,
 columnTypes: data?.columnTypes,
 metadata: explorerPresentation,
 dataColumns: dataColumns,

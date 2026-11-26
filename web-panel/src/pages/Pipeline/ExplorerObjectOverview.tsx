@@ -5,9 +5,11 @@ import { ProfileOutlined } from '@/components/ui/icons';
 import { inferSiteKind, TemplateGlyph } from '../AICollect/WorkspaceDock';
 import { fetchExplorerProperties, type ExplorerPropertyMapping } from '../../services/explorerProperties';
 import { accentStyle } from '../../theme/tokens';
+import { getFriendlyErrorMessage } from '../../services/api';
+import type { AxiosError } from 'axios';
 
 export type ExplorerOverviewPresentation = ExplorerPropertyMapping;
-export type ExplorerPresentationRead = { presentation?: ExplorerOverviewPresentation; error?: true };
+export type ExplorerPresentationRead = { presentation?: ExplorerOverviewPresentation; error?: string; retry?: () => void };
 export type ExplorerPropertyPresentation = 'value' | 'timeSeries' | 'geoJson' | 'media';
 type RowValues = Record<string, unknown>;
 export type ExplorerPreviewRow = {
@@ -50,20 +52,21 @@ export function explorerRowTitle(record: RowValues, identity: RowValues, titlePr
   return ordered.length ? 'Primary key: ' + ordered.map(key => key + '=' + rawText(identity[key])).join(' · ') : fallback;
 }
 
-export function useExplorerPresentation(schema: string, table: string, revision: string | number = 0) {
-  const key = JSON.stringify([schema, table]);
+export function useExplorerPresentation(schema: string, table: string, revision: string | number = 0, connectionId?: string) {
+  const key = JSON.stringify([schema, table, connectionId]);
+  const [retry, setRetry] = useState(0);
   const [read, setRead] = useState<ExplorerPresentationRead & { key: string }>();
   useEffect(() => {
     if (!schema || !table) return;
     const controller = new AbortController();
-    fetchExplorerProperties(schema, table, controller.signal).then(result => {
+    fetchExplorerProperties(schema, table, controller.signal, undefined, connectionId).then(result => {
       if (!controller.signal.aborted) setRead({ key, presentation: result });
-    }, () => {
-      if (!controller.signal.aborted) setRead({ key, error: true });
+    }, error => {
+      if (!controller.signal.aborted) setRead({ key, error: getFriendlyErrorMessage(error as AxiosError) });
     });
     return () => controller.abort();
-  }, [key, schema, table, revision]);
-  return read?.key === key ? read : undefined;
+  }, [key, schema, table, revision, retry, connectionId]);
+  return read?.key === key ? { ...read, retry: () => setRetry(value => value + 1) } : undefined;
 }
 
 export function ExplorerTypeIcon({ dataType, table, compact }: { dataType?: string; table: string; compact?: boolean }) {
@@ -107,7 +110,7 @@ function formattedText(value: unknown, format: Format) {
 
 export function ExplorerPropertyValue({ value, format = 'default', identity, field }: { value: unknown; format?: Format; identity?: RowValues; field?: string | null }) {
   if (value === undefined) return <span className="flow-explorer-selection__empty-value">Missing</span>;
-  if (value === null) return <span className="flow-explorer-selection__empty-value">No value</span>;
+  if (value === null) return <span className="flow-explorer-selection__empty-value flow-explorer-null" title="SQL NULL: no value">(Null)</span>;
   if (value === '') return <span className="flow-explorer-selection__empty-value">Empty string</span>;
   return <ExplorerValue value={value} text={formattedText(value, format)} identity={identity} field={field} />;
 }
