@@ -30,6 +30,7 @@ const Organization = lazy(() => import('@/pages/Organization'));
 const AutomationCenter = lazy(() => import('@/pages/AutomationCenter'));
 const AccountSettings = lazy(() => import('@/pages/AccountSettings'));
 const SystemSettings = lazy(() => import('@/pages/SystemSettings'));
+const Agents = lazy(() => import('@/pages/Agents'));
 const FAQ = lazy(() => import('@/pages/FAQ'));
 const Legal = lazy(() => import('@/pages/Legal'));
 
@@ -171,6 +172,7 @@ const App: React.FC = () => {
             <Route path="/organization/users/:userId" element={<Organization />} />
             <Route path="/account/settings" element={<AccountSettings />} />
             <Route path="/settings" element={<SystemSettings />} />
+            <Route path="/agents" element={<Agents />} />
             <Route path="/faq" element={<FAQ />} />
             <Route path="/legal/:section" element={<Legal />} />
             <Route path="/project-users" element={<Organization />} />

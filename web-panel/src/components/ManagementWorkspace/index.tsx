@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { ApartmentOutlined, AuditOutlined, BookOutlined, QuestionCircleOutlined, SafetyCertificateOutlined, SettingOutlined, TeamOutlined, UserOutlined } from '@/components/ui/icons';
+import { ApartmentOutlined, AuditOutlined, BookOutlined, QuestionCircleOutlined, SafetyCertificateOutlined, SettingOutlined, TeamOutlined, UserOutlined, RobotOutlined } from '@/components/ui/icons';
 import './style.css';
 
 const sections = {
@@ -13,6 +13,7 @@ const sections = {
   ] }] },
   settings: { title: 'SETTINGS', description: 'PLATFORM & PREFERENCES', icon: <SettingOutlined />, groups: [{ title: 'CONFIGURATION', links: [
     { path: '/settings', label: 'SYSTEM SETTINGS', icon: <SettingOutlined /> },
+    { path: '/agents', label: 'AGENTS', icon: <RobotOutlined /> },
     { path: '/account/settings', label: 'ACCOUNT SETTINGS', icon: <UserOutlined /> },
   ] }] },
   help: { title: 'HELP', description: 'DOCUMENTATION & SUPPORT', icon: <QuestionCircleOutlined />, groups: [
@@ -28,7 +29,7 @@ const sections = {
 
 export function managementSection(path: string) {
   if (path === '/organization' || path.startsWith('/organization/')) return 'access';
-  if (path === '/settings' || path === '/account/settings') return 'settings';
+  if (path === '/settings' || path === '/account/settings' || path === '/agents') return 'settings';
   if (path === '/faq' || path.startsWith('/legal/')) return 'help';
   return null;
 }

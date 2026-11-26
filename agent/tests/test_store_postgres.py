@@ -36,6 +36,9 @@ class PostgresStoreTests(unittest.IsolatedAsyncioTestCase):
         self.key_patch = patch("agent.store.cipher", side_effect=lambda: connection_cipher("isolated-test-encryption-secret"))
         self.key_patch.start()
         self.addCleanup(self.key_patch.stop)
+        registry_key_patch = patch("agent.registry.cipher", side_effect=lambda: connection_cipher("isolated-test-encryption-secret"))
+        registry_key_patch.start()
+        self.addCleanup(registry_key_patch.stop)
         migration = importlib.import_module("app.web.alembic.versions.c801b426df90_collection_agent_harness")
         async with self.database.begin() as conn:
             # The database name check above is mandatory before resetting this test-only schema.
@@ -45,6 +48,7 @@ class PostgresStoreTests(unittest.IsolatedAsyncioTestCase):
             def upgrade(sync):
                 with Operations.context(MigrationContext.configure(sync)):
                     migration.upgrade()
+                    importlib.import_module("app.web.alembic.versions.d29c0e317fa2_agent_management").upgrade()
             await conn.run_sync(upgrade)
             await conn.execute(text('INSERT INTO app."user" VALUES (:owner),(:other)'), {"owner": self.owner, "other": self.other})
         view = await self.store.save_settings(SettingsUpdate(expected_revision=0, api_key="isolated-model-key"), self.owner)
@@ -71,6 +75,61 @@ class PostgresStoreTests(unittest.IsolatedAsyncioTestCase):
         config, key = await CollectionStore(self.database).runtime_settings(view.revision)
         self.assertEqual(key, "isolated-model-key")
         self.assertEqual((config.model, config.reasoning_effort), ("gpt-6-sol", "high"))
+
+    async def test_managed_agents_share_connection_but_keep_models_and_owners_isolated(self):
+        from agent.registry import AgentRegistry, ConnectionUpdate, DefinitionUpdate
+        registry = AgentRegistry(self.database)
+        connection = (await registry.save_connection(self.owner, ConnectionUpdate(name="Personal", api_key="managed-secret")))["id"]
+        first = DefinitionUpdate(name="Articles", connection_id=connection, model="model-one", instructions="Extract article titles.")
+        ident = (await registry.save_definition(self.owner, first))["id"]
+        await registry.save_definition(self.owner, first.model_copy(update={"name": "Patents", "model": "model-two"}))
+        catalog = await registry.list(self.owner)
+        self.assertEqual(len(catalog["connections"]), 1)
+        self.assertEqual({row["model"] for row in catalog["agents"]}, {"model-one", "model-two"})
+        self.assertNotIn("managed-secret", str(catalog))
+        self.assertNotIn("api_key_ciphertext", str(catalog))
+        self.assertEqual((await registry.list(self.other))["agents"], [])
+        for operation in (registry.resolve(self.other, ident), registry.save_definition(self.other, first), registry.save_connection(self.other, ConnectionUpdate(name="Steal", expected_revision=1), connection)):
+            with self.assertRaises(HTTPException) as denied:
+                await operation
+            self.assertEqual(denied.exception.status_code, 404)
+        with self.assertRaises(HTTPException):
+            await registry.resolve(self.owner, ident)
+        config, key, snapshot = await registry.resolve(self.owner, ident, require_enabled=False)
+        self.assertEqual(key, "managed-secret")
+        self.assertEqual(config.model, "model-one")
+        await registry.mark_verified(self.owner, snapshot)
+        await registry.save_definition(self.owner, first.model_copy(update={"enabled": True, "expected_revision": 1}), ident)
+        _, _, snapshot = await registry.resolve(self.owner, ident)
+        request = self.request.model_copy(update={"agent_id": ident})
+        run = await self.store.enqueue(self.owner, "managed", request)
+        self.assertEqual(run["model_config"], snapshot)
+        self.assertNotIn("managed-secret", str(run))
+        claimed = await self.store.claim()
+        seen_models = []
+        async def generate(model, *_args, **_kwargs):
+            seen_models.append((model.config.model, model.instructions, model.api_key))
+            return TEMPLATE
+        with patch("agent.tools.browser_renderer.render", new=AsyncMock(return_value=BrowserRenderResult(
+            "https://example.org/articles", "Articles", "<html><article>Article</article></html>"
+        ))), patch("agent.model.CollectionModel.generate", new=generate):
+            await CollectionHarness(self.store).process(claimed)
+        self.assertEqual((await self.store.get(self.owner, run["id"]))["status"], "completed")
+        self.assertTrue(seen_models)
+        self.assertEqual(seen_models[0][0], "model-one")
+        self.assertIn("Extract article titles.", seen_models[0][1])
+        self.assertEqual(seen_models[0][2], "managed-secret")
+        # Updating shared credentials invalidates all dependent verifications.
+        await registry.save_connection(self.owner, ConnectionUpdate(name="Personal", api_key="replacement", expected_revision=1), connection)
+        with self.assertRaises(HTTPException) as stale:
+            await registry.mark_verified(self.owner, snapshot)
+        self.assertEqual(stale.exception.status_code, 409)
+        with self.assertRaises(HTTPException):
+            await registry.resolve(self.owner, ident)
+        with self.assertRaises(HTTPException):
+            await registry.delete(self.owner, "connections", connection, 2)
+        with self.assertRaises(HTTPException):
+            await registry.save_definition(self.owner, first, ident)
 
     async def test_optimistic_settings_and_connection_test_revision(self):
         with self.assertRaises(RunConflict):

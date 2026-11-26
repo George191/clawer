@@ -1,32 +1,37 @@
+import { parseTemplateEntries } from './templatePreview';
 import { useEffect, useRef } from 'react';
 import { renderPythonPreviewContent } from './pythonPreview';
 
 // Product preview fixtures, never fetched, executed, or published.
-export const previewTemplate = `# Example template · product preview
-name: example_articles
-version: "1.0"
+export const previewTemplate = `name: collection_articles
+display_name: Articles
+base_url: https://example.org
+data_type: other
 description: Collect article titles and links
-source:
-  url: https://example.org/articles
+adapter: collection_articles
+list_page: /articles?page={page}
+list_request:
   method: GET
-pagination:
-  parameter: page
-  start: 1
+response_type: html
+list_pagination:
+  type: page_number
   max_pages: 20
-fields:
+list_fields:
   - name: title
-    type: string
-    required: true
     selector: article h2
-  - name: url
-    type: string
+    selector_type: css
+    field_type: text
     required: true
+  - name: url
     selector: article a
-    attribute: href
-adapter: adapter.py
+    selector_type: css
+    field_type: href
+    required: true
+dedup_fields:
+  - url
 `;
 
-export const previewAdapter = `"""Example adapter · product preview; not executed."""
+export const previewAdapter = `"""Normalize article records for the collection adapter."""
 
 from urllib.parse import urljoin
 
@@ -66,20 +71,38 @@ export default function PreviewResults({ turn, step, running }: { turn?: Preview
   useEffect(() => { if (follow.current && writing) code.current?.scrollTo({ top: code.current.scrollHeight }); }, [text, writing]);
   return <>
     <div ref={code} className="scout-result-content" data-phase={phase} onScroll={() => { const node = code.current; if (node) follow.current = node.scrollHeight - node.scrollTop - node.clientHeight < 60; }}>
-      {phase === 'brief' || phase === 'review' ? <div className="scout-result-brief"><p>{turn?.prompt || 'Collection request'}</p>{phase === 'review' && <><p>https://example.org/articles</p><dl><dt>Output fields</dt><dd>title, url</dd><dt>Pagination</dt><dd>page · up to 20 pages</dd><dt>Files</dt><dd>template.yaml · adapter.py</dd></dl></>}<small>Example artifact · product preview</small></div>
-        : phase === 'data' ? <div className="scout-result-data"><p>Example records · Not collected from a live website</p><table><thead><tr><th>title</th><th>url</th></tr></thead><tbody>{sampleRows.map((row) => <tr key={row.url}><td>{row.title}</td><td>{row.url}</td></tr>)}</tbody></table></div> : null}
-      {phase === 'source' ? <div className={`scout-source-preview ${running && turn?.step === 1 ? 'is-scanning' : ''}`}><div className="scout-source-address">https://example.org/articles <span>Example page</span></div><div className="scout-source-page"><small>THE COLLECTION JOURNAL</small><h3>Ideas worth collecting.</h3><p>A sample article page for the collection design preview.</p>{sampleRows.map((row, index) => <article key={row.url}><span>0{index + 1} · ARTICLE</span><h4>{row.title}</h4><p>Title and article link are the example fields.</p></article>)}</div></div>
+      {phase === 'brief' || phase === 'review' ? <div className="scout-result-brief"><p>{turn?.prompt || 'Collection request'}</p>{phase === 'review' && <><p>https://example.org/articles</p><dl><dt>Output fields</dt><dd>title, url</dd><dt>Pagination</dt><dd>page · up to 20 pages</dd><dt>Files</dt><dd>template.yaml · adapter.py</dd></dl></>}</div>
+        : phase === 'data' ? <div className="scout-result-data"><table><thead><tr><th>title</th><th>url</th></tr></thead><tbody>{sampleRows.map((row) => <tr key={row.url}><td>{row.title}</td><td>{row.url}</td></tr>)}</tbody></table></div> : null}
+      {phase === 'source' ? <div className={`scout-source-preview ${running && turn?.step === 1 ? 'is-scanning' : ''}`}><div className="scout-source-address">https://example.org/articles </div><div className="scout-source-page"><small>THE COLLECTION JOURNAL</small><h3>Ideas worth collecting.</h3><p>Articles, research, and collection workflows.</p>{sampleRows.map((row, index) => <article key={row.url}><span>0{index + 1} · ARTICLE</span><h4>{row.title}</h4><p>Read the article and explore its sources.</p></article>)}</div></div>
         : (phase === 'template' || phase === 'adapter') && <>
           <div className={`scout-result-code ${phase === 'template' ? 'scout-template-sheet' : ''}`}>
-            {phase === 'template' ? <section className="ai-template-stage-section"><div className="ai-template-stage-body">{text.split('\n').map((line, index) => {
-              if (!line.trim() || line.trim().startsWith('#')) return null;
-              const field = line.match(/^(\s*)(- )?([^:]+):\s*(.*)$/);
-              return <div key={index} className={`ai-template-field scout-template-row ${field && !field[4] ? 'is-group' : ''}`} style={{ paddingLeft: field ? `${field[1].length * 8}px` : undefined }}><div className="ai-template-field-key"><span>{field ? `${field[2] ?? ''}${field[3]}` : line}</span></div>{field?.[4] && <div className="ai-template-field-value"><pre>{field[4]}</pre></div>}{writing && index === text.trimEnd().split('\n').length - 1 && <i className="scout-result-caret" />}</div>;
-            })}</div></section>
+            {phase === 'template' ? <TemplateSheet text={text} writing={writing} />
               : <pre>{text.split('\n').map((line, index) => <div className="scout-result-code-line ai-session-inspector-editor-line" key={index}><span aria-hidden="true">{index + 1}</span><span className="scout-code-prefix" aria-hidden="true">+</span><code>{renderPythonPreviewContent(line || ' ', `preview-${turn?.id}-${index}`)}{writing && index === text.split('\n').length - 1 && <i className="scout-result-caret" />}</code></div>)}</pre>}
 
           </div>
         </>}
     </div>
   </>;
+}
+
+const sections = ['site', 'request', 'response', 'pagination', 'fields', 'dedup'] as const;
+const sectionRoots: Record<string, string> = { list_page: 'request', list_request: 'request', response_type: 'response', list_pagination: 'pagination', list_fields: 'fields', dedup_fields: 'dedup' };
+function TemplateSheet({ text, writing }: { text: string; writing: boolean }) {
+  const entries = parseTemplateEntries(text, (_key, path) => ({ stage: sectionRoots[path.split(/[.[]/)[0]] ?? 'site' }));
+  const last = entries[entries.length - 1]?.id;
+  return <>{sections.map((stage) => {
+    const rows = entries.filter((entry) => entry.stage === stage);
+    if (!rows.length) return null;
+    return <section key={stage} className="ai-template-stage-section" data-template-stage={stage}>
+      <h3 className="scout-template-section-label">{stage}</h3>
+      <div className="ai-template-stage-body">{rows.map((entry) => {
+        const isItem = /\[\d+\]$/.test(entry.key);
+        const label = entry.key.split('.').pop()?.replace(/\[\d+\]$/, '') ?? entry.key;
+        return <div key={entry.id} className={`ai-template-field scout-template-row ${entry.nodeType === 'group' ? 'is-group' : ''} ${isItem ? 'is-item-group' : ''}`} style={{ '--ai-template-depth': Math.max(0, entry.depth - (entry.key.includes('[') ? 1 : 0)) } as React.CSSProperties}>
+          <div className="ai-template-field-key"><span>{isItem ? '−' : label}</span></div>
+          {entry.nodeType !== 'group' && <div className="ai-template-field-value"><pre>{entry.value.replace(/^['"]|['"]$/g, '')}</pre>{writing && entry.id === last && <i className="scout-result-caret" />}</div>}
+        </div>;
+      })}</div>
+    </section>;
+  })}</>;
 }

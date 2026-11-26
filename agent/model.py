@@ -26,9 +26,10 @@ class ModelFailure(Exception):
 
 
 class CollectionModel:
-    def __init__(self, config: AgentSettings, api_key: str):
+    def __init__(self, config: AgentSettings, api_key: str, instructions: str = ""):
         self.config = config
         self.api_key = api_key
+        self.instructions = INSTRUCTIONS + ("\nCollection task guidance:\n" + instructions if instructions else "")
         self.calls = 0
         self.usage: dict[str, int] = {"input_tokens": 0, "output_tokens": 0}
 
@@ -41,7 +42,7 @@ class CollectionModel:
         body: dict[str, Any] = {
             "model": self.config.model,
             "reasoning": {"effort": self.config.reasoning_effort},
-            "instructions": INSTRUCTIONS,
+            "instructions": self.instructions,
             "input": [{"role": "user", "content": prompt}],
             "max_output_tokens": min(max_tokens, self.config.max_output_tokens),
             "store": False,

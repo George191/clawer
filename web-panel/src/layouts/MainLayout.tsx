@@ -82,6 +82,7 @@ const headerMenus: { key: Exclude<HeaderMenuKey, 'projects'>; label: string; ite
   { key: 'settings', label: 'SETTINGS', items: [
     { key: 'preferences', type: 'group', label: 'Preferences', children: [
       { key: '/settings', label: 'System Settings', icon: <SettingOutlined /> },
+      { key: '/agents', label: 'Agents', icon: <RobotOutlined /> },
       { key: '/account/settings', label: 'Account Settings', icon: <UserOutlined /> },
     ] },
   ] },
@@ -156,6 +157,7 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
         label: 'Collection',
         children: [
           { key: '/scout', icon: <RobotOutlined />, label: 'Scout' },
+          { key: '/agents', icon: <ApiOutlined />, label: 'Agents' },
         ],
       },
       {

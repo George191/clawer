@@ -13,7 +13,7 @@ from agent.store import CollectionStore
 from agent.tools import CollectionTools
 
 logger = logging.getLogger(__name__)
-ACTIVITIES = {"capture": "Searching", "template": "Thinking", "adapter": "Creating", "validate": "Working"}
+ACTIVITIES = {"capture": "Searching", "template": "Working", "adapter": "Working", "validate": "Working"}
 
 
 class CollectionHarness:
@@ -22,8 +22,17 @@ class CollectionHarness:
         self.tools_factory = tools_factory
 
     async def execute(self, run: dict) -> None:
-        config, key = await self.store.runtime_settings(run["model_config"]["revision"])
-        tools = self.tools_factory(CollectionModel(config, key))
+        snapshot = run["model_config"]
+        if snapshot.get("agent_id"):
+            from uuid import UUID
+
+            from agent.registry import AgentRegistry
+            config, key, current = await AgentRegistry(self.store.database).resolve(run["owner_id"], UUID(snapshot["agent_id"]))
+            if current != snapshot:
+                raise ValueError("Agent configuration changed after this run was queued")
+        else:
+            config, key = await self.store.runtime_settings(snapshot["revision"])
+        tools = self.tools_factory(CollectionModel(config, key, snapshot.get("instructions", "")))
         request = CollectionRequest.model_validate(run["request"])
         for name in STAGES[run["stage"]:]:
             await self.store.progress(run, name, ACTIVITIES[name])

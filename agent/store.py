@@ -97,7 +97,7 @@ class CollectionStore:
         await conn.execute(text("INSERT INTO app.collection_agent_events(run_id,seq,event) VALUES (:id,:seq,CAST(:event AS jsonb))"), {"id": run_id, "seq": seq, "event": encoded(event)})
 
     async def enqueue(self, owner: UUID, key: str, payload: CollectionRequest) -> dict:
-        request = payload.model_dump()
+        request = payload.model_dump(mode="json", exclude_none=True)
         digest = hashlib.sha256(encoded(request).encode()).hexdigest()
         async with self.database.begin() as conn:
             await conn.execute(text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": f"collection-owner:{owner}"})
@@ -106,9 +106,14 @@ class CollectionStore:
                 if existing["request_hash"] != digest:
                     raise RunConflict("Idempotency key was already used for a different collection request")
                 return self.view(existing)
-            config = (await conn.execute(text("SELECT * FROM app.collection_agent_settings WHERE singleton FOR SHARE"))).mappings().one()
-            if not config["config"].get("enabled") or not config["api_key_ciphertext"] or config["tested_revision"] != config["revision"]:
-                raise HTTPException(503, "Configure and enable the collection agent in Settings")
+            if payload.agent_id:
+                from agent.registry import AgentRegistry
+                _, _, snapshot = await AgentRegistry(self.database).resolve(owner, payload.agent_id)
+            else:
+                config = (await conn.execute(text("SELECT * FROM app.collection_agent_settings WHERE singleton FOR SHARE"))).mappings().one()
+                if not config["config"].get("enabled") or not config["api_key_ciphertext"] or config["tested_revision"] != config["revision"]:
+                    raise HTTPException(503, "Configure and enable the collection agent in Settings")
+                snapshot = {**AgentSettings.model_validate(config["config"]).model_dump(), "revision": config["revision"]}
             count = (await conn.execute(text("SELECT count(*) FROM app.collection_agent_runs WHERE owner_id=:owner AND status IN ('queued','running')"), {"owner": owner})).scalar_one()
             if count >= 3:
                 raise HTTPException(429, "Collection queue limit reached for this user")
@@ -117,7 +122,7 @@ class CollectionStore:
                 (id,owner_id,idempotency_key,request_hash,request,model_config)
                 VALUES (:id,:owner,:key,:hash,CAST(:request AS jsonb),CAST(:config AS jsonb))"""),
                 {"id": run_id, "owner": owner, "key": key, "hash": digest, "request": encoded(request),
-                 "config": encoded({**AgentSettings.model_validate(config["config"]).model_dump(), "revision": config["revision"]})})
+                 "config": encoded(snapshot)})
             await self.event(conn, run_id, {"type": "queued", "activity": "None"})
         return await self.get(owner, run_id)
 

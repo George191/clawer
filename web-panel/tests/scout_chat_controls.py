@@ -118,12 +118,15 @@ with sync_playwright() as p:
     page.get_by_role("button", name="Delete queued message", exact=True).click()
     expect(page.locator(".scout-queued-message")).to_have_count(0)
     expect(results.locator(".scout-result-content")).to_have_attribute("data-phase", "template")
-    expect(results.locator(".scout-template-sheet")).to_contain_text("example_articles")
+    expect(results.locator(".scout-template-sheet")).to_contain_text("collection_articles")
+    expect(page.locator(".ai-chat-dot")).to_have_attribute("data-activity", "Working")
+    expect(results.get_by_text("Example artifact", exact=False)).to_have_count(0)
     expect(page.get_by_role("button", name="Confirm Template", exact=True)).to_be_visible()
     assert page.get_by_role("button", name="View adapter.py", exact=True).count() == 0
     page.get_by_role("button", name="Confirm Template", exact=True).click()
     expect(results.locator(".scout-result-content")).to_have_attribute("data-phase", "adapter")
     expect(results.locator(".scout-result-caret")).to_be_visible()
+    expect(page.locator(".ai-chat-dot")).to_have_attribute("data-activity", "Working")
     keyword = results.locator(".ai-session-python-token.is-keyword").first
     function = results.locator(".ai-session-python-token.is-function-name").first
     string = results.locator(".ai-session-python-token.is-string").first

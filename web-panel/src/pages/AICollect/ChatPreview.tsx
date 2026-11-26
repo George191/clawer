@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { Dropdown } from '@/components/ui';
-import { CopyOutlined } from '@/components/ui/icons';
 import { DOT_ACTIVITIES, type DotActivity } from '@/components/NativeDot';
 import { useThemeStore } from '@/stores/settings';
 import PreviewResults, { previewAdapter, previewTemplate } from './PreviewResults';
@@ -13,7 +12,7 @@ const steps: Array<{ activity: DotActivity; title: string; detail: string }> = [
   { activity: 'Thinking', title: 'Understanding the request', detail: 'Organize the goal, scope, and expected result.' },
   { activity: 'Searching', title: 'Analyzing the webpage', detail: 'Inspect page structure, pagination, and candidate data sources.' },
   { activity: 'Working', title: 'Generating the template', detail: 'Map source fields and extraction rules into template.yaml.' },
-  { activity: 'Creating', title: 'Writing the adapter', detail: 'Draft adapter.py with extraction, pagination, and normalization.' },
+  { activity: 'Working', title: 'Writing the adapter', detail: 'Draft adapter.py with extraction, pagination, and normalization.' },
   { activity: 'Working', title: 'Reviewing the collection plan', detail: 'Review the confirmed template, adapter, and sample output together.' },
   { activity: 'Ready', title: 'Validating the adapter', detail: 'Review sample output, required fields, and collection readiness.' },
 ];
@@ -242,7 +241,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
           {turn.reply && <p className="scout-reply">{turn.reply}</p>}
           {turn.complete && <ReleasePreview />}
           {turn.complete && <><div className="scout-response-actions" aria-label="Response actions">
-            <button type="button" title={copied === turn.id ? 'Copied' : 'Copy'} aria-label="Copy response" onClick={() => void copy(turn)}>{copied === turn.id ? <span>✓</span> : <CopyOutlined />}</button>
+            <button type="button" title={copied === turn.id ? 'Copied' : 'Copy'} aria-label="Copy response" onClick={() => void copy(turn)}>{copied === turn.id ? <span>✓</span> : <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8V3h13v13h-5M3 8h13v13H3V8Z" /></svg>}</button>
             <Dropdown trigger={['click']} placement="bottomLeft" overlayClassName="scout-feedback-menu" menu={{ selectedKeys: turn.vote ? [turn.vote] : [], items: [{ key: 'up', label: goodLabel, icon: <FeedbackIcon /> }, { key: 'down', label: badLabel, icon: <FeedbackIcon down /> }], onClick: ({ key }) => vote(turn.id, key as 'up' | 'down') }}>
               <button type="button" title={turn.vote === 'up' ? goodLabel : turn.vote === 'down' ? badLabel : 'Rate response'} aria-label="Rate response" aria-pressed={Boolean(turn.vote)}>{turn.vote ? <FeedbackIcon down={turn.vote === 'down'} /> : <FeedbackControlIcon />}</button>
             </Dropdown>

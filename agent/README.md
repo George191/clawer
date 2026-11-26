@@ -74,3 +74,15 @@ python -m unittest agent.tests.test_store_postgres
 - [OpenAI GPT-6 Sol 模型规格](https://developers.openai.com/api/docs/models/gpt-6-sol) 与 [推理参数](https://developers.openai.com/api/docs/guides/reasoning)：使用实际模型 ID 和 Responses `reasoning.effort`。
 - [Anthropic 长任务 Harness 设计](https://www.anthropic.com/research/effective-harnesses-for-long-running-agents)：可验证阶段与持久化进展。
 - [LangGraph 故障容错原始文档](https://github.com/langchain-ai/docs/blob/main/src/oss/langgraph/fault-tolerance.mdx)：重放按至少一次语义处理，不把不可幂等发布写入重试阶段。本实现使用项目现有 PostgreSQL/asyncio 固定流程，无新增 Agent 框架依赖。
+
+## Agent 管理
+
+登录后打开 **Settings → Agents**（`/agents`），普通用户可以管理自己的模型连接和 Agent。先添加一个兼容 Responses API 的连接，再创建 Agent，选择连接、模型、推理强度和任务指令；保存并测试后启用。连接测试是真实模型调用。多个 Agent 共用同一个连接，不重复保存密钥；不同用户无法读取或修改彼此的配置。
+
+定义、模型绑定、修订号和加密密钥保存在 PostgreSQL。更改共享连接后，引用它的 Agent 必须重新测试；并发更新通过修订号拒绝覆盖。当前注册的执行框架为 `collection`，工具固定为 capture、template、adapter、validate。新增同类 Agent 不需要部署代码；新增工具或执行框架需要审查代码并按 Git 流程部署，不从数据库动态执行 Python。
+
+管理 API 前缀 `/api/v1/agent-management`：GET 根路径读取用户目录；POST/PUT `connections` 和 `agents` 新建/修改；POST `agents/{id}/test` 测试已保存配置；DELETE `{kind}/{id}?revision=N` 删除。API 仅返回连接名称、地址和修订号，不返回密钥或密文。
+
+通过采集运行 API 提交 `agent_id` 选用已启用并验证的个人 Agent。运行固定该 Agent 的配置快照；排队后定义或连接变化会明确失败，需要重新提交。原系统采集默认配置继续服务于未指定 `agent_id` 的现有调用。前端聊天目前仍为独立产品模拟，不会因保存 Agent 自动执行真实采集。
+
+部署先升级数据库至 `d29c0e317fa2`。不增加服务、框架或依赖。

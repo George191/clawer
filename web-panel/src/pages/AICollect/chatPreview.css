@@ -249,3 +249,23 @@
 @media (max-width: 767px) { .scout-chat-preview.has-results > .scout-chat-dot-frost { top: calc(42% - 90px); } }
 
 @media (max-width: 767px) { .scout-chat-preview > .ai-chat-dot, .scout-chat-dot-frost, body:has(.scout-chat-preview) .scout-dot-host { display: none !important; } }
+
+/* Match the conversation column and action controls to the Codex content grid. */
+.scout-chat-messages { padding-inline: max(16px, calc((100% - var(--scout-results-width) - var(--scout-context-width) - 760px)/2)); text-align: start; }
+.scout-assistant-message { font-size: 14px; line-height: 1.65; text-align: start; }
+.scout-response-actions { gap: 4px; margin-left: -6px; margin-top: 16px; align-items: center; }
+.scout-response-actions button { width: 32px; height: 32px; padding: 6px; }
+.scout-response-actions svg { width: 20px; height: 20px; stroke-width: 1.5; }
+.scout-worked-toggle { font-size: 13px; line-height: 20px; vertical-align: middle; }
+.scout-reply { margin: 20px 0 16px; }
+.scout-template-sheet .ai-template-stage-section { margin: 0 0 28px; }
+.scout-template-section-label { margin: 0 0 12px; color: #9caec7; font-size: 11px; font-weight: 500; line-height: 1.5; text-transform: capitalize; letter-spacing: .04em; }
+.scout-template-sheet .scout-template-row { grid-template-columns: minmax(100px, 38%) minmax(0, 1fr); padding-left: calc(var(--ai-template-depth, 0) * 14px); min-height: 28px; padding-block: 4px; }
+.scout-template-sheet .scout-template-row.is-group { grid-template-columns: 1fr; margin-top: 10px; padding-top: 6px; }
+.scout-template-sheet .scout-template-row.is-item-group { margin-top: 6px; padding-block: 0; }
+.scout-template-sheet .ai-template-field-key span, .scout-template-sheet .ai-template-field-value pre { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace; font-size: 12px; line-height: 1.65; }
+.scout-result-code:not(.scout-template-sheet) pre, .scout-result-code-line code { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace; font-size: 13px; line-height: 1.75; font-weight: 400; font-variant-ligatures: none; -webkit-font-smoothing: antialiased; }
+.scout-chat-preview .scout-result-code-line code { font-weight: 400; }
+.scout-chat-preview .ai-session-python-token { -webkit-text-stroke: 0; }
+.scout-chat-preview .scout-template-sheet .ai-template-stage-section { border: 0; }
+@media (max-width: 767px) { .scout-chat-messages { padding-inline: 20px; } }

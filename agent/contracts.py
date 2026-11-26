@@ -5,6 +5,7 @@ from __future__ import annotations
 import ipaddress
 from typing import Literal
 from urllib.parse import urlsplit
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
@@ -40,6 +41,7 @@ class CollectionRequest(BaseModel):
     goal: str = Field(min_length=1, max_length=4000)
     max_pages: int = Field(default=20, ge=1, le=100)
     max_fields: int = Field(default=50, ge=1, le=100)
+    agent_id: UUID | None = None
 
     @field_validator("url")
     @classmethod
