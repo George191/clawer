@@ -63,6 +63,7 @@ import {
   uploadWorkspaceBatchInput,
 } from '@/services/aiApi';
 import { fetchCurrentUserContext } from '@/services/api';
+import ChatPreview from './ChatPreview';
 import workspacePalette from './palette';
 import { ReleaseArchiveIcon, ReleaseDraftIcon } from './releaseIcons';
 import WorkspaceDock, { type WorkspacePanel } from './WorkspaceDock';
@@ -1184,7 +1185,6 @@ const AICollect: React.FC = () => {
   const [taskDraft, setTaskDraft] = useState('');
   const [submittedPrompt, setSubmittedPrompt] = useState('');
   const [chatEntered, setChatEntered] = useState(false);
-  const [chatMessages, setChatMessages] = useState<string[]>([]);
   const [workflowPhase, setWorkflowPhase] = useState<SessionWorkflowPhase>('analyzing-template');
   const [expandedStep, setExpandedStep] = useState<WorkMode>('explore');
   const [activeProcessStep, setActiveProcessStep] = useState<ProcessStepKey>('prepare');
@@ -9664,7 +9664,6 @@ const AICollect: React.FC = () => {
       </style>
 
       <div className={`ai-collect-workbench ${hasSession ? 'is-chat' : ''} ${collectionStarted ? 'is-collecting' : ''}`}>
-        {hasSession && <div className={`ai-chat-dot ${!collectionStarted ? 'is-landing' : ''}`} data-activity={dotActivity} />}
         <header
           className={`ai-collect-header ${hasSession ? 'is-session' : 'is-idle'}`}
           style={{
@@ -9676,43 +9675,12 @@ const AICollect: React.FC = () => {
         </header>
 
         <div className={`ai-collect-body ${hasSession ? 'is-session' : 'is-idle'}`}>
-          {!hasSession ? (
-            renderMissionPanel('hero')
+          {!collectionStarted ? (
+            <ChatPreview entered={hasSession} userName={currentUserName} onEnter={() => setChatEntered(true)} />
           ) : (
-            <div
-              className={`ai-session-shell ${releaseExit ? 'is-releasing' : ''}`}
-              style={releaseExit ? ({
-                '--release-exit-x': `${releaseExit.x}px`,
-                '--release-exit-y': `${releaseExit.y}px`,
-                '--release-exit-scale': releaseExit.scale,
-              } as React.CSSProperties) : undefined}
-            >
-              <div className={`ai-chat-layout ${collectionStarted ? 'is-collecting' : ''}`}>
-                {collectionStarted && <aside className="ai-chat-progress" aria-label="Live progress">
-                  <h2>Live progress</h2>
-                  <div role="log" aria-live="polite">{analysisFeed.map((item) => <div key={item.id} className={`ai-chat-event is-${item.kind}`}><span>{item.step || '采集'}</span><p>{item.content}</p></div>)}</div>
-                  {streamError && <Alert type="error" message={streamError} />}
-                </aside>}
-                <main className="ai-chat-main" aria-label="Scout chat">
-                  <div className="ai-chat-thread" role="log" aria-live="polite">
-                    <div className="ai-chat-message is-user">{submittedPrompt}</div>
-                    <div className="ai-chat-message is-assistant">What would you like to work on?</div>
-                    {chatMessages.map((text, index) => <div className="ai-chat-message is-user" key={index}>{text}</div>)}
-                    {collectionStarted && <div className="ai-chat-message is-assistant">{streamError || analysisFeed[analysisFeed.length - 1]?.content || 'Connecting to the collection task…'}</div>}
-                    {collectionStarted && runStatus !== 'running' && !streamError && <details className="ai-chat-results"><summary>View collection results and actions</summary>{renderWorkflowLayout()}</details>}
-                  </div>
-                  <form className="ai-chat-composer" onSubmit={(event) => {
-                    event.preventDefault();
-                    setChatMessages((prev) => [...prev, taskDraft]);
-                    setTaskDraft('');
-                  }}>
-                    <Input aria-label="Chat message" placeholder="Message Scout…" value={taskDraft}
-                      onChange={(event) => setTaskDraft(event.target.value.replace(/[\r\n]+/g, ''))}
-                      onKeyDown={(event) => { if (event.nativeEvent.isComposing && event.key === 'Enter') event.preventDefault(); }} />
-                    <Button htmlType="submit">Send</Button>
-                  </form>
-                </main>
-              </div>
+            <div className="ai-session-shell">
+              <div className="ai-chat-dot" data-activity={dotActivity} />
+              {renderWorkflowLayout()}
             </div>
           )}
         </div>
