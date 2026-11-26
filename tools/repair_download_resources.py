@@ -3,6 +3,7 @@ import argparse
 import asyncio
 import json
 import multiprocessing
+import os
 import re
 import sqlite3
 import sys
@@ -100,6 +101,7 @@ def verify_repairs(db, mongo, client):
 
 
 def worker(directory, shard, sources):
+    os.umask(0o002)
     path=Path(directory)/f'worker-{shard}.sqlite'
     db=sqlite3.connect(path);db.execute('PRAGMA journal_mode=WAL')
     db.execute('CREATE TABLE IF NOT EXISTS progress(collection TEXT PRIMARY KEY,last_id TEXT,done INTEGER,inspected INTEGER)')
