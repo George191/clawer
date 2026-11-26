@@ -12,7 +12,7 @@ COPY web-panel/package.json web-panel/package-lock.json ./
 RUN npm ci --registry=${NPM_REGISTRY}
 
 COPY web-panel/ ./
-RUN npm run build
+RUN npm run build && chmod -R a+rX /static
 
 # ============================================================
 # Stage 2: Compile wheels for all Python dependencies
