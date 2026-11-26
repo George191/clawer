@@ -15,7 +15,7 @@ from agent.contracts import (
     MAX_ATTEMPTS,
     MAX_CHECKPOINT_BYTES,
     AgentSettings,
-    CollectionRequest,
+    AgentRunRequest,
     LeaseLost,
     RunConflict,
     SettingsUpdate,
@@ -36,20 +36,20 @@ def cipher():
     return connection_cipher(settings.SECRET_KEY)
 
 
-class CollectionStore:
+class AgentStore:
     def __init__(self, database=engine):
         self.database = database
 
     async def settings(self) -> SettingsView:
         async with self.database.connect() as conn:
-            row = (await conn.execute(text("SELECT * FROM app.collection_agent_settings WHERE singleton"))).mappings().one()
+            row = (await conn.execute(text("SELECT * FROM app.agent_settings WHERE singleton"))).mappings().one()
         return SettingsView(**row["config"], api_key_configured=bool(row["api_key_ciphertext"]), revision=row["revision"], connection_verified=row["tested_revision"] == row["revision"])
 
     async def save_settings(self, payload: SettingsUpdate, owner: UUID) -> SettingsView:
         if payload.clear_api_key and payload.api_key and payload.api_key.get_secret_value():
             raise RunConflict("Choose either replace or clear API key")
         async with self.database.begin() as conn:
-            row = (await conn.execute(text("SELECT * FROM app.collection_agent_settings WHERE singleton FOR UPDATE"))).mappings().one()
+            row = (await conn.execute(text("SELECT * FROM app.agent_settings WHERE singleton FOR UPDATE"))).mappings().one()
             if row["revision"] != payload.expected_revision:
                 raise RunConflict("Settings changed; reload before saving")
             ciphertext = row["api_key_ciphertext"]
@@ -58,14 +58,14 @@ class CollectionStore:
             elif payload.api_key and payload.api_key.get_secret_value():
                 ciphertext = cipher().encrypt(payload.api_key.get_secret_value().encode()).decode()
             if payload.enabled and not ciphertext:
-                raise RunConflict("An API key is required before enabling collection")
+                raise RunConflict("An API key is required before enabling system agents")
             config = AgentSettings.model_validate(payload.model_dump(include=set(AgentSettings.model_fields)))
             old_config = AgentSettings.model_validate(row["config"])
             verified = (row["tested_revision"] == row["revision"] and ciphertext == row["api_key_ciphertext"]
                         and config.model_dump(exclude={"enabled"}) == old_config.model_dump(exclude={"enabled"}))
             if config.enabled and not verified:
                 raise RunConflict("Save the model configuration disabled, test its connection, then enable it")
-            await conn.execute(text("""UPDATE app.collection_agent_settings
+            await conn.execute(text("""UPDATE app.agent_settings
                 SET config=CAST(:config AS jsonb), api_key_ciphertext=:key, revision=revision+1,
                 tested_revision=:tested, updated_by=:owner, updated_at=now() WHERE singleton"""),
                 {"config": config.model_dump_json(), "key": ciphertext, "owner": owner, "tested": row["revision"] + 1 if verified else None})
@@ -73,7 +73,7 @@ class CollectionStore:
 
     async def runtime_settings(self, revision: int, *, require_enabled: bool = True) -> tuple[AgentSettings, str]:
         async with self.database.connect() as conn:
-            row = (await conn.execute(text("SELECT * FROM app.collection_agent_settings WHERE singleton"))).mappings().one()
+            row = (await conn.execute(text("SELECT * FROM app.agent_settings WHERE singleton"))).mappings().one()
         config = AgentSettings.model_validate(row["config"])
         if row["revision"] != revision:
             raise HTTPException(409, "SETTINGS_CHANGED")
@@ -87,67 +87,74 @@ class CollectionStore:
 
     async def mark_verified(self, revision: int) -> None:
         async with self.database.begin() as conn:
-            result = await conn.execute(text("UPDATE app.collection_agent_settings SET tested_revision=revision,tested_at=now() WHERE singleton AND revision=:revision"), {"revision": revision})
+            result = await conn.execute(text("UPDATE app.agent_settings SET tested_revision=revision,tested_at=now() WHERE singleton AND revision=:revision"), {"revision": revision})
             if result.rowcount != 1:
                 raise RunConflict("Settings changed while the connection test was running")
 
     @staticmethod
     async def event(conn, run_id: UUID, event: dict) -> None:
-        seq = (await conn.execute(text("UPDATE app.collection_agent_runs SET event_seq=event_seq+1, updated_at=now() WHERE id=:id RETURNING event_seq"), {"id": run_id})).scalar_one()
-        await conn.execute(text("INSERT INTO app.collection_agent_events(run_id,seq,event) VALUES (:id,:seq,CAST(:event AS jsonb))"), {"id": run_id, "seq": seq, "event": encoded(event)})
+        seq = (await conn.execute(text("UPDATE app.agent_runs SET event_seq=event_seq+1, updated_at=now() WHERE id=:id RETURNING event_seq"), {"id": run_id})).scalar_one()
+        await conn.execute(text("INSERT INTO app.agent_events(run_id,seq,event) VALUES (:id,:seq,CAST(:event AS jsonb))"), {"id": run_id, "seq": seq, "event": encoded(event)})
 
-    async def enqueue(self, owner: UUID, key: str, payload: CollectionRequest) -> dict:
+    async def enqueue(self, owner: UUID, key: str, payload: AgentRunRequest) -> dict:
+        from agent.executors import EXECUTORS
+        from agent.registry import AgentRegistry
+
+        _, _, snapshot = await AgentRegistry(self.database).resolve(owner, payload.agent_id)
+        executor = EXECUTORS[snapshot["harness"]]
+        validated = executor["request"].model_validate(payload.input)
         request = payload.model_dump(mode="json", exclude_none=True)
+        request["input"] = validated.model_dump(mode="json", exclude_none=True)
         digest = hashlib.sha256(encoded(request).encode()).hexdigest()
         async with self.database.begin() as conn:
-            await conn.execute(text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": f"collection-owner:{owner}"})
-            existing = (await conn.execute(text("SELECT * FROM app.collection_agent_runs WHERE owner_id=:owner AND idempotency_key=:key"), {"owner": owner, "key": key})).mappings().first()
+            await conn.execute(text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": f"agent-owner:{owner}"})
+            existing = (await conn.execute(text("SELECT * FROM app.agent_runs WHERE owner_id=:owner AND idempotency_key=:key"), {"owner": owner, "key": key})).mappings().first()
             if existing:
                 if existing["request_hash"] != digest:
-                    raise RunConflict("Idempotency key was already used for a different collection request")
+                    raise RunConflict("Idempotency key was already used for a different agent request")
                 return self.view(existing)
-            if payload.agent_id:
-                from agent.registry import AgentRegistry
-                _, _, snapshot = await AgentRegistry(self.database).resolve(owner, payload.agent_id)
-            else:
-                config = (await conn.execute(text("SELECT * FROM app.collection_agent_settings WHERE singleton FOR SHARE"))).mappings().one()
-                if not config["config"].get("enabled") or not config["api_key_ciphertext"] or config["tested_revision"] != config["revision"]:
-                    raise HTTPException(503, "Configure and enable the collection agent in Settings")
-                snapshot = {**AgentSettings.model_validate(config["config"]).model_dump(), "revision": config["revision"]}
-            count = (await conn.execute(text("SELECT count(*) FROM app.collection_agent_runs WHERE owner_id=:owner AND status IN ('queued','running')"), {"owner": owner})).scalar_one()
+            count = (await conn.execute(text("SELECT count(*) FROM app.agent_runs WHERE owner_id=:owner AND status IN ('queued','running')"), {"owner": owner})).scalar_one()
             if count >= 3:
-                raise HTTPException(429, "Collection queue limit reached for this user")
+                raise HTTPException(429, "Agent queue limit reached for this user")
             run_id = uuid4()
-            await conn.execute(text("""INSERT INTO app.collection_agent_runs
-                (id,owner_id,idempotency_key,request_hash,request,model_config)
-                VALUES (:id,:owner,:key,:hash,CAST(:request AS jsonb),CAST(:config AS jsonb))"""),
+            await conn.execute(text("""INSERT INTO app.agent_runs
+                (id,owner_id,idempotency_key,request_hash,request,model_config,agent_id,product_domain,harness,stage_count)
+                VALUES (:id,:owner,:key,:hash,CAST(:request AS jsonb),CAST(:config AS jsonb),:agent,:domain,:harness,:stages)"""),
                 {"id": run_id, "owner": owner, "key": key, "hash": digest, "request": encoded(request),
-                 "config": encoded(snapshot)})
+                 "config": encoded(snapshot), "agent": payload.agent_id, "domain": payload.product_domain,
+                 "harness": snapshot["harness"], "stages": len(executor["steps"])})
             await self.event(conn, run_id, {"type": "queued", "activity": "None"})
         return await self.get(owner, run_id)
 
     @staticmethod
     def view(row) -> dict:
-        return {key: row[key] for key in ("id", "request", "model_config", "status", "stage", "result", "error_code", "attempts", "event_seq", "created_at", "updated_at")}
+        return {key: row[key] for key in ("id", "agent_id", "product_domain", "harness", "request", "model_config", "status", "stage", "stage_count", "result", "error_code", "attempts", "event_seq", "created_at", "updated_at")}
+
+    async def list(self, owner: UUID, product_domain: str | None, limit: int) -> list[dict]:
+        async with self.database.connect() as conn:
+            rows = (await conn.execute(text("""SELECT * FROM app.agent_runs WHERE owner_id=:owner
+                AND (CAST(:domain AS text) IS NULL OR product_domain=:domain)
+                ORDER BY created_at DESC LIMIT :limit"""), {"owner": owner, "domain": product_domain, "limit": limit})).mappings().all()
+        return [self.view(row) for row in rows]
 
     async def get(self, owner: UUID, run_id: UUID) -> dict:
         async with self.database.connect() as conn:
-            row = (await conn.execute(text("SELECT * FROM app.collection_agent_runs WHERE id=:id AND owner_id=:owner"), {"id": run_id, "owner": owner})).mappings().first()
+            row = (await conn.execute(text("SELECT * FROM app.agent_runs WHERE id=:id AND owner_id=:owner"), {"id": run_id, "owner": owner})).mappings().first()
         if row is None:
-            raise HTTPException(404, "Collection run not found")
+            raise HTTPException(404, "Agent run not found")
         return self.view(row)
 
     async def events(self, owner: UUID, run_id: UUID, after: int, limit: int) -> list[dict]:
         await self.get(owner, run_id)
         async with self.database.connect() as conn:
-            rows = (await conn.execute(text("SELECT seq,event,created_at FROM app.collection_agent_events WHERE run_id=:id AND seq>:after ORDER BY seq LIMIT :limit"), {"id": run_id, "after": after, "limit": limit})).mappings().all()
+            rows = (await conn.execute(text("SELECT seq,event,created_at FROM app.agent_events WHERE run_id=:id AND seq>:after ORDER BY seq LIMIT :limit"), {"id": run_id, "after": after, "limit": limit})).mappings().all()
         return [dict(row) for row in rows]
 
     async def control(self, owner: UUID, run_id: UUID, action: str) -> dict:
         async with self.database.begin() as conn:
-            row = (await conn.execute(text("SELECT * FROM app.collection_agent_runs WHERE id=:id AND owner_id=:owner FOR UPDATE"), {"id": run_id, "owner": owner})).mappings().first()
+            row = (await conn.execute(text("SELECT * FROM app.agent_runs WHERE id=:id AND owner_id=:owner FOR UPDATE"), {"id": run_id, "owner": owner})).mappings().first()
             if row is None:
-                raise HTTPException(404, "Collection run not found")
+                raise HTTPException(404, "Agent run not found")
             if action == "cancel":
                 if row["status"] in {"completed", "cancelled", "failed"}:
                     return self.view(row)
@@ -156,29 +163,29 @@ class CollectionStore:
                 if row["status"] != "failed" or row["attempts"] >= MAX_ATTEMPTS:
                     raise RunConflict("Only failed runs with remaining attempts can be resumed")
                 status, activity = "queued", "None"
-            await conn.execute(text("UPDATE app.collection_agent_runs SET status=:status,lease_token=NULL,lease_until=NULL,error_code=NULL WHERE id=:id"), {"status": status, "id": run_id})
+            await conn.execute(text("UPDATE app.agent_runs SET status=:status,lease_token=NULL,lease_until=NULL,error_code=NULL WHERE id=:id"), {"status": status, "id": run_id})
             await self.event(conn, run_id, {"type": status, "activity": activity})
         return await self.get(owner, run_id)
 
     async def claim(self) -> dict | None:
         async with self.database.begin() as conn:
-            if not (await conn.execute(text("SELECT pg_try_advisory_xact_lock(hashtext('collection-agent-claim'))"))).scalar_one():
+            if not (await conn.execute(text("SELECT pg_try_advisory_xact_lock(hashtext('agent-claim'))"))).scalar_one():
                 return None
-            active = (await conn.execute(text("SELECT count(*) FROM app.collection_agent_runs WHERE status='running' AND lease_until>now()"))).scalar_one()
+            active = (await conn.execute(text("SELECT count(*) FROM app.agent_runs WHERE status='running' AND lease_until>now()"))).scalar_one()
             if active >= 2:
                 return None
-            row = (await conn.execute(text("""SELECT * FROM app.collection_agent_runs
+            row = (await conn.execute(text("""SELECT * FROM app.agent_runs
                 WHERE status='queued' OR (status='running' AND lease_until<=now())
                 ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED"""))).mappings().first()
             if row is None:
                 return None
             run_id = row["id"]
             if row["attempts"] >= MAX_ATTEMPTS:
-                await conn.execute(text("UPDATE app.collection_agent_runs SET status='failed',error_code='ATTEMPTS_EXHAUSTED',lease_token=NULL,lease_until=NULL WHERE id=:id"), {"id": run_id})
+                await conn.execute(text("UPDATE app.agent_runs SET status='failed',error_code='ATTEMPTS_EXHAUSTED',lease_token=NULL,lease_until=NULL WHERE id=:id"), {"id": run_id})
                 await self.event(conn, run_id, {"type": "failed", "activity": "Error", "code": "ATTEMPTS_EXHAUSTED"})
                 return None
             token = uuid4()
-            updated = (await conn.execute(text("""UPDATE app.collection_agent_runs SET status='running',attempts=attempts+1,
+            updated = (await conn.execute(text("""UPDATE app.agent_runs SET status='running',attempts=attempts+1,
                 lease_token=:token,lease_until=now()+(:lease * interval '1 second'),error_code=NULL
                 WHERE id=:id RETURNING *"""), {"token": token, "lease": LEASE_SECONDS, "id": run_id})).mappings().one()
             await self.event(conn, run_id, {"type": "started", "stage": updated["stage"], "attempt": updated["attempts"], "activity": "Working"})
@@ -186,7 +193,7 @@ class CollectionStore:
 
     async def heartbeat(self, run_id: UUID, token: UUID) -> bool:
         async with self.database.begin() as conn:
-            result = await conn.execute(text("""UPDATE app.collection_agent_runs SET lease_until=now()+(:lease * interval '1 second')
+            result = await conn.execute(text("""UPDATE app.agent_runs SET lease_until=now()+(:lease * interval '1 second')
                 WHERE id=:id AND lease_token=:token AND status='running' AND lease_until>now()"""), {"id": run_id, "token": token, "lease": LEASE_SECONDS})
         return result.rowcount == 1
 
@@ -195,7 +202,7 @@ class CollectionStore:
         if len(encoded(checkpoints).encode()) > MAX_CHECKPOINT_BYTES:
             raise ValueError("CHECKPOINT_LIMIT_EXCEEDED")
         async with self.database.begin() as conn:
-            result = await conn.execute(text("""UPDATE app.collection_agent_runs SET checkpoints=CAST(:data AS jsonb),stage=stage+1
+            result = await conn.execute(text("""UPDATE app.agent_runs SET checkpoints=CAST(:data AS jsonb),stage=stage+1
                 WHERE id=:id AND lease_token=:token AND status='running' AND lease_until>now() AND stage=:stage"""),
                 {"data": encoded(checkpoints), "id": run["id"], "token": run["lease_token"], "stage": run["stage"]})
             if result.rowcount != 1:
@@ -206,14 +213,14 @@ class CollectionStore:
 
     async def progress(self, run: dict, stage: str, activity: str) -> None:
         async with self.database.begin() as conn:
-            row = (await conn.execute(text("SELECT id FROM app.collection_agent_runs WHERE id=:id AND lease_token=:token AND status='running' AND lease_until>now() FOR UPDATE"), {"id": run["id"], "token": run["lease_token"]})).first()
+            row = (await conn.execute(text("SELECT id FROM app.agent_runs WHERE id=:id AND lease_token=:token AND status='running' AND lease_until>now() FOR UPDATE"), {"id": run["id"], "token": run["lease_token"]})).first()
             if row is None:
                 raise LeaseLost()
             await self.event(conn, run["id"], {"type": "stage_started", "stage": stage, "activity": activity})
 
     async def finish(self, run: dict, status: str, *, result: dict | None = None, error: str | None = None) -> bool:
         async with self.database.begin() as conn:
-            updated = await conn.execute(text("""UPDATE app.collection_agent_runs
+            updated = await conn.execute(text("""UPDATE app.agent_runs
                 SET status=:status,result=CAST(:result AS jsonb),error_code=:error,lease_token=NULL,lease_until=NULL
                 WHERE id=:id AND lease_token=:token AND status='running' AND lease_until>now()"""),
                 {"status": status, "result": encoded(result) if result is not None else None, "error": error, "id": run["id"], "token": run["lease_token"]})

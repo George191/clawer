@@ -1,6 +1,6 @@
 import client, { unwrap } from './api';
 
-export interface CollectionAgentSettings {
+export interface AgentSettings {
   enabled: boolean;
   base_url: string;
   model: string;
@@ -11,14 +11,14 @@ export interface CollectionAgentSettings {
   connection_verified: boolean;
   revision: number;
 }
-export type CollectionAgentUpdate = Omit<CollectionAgentSettings, 'revision' | 'api_key_configured' | 'connection_verified'> & {
+export type AgentUpdate = Omit<AgentSettings, 'revision' | 'api_key_configured' | 'connection_verified'> & {
   expected_revision: number;
   api_key?: string;
   clear_api_key?: boolean;
 };
-export const getCollectionAgentSettings = () =>
-  client.get('/agents/collection/settings').then((r) => unwrap<CollectionAgentSettings>(r.data));
-export const saveCollectionAgentSettings = (data: CollectionAgentUpdate) =>
-  client.put('/agents/collection/settings', data).then((r) => unwrap<CollectionAgentSettings>(r.data));
-export const testCollectionAgentSettings = () =>
-  client.post('/agents/collection/settings/test', {}, { timeout: 610000 }).then((r) => unwrap<{ ok: boolean; latency_ms: number }>(r.data));
+export const getAgentSettings = () =>
+  client.get('/agents/settings').then((r) => unwrap<AgentSettings>(r.data));
+export const saveAgentSettings = (data: AgentUpdate) =>
+  client.put('/agents/settings', data).then((r) => unwrap<AgentSettings>(r.data));
+export const testAgentSettings = () =>
+  client.post('/agents/settings/test', {}, { timeout: 610000 }).then((r) => unwrap<{ ok: boolean; latency_ms: number }>(r.data));

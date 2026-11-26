@@ -1,88 +1,76 @@
-# Collection Harness
+# Global Agents
 
-仅用于公共网页采集取证、采集模板生成、必要的适配器生成和静态合约校验。不是通用聊天或代码执行 Agent。固定工具路径为 `capture → template → adapter → validate`；模型无法增加工具、执行命令、访问数据库、运行生成代码、发布模板或启动批量任务。
+Agent 是与 Automation 平级的全局基础设施。定义、模型连接、默认配置、运行队列和事件不归属于某一个产品。采集是一个已部署的执行器，不是所有 Agent 的能力边界。
 
-采集页面的 `ChatPreview` 仍为独立样式演示，尚未接入本 API。不要把演示步骤当成真实执行记录。
+## 存储和权限
 
-## 配置与启用
+使用现有应用数据库的 `app` schema，不创建采集专用数据库。表为 `agent_settings`、`agent_definitions`、`agent_connections`、`agent_shares`、`agent_runs` 和 `agent_events`。
 
-1. 通过 Git 部署代码，使用现有 Alembic 配置升级到 `c801b426df90`，再启动 Web。`docker/web.Dockerfile` 包含根目录 `agent/` 包。运行期间不创建或修改数据库结构。
-2. 管理员打开 **Settings → Collection Agent**。默认模型为 `gpt-6-sol`，推理强度 `high`，端点 `https://api.openai.com/v1`；支持更换兼容 OpenAI **Responses API** 的 HTTPS 端点和模型，不回退到其他模型或 Chat Completions。
-3. 保持禁用状态，输入 API Key 并保存。密钥使用系统已有、显式配置的持久化 `SECRET_KEY` 派生密钥加密；没有稳定系统密钥时拒绝保存。密钥不返回前端、不进入运行快照和事件，不写入浏览器存储。留空保留，显式勾选清除才删除。
-4. 点击 **Test connection**。这是实际模型请求，会使用模型额度；只有请求完成且配置修订号仍一致才记录验证成功。
-5. 验证成功后启用并保存。连接、模型、推理强度、超时、输出预算或密钥变更均需要重新验证；单独切换启停保留验证结果。服务默认禁用，缺少配置/验证时提交运行返回 503。
+- 私有 Agent：仅创建者可见、使用和编辑。
+- 指定分享：填写一个或多个已注册用户的邮箱；接收者可查看和使用，不能编辑、删除、测试或重新绑定创建者的连接。
+- 公开 Agent：所有已登录用户均可查看和使用。运行和事件始终归发起者所有，公开定义不公开其他人的执行结果。
+- 系统 Agent：使用固定系统标识，没有个人所有者，向所有已登录用户提供。当前预置 `collection`（采集智能体），管理员在 **System settings → System agents** 配置默认模型、测试并启用。
+- 模型连接始终归创建者所有；分享 Agent 不会分享连接管理权、API Key 或密文。密钥使用稳定的系统 `SECRET_KEY` 加密，不能由客户端指定 owner。
 
-Settings 使用修订号防止并发覆盖。修改系统 `SECRET_KEY` 后需要重新输入 API Key；不要让多个 Web 实例使用不同系统密钥。已排队运行固定配置修订号，配置变更后拒绝混用新密钥和旧端点，应重新提交新运行。已经开始的运行使用其加载的配置。
+分享收回、定义修改、连接修改或系统默认配置变化后，排队运行会在执行前重新检查权限和快照。失败会明确记录，不回退到其他连接或模型。分享不会把接收者提升为编辑者。
 
-## API
+## 公共接口
 
-公网前缀沿用项目配置，浏览器入口为 `/api/v1/agents/collection`。所有接口需要现有登录 Bearer token；Settings 读取、修改与连接测试仅超级管理员可用。运行和事件严格按当前用户隔离，无法通过客户端传入其他 owner。
+统一前缀 `/v1/agents`（由部署的 API 前缀配置控制），没有旧的 collection 专用接口别名。
 
-| 方法 | 路径 | 行为 |
-|---|---|---|
-| GET / PUT | `/settings` | 脱敏读取 / 乐观锁更新配置 |
-| POST | `/settings/test` | 验证已保存模型连接 |
-| POST | `/runs` | 持久化提交；必须提供 `Idempotency-Key` 请求头 |
-| GET | `/runs/{id}` | 状态、配置快照、检查点位置、结果与错误码 |
-| GET | `/runs/{id}/events?after=0&limit=100` | 按递增序号回放真实进度，支持断线续读 |
-| POST | `/runs/{id}/cancel` | 撤销运行租约，阻止后续结果提交；重复取消幂等 |
-| POST | `/runs/{id}/resume` | 仅恢复失败且尚有尝试预算的运行 |
+| 接口 | 用途 |
+|---|---|
+| GET `/catalog` | 系统、自己创建、公开及指定分享的 Agent，以及自己的模型连接 |
+| POST `/definitions`、PUT `/definitions/{id}` | 保存自己的定义和分享设置 |
+| POST `/definitions/{id}/test` | 所有者测试模型连接，会使用模型额度 |
+| POST `/connections`、PUT `/connections/{id}` | 保存自己的模型连接 |
+| DELETE `/{definitions,connections}/{id}?revision=N` | 所有者删除相应资源 |
+| GET、PUT `/settings`，POST `/settings/test` | 管理员配置和验证系统默认模型 |
+| POST `/runs` | 提交运行，必须提供 `Idempotency-Key` 请求头 |
+| GET `/runs?product_domain=ontology&limit=100` | 发起者按业务域查看运行；省略业务域查看全部 |
+| GET `/runs/{id}`、GET `/runs/{id}/events?after=0&limit=100` | 发起者读取状态、产物和事件 |
+| POST `/runs/{id}/cancel`、POST `/runs/{id}/resume` | 发起者取消或恢复失败运行 |
 
-创建请求：
+运行请求显式指定 Agent 和业务域，输入由对应执行器校验：
 
 ```json
 {
-  "url": "https://example.org/articles",
-  "goal": "Collect article titles and publication dates",
-  "max_pages": 20,
-  "max_fields": 50
+  "agent_id": "c011ec70-0000-4000-8000-000000000001",
+  "product_domain": "ai-collect",
+  "input": {
+    "url": "https://example.org/articles",
+    "goal": "Collect article titles and publication dates",
+    "max_pages": 20,
+    "max_fields": 50
+  }
 }
 ```
 
-同一用户、同一幂等键和请求返回同一个运行；同键不同请求返回 409。完成结果为 `template_yaml`、`adapter_python`、来源证据摘要哈希及产物哈希。`requires_review=true`、`published=false`，静态检查通过不代表适配器执行或试采集通过。发布与调度继续使用已有独立流程；本 Harness 不修改 MinIO 对象或既有模板绑定。
+`product_domain` 表示调用来源，不授予额外能力。当前提供 `assistant`（通用文本任务）和 `collection`（网页采集）两种执行器。个人 Agent 默认使用通用执行器，接收 `task` 与可选 `context`，不要求网页 URL；它只使用显式提供的上下文，不读取其他业务数据。新增执行器在 `agent/executors.py` 注册独立输入合约、工具、阶段和模型指令；公共存储和调度不假定采集输入或固定四个阶段。
 
-## 执行保证与界限
+## 执行约束
 
-- PostgreSQL 同时保存队列、检查点和顺序事件。阶段推进和事件在同一事务提交，成功只发生在最终校验检查点之后。没有内存队列或本地 JSON 作为权威状态。
-- 每次领取使用唯一租约 token，45 秒有效、每 10 秒续约。全局最多两个有效运行，每个 Web 进程一个执行循环。过期租约可被其他进程领取；旧执行者不能续租、推进检查点或提交成功。
-- 重启从最后提交阶段继续；同一次运行终生最多领取三次，手动恢复也不重置预算。没有检查点的浏览器/模型阶段可能重做，模型计费不保证恰好一次。只有读取网页和生成草稿可以重做；发布等外部写入不在重试边界内。
-- 每次领取最多四次逻辑模型生成，每次最多两次 HTTP 尝试；只重试明确的瞬时 HTTP 状态。超时请求可能已被提供商接收，因此不自动重发。单次模型输出上限 16,384 token，输入 128 KiB、供应商响应封装 512 KiB、输出产物 64 KiB，总检查点 512 KiB。每次 HTTP 请求包括响应体读取都受配置总时限限制。最多 100 页、100 个字段，具体请求可进一步收紧。
-- 取消立即写入数据库并撤销租约，活动工具在下一次心跳检测到撤销后取消。浏览器由既有 renderer 管理，其关闭可能等待当前浏览器超时；取消后不能提交结果，也不会假称网络请求已经瞬间终止。
-- 输入和重定向 URL 经过公共地址校验。实际浏览器流量继续通过既有 ProxyTunnel 的目的地址/DNS 检查；不提供任意 HTTP、Shell、文件或数据库工具。模型上下文中的网页内容作为不可信证据，不能扩大工具权限。生成 URL 必须属于已观察来源，生成代码只做静态校验、不执行。生成 YAML 在进入现有解析器前拒绝锚点和别名，避免小体积输入造成指数级遍历。
-- 所有模型错误、拒绝、不完整输出、非法合约、预算超限和基础设施故障明确失败。事件只含阶段、状态和错误码；不输出密钥、完整模型推理或原始供应商错误正文。
-- 连接验证只验证传输、认证和模型响应，不能代替采集质量验收。启用前必须针对实际来源运行完整任务并人工审查模板/字段，之后才进入原有发布流程。尚未完成真实模型和实际来源验证时，不应宣称业务已通过投产验收。
+PostgreSQL 是队列、检查点和事件的唯一权威。租约 fencing、取消、重启恢复、幂等和事件序号由公共运行层负责；全局最多两条有效运行，每个用户最多三条排队/运行任务，每条任务最多领取三次。运行保存执行器阶段数量和配置快照，不使用进程内队列作为事实来源。
 
-## 验证
+采集执行器保持 `capture → template → adapter → validate` 的固定流程。仅访问公共网页，生成采集模板和必要的适配器并做静态合约校验；不执行生成代码、不发布、不启动批量任务。页面内容是不可信证据，用户指令不能增加工具。模型通过 Responses API 调用；不回退到其他模型或 Chat Completions，原有请求预算和输出上限继续生效。
 
-```powershell
-python -m unittest agent.tests.test_harness agent.tests.test_api app.web.tests.test_scout_gateway
+采集产物标记 `requires_review=true`、`published=false`。静态校验通过不等于真实采集验收。前端 Scout ChatPreview 仍为独立演示，保存 Agent 不会自动执行真实采集。
+
+## 部署和迁移
+
+在 `master` 提交、推送、拉取后重建 Web 镜像。镜像必须包含根目录 `agent/`。暂停旧 Web，再执行现有 Alembic 配置的 `upgrade head`（本次修订 `e38a62f9c104`），最后启动新 Web。
+
+迁移将现有 `collection_agent_*` 表、索引和约束原位改名，保留配置密文、运行 ID、检查点和事件，补充运行业务域、执行器与阶段数量，并注册系统采集 Agent。旧请求被转换为统一运行合约并更新幂等摘要；不在生产运行代码中保留历史命名分支。分享权限无法无损表示为旧结构，因此降级必须先显式迁移数据。
+
+## 开发验证
+
+```sh
+python -m unittest agent.tests.test_harness agent.tests.test_api
 ```
 
-真实 PostgreSQL 集成测试使用 `AGENT_TEST_DATABASE_URL` 指定独立、可销毁的数据库，名称必须为 `collection_agent_test`；测试会重置该数据库中的 `app` schema，拒绝其他数据库名。不要配置生产连接。
+PostgreSQL 集成测试仅允许显式指定的独立可销毁 `agent_test` 数据库，测试会重建其中的 `app` schema，拒绝其他数据库名。
 
-```powershell
-$env:AGENT_TEST_DATABASE_URL = 'postgresql+asyncpg://test:test@127.0.0.1:55432/collection_agent_test'
-python -m unittest agent.tests.test_store_postgres
+```sh
+AGENT_TEST_DATABASE_URL=postgresql+asyncpg://test:test@127.0.0.1:55432/agent_test \
+  python -m unittest agent.tests.test_store_postgres
 ```
-
-覆盖幂等并发、全局并发上限、用户隔离、取消 fencing、过期执行者、检查点/事件原子性、重启恢复、尝试预算、设置修订、密钥加密和跨实例读取。模型协议测试使用 MockTransport，不调用或消耗真实模型额度。
-
-诊断使用运行 UUID、`error_code`、事件序号和时间戳。`failed` 不会变成替代结果；基础设施暂时不可用时保留租约恢复路径。没有自动删除运行/检查点的后台任务，清理必须显式遵守项目的保留规则。
-
-## 设计依据
-
-- [OpenAI GPT-6 Sol 模型规格](https://developers.openai.com/api/docs/models/gpt-6-sol) 与 [推理参数](https://developers.openai.com/api/docs/guides/reasoning)：使用实际模型 ID 和 Responses `reasoning.effort`。
-- [Anthropic 长任务 Harness 设计](https://www.anthropic.com/research/effective-harnesses-for-long-running-agents)：可验证阶段与持久化进展。
-- [LangGraph 故障容错原始文档](https://github.com/langchain-ai/docs/blob/main/src/oss/langgraph/fault-tolerance.mdx)：重放按至少一次语义处理，不把不可幂等发布写入重试阶段。本实现使用项目现有 PostgreSQL/asyncio 固定流程，无新增 Agent 框架依赖。
-
-## Agent 管理
-
-登录后打开 **Settings → Agents**（`/agents`），普通用户可以管理自己的模型连接和 Agent。先添加一个兼容 Responses API 的连接，再创建 Agent，选择连接、模型、推理强度和任务指令；保存并测试后启用。连接测试是真实模型调用。多个 Agent 共用同一个连接，不重复保存密钥；不同用户无法读取或修改彼此的配置。
-
-定义、模型绑定、修订号和加密密钥保存在 PostgreSQL。更改共享连接后，引用它的 Agent 必须重新测试；并发更新通过修订号拒绝覆盖。当前注册的执行框架为 `collection`，工具固定为 capture、template、adapter、validate。新增同类 Agent 不需要部署代码；新增工具或执行框架需要审查代码并按 Git 流程部署，不从数据库动态执行 Python。
-
-管理 API 前缀 `/api/v1/agent-management`：GET 根路径读取用户目录；POST/PUT `connections` 和 `agents` 新建/修改；POST `agents/{id}/test` 测试已保存配置；DELETE `{kind}/{id}?revision=N` 删除。API 仅返回连接名称、地址和修订号，不返回密钥或密文。
-
-通过采集运行 API 提交 `agent_id` 选用已启用并验证的个人 Agent。运行固定该 Agent 的配置快照；排队后定义或连接变化会明确失败，需要重新提交。原系统采集默认配置继续服务于未指定 `agent_id` 的现有调用。前端聊天目前仍为独立产品模拟，不会因保存 Agent 自动执行真实采集。
-
-部署先升级数据库至 `d29c0e317fa2`。不增加服务、框架或依赖。

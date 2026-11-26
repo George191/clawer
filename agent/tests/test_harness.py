@@ -7,11 +7,11 @@ from uuid import uuid4
 
 import httpx
 from fastapi import HTTPException
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from agent.contracts import AgentSettings, CollectionRequest, LeaseLost, SettingsUpdate
-from agent.model import CollectionModel, ModelFailure
-from agent.runtime import CollectionHarness
+from agent.model import AgentModel, ModelFailure
+from agent.runtime import AgentWorker
 from agent.tools import CollectionTools, ScopedTemplateAgent
 
 TEMPLATE = """name: articles
@@ -82,7 +82,7 @@ class ModelTests(unittest.IsolatedAsyncioTestCase):
             requests.append(request)
             return self.answer()
         self.transport(handler)
-        model = CollectionModel(AgentSettings(max_output_tokens=2048), "secret")
+        model = AgentModel(AgentSettings(max_output_tokens=2048), "secret")
         self.assertEqual(await model.generate("page evidence", max_tokens=8192), "ready: true")
         body = json.loads(requests[0].content)
         self.assertEqual(requests[0].url.path, "/v1/responses")
@@ -101,7 +101,7 @@ class ModelTests(unittest.IsolatedAsyncioTestCase):
             return httpx.Response(429) if len(calls) == 1 else self.answer()
         self.transport(handler)
         with patch("agent.model.asyncio.sleep", new=AsyncMock()):
-            self.assertEqual(await CollectionModel(AgentSettings(), "key").generate("test"), "ready: true")
+            self.assertEqual(await AgentModel(AgentSettings(), "key").generate("test"), "ready: true")
         self.assertEqual(len(calls), 2)
 
     async def test_auth_failure_does_not_retry_or_expose_provider_body(self):
@@ -111,7 +111,7 @@ class ModelTests(unittest.IsolatedAsyncioTestCase):
             return httpx.Response(401, text="private-provider-message")
         self.transport(handler)
         with self.assertRaisesRegex(ModelFailure, "MODEL_HTTP_401") as failure:
-            await CollectionModel(AgentSettings(), "key").generate("test")
+            await AgentModel(AgentSettings(), "key").generate("test")
         self.assertNotIn("private-provider-message", str(failure.exception))
         self.assertEqual(len(calls), 1)
 
@@ -122,7 +122,7 @@ class ModelTests(unittest.IsolatedAsyncioTestCase):
             raise httpx.ReadTimeout("timeout", request=request)
         self.transport(handler)
         with self.assertRaisesRegex(ModelFailure, "MODEL_TIMEOUT"):
-            await CollectionModel(AgentSettings(), "key").generate("test")
+            await AgentModel(AgentSettings(), "key").generate("test")
         self.assertEqual(len(calls), 1)
 
     async def test_refusal_partial_and_malformed_outputs_fail(self):
@@ -132,10 +132,10 @@ class ModelTests(unittest.IsolatedAsyncioTestCase):
         self.transport(lambda _: replies.pop(0))
         for _ in range(4):
             with self.assertRaises(ModelFailure):
-                await CollectionModel(AgentSettings(), "key").generate("test")
+                await AgentModel(AgentSettings(), "key").generate("test")
 
     async def test_call_budget_is_enforced_before_network(self):
-        model = CollectionModel(AgentSettings(), "key")
+        model = AgentModel(AgentSettings(), "key")
         model.calls = 4
         with self.assertRaisesRegex(ModelFailure, "MODEL_CALL_BUDGET"):
             await model.generate("test")
@@ -151,7 +151,7 @@ class ModelTests(unittest.IsolatedAsyncioTestCase):
     async def test_oversized_response_envelope_is_rejected_before_decoding(self):
         self.transport(lambda _: httpx.Response(200, content=b"x" * 524289))
         with self.assertRaisesRegex(ModelFailure, "MODEL_RESPONSE_LIMIT"):
-            await CollectionModel(AgentSettings(), "key").generate("test")
+            await AgentModel(AgentSettings(), "key").generate("test")
 
     async def test_total_deadline_cancels_slow_response_body(self):
         class SlowBody(httpx.AsyncByteStream):
@@ -161,16 +161,19 @@ class ModelTests(unittest.IsolatedAsyncioTestCase):
         self.transport(lambda _: httpx.Response(200, stream=SlowBody()))
         original = asyncio.wait_for
         with patch("agent.model.asyncio.wait_for", new=lambda task, timeout: original(task, timeout=0.01)), self.assertRaisesRegex(ModelFailure, "MODEL_TIMEOUT"):
-            await CollectionModel(AgentSettings(), "key").generate("test")
+            await AgentModel(AgentSettings(), "key").generate("test")
 
 
 class RuntimeTests(unittest.IsolatedAsyncioTestCase):
     def setup_run(self, stage=0):
         run = {"id": uuid4(), "lease_token": uuid4(), "stage": stage,
-               "model_config": {"revision": 1},
-               "request": {"url": "https://example.org", "goal": "titles"},
+               "owner_id": uuid4(), "model_config": {"agent_id": str(uuid4()), "harness": "collection", "instructions": ""},
+               "request": {"input": {"url": "https://example.org", "goal": "titles"}},
                "checkpoints": {"capture": {"evidence": True}} if stage else {}}
-        store = SimpleNamespace(runtime_settings=AsyncMock(return_value=(AgentSettings(enabled=True), "key")),
+        resolver = patch("agent.registry.AgentRegistry.resolve", new=AsyncMock(return_value=(AgentSettings(enabled=True), "key", run["model_config"])))
+        resolver.start()
+        self.addCleanup(resolver.stop)
+        store = SimpleNamespace(database=None,
             progress=AsyncMock(), heartbeat=AsyncMock(return_value=True), finish=AsyncMock(return_value=True))
         async def checkpoint(current, name, value):
             current["checkpoints"][name] = value
@@ -181,15 +184,31 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_resume_skips_committed_capture_and_completes_after_validation(self):
         run, store, tools = self.setup_run(stage=1)
-        await CollectionHarness(store, lambda _: tools).process(run)
+        await AgentWorker(store, lambda _: tools).process(run)
         tools.capture.assert_not_called()
         self.assertEqual([call.args[1] for call in store.checkpoint.await_args_list], ["template", "adapter", "validate"])
         store.finish.assert_awaited_once_with(run, "completed", result={"stage": "validate"})
 
+    async def test_worker_dispatches_non_collection_input_and_stage_plan(self):
+        class AnalysisRequest(BaseModel):
+            text: str
+        run, store, _ = self.setup_run()
+        run["model_config"]["harness"] = "analysis"
+        run["request"]["input"] = {"text": "Example"}
+        tools = SimpleNamespace(timeout=lambda _: 5, inspect=AsyncMock(return_value={"facts": 1}),
+                                summarize=AsyncMock(return_value={"summary": "Done"}))
+        executor = {"request": AnalysisRequest, "steps": ("inspect", "summarize"), "instructions": "Analyze text.",
+                    "activities": {"inspect": "Working", "summarize": "Working"}}
+        with patch.dict("agent.runtime.EXECUTORS", {"analysis": executor}):
+            await AgentWorker(store, lambda _: tools).process(run)
+        self.assertEqual(run["stage"], 2)
+        self.assertEqual(tools.inspect.await_args.args[0].text, "Example")
+        store.finish.assert_awaited_once_with(run, "completed", result={"summary": "Done"})
+
     async def test_failure_does_not_fabricate_success_or_advance_checkpoint(self):
         run, store, tools = self.setup_run()
         tools.capture.side_effect = ModelFailure("MODEL_HTTP_401")
-        await CollectionHarness(store, lambda _: tools).process(run)
+        await AgentWorker(store, lambda _: tools).process(run)
         store.checkpoint.assert_not_called()
         store.finish.assert_awaited_once_with(run, "failed", error="MODEL_HTTP_401")
 
@@ -204,7 +223,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 cancelled.set()
         tools.capture.side_effect = capture
-        harness = CollectionHarness(store, lambda _: tools)
+        harness = AgentWorker(store, lambda _: tools)
         async def guard(_):
             await started.wait()
             raise LeaseLost()
@@ -220,7 +239,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             started.set()
             await asyncio.Event().wait()
         tools.template.side_effect = template
-        task = asyncio.create_task(CollectionHarness(store, lambda _: tools).process(run))
+        task = asyncio.create_task(AgentWorker(store, lambda _: tools).process(run))
         await started.wait()
         task.cancel()
         with self.assertRaises(asyncio.CancelledError):
@@ -236,7 +255,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.Event().wait()
         tools.template.side_effect = template
         store.finish.side_effect = RuntimeError("database unavailable")
-        task = asyncio.create_task(CollectionHarness(store, lambda _: tools).process(run))
+        task = asyncio.create_task(AgentWorker(store, lambda _: tools).process(run))
         await started.wait()
         task.cancel()
         with self.assertRaises(asyncio.CancelledError):

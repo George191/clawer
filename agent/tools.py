@@ -10,7 +10,7 @@ import yaml
 from yaml.tokens import AliasToken, AnchorToken
 
 from agent.contracts import CollectionRequest, public_url
-from agent.model import CollectionModel
+from agent.model import AgentModel
 from app.config.ai_settings import ai_settings
 from app.models.template import SiteTemplate
 from app.web.agents.adapter import AdapterAgent
@@ -29,7 +29,7 @@ def reject_yaml_aliases(content: str) -> None:
 
 
 class ScopedTemplateAgent(TemplateAgent):
-    def __init__(self, model: CollectionModel):
+    def __init__(self, model: AgentModel):
         super().__init__()
         self.model = model
 
@@ -45,7 +45,7 @@ class ScopedTemplateAgent(TemplateAgent):
 
 
 class ScopedAdapterAgent(AdapterAgent):
-    def __init__(self, model: CollectionModel):
+    def __init__(self, model: AgentModel):
         super().__init__()
         self.generate = model.generate
 
@@ -55,7 +55,7 @@ class ScopedAdapterAgent(AdapterAgent):
 
 
 class CollectionTools:
-    def __init__(self, model: CollectionModel):
+    def __init__(self, model: AgentModel):
         self.model = model
         self.template_agent = ScopedTemplateAgent(model)
         self.adapter_agent = ScopedAdapterAgent(model)

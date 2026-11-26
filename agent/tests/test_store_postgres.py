@@ -2,6 +2,8 @@
 
 import asyncio
 import importlib
+import hashlib
+import json
 import os
 import unittest
 from unittest.mock import AsyncMock, patch
@@ -14,9 +16,9 @@ from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from agent.contracts import CollectionRequest, LeaseLost, RunConflict, SettingsUpdate
-from agent.runtime import CollectionHarness
-from agent.store import CollectionStore
+from agent.contracts import AgentRunRequest, AgentSettings, SYSTEM_COLLECTION_AGENT_ID, LeaseLost, RunConflict, SettingsUpdate
+from agent.runtime import AgentWorker
+from agent.store import AgentStore
 from agent.tests.test_harness import TEMPLATE
 from app.storage.connection_credentials import connection_cipher
 from app.web.services.browser_renderer import BrowserRenderResult
@@ -24,15 +26,15 @@ from app.web.services.browser_renderer import BrowserRenderResult
 TEST_URL = os.getenv("AGENT_TEST_DATABASE_URL")
 
 
-@unittest.skipUnless(TEST_URL, "Set AGENT_TEST_DATABASE_URL to a disposable collection_agent_test database")
+@unittest.skipUnless(TEST_URL, "Set AGENT_TEST_DATABASE_URL to a disposable agent_test database")
 class PostgresStoreTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        if make_url(TEST_URL).database != "collection_agent_test":
-            raise RuntimeError("Integration tests refuse any database other than collection_agent_test")
+        if make_url(TEST_URL).database != "agent_test":
+            raise RuntimeError("Integration tests refuse any database other than agent_test")
         self.database = create_async_engine(TEST_URL)
-        self.store = CollectionStore(self.database)
+        self.store = AgentStore(self.database)
         self.owner, self.other = uuid4(), uuid4()
-        self.request = CollectionRequest(url="https://example.org/articles", goal="Collect titles")
+        self.request = AgentRunRequest(agent_id=SYSTEM_COLLECTION_AGENT_ID, product_domain="ai-collect", input={"url": "https://example.org/articles", "goal": "Collect titles"})
         self.key_patch = patch("agent.store.cipher", side_effect=lambda: connection_cipher("isolated-test-encryption-secret"))
         self.key_patch.start()
         self.addCleanup(self.key_patch.stop)
@@ -44,13 +46,15 @@ class PostgresStoreTests(unittest.IsolatedAsyncioTestCase):
             # The database name check above is mandatory before resetting this test-only schema.
             await conn.execute(text("DROP SCHEMA IF EXISTS app CASCADE"))
             await conn.execute(text("CREATE SCHEMA app"))
-            await conn.execute(text('CREATE TABLE app."user" (id uuid PRIMARY KEY)'))
+            await conn.execute(text('CREATE TABLE app."user" (id uuid PRIMARY KEY, email text UNIQUE, status integer DEFAULT 0)'))
             def upgrade(sync):
                 with Operations.context(MigrationContext.configure(sync)):
                     migration.upgrade()
                     importlib.import_module("app.web.alembic.versions.d29c0e317fa2_agent_management").upgrade()
+                    importlib.import_module("app.web.alembic.versions.e38a62f9c104_global_agents").upgrade()
             await conn.run_sync(upgrade)
-            await conn.execute(text('INSERT INTO app."user" VALUES (:owner),(:other)'), {"owner": self.owner, "other": self.other})
+            await conn.execute(text('INSERT INTO app."user" (id,email) VALUES (:owner,:owner_email),(:other,:other_email)'),
+                               {"owner": self.owner, "other": self.other, "owner_email": "owner@example.org", "other_email": "other@example.org"})
         view = await self.store.save_settings(SettingsUpdate(expected_revision=0, api_key="isolated-model-key"), self.owner)
         await self.store.mark_verified(view.revision)
         view = await self.store.save_settings(SettingsUpdate(expected_revision=view.revision, enabled=True), self.owner)
@@ -64,15 +68,15 @@ class PostgresStoreTests(unittest.IsolatedAsyncioTestCase):
 
     async def expire(self, run):
         async with self.database.begin() as conn:
-            await conn.execute(text("UPDATE app.collection_agent_runs SET lease_until=now()-interval '1 second' WHERE id=:id"), {"id": run["id"]})
+            await conn.execute(text("UPDATE app.agent_runs SET lease_until=now()-interval '1 second' WHERE id=:id"), {"id": run["id"]})
 
     async def test_credentials_are_encrypted_masked_and_survive_store_recreation(self):
         view = await self.store.settings()
         self.assertNotIn("isolated-model-key", view.model_dump_json())
         async with self.database.connect() as conn:
-            encrypted = (await conn.execute(text("SELECT api_key_ciphertext FROM app.collection_agent_settings"))).scalar_one()
+            encrypted = (await conn.execute(text("SELECT api_key_ciphertext FROM app.agent_settings"))).scalar_one()
         self.assertNotEqual(encrypted, "isolated-model-key")
-        config, key = await CollectionStore(self.database).runtime_settings(view.revision)
+        config, key = await AgentStore(self.database).runtime_settings(view.revision)
         self.assertEqual(key, "isolated-model-key")
         self.assertEqual((config.model, config.reasoning_effort), ("gpt-6-sol", "high"))
 
@@ -80,15 +84,16 @@ class PostgresStoreTests(unittest.IsolatedAsyncioTestCase):
         from agent.registry import AgentRegistry, ConnectionUpdate, DefinitionUpdate
         registry = AgentRegistry(self.database)
         connection = (await registry.save_connection(self.owner, ConnectionUpdate(name="Personal", api_key="managed-secret")))["id"]
-        first = DefinitionUpdate(name="Articles", connection_id=connection, model="model-one", instructions="Extract article titles.")
+        first = DefinitionUpdate(name="Articles", harness="collection", connection_id=connection, model="model-one", instructions="Extract article titles.")
         ident = (await registry.save_definition(self.owner, first))["id"]
         await registry.save_definition(self.owner, first.model_copy(update={"name": "Patents", "model": "model-two"}))
         catalog = await registry.list(self.owner)
+        catalog["agents"] = [row for row in catalog["agents"] if not row["system_key"]]
         self.assertEqual(len(catalog["connections"]), 1)
         self.assertEqual({row["model"] for row in catalog["agents"]}, {"model-one", "model-two"})
         self.assertNotIn("managed-secret", str(catalog))
         self.assertNotIn("api_key_ciphertext", str(catalog))
-        self.assertEqual((await registry.list(self.other))["agents"], [])
+        self.assertTrue(all(row["system_key"] for row in (await registry.list(self.other))["agents"]))
         for operation in (registry.resolve(self.other, ident), registry.save_definition(self.other, first), registry.save_connection(self.other, ConnectionUpdate(name="Steal", expected_revision=1), connection)):
             with self.assertRaises(HTTPException) as denied:
                 await operation
@@ -112,8 +117,8 @@ class PostgresStoreTests(unittest.IsolatedAsyncioTestCase):
             return TEMPLATE
         with patch("agent.tools.browser_renderer.render", new=AsyncMock(return_value=BrowserRenderResult(
             "https://example.org/articles", "Articles", "<html><article>Article</article></html>"
-        ))), patch("agent.model.CollectionModel.generate", new=generate):
-            await CollectionHarness(self.store).process(claimed)
+        ))), patch("agent.model.AgentModel.generate", new=generate):
+            await AgentWorker(self.store).process(claimed)
         self.assertEqual((await self.store.get(self.owner, run["id"]))["status"], "completed")
         self.assertTrue(seen_models)
         self.assertEqual(seen_models[0][0], "model-one")
@@ -144,6 +149,134 @@ class PostgresStoreTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(RunConflict):
             await self.store.save_settings(SettingsUpdate(expected_revision=changed.revision, enabled=True, model="gpt-6.2-sol"), self.owner)
 
+    async def test_system_agent_is_global_and_immutable(self):
+        from agent.registry import AgentRegistry
+        registry = AgentRegistry(self.database)
+        for actor in (self.owner, self.other):
+            catalog = await registry.list(actor)
+            system = next(row for row in catalog["agents"] if row["system_key"] == "collection")
+            self.assertEqual(system["id"], SYSTEM_COLLECTION_AGENT_ID)
+            self.assertEqual(system["visibility"], "public")
+            self.assertFalse(system["can_edit"])
+            self.assertTrue(system["verified"])
+            with self.assertRaises(HTTPException):
+                await registry.delete(actor, "agents", SYSTEM_COLLECTION_AGENT_ID, system["revision"])
+        submitted = await self.store.enqueue(self.other, "ontology", self.request.model_copy(update={"product_domain": "ontology"}))
+        self.assertEqual(submitted["product_domain"], "ontology")
+        self.assertEqual(len(await self.store.list(self.other, None, 100)), 1)
+        self.assertEqual(await self.store.list(self.other, "ai-collect", 100), [])
+        self.assertEqual(await self.store.list(self.owner, None, 100), [])
+
+    async def test_upgrade_preserves_historical_runs_events_and_idempotency(self):
+        async with self.database.begin() as conn:
+            await conn.execute(text("DROP SCHEMA app CASCADE"))
+            await conn.execute(text("CREATE SCHEMA app"))
+            await conn.execute(text('CREATE TABLE app."user" (id uuid PRIMARY KEY, email text UNIQUE, status integer DEFAULT 0)'))
+            await conn.execute(text('INSERT INTO app."user" (id) VALUES (:id)'), {"id": self.owner})
+            def legacy(sync):
+                with Operations.context(MigrationContext.configure(sync)):
+                    importlib.import_module("app.web.alembic.versions.c801b426df90_collection_agent_harness").upgrade()
+                    importlib.import_module("app.web.alembic.versions.d29c0e317fa2_agent_management").upgrade()
+            await conn.run_sync(legacy)
+            run_id = uuid4()
+            request = {"url": "https://example.org", "goal": "Collect titles"}
+            snapshot = {**AgentSettings().model_dump(), "revision": 7}
+            await conn.execute(text("""INSERT INTO app.collection_agent_runs
+                (id,owner_id,idempotency_key,request_hash,request,model_config,status,stage,result,checkpoints)
+                VALUES (:id,:owner,'original','original-hash',CAST(:request AS jsonb),CAST(:snapshot AS jsonb),
+                    'completed',4,CAST(:result AS jsonb),CAST(:checkpoints AS jsonb))"""),
+                {"id": run_id, "owner": self.owner, "request": json.dumps(request), "snapshot": json.dumps(snapshot),
+                 "result": json.dumps({"published": False}), "checkpoints": json.dumps({"capture": {"evidence": "saved"}})})
+            await conn.execute(text("INSERT INTO app.collection_agent_events(run_id,seq,event) VALUES(:id,1,'{\"type\":\"completed\"}')"), {"id": run_id})
+            def upgrade(sync):
+                with Operations.context(MigrationContext.configure(sync)):
+                    importlib.import_module("app.web.alembic.versions.e38a62f9c104_global_agents").upgrade()
+            await conn.run_sync(upgrade)
+            row = (await conn.execute(text("SELECT * FROM app.agent_runs WHERE id=:id"), {"id": run_id})).mappings().one()
+            self.assertEqual(row["checkpoints"]["capture"]["evidence"], "saved")
+            self.assertEqual((row["status"], row["stage"], row["stage_count"]), ("completed", 4, 4))
+            self.assertEqual(row["agent_id"], SYSTEM_COLLECTION_AGENT_ID)
+            self.assertEqual(row["request"]["input"], request)
+            encoded = json.dumps(row["request"], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            self.assertEqual(row["request_hash"], hashlib.sha256(encoded.encode()).hexdigest())
+            self.assertEqual(row["model_config"]["connection_revision"], 7)
+            self.assertEqual((await conn.execute(text("SELECT count(*) FROM app.agent_events WHERE run_id=:id"), {"id": run_id})).scalar_one(), 1)
+            self.assertIsNone((await conn.execute(text("SELECT to_regclass('app.collection_agent_runs')"))).scalar_one())
+
+    async def test_private_selected_and_public_access_with_revocation(self):
+        from agent.registry import AgentRegistry, ConnectionUpdate, DefinitionUpdate
+        registry = AgentRegistry(self.database)
+        outsider = uuid4()
+        async with self.database.begin() as conn:
+            await conn.execute(text('INSERT INTO app."user" (id,email) VALUES (:id,\'outsider@example.org\')'), {"id": outsider})
+        connection = (await registry.save_connection(self.owner, ConnectionUpdate(name="Private key", api_key="owner-secret")))["id"]
+        payload = DefinitionUpdate(name="Reusable", harness="collection", connection_id=connection, model="gpt-6-sol")
+        ident = (await registry.save_definition(self.owner, payload))["id"]
+        for actor in (self.other, outsider):
+            with self.assertRaises(HTTPException):
+                await registry.resolve(actor, ident, require_enabled=False)
+        _, _, snapshot = await registry.resolve(self.owner, ident, require_enabled=False)
+        await registry.mark_verified(self.owner, snapshot)
+        shared = payload.model_copy(update={"visibility": "shared", "shared_with": ["other@example.org"], "enabled": True, "expected_revision": 1})
+        await registry.save_definition(self.owner, shared, ident)
+        catalog = await registry.list(self.other)
+        self.assertEqual(catalog["connections"], [])
+        row = next(row for row in catalog["agents"] if row["id"] == ident)
+        self.assertFalse(row["can_edit"])
+        self.assertNotIn("owner-secret", str(catalog))
+        self.assertNotIn("api_key_ciphertext", str(catalog))
+        with self.assertRaises(HTTPException):
+            await registry.resolve(outsider, ident)
+        with self.assertRaises(HTTPException):
+            await registry.resolve(self.other, ident, require_enabled=False, require_owner=True)
+        with self.assertRaises(HTTPException):
+            await registry.delete(self.other, "agents", ident, 2)
+        run = await self.store.enqueue(self.other, "shared", self.request.model_copy(update={"agent_id": ident, "product_domain": "ontology"}))
+        claimed = await self.store.claim()
+        # Removing a grant also prevents an already queued run from using the owner's key.
+        await registry.save_definition(self.owner, payload.model_copy(update={"enabled": True, "expected_revision": 2}), ident)
+        with patch("agent.model.AgentModel.generate", new=AsyncMock()) as model:
+            await AgentWorker(self.store).process(claimed)
+            model.assert_not_called()
+        self.assertEqual((await self.store.get(self.other, run["id"]))["error_code"], "DEPENDENCY_HTTP_404")
+        await registry.save_definition(self.owner, payload.model_copy(update={"enabled": True, "visibility": "public", "expected_revision": 3}), ident)
+        _, key, _ = await registry.resolve(outsider, ident)
+        self.assertEqual(key, "owner-secret")
+        # A recipient can use an agent, but cannot bind a new definition to its private connection.
+        with self.assertRaises(HTTPException):
+            await registry.save_definition(outsider, payload)
+
+    async def test_sharing_rejects_unknown_users_atomically(self):
+        from agent.registry import AgentRegistry, ConnectionUpdate, DefinitionUpdate
+        registry = AgentRegistry(self.database)
+        connection = (await registry.save_connection(self.owner, ConnectionUpdate(name="Model", api_key="key")))["id"]
+        with self.assertRaises(HTTPException) as denied:
+            await registry.save_definition(self.owner, DefinitionUpdate(name="Invalid share", model="model", connection_id=connection,
+                visibility="shared", shared_with=["missing@example.org"]))
+        self.assertEqual(denied.exception.status_code, 422)
+        self.assertTrue(all(row["system_key"] for row in (await registry.list(self.owner))["agents"]))
+
+    async def test_general_agent_uses_its_own_contract_and_one_stage(self):
+        from agent.registry import AgentRegistry, ConnectionUpdate, DefinitionUpdate
+        registry = AgentRegistry(self.database)
+        connection = (await registry.save_connection(self.owner, ConnectionUpdate(name="General", api_key="key")))["id"]
+        payload = DefinitionUpdate(name="Summarizer", connection_id=connection, model="gpt-6-sol", instructions="Summarize in one sentence.")
+        ident = (await registry.save_definition(self.owner, payload))["id"]
+        _, _, snapshot = await registry.resolve(self.owner, ident, require_enabled=False)
+        await registry.mark_verified(self.owner, snapshot)
+        await registry.save_definition(self.owner, payload.model_copy(update={"enabled": True, "expected_revision": 1}), ident)
+        submitted = await self.store.enqueue(self.owner, "summary", AgentRunRequest(agent_id=ident, product_domain="ontology",
+            input={"task": "Summarize", "context": "Three companies joined."}))
+        self.assertEqual(submitted["harness"], "assistant")
+        self.assertEqual(submitted["stage_count"], 1)
+        run = await self.store.claim()
+        with patch("agent.model.AgentModel.generate", new=AsyncMock(return_value="Three companies joined.")) as model:
+            await AgentWorker(self.store).process(run)
+        current = await self.store.get(self.owner, submitted["id"])
+        self.assertEqual((current["status"], current["stage"]), ("completed", 1))
+        self.assertEqual(current["result"]["text"], "Three companies joined.")
+        self.assertIn("Three companies joined.", model.await_args.args[0])
+
     async def test_clear_key_disables_and_prevents_new_collection(self):
         cleared = await self.store.save_settings(SettingsUpdate(expected_revision=self.revision, clear_api_key=True), self.owner)
         self.assertFalse(cleared.api_key_configured)
@@ -158,7 +291,7 @@ class PostgresStoreTests(unittest.IsolatedAsyncioTestCase):
         events = await self.store.events(self.owner, results[0]["id"], 0, 100)
         self.assertEqual([event["seq"] for event in events], [1])
         with self.assertRaises(RunConflict):
-            await self.store.enqueue(self.owner, "one", self.request.model_copy(update={"goal": "Different request"}))
+            await self.store.enqueue(self.owner, "one", self.request.model_copy(update={"input": {**self.request.input, "goal": "Different request"}}))
 
     async def test_owner_isolation_and_same_key_is_independent_per_owner(self):
         first = await self.enqueue()
@@ -218,7 +351,7 @@ class PostgresStoreTests(unittest.IsolatedAsyncioTestCase):
         first = await self.store.claim()
         await self.store.checkpoint(first, "capture", {"url": "https://example.org", "evidence": "durable"})
         await self.expire(first)
-        recovered = await CollectionStore(self.database).claim()
+        recovered = await AgentStore(self.database).claim()
         self.assertEqual(recovered["stage"], 1)
         self.assertEqual(recovered["checkpoints"]["capture"]["evidence"], "durable")
 
@@ -263,8 +396,8 @@ class PostgresStoreTests(unittest.IsolatedAsyncioTestCase):
         run = await self.store.claim()
         with patch("agent.tools.browser_renderer.render", new=AsyncMock(return_value=BrowserRenderResult(
             "https://example.org/articles", "Articles", "<html><title>Articles</title><article><h1>First article</h1></article></html>"
-        ))), patch("agent.model.CollectionModel.generate", new=AsyncMock(return_value=TEMPLATE)):
-            await CollectionHarness(self.store).process(run)
+        ))), patch("agent.model.AgentModel.generate", new=AsyncMock(return_value=TEMPLATE)):
+            await AgentWorker(self.store).process(run)
         current = await self.store.get(self.owner, submitted["id"])
         self.assertEqual((current["status"], current["stage"]), ("completed", 4))
         self.assertTrue(current["result"]["requires_review"])
@@ -278,6 +411,6 @@ class PostgresStoreTests(unittest.IsolatedAsyncioTestCase):
         await self.enqueue()
         async with self.database.begin() as conn:
             await conn.execute(text('DELETE FROM app."user" WHERE id=:owner'), {"owner": self.owner})
-            count = (await conn.execute(text("SELECT count(*) FROM app.collection_agent_runs"))).scalar_one()
+            count = (await conn.execute(text("SELECT count(*) FROM app.agent_runs"))).scalar_one()
             self.assertEqual(count, 0)
         self.assertTrue((await self.store.settings()).api_key_configured)

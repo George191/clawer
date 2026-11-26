@@ -7,7 +7,7 @@ import httpx
 from fastapi import FastAPI
 
 from agent import api
-from agent.contracts import SettingsView
+from agent.contracts import SettingsView, SYSTEM_COLLECTION_AGENT_ID
 from app.web.api.dependencies.common import get_current_user
 
 
@@ -32,25 +32,25 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_settings_require_admin(self):
         self.user.is_superuser = False
         for method, path in [("GET", "/settings"), ("POST", "/settings/test")]:
-            response = await self.client.request(method, "/agents/collection" + path)
+            response = await self.client.request(method, "/agents" + path)
             self.assertEqual(response.status_code, 403)
         self.store.settings.assert_not_called()
 
     async def test_missing_auth_is_rejected(self):
         self.app.dependency_overrides.clear()
-        response = await self.client.get("/agents/collection/settings")
+        response = await self.client.get("/agents/settings")
         self.assertEqual(response.status_code, 401)
 
     async def test_settings_read_never_contains_api_key_field(self):
-        response = await self.client.get("/agents/collection/settings")
+        response = await self.client.get("/agents/settings")
         self.assertEqual(response.status_code, 200)
         self.assertNotIn("api_key", response.json())
         self.assertNotIn("api_key_ciphertext", response.json())
         self.assertEqual(response.json()["model"], "gpt-6-sol")
 
     async def test_request_requires_idempotency_and_forbids_general_tools(self):
-        path = "/agents/collection/runs"
-        payload = {"url": "https://example.org", "goal": "titles"}
+        path = "/agents/runs"
+        payload = {"agent_id": str(SYSTEM_COLLECTION_AGENT_ID), "product_domain": "ontology", "input": {"url": "https://example.org", "goal": "titles"}}
         self.assertEqual((await self.client.post(path, json=payload)).status_code, 422)
         self.assertEqual((await self.client.post(path, headers={"Idempotency-Key": "one"}, json={**payload, "command": "shell"})).status_code, 422)
         self.store.enqueue.assert_not_called()
@@ -60,7 +60,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_owner_and_event_cursor_are_forwarded_by_server(self):
         run_id = uuid4()
-        response = await self.client.get(f"/agents/collection/runs/{run_id}/events?after=12&limit=20")
+        response = await self.client.get(f"/agents/runs/{run_id}/events?after=12&limit=20")
         self.assertEqual(response.status_code, 200)
         self.store.events.assert_awaited_once_with(self.user.id, run_id, 12, 20)
-        self.assertEqual((await self.client.get(f"/agents/collection/runs/{run_id}/events?limit=10000")).status_code, 422)
+        self.assertEqual((await self.client.get(f"/agents/runs/{run_id}/events?limit=10000")).status_code, 422)

@@ -15,7 +15,7 @@ MAX_ATTEMPTS = 3
 LEASE_SECONDS = 45
 HEARTBEAT_SECONDS = 10
 MAX_CHECKPOINT_BYTES = 524288
-STAGES = ("capture", "template", "adapter", "validate")
+SYSTEM_COLLECTION_AGENT_ID = UUID("c011ec70-0000-4000-8000-000000000001")
 
 
 def public_url(value: str) -> str:
@@ -23,13 +23,13 @@ def public_url(value: str) -> str:
     parsed = urlsplit(value)
     host = (parsed.hostname or "").lower().rstrip(".")
     if host == "localhost" or host.endswith((".local", ".internal", ".localhost")):
-        raise ValueError("Collection requires a public host")
+        raise ValueError("A public host is required")
     try:
         address = ipaddress.ip_address(host)
     except ValueError:
         address = None
     if address is not None and not address.is_global:
-        raise ValueError("Collection requires a public address")
+        raise ValueError("A public address is required")
     if parsed.port == 0:
         raise ValueError("Invalid port")
     return value
@@ -41,12 +41,18 @@ class CollectionRequest(BaseModel):
     goal: str = Field(min_length=1, max_length=4000)
     max_pages: int = Field(default=20, ge=1, le=100)
     max_fields: int = Field(default=50, ge=1, le=100)
-    agent_id: UUID | None = None
 
     @field_validator("url")
     @classmethod
     def check_url(cls, value: str) -> str:
         return public_url(value)
+
+
+class AgentRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    agent_id: UUID
+    product_domain: str = Field(min_length=1, max_length=80, pattern=r"^[a-z][a-z0-9-]*$")
+    input: dict
 
 
 class AgentSettings(BaseModel):
