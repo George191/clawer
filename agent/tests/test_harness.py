@@ -140,6 +140,21 @@ class ModelTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ModelFailure, "MODEL_CALL_BUDGET"):
             await model.generate("test")
 
+    async def test_oversized_response_envelope_is_rejected_before_decoding(self):
+        self.transport(lambda _: httpx.Response(200, content=b"x" * 524289))
+        with self.assertRaisesRegex(ModelFailure, "MODEL_RESPONSE_LIMIT"):
+            await CollectionModel(AgentSettings(), "key").generate("test")
+
+    async def test_total_deadline_cancels_slow_response_body(self):
+        class SlowBody(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                yield b"{"
+                await asyncio.Event().wait()
+        self.transport(lambda _: httpx.Response(200, stream=SlowBody()))
+        original = asyncio.wait_for
+        with patch("agent.model.asyncio.wait_for", new=lambda task, timeout: original(task, timeout=0.01)), self.assertRaisesRegex(ModelFailure, "MODEL_TIMEOUT"):
+            await CollectionModel(AgentSettings(), "key").generate("test")
+
 
 class RuntimeTests(unittest.IsolatedAsyncioTestCase):
     def setup_run(self, stage=0):

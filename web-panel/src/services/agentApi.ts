@@ -21,4 +21,4 @@ export const getCollectionAgentSettings = () =>
 export const saveCollectionAgentSettings = (data: CollectionAgentUpdate) =>
   client.put('/agents/collection/settings', data).then((r) => unwrap<CollectionAgentSettings>(r.data));
 export const testCollectionAgentSettings = () =>
-  client.post('/agents/collection/settings/test', {}, { timeout: 310000 }).then((r) => unwrap<{ ok: boolean; latency_ms: number }>(r.data));
+  client.post('/agents/collection/settings/test', {}, { timeout: 610000 }).then((r) => unwrap<{ ok: boolean; latency_ms: number }>(r.data));

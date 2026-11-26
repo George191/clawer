@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 import httpx
@@ -49,22 +50,19 @@ class CollectionModel:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
             for attempt in range(2):
                 try:
-                    response = await client.post(
-                        self.config.base_url + "/responses", json=body,
-                        headers={"Authorization": f"Bearer {self.api_key}"},
-                    )
-                except httpx.TimeoutException as exc:
+                    status, content = await asyncio.wait_for(self._request(client, body), timeout=self.config.timeout_seconds)
+                except (httpx.TimeoutException, asyncio.TimeoutError) as exc:
                     # The provider may have accepted it. Never automatically replay an ambiguous request.
                     raise ModelFailure("MODEL_TIMEOUT") from exc
                 except httpx.RequestError as exc:
                     raise ModelFailure("MODEL_CONNECTION_FAILED") from exc
-                if response.status_code in {429, 502, 503, 504} and attempt == 0:
+                if status in {429, 502, 503, 504} and attempt == 0:
                     await asyncio.sleep(1)
                     continue
-                if not response.is_success:
-                    raise ModelFailure(f"MODEL_HTTP_{response.status_code}")
+                if not 200 <= status < 300:
+                    raise ModelFailure(f"MODEL_HTTP_{status}")
                 try:
-                    payload = response.json()
+                    payload = json.loads(content)
                     if payload.get("status") != "completed":
                         raise ModelFailure("MODEL_INCOMPLETE")
                     parts = [part["text"] for item in payload["output"] if item.get("type") == "message"
@@ -81,3 +79,15 @@ class CollectionModel:
                     on_chunk(text)
                 return text
         raise ModelFailure("MODEL_UNAVAILABLE")
+
+    async def _request(self, client: httpx.AsyncClient, body: dict) -> tuple[int, bytes]:
+        async with client.stream("POST", self.config.base_url + "/responses", json=body,
+                                 headers={"Authorization": f"Bearer {self.api_key}"}) as response:
+            if not response.is_success:
+                return response.status_code, b""
+            content = bytearray()
+            async for chunk in response.aiter_bytes():
+                if len(content) + len(chunk) > 524288:
+                    raise ModelFailure("MODEL_RESPONSE_LIMIT")
+                content.extend(chunk)
+            return response.status_code, bytes(content)
