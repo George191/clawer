@@ -30,5 +30,8 @@ ZSCALER_MARKERS = re.compile(
 
 def validate_response(item: DownloadItem, response: DownloadResponse | FileDownloadResponse) -> None:
     """Reject proxy authentication pages before uploading any downloaded file."""
-    if ZSCALER_MARKERS.search(response.read_prefix(32768)):
+    prefix = response.read_prefix(32768)
+    if not prefix:
+        raise DownloadError(item.url, response.status_code, "Empty download response")
+    if ZSCALER_MARKERS.search(prefix):
         raise DownloadError(item.url, response.status_code, "Zscaler authentication page")

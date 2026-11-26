@@ -35,6 +35,27 @@ def test_active_download_is_not_reset():
         reset_operation({'_id':1,'_meta':{'download_status':'downloading'}},{'assets.file':'bad'})
 
 
+def test_unsatisfiable_range_is_empty_only_after_size_confirmation():
+    from unittest.mock import Mock
+    from minio.error import S3Error
+    from tools.repair_download_resources import inspect
+    client=Mock();error=S3Error(response=None,code='InvalidRange',message='range',resource=None,request_id=None,host_id=None)
+    client.get_object.side_effect=error
+    client.stat_object.return_value.size=0
+    assert inspect(client,'news/source/id/file.jpg')=='Stored resource is empty'
+    client.stat_object.return_value.size=1
+    with pytest.raises(S3Error):inspect(client,'news/source/id/file.jpg')
+
+
+def test_download_producer_rejects_empty_payload():
+    from unittest.mock import Mock
+    from app.downloader.adapters.base import DownloadItem,validate_response
+    from app.base.http import DownloadError
+    response=Mock(status_code=200);response.read_prefix.return_value=b''
+    with pytest.raises(DownloadError,match='Empty download response'):
+        validate_response(DownloadItem('https://example.test/a.jpg','a.jpg','assets.cover'),response)
+
+
 def test_resume_after_reset_commit_requires_replacement_object_check(tmp_path,monkeypatch):
     import json,sqlite3
     from unittest.mock import MagicMock

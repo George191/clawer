@@ -50,6 +50,8 @@ def inspect(client, key):
         response = client.get_object(settings.minio_bucket, key, offset=0, length=32768)
     except S3Error as error:
         if error.code == 'NoSuchKey':return 'Stored resource is missing'
+        if error.code == 'InvalidRange' and client.stat_object(settings.minio_bucket,key).size == 0:
+            return 'Stored resource is empty'
         raise
     try:
         content=response.read()
