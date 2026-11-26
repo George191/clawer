@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from datetime import datetime, timezone
 from typing import Any, TypeVar
+from uuid import UUID
 
 import httpx
 from aiokafka import AIOKafkaConsumer
@@ -69,10 +70,12 @@ async def _connect() -> ConnectState:
         raise ValueError("Expected expanded connector statuses")
     expected = set()
     internal = {}
+    connection_ids = {}
     selection_error = None
     try:
         for pg, identity in await _internal_targets():
             internal[identity["connector"]] = connector_config(pg, identity)
+            connection_ids[identity["connector"]] = identity["connection_id"]
     except (BusinessDatabaseNotConfigured, SetupError) as error:
         selection_error = str(error)
     expected.update(internal)
@@ -80,20 +83,23 @@ async def _connect() -> ConnectState:
         expected.add(f"{mongo_cdc_topic_prefix()}-{settings.db_name}")
     connectors, mismatched = [], []
     for name, item in body.items():
-        saved_source = re.fullmatch(r"spider-source-[0-9a-f]{32}(?:-channel-[0-9]+)?", name)
+        saved_source = re.fullmatch(r"spider-source-([0-9a-f]{32})(?:-channel-[0-9]+)?", name)
         if name not in expected and not saved_source:
             continue
         if saved_source:
             expected.add(name)
+            connection_ids[name] = str(UUID(saved_source.group(1)))
         if name in internal:
             config = item.get("info", {}).get("config", {})
             keys = ("connector.class", "database.hostname", "database.port", "database.dbname", "publication.name", "topic.prefix", "slot.name")
             if any(config.get(key) != internal[name][key] for key in keys):
                 mismatched.append(name)
+                connection_ids.pop(name, None)
         status = item["status"]
         connectors.append(ConnectorState(
             name=name, state=_state(status["connector"]["state"]),
             task_states=[_state(task["state"]) for task in status.get("tasks", [])],
+            connection_id=connection_ids.get(name),
         ))
     if selection_error:
         return ConnectState(state="not_ready", connectors=connectors, reason=selection_error)

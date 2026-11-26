@@ -149,7 +149,27 @@ class SourceCdcLifecycleTests(unittest.IsolatedAsyncioTestCase):
              patch.object(httpx.AsyncClient, "get", AsyncMock(return_value=response)):
             result = await cdc_runtime._connect()
         self.assertEqual([item.name for item in result.connectors], [name])
+        self.assertEqual(result.connectors[0].connection_id, str(IDENTIFIER))
         self.assertEqual(result.state, "not_ready")
+
+    async def test_runtime_monitor_associates_internal_connector_only_with_matching_target(self):
+        name = "internal-postgres"
+        config = {key: key for key in ("connector.class", "database.hostname", "database.port", "database.dbname",
+                                      "publication.name", "topic.prefix", "slot.name")}
+        identity = {"connector": name, "connection_id": str(IDENTIFIER)}
+        for matches in (True, False):
+            actual = dict(config, **({} if matches else {"database.dbname": "another_database"}))
+            response = httpx.Response(200, request=httpx.Request("GET", "http://connect/connectors"), json={name: {
+                "info": {"config": actual}, "status": {"connector": {"state": "RUNNING"}, "tasks": [{"state": "RUNNING"}]},
+            }})
+            with patch.object(cdc.settings, "cdc_connect_url", "http://connect"), \
+                 patch.object(cdc.settings, "db_url", ""), \
+                 patch.object(cdc_runtime, "_internal_targets", AsyncMock(return_value=[(object(), identity)])), \
+                 patch.object(cdc_runtime, "connector_config", return_value=config), \
+                 patch.object(httpx.AsyncClient, "get", AsyncMock(return_value=response)):
+                result = await cdc_runtime._connect()
+            self.assertEqual(result.connectors[0].connection_id, str(IDENTIFIER) if matches else None)
+            self.assertEqual(result.state, "available" if matches else "not_ready")
 
     async def test_create_uses_saved_secret_and_checks_config_before_registration(self):
         saved = registry()

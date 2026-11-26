@@ -18,6 +18,7 @@ import SourceObjectEvents from './SourceObjectEvents';
 import SourceCatalogReferences from './SourceCatalogReferences';
 import { useSandboxIdentity } from './SandboxMarkings';
 import SavedConnectionCapabilities from './SavedConnectionCapabilities';
+import SourceRuntimeStatus from './SourceRuntimeStatus';
 import type { BatchSyncSource } from './SourceBatchSyncs';
 import TableExports from './TableExports';
 import SandboxCdcReplay from './SandboxCdcReplay';
@@ -639,6 +640,7 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
           {sourcePaused && <div><dt>Paused at</dt><dd>{formatDate(viewedSource.pausedAt)}</dd></div>}
         </dl>
         <details className="source-detail-advanced"><summary>Connection capabilities and source identity</summary>
+        {viewedSource.engine === 'postgresql' && <SourceRuntimeStatus key={`runtime:${proofKey}`} source={viewedSource} />}
         <SavedConnectionCapabilities capabilities={viewedSource.capabilities} />
         <p className="ontology-connectors__scope"><DatabaseOutlined /> These settings do not import or synchronize tables.</p>
         {sourcePaused && <p>This source cannot be tested, explored, verified or edited while paused. Sync history remains available.</p>}

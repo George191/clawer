@@ -381,6 +381,9 @@
 .source-detail-advanced > summary { padding: 10px 14px; cursor: pointer; font-weight: 600; }
 .source-detail-advanced[open] { padding: 0 12px 12px; }
 .source-detail-advanced[open] > summary { margin-inline: -12px; }
+.source-runtime-consumers { padding: 0 12px 12px; overflow-wrap: anywhere; }
+.source-runtime-consumers summary { cursor: pointer; }
+.source-runtime-consumers dl { margin-bottom: 0; }
 .ontology-connections-detail__body > .ontology-connections-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .source-node-syncs__layout { display: grid; grid-template-columns: minmax(220px, .75fr) minmax(0, 2fr); }
 .source-node-syncs__source { min-width: 0; padding: 16px; border-right: 1px solid var(--ontology-border); background: var(--ontology-bg); }

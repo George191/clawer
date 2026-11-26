@@ -475,7 +475,7 @@ export interface CdcProbe {
 export interface CdcStatus {
   checkedAt: string;
   outputMode: 'debezium' | 'direct';
-  connect: CdcProbe & { connectors: { name: string; state: string; taskStates: string[] }[] };
+  connect: CdcProbe & { connectors: { name: string; state: string; taskStates: string[]; connectionId: string | null }[] };
   mongo: CdcProbe;
   postgres: CdcProbe & {
     walLevel?: string | null;

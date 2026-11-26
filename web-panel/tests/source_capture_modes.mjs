@@ -82,6 +82,40 @@ test('empty and failed layer queries do not offer hardcoded layer choices', asyn
   }
 });
 
+test('live status shows only this source CDC and WAL, with explicitly cluster-wide Kafka lag', async () => {
+  const saved = source('postgresql');
+  const ui = await mount('SourceRuntimeStatus', saved, {
+    fetchCdcStatus: async () => ({ checkedAt: '2026-11-26T09:00:00Z', outputMode: 'debezium',
+      connect: { state: 'available', connectors: [
+        { connectionId: saved.id, name: 'internal-current', state: 'RUNNING', taskStates: ['FAILED'] },
+        { connectionId: 'other', name: 'private-other', state: 'RUNNING', taskStates: ['RUNNING'] },
+      ] },
+      postgres: { state: 'available', targets: [{ connectionId: saved.id, state: 'available' }], slots: [
+        { connectionId: saved.id, name: 'current-slot', active: true },
+        { connectionId: 'other', name: 'other-slot', active: true },
+      ] }, kafka: { state: 'available', consumers: [{ group: 'cluster-worker', lag: 25, partitions: 3 }] },
+    }),
+  });
+  for (const value of ['internal-current', 'FAILED', 'current-slot', 'Active reader', 'cluster-wide', '25 pending']) assert.ok(ui.text().includes(value), value);
+  for (const value of ['private-other', 'other-slot']) assert.equal(ui.text().includes(value), false, value);
+  ui.close();
+});
+
+test('failed live refresh clears previous running status instead of presenting stale success', async () => {
+  let failed = false;
+  const ui = await mount('SourceRuntimeStatus', source('postgresql'), {
+    fetchCdcStatus: async () => {
+      if (failed) throw new Error('Unavailable');
+      return { checkedAt: '2026-11-26T09:00:00Z', connect: { state: 'available', connectors: [] }, postgres: { state: 'available', targets: [], slots: [] }, kafka: { state: 'available', consumers: [] } };
+    },
+  });
+  assert.ok(ui.text().includes('No matching connector'));
+  failed = true; ui.button('Refresh live status').props.onClick(); await ui.settle();
+  assert.ok(ui.nodes().find(node => node.props.role === 'alert'));
+  assert.equal(ui.text().includes('No matching connector'), false);
+  ui.close();
+});
+
 test('capture operations report busy state to keep the enclosing dialog open', async () => {
   for (const [component, engine, fetchName, createName, status] of [
     ['SourceObjectEvents', 's3', 'fetchSourceObjectEvents', 'createSourceObjectEvents', { state: 'unconfigured', configurationHash: 'a'.repeat(64), notification: null }],

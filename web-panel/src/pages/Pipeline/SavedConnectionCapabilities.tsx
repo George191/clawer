@@ -3,9 +3,9 @@ import type { DataSource, DataSourceCapabilityKey } from '../../services/api';
 const items: { key: DataSourceCapabilityKey; label: string }[] = [
   { key: 'connectionTest', label: 'Connection test' },
   { key: 'catalog', label: 'Catalog' },
-  { key: 'snapshot', label: 'Snapshot sync' },
-  { key: 'committedBatch', label: 'Committed batch sync' },
-  { key: 'reviewedRange', label: 'Reviewed range snapshot' },
+  { key: 'snapshot', label: 'Sandbox snapshot sync' },
+  { key: 'committedBatch', label: 'Sandbox committed batch sync' },
+  { key: 'reviewedRange', label: 'Sandbox reviewed range snapshot' },
 ];
 const reasons: Partial<Record<string, string>> = {
   source_paused: 'The saved connection is paused.',
@@ -24,7 +24,7 @@ const reasons: Partial<Record<string, string>> = {
 export default function SavedConnectionCapabilities({ capabilities }: { capabilities: DataSource['capabilities'] }) {
   if (!capabilities) return null;
   return <section className="ontology-source-catalog ontology-connection-capabilities" aria-label="Saved connection capabilities">
-    <header><div><h3>Saved connection capabilities</h3><p>“Available to try” does not prove connectivity, permissions, or an approved run.</p></div></header>
+    <header><div><h3>Saved connection capabilities</h3><p>Manual and sandbox feature availability. These switches do not describe running CDC or Kafka services.</p></div></header>
     <dl className="ontology-connection-capabilities__list">
       {items.map(item => {
         const capability = capabilities[item.key];

@@ -19,6 +19,7 @@ class ConnectorState(CdcModel):
     name: str
     state: str
     task_states: list[str]
+    connection_id: str | None = None
 
 
 class ConnectState(ProbeState):
