@@ -46,7 +46,7 @@ import {
 } from '@/components/ui/icons';
 import { useSearchParams } from 'react-router-dom';
 import ErrorBoundary from '@/components/ErrorBoundary';
-import NativeDot, { type DotActivity } from '@/components/NativeDot';
+import { type DotActivity } from '@/components/NativeDot';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { formatWorkspaceScheduleLabel } from '@/services/taskSchedule';
 import {
@@ -3261,6 +3261,7 @@ const AICollect: React.FC = () => {
       return (
         <section className="ai-prompt-landing">
           <div className="ai-prompt-copy">
+            <div className="ai-chat-dot is-landing" data-activity={dotActivity} />
             <h1 className="ai-prompt-title">Hi{currentUserName ? <>, <span className="ai-prompt-name">{currentUserName}</span></> : null}, any new ideas?</h1>
           </div>
 
@@ -9350,6 +9351,7 @@ const AICollect: React.FC = () => {
             border: 0 !important; outline: none !important; box-shadow: none !important; background: transparent !important;
           }
           .ai-chat-dot { position: absolute; z-index: 20; width: 120px; height: 120px; top: 15%; left: calc(50% - 60px); transition: left .6s cubic-bezier(.22,1,.36,1), top .6s cubic-bezier(.22,1,.36,1); }
+          .ai-prompt-copy .ai-chat-dot { position: relative; top: auto; left: auto; margin: 0 auto 16px; }
           .is-chat > .ai-chat-dot { top: 12px; }
           .is-chat.is-collecting > .ai-chat-dot { left: calc(34% - 60px); top: calc(50% - 60px); }
           .ai-chat-layout { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr); min-height: 0; }
@@ -9662,7 +9664,7 @@ const AICollect: React.FC = () => {
       </style>
 
       <div className={`ai-collect-workbench ${hasSession ? 'is-chat' : ''} ${collectionStarted ? 'is-collecting' : ''}`}>
-        <div className="ai-chat-dot" aria-label="AI 进度"><NativeDot activity={dotActivity} preload /></div>
+        {hasSession && <div className={`ai-chat-dot ${!collectionStarted ? 'is-landing' : ''}`} data-activity={dotActivity} />}
         <header
           className={`ai-collect-header ${hasSession ? 'is-session' : 'is-idle'}`}
           style={{

@@ -33,7 +33,7 @@ export default function ScoutDot() {
   useEffect(() => {
     let frame = 0;
     const update = () => {
-      const element = document.querySelector<HTMLElement>('.ai-collect-dot');
+      const element = document.querySelector<HTMLElement>('.ai-chat-dot') || document.querySelector<HTMLElement>('.ai-collect-dot');
       const rect = element?.getBoundingClientRect();
       const next = rect && rect.width && rect.height ? { left: rect.left, top: rect.top, width: rect.width, height: rect.height, activity: element!.dataset.activity as DotActivity, idle: element!.classList.contains('is-landing') } : null;
       setAnchor(previous => JSON.stringify(previous) === JSON.stringify(next) ? previous : next);
