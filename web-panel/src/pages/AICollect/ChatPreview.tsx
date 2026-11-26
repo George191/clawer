@@ -19,7 +19,7 @@ const feedbackPath = 'M7 10H4a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h3m0-10 4-7a2.4 2.4 0
 const outlineReply = 'The example template and adapter are ready in the results panel. Review template.yaml, adapter.py, and the sample data, or describe what you would like to change.';
 type Turn = { id: number; prompt: string; step: number; reply: string; template: string; adapter: string; complete: boolean; vote?: 'up' | 'down' };
 
-export default function ChatPreview({ entered, userName, onEnter }: { entered: boolean; userName: string; onEnter: () => void }) {
+export default function ChatPreview({ entered, userName, userLoading, onEnter }: { entered: boolean; userName: string; userLoading: boolean; onEnter: () => void }) {
   const [draft, setDraft] = useState('');
   const [turns, setTurns] = useState<Turn[]>([]);
   const [activity, setActivity] = useState<DotActivity>('Paused');
@@ -51,6 +51,8 @@ export default function ChatPreview({ entered, userName, onEnter }: { entered: b
     ...steps.slice(0, turn.step + 1).map((step, index) => ({ key: `step-${turn.id}-${index}`, turn: turn.id, target: `scout-step-${turn.id}-${index}`, step: index, title: step.title })),
   ]);
   const currentHistory = selectedHistory ?? history[history.length - 1]?.key;
+
+  useEffect(() => { setResultStep(undefined); setResultTurnId(null); }, [latest?.id, latest?.step]);
 
   useEffect(() => {
     if (!running || !latest) return;
@@ -184,10 +186,10 @@ export default function ChatPreview({ entered, userName, onEnter }: { entered: b
 
   return <section className={`scout-chat-preview ${entered ? 'is-entered' : ''} ${entered && resultsOpen ? 'has-results' : ''}`} aria-label="Scout conversation">
     <div className={`ai-chat-dot ${!entered ? 'is-landing' : ''}`} data-activity={dotActivity} />
-    <h1 className="scout-chat-greeting ai-prompt-title" aria-hidden={entered}>Hi{userName ? <>, <span className="ai-prompt-name">{userName}</span></> : null}, any new ideas?</h1>
+    <h1 className="scout-chat-greeting ai-prompt-title" aria-hidden={entered}>Hi{userLoading || userName ? <>, <span className="scout-greeting-name">{userLoading ? <span className="native-dot-loading scout-profile-loading" role="status" aria-label="Loading your profile"><i /><i /><i /></span> : <span key={userName} className="ai-prompt-name scout-loaded-name">{userName}</span>}</span></> : null}, any new ideas?</h1>
     {entered && <button type="button" className="scout-results-toggle" aria-label={resultsOpen ? 'Hide collection results' : 'Show collection results'} aria-expanded={resultsOpen} aria-controls="scout-collection-results" onClick={() => setResultsOpen((value) => !value)}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M9 4v16m4-11h4m-4 6h4" /></svg></button>}
     <aside id="scout-collection-results" className="scout-collection-results" aria-label="Collection results" aria-hidden={!entered || !resultsOpen}>
-      <PreviewResults turn={resultTurn} step={resultStep} running={running && resultTurn?.id === latest?.id} onNotice={setNotice} />
+      <PreviewResults turn={resultTurn} step={resultStep} running={running && resultTurn?.id === latest?.id} onSelectStep={setResultStep} onNotice={setNotice} />
     </aside>
     {entered && <div className="scout-activity-menu"><Dropdown trigger={['click']} placement="bottomRight" overlayClassName="scout-dot-state-menu" menu={{ selectedKeys: [activity], items: (Object.keys(DOT_ACTIVITIES) as DotActivity[]).map((value) => ({ key: value, label: labels[value] })), onClick: ({ key }) => selectActivity(key as DotActivity) }}><button type="button" aria-label="Dot activity"><MoreIcon /></button></Dropdown></div>}
     {entered && <aside className="scout-history-rail" aria-label="Conversation history" onMouseLeave={() => setHoveredHistory(null)} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setHoveredHistory(null); }}>

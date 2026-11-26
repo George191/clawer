@@ -55,13 +55,16 @@ const sampleRows = [
 ];
 type PreviewResult = { id: number; prompt: string; step: number; template: string; adapter: string; complete: boolean };
 
-export default function PreviewResults({ turn, step = turn?.step ?? 0, running, onNotice }: { turn?: PreviewResult; step?: number; running: boolean; onNotice: (notice: string) => void }) {
-  const phase = step < 2 ? 'source' : step === 2 ? 'template' : 'adapter';
+export default function PreviewResults({ turn, step, running, onSelectStep, onNotice }: { turn?: PreviewResult; step?: number; running: boolean; onSelectStep: (step: number) => void; onNotice: (notice: string) => void }) {
+  const displayStep = step ?? turn?.step ?? 0;
+  const phase = step === 0 ? 'brief' : step === 4 ? 'review' : step === 5 ? 'data' : displayStep < 2 ? 'source' : displayStep === 2 ? 'template' : 'adapter';
+  const stages = [{ label: 'Request brief', step: 0 }, { label: 'Webpage', step: 1 }, { label: 'template.yaml', step: 2 }, { label: 'adapter.py', step: 3 }, { label: 'Collection plan', step: 4 }, { label: 'Sample data', step: 5 }];
+  const completed = stages.filter((item) => turn && (turn.complete || item.step < turn.step));
   const code = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
   const text = phase === 'template' ? turn?.template ?? '' : turn?.adapter ?? '';
   const filename = phase === 'template' ? 'template.yaml' : 'adapter.py';
-  const writing = running && step === turn?.step && (step === 2 || step === 3);
+  const writing = running && displayStep === turn?.step && (phase === 'template' || phase === 'adapter') && (displayStep === 2 || displayStep === 3);
   useEffect(() => { follow.current = true; }, [turn?.id, phase]);
   useEffect(() => { if (follow.current && writing) code.current?.scrollTo({ top: code.current.scrollHeight }); }, [text, writing]);
   async function copy() {
@@ -74,12 +77,15 @@ export default function PreviewResults({ turn, step = turn?.step ?? 0, running, 
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
   return <>
-    <header className="scout-results-header"><h2>{phase === 'source' ? 'Webpage analysis' : phase === 'template' ? 'Collection template' : 'Collection adapter'}</h2><span className="scout-preview-badge">Example</span></header>
-    <div className="scout-result-content" data-phase={phase}>
+    <nav className="scout-stage-results" aria-label="Stage results">{completed.map((item) => <button key={item.step} type="button" aria-label={`View ${item.label}`} aria-pressed={step === item.step || step === undefined && (phase === 'source' && item.step === 1 || phase === 'template' && item.step === 2 || phase === 'adapter' && item.step === 3)} onClick={() => onSelectStep(item.step)}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 10 3 3 7-7" /></svg><span>{item.label}</span></button>)}</nav>
+    <div className="scout-workspace-frost" aria-hidden="true" />
+    <div ref={code} className="scout-result-content" data-phase={phase} onScroll={() => { const node = code.current; if (node) follow.current = node.scrollHeight - node.scrollTop - node.clientHeight < 60; }}>
+      {phase === 'brief' || phase === 'review' ? <div className="scout-result-brief"><p>{turn?.prompt || 'Collection request'}</p>{phase === 'review' && <><p>https://example.org/articles</p><dl><dt>Output fields</dt><dd>title, url</dd><dt>Pagination</dt><dd>page · up to 20 pages</dd><dt>Files</dt><dd>template.yaml · adapter.py</dd></dl></>}<small>Example artifact · product preview</small></div>
+        : phase === 'data' ? <div className="scout-result-data"><p>Example records · Not collected from a live website</p><table><thead><tr><th>title</th><th>url</th></tr></thead><tbody>{sampleRows.map((row) => <tr key={row.url}><td>{row.title}</td><td>{row.url}</td></tr>)}</tbody></table></div> : null}
       {phase === 'source' ? <div className="scout-source-preview"><div className="scout-source-address">https://example.org/articles <span>Example page</span></div><div className="scout-source-page"><small>THE COLLECTION JOURNAL</small><h3>Ideas worth collecting.</h3><p>A sample article page for the collection design preview.</p>{sampleRows.map((row, index) => <article key={row.url}><span>0{index + 1} · ARTICLE</span><h4>{row.title}</h4><p>Title and article link are the example fields.</p></article>)}</div></div>
-        : <><div className="scout-result-toolbar"><span>{filename}</span><span className="scout-result-file-status">Example draft</span><button type="button" aria-label={`Copy ${filename}`} title="Copy file" disabled={!text} onClick={() => void copy()}><CopyOutlined /></button><button type="button" aria-label={`Download ${filename}`} title="Download file" disabled={!text} onClick={download}><svg viewBox="0 0 24 24"><path d="M12 3v12m-4-4 4 4 4-4M4 16v4h16v-4" /></svg></button></div>
-          <div ref={code} className={`scout-result-code ${phase === 'template' ? 'scout-template-sheet' : ''}`} onScroll={() => { const node = code.current; if (node) follow.current = node.scrollHeight - node.scrollTop - node.clientHeight < 60; }}>
-            {phase === 'template' ? <section className="ai-template-stage-section"><div className="ai-template-stage-head"><span className="ai-template-stage-title">Collection contract</span><small>Source, pagination, and fields</small></div><div className="ai-template-stage-body">{text.split('\n').map((line, index) => {
+        : (phase === 'template' || phase === 'adapter') && <><div className="scout-result-actions"><button type="button" aria-label={`Copy ${filename}`} title="Copy file" disabled={!text} onClick={() => void copy()}><CopyOutlined /></button><button type="button" aria-label={`Download ${filename}`} title="Download file" disabled={!text} onClick={download}><svg viewBox="0 0 24 24"><path d="M12 3v12m-4-4 4 4 4-4M4 16v4h16v-4" /></svg></button></div>
+          <div className={`scout-result-code ${phase === 'template' ? 'scout-template-sheet' : ''}`}>
+            {phase === 'template' ? <section className="ai-template-stage-section"><div className="ai-template-stage-body">{text.split('\n').map((line, index) => {
               if (!line.trim() || line.trim().startsWith('#')) return null;
               const field = line.match(/^(\s*)(- )?([^:]+):\s*(.*)$/);
               return <div key={index} className={`ai-template-field scout-template-row ${field && !field[4] ? 'is-group' : ''}`} style={{ paddingLeft: field ? `${field[1].length * 8}px` : undefined }}><div className="ai-template-field-key"><span>{field ? `${field[2] ?? ''}${field[3]}` : line}</span></div>{field?.[4] && <div className="ai-template-field-value"><pre>{field[4]}</pre></div>}{writing && index === text.trimEnd().split('\n').length - 1 && <i className="scout-result-caret" />}</div>;

@@ -33,30 +33,52 @@ with sync_playwright() as p:
         "const n=Math.floor(Date.now()/1000);localStorage.setItem('auth_session',JSON.stringify({access_token:'test.'+btoa(JSON.stringify({sub:'fixture',type:'access',iat:n,exp:n+600,session_exp:n+600})).replace(/=+$/,'')+'.test',last_activity:Date.now(),locked:false}));window.__speech=[];Object.defineProperty(window,'speechSynthesis',{value:{cancel(){const u=window.__speech.at(-1);if(u)queueMicrotask(()=>u.dispatchEvent(new Event('error')))},speak(u){window.__speech.push(u)}}});"
     )
 
+    pending_profiles = []
+    profile_loading = True
+    profile = {
+        "user": {
+            "id": "fixture",
+            "email": "alex@example.test",
+            "full_name": "Alex",
+            "is_superuser": True,
+        },
+        "tenants": [],
+        "teams": [],
+    }
+
     def route(r):
         if r.request.method == "POST":
             posts.append(r.request.url)
-        r.fulfill(
-            json={
-                "user": {
-                    "id": "fixture",
-                    "email": "alex@example.test",
-                    "full_name": "Alex",
-                    "is_superuser": True,
-                },
-                "tenants": [],
-                "teams": [],
-            }
-            if "/users/me/context" in r.request.url
-            else {"items": []}
-        )
+        if "/users/me/context" in r.request.url and profile_loading:
+            pending_profiles.append(r)
+            return
+        r.fulfill(json=profile if "/users/me/context" in r.request.url else {"items": []})
 
     page.route("**/api/**", route)
     page.route_web_socket("**/ws**", lambda ws: ws.on_message(lambda _: None))
     page.on("pageerror", lambda e: errors.append(str(e)))
-    page.goto(args.base.rstrip("/") + "/scout")
+    page.goto(args.base.rstrip("/") + "/scout", wait_until="domcontentloaded")
     entry = page.get_by_role("textbox", name="Message Scout", exact=True)
     expect(entry).to_be_visible()
+    loading = page.get_by_role("status", name="Loading your profile")
+    expect(loading).to_be_visible()
+    expect(loading.locator("i")).to_have_count(3)
+    home = page.locator(".scout-chat-preview").bounding_box()
+    composer = page.locator(".scout-persistent-composer").bounding_box()
+    greeting = page.locator(".scout-chat-greeting").bounding_box()
+    dot = page.locator(".ai-chat-dot").bounding_box()
+    assert abs(composer["y"] + composer["height"] / 2 - home["y"] - home["height"] / 2) < 2
+    assert (
+        dot["y"] + dot["height"]
+        < greeting["y"]
+        < greeting["y"] + greeting["height"]
+        < composer["y"]
+    )
+    profile_loading = False
+    for pending in pending_profiles:
+        pending.fulfill(json=profile)
+    expect(page.locator(".scout-loaded-name")).to_have_text("Alex")
+    expect(loading).to_have_count(0)
     entry.fill("Plan a collection")
     entry.press("Enter")
     results = page.get_by_role("complementary", name="Collection results")
@@ -82,8 +104,26 @@ with sync_playwright() as p:
     dot_bounds = page.locator(".ai-chat-dot").bounding_box()
     assert abs(bounds["width"] - root_bounds["width"] / 2) < 1
     assert abs(bounds["x"] + bounds["width"] - chat_bounds["x"]) < 1
-    assert abs(dot_bounds["x"] + dot_bounds["width"] / 2 - bounds["x"] - bounds["width"] / 2) < 1
-    assert dot_bounds["y"] < bounds["y"]
+    assert bounds["x"] <= dot_bounds["x"] < bounds["x"] + bounds["width"] / 2
+    assert bounds["y"] <= dot_bounds["y"] <= bounds["y"] + 32
+    stages = results.get_by_role("navigation", name="Stage results")
+    expect(stages.get_by_role("button")).to_have_count(6)
+    assert stages.bounding_box()["x"] >= dot_bounds["x"] + dot_bounds["width"]
+    assert results.locator("header, h2, .scout-result-toolbar").count() == 0
+    assert results.evaluate("e=>getComputedStyle(e).borderRightWidth") == "0px"
+    assert "blur" in results.locator(".scout-workspace-frost").evaluate(
+        "e=>getComputedStyle(e).backdropFilter"
+    )
+    stages.get_by_role("button", name="View Request brief", exact=True).click()
+    expect(results.locator(".scout-result-content")).to_have_attribute("data-phase", "brief")
+    expect(results.locator(".scout-result-brief")).to_contain_text("Plan a collection")
+    stages.get_by_role("button", name="View template.yaml", exact=True).click()
+    expect(results.locator(".scout-template-sheet")).to_contain_text("example_articles")
+    stages.get_by_role("button", name="View Sample data", exact=True).click()
+    expect(results.get_by_role("table")).to_be_visible()
+    stages.get_by_role("button", name="View Collection plan", exact=True).click()
+    expect(results.locator(".scout-result-brief")).to_contain_text("title, url")
+    stages.get_by_role("button", name="View adapter.py", exact=True).click()
     results.get_by_role("button", name="Copy adapter.py").click()
     adapter = page.evaluate("navigator.clipboard.readText()")
     assert "def normalize_article" in adapter and "yield record" in adapter
@@ -98,7 +138,9 @@ with sync_playwright() as p:
     assert chat_bounds["x"] <= rail_bounds["x"] < chat_bounds["x"] + 56
     bars.nth(3).click()
     expect(results.locator(".scout-result-content")).to_have_attribute("data-phase", "template")
-    expect(results.locator(".scout-template-sheet").get_by_text("fields", exact=True)).to_be_visible()
+    expect(
+        results.locator(".scout-template-sheet").get_by_text("fields", exact=True)
+    ).to_be_visible()
     results.get_by_role("button", name="Copy template.yaml").click()
     assert "name: example_articles" in page.evaluate("navigator.clipboard.readText()")
     bars.nth(2).click()
@@ -233,7 +275,7 @@ with sync_playwright() as p:
     assert not posts, posts
     assert not errors, errors
     print(
-        "Automatic result stages, historical template/code views, right-side history rail, file copy/download, chat controls and Dot states passed",
+        "Profile loading, centered composer, floating workspace Dot, clickable stage artifacts, automatic stages and existing chat controls passed",
         flush=True,
     )
     b.close()

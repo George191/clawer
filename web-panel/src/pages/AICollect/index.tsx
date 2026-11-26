@@ -1154,11 +1154,13 @@ const AICollect: React.FC = () => {
   const simulationTimerRef = useRef<number | null>(null);
   const promptGenerationTimerRef = useRef<number | null>(null);
   const [currentUserName, setCurrentUserName] = useState('');
+  const [currentUserLoading, setCurrentUserLoading] = useState(true);
   useEffect(() => {
     const controller = new AbortController();
     fetchCurrentUserContext(controller.signal).then(({ user }) => {
       setCurrentUserName(user.full_name?.trim() || user.email.split('@')[0]);
-    }).catch(() => { if (!controller.signal.aborted) message.error('Unable to load your profile.'); });
+    }).catch(() => { if (!controller.signal.aborted) message.error('Unable to load your profile.'); })
+      .finally(() => { if (!controller.signal.aborted) setCurrentUserLoading(false); });
     return () => controller.abort();
   }, [message]);
   const [mode, setMode] = useState<WorkMode>('explore');
@@ -9676,7 +9678,7 @@ const AICollect: React.FC = () => {
 
         <div className={`ai-collect-body ${hasSession ? 'is-session' : 'is-idle'}`}>
           {!collectionStarted ? (
-            <ChatPreview entered={hasSession} userName={currentUserName} onEnter={() => setChatEntered(true)} />
+            <ChatPreview entered={hasSession} userName={currentUserName} userLoading={currentUserLoading} onEnter={() => setChatEntered(true)} />
           ) : (
             <div className="ai-session-shell">
               <div className="ai-chat-dot" data-activity={dotActivity} />
