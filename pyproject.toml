@@ -5,7 +5,7 @@ description = "Google Patents 专利采集平台"
 requires-python = ">=3.10"
 
 [tool.pytest.ini_options]
-testpaths = ["app"]
+testpaths = ["app", "agent/tests"]
 asyncio_mode = "auto"
 python_files = ["test_*.py"]
 addopts = [

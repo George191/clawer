@@ -99,6 +99,7 @@ RUN --mount=type=bind,from=builder,source=/data/wheels,target=/wheels,readonly \
     && python -c "import dmPython"
 
 COPY app/ ./app/
+COPY agent/ ./agent/
 COPY --from=frontend /static/ ./static/
 
 RUN groupadd -r appuser && useradd -r -m -d /home/appuser -g appuser appuser \
