@@ -48,7 +48,7 @@ async def test_missing_selection_rejects_migration_before_connecting(module):
 async def test_download_routes_only_use_system_metadata_connection():
     pg = SimpleNamespace(connect=AsyncMock(), close=AsyncMock())
     with patch.object(downloads, 'get_pg_client', return_value=pg), \
-         patch.object(downloads, 'get_business_pg_client') as business, \
+         patch.object(downloads.business_database, 'get_layer_pg_client') as business, \
          patch.object(downloads.collection_route_store, 'list_by_data_type', AsyncMock(return_value=['route'])):
         assert await downloads.routes() == ['route']
     business.assert_not_called()
@@ -58,17 +58,18 @@ async def test_download_routes_only_use_system_metadata_connection():
 @pytest.mark.asyncio
 async def test_download_business_connection_preserves_transport_and_null_pool():
     transport = object()
-    pg = SimpleNamespace(_engine=None, _connect_args={'ssl': transport}, resolve=AsyncMock())
+    pg = SimpleNamespace(_engine=None, _connect_args={'ssl': transport}, resolve=AsyncMock(),
+                         connection_url='postgresql+asyncpg://business/analytics')
     @asynccontextmanager
     async def context():
         yield SimpleNamespace(execute=AsyncMock())
     engine = SimpleNamespace(connect=context)
-    with patch.object(downloads, 'get_business_pg_client', return_value=pg), \
-         patch.object(downloads, 'business_database_url', return_value='postgresql+asyncpg://business/analytics'), \
+    with patch.object(downloads.business_database, 'get_layer_pg_client', return_value=pg) as get_layer, \
          patch('sqlalchemy.ext.asyncio.create_async_engine', return_value=engine) as create, \
          patch('sqlalchemy.ext.asyncio.async_sessionmaker', return_value=Mock()):
         assert await downloads.connect_pg() is pg
     pg.resolve.assert_awaited_once()
+    get_layer.assert_called_once_with('rds')
     assert make_url(create.call_args.args[0]).database == 'analytics'
     assert create.call_args.kwargs['poolclass'] is NullPool
     assert create.call_args.kwargs['connect_args']['ssl'] is transport

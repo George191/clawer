@@ -8,13 +8,54 @@ import inspect
 import json
 import multiprocessing
 import re
+import signal
 import sqlite3
+import subprocess
 import sys
+import time
 from collections import defaultdict
+from contextlib import asynccontextmanager, closing
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from urllib.parse import urlsplit
+
+PAUSED = 75
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('mode', choices=['run','pause','inventory','apply','verify','clean','status'])
+    parser.add_argument('--journal', type=Path, required=True)
+    return parser.parse_args()
+
+
+def pause_marker(path):
+    return Path(path).parent / 'STOP'
+
+
+def check_pause(path):
+    if pause_marker(path).exists():
+        raise SystemExit(PAUSED)
+
+
+def check_control(args):
+    if args.mode == 'pause':
+        args.journal.parent.mkdir(parents=True, exist_ok=True)
+        pause_marker(args.journal).touch(exist_ok=True)
+        print(json.dumps({'pause_requested': True}), flush=True)
+        return True
+    if args.mode != 'status':
+        check_pause(args.journal)
+    return False
+
+
+# Existing controllers execute this file by path and can still have the previous app image.
+if __name__ == '__main__':
+    command = parse_args()
+    if check_control(command):
+        raise SystemExit(0)
+
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import filetype
@@ -27,13 +68,35 @@ from sqlalchemy import text
 from app.config.settings import settings
 from app.records.collection_routes import collection_route_store
 from app.storage.postgres_client import get_pg_client
-from app.storage.business_database import business_database_url, get_business_pg_client
+from app.storage import business_database
 
 WORKERS = 6
 BATCH = 3000
 SOURCE_PAGE_SIZE = 100
 HEX = re.compile(r'^[0-9a-f]{64}$')
 RECORD = re.compile(r'^[0-9a-f]{32}$')
+
+
+def handle_stop_signals(path):
+    def request_pause(*_):
+        pause_marker(path).touch(exist_ok=True)
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, request_pause)
+
+
+@asynccontextmanager
+async def reference_binding():
+    # A repair updates both layers in one transaction on the selected business connection.
+    pg = business_database.get_layer_pg_client('rds')
+    expected = {layer: (pg.connection_id, pg.revision) for layer in ('rds', 'ods')}
+    async with business_database.layer_binding_lease(('rds', 'ods'), expected=expected, pg=get_pg_client()):
+        yield
+
+
+async def current_table(layer, kind):
+    from app.etl.schema.registry import object_table_ref, require_registered_object
+    obj = await require_registered_object(get_pg_client(), layer, kind, 'current')
+    return obj, object_table_ref(obj)
 
 
 class ConcurrentSourceUpdate(RuntimeError):
@@ -97,10 +160,10 @@ async def connect_pg():
     """Do not reserve idle database slots while the six workers copy files."""
     from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
     from sqlalchemy.pool import NullPool
-    pg=get_business_pg_client()
+    pg=business_database.get_layer_pg_client('rds')
     if pg._engine is None:
         await pg.resolve()
-        pg._engine=create_async_engine(business_database_url(),poolclass=NullPool,
+        pg._engine=create_async_engine(pg.connection_url,poolclass=NullPool,
             connect_args={'timeout':10,'command_timeout':30,'prepared_statement_cache_size':0,**pg._connect_args})
         pg._session_factory=async_sessionmaker(pg._engine,expire_on_commit=False)
         pg._connected=True
@@ -120,16 +183,20 @@ async def routes():
 
 def inventory(path):
     # Source-owned assets avoid an expensive bucket-wide object listing and retain live-reference scope.
-    from bson.json_util import dumps, loads
-    db = journal(path)
+    check_pause(path)
     registered = asyncio.run(routes())
     registered.sort(key=lambda r: (r['template_name'] != 'twitter', r['data_type'] in {'patent','filing'}, r['collection_name']))
-    client = MongoClient(settings.db_url, serverSelectionTimeoutMS=15000)
-    mongo = client[settings.db_name]
+    with closing(journal(path)) as db, closing(MongoClient(settings.db_url, serverSelectionTimeoutMS=15000)) as client:
+        scan_inventory(path, db, client[settings.db_name], registered)
+
+
+def scan_inventory(path, db, mongo, registered):
+    from bson.json_util import dumps, loads
     snapshot = db.execute('SELECT last_key FROM progress WHERE prefix="__snapshot__"').fetchone()
     if not snapshot:
         db.execute('INSERT INTO progress VALUES(?,?,1)', ('__snapshot__',dumps(datetime.now(timezone.utc))));db.commit()
     for route in registered:
+        check_pause(path)
         collection = mongo[route['collection_name']]
         keys = [list(info['key']) for info in collection.index_information().values()]
         compound = [('_meta.download_status',1),('_meta.updated_at',1),('_id',1)]
@@ -144,6 +211,7 @@ def inventory(path):
             if checkpoint and checkpoint[1]:continue
             last = loads(checkpoint[0]) if checkpoint and checkpoint[0] else None
             while True:
+                check_pause(path)
                 queries = [{'_meta.download_status':status}]
                 if last:
                     # Seek the complete compound key; an OR leaves _id unbounded
@@ -183,8 +251,8 @@ def inventory(path):
                 last=(docs[-1]['_meta']['updated_at'],docs[-1]['_id'])
                 db.execute('INSERT OR REPLACE INTO progress VALUES(?,?,0)',(name,dumps(last)));db.commit()
                 print(json.dumps({'inventory':name,'records':len(docs)}),flush=True)
+    check_pause(path)
     db.execute('INSERT OR REPLACE INTO progress VALUES("__inventory__","",1)');db.commit()
-    client.close();db.close()
 
 
 def copy_object(client, old, prefix, record_id):
@@ -298,6 +366,7 @@ def declared_normalizer(module, kind, source):
     return normalizer
 
 
+@reference_binding()
 async def repair_references(db, mongo, registered, prefix, record_id):
     """Repair current database references explicitly, including sources with paused CDC topics."""
     from app.adapters.runtime import get_source_module
@@ -305,7 +374,7 @@ async def repair_references(db, mongo, registered, prefix, record_id):
     from app.etl.source_fences import business_version
     rows=db.execute('SELECT old,new FROM objects WHERE prefix=? AND record_id=? AND phase="source_updated"',(prefix,record_id)).fetchall()
     if not rows:return
-    pg=get_business_pg_client()
+    pg=business_database.get_layer_pg_client('rds')
     docs=source_documents(mongo,registered,prefix,record_id)
     if not docs:raise RuntimeError('Source disappeared before reference repair')
     for route,doc in docs:
@@ -321,10 +390,11 @@ async def repair_references(db, mongo, registered, prefix, record_id):
             fields={key:value for key,value in output.items()
                     if key not in {'record_id','data_source','data_type'} and any(new in json.dumps(value,default=str) for _,new in rows)}
             if fields:updates.append((validate_table_name(output.get('data_type') or kind),output.get('record_id') or record_id,fields))
+        _, rds = await current_table('rds', kind)
         async with pg.session() as session:
             await session.execute(text("SET LOCAL lock_timeout='5s'"))
             await session.execute(text("SET LOCAL statement_timeout='30s'"))
-            current=(await session.execute(text(f'SELECT raw_data FROM ts_rds.rds_{kind} WHERE record_id=:id AND data_source=:src AND data_type=:kind FOR UPDATE'),{'id':record_id,'src':source,'kind':kind})).mappings().first()
+            current=(await session.execute(text(f'SELECT raw_data FROM {rds} WHERE record_id=:id AND data_source=:src AND data_type=:kind FOR UPDATE'),{'id':record_id,'src':source,'kind':kind})).mappings().first()
             if not current:raise RuntimeError('Source has no current RDS row: '+source+'/'+record_id)
             raw=current['raw_data']
             if isinstance(raw,str):raw=json.loads(raw)
@@ -332,9 +402,10 @@ async def repair_references(db, mongo, registered, prefix, record_id):
                 raise RuntimeError('RDS advanced during migration; resume with the latest source')
             # Keep real delivery positions; the source snapshot and revision come from Mongo.
             if '_kafka_meta' in raw:body['_kafka_meta']=raw['_kafka_meta']
-            await session.execute(text(f'UPDATE ts_rds.rds_{kind} SET raw_data=CAST(:raw AS jsonb),updated_at=NOW() WHERE record_id=:id AND data_source=:src AND data_type=:kind'),{'raw':json.dumps(body,ensure_ascii=False,default=str),'id':record_id,'src':source,'kind':kind})
+            await session.execute(text(f'UPDATE {rds} SET raw_data=CAST(:raw AS jsonb),updated_at=NOW() WHERE record_id=:id AND data_source=:src AND data_type=:kind'),{'raw':json.dumps(body,ensure_ascii=False,default=str),'id':record_id,'src':source,'kind':kind})
             for table,identity,fields in sorted(updates,key=lambda row:(row[0],row[1])):
-                columns=(await session.execute(text("SELECT column_name,data_type FROM information_schema.columns WHERE table_schema='ts_ods' AND table_name=:table"),{'table':'ods_'+table})).mappings().all()
+                obj, ods = await current_table('ods', table)
+                columns=(await session.execute(text("SELECT column_name,data_type FROM information_schema.columns WHERE table_schema=:schema AND table_name=:table"),{'schema':obj['schema_name'],'table':obj['table_name']})).mappings().all()
                 types={row['column_name']:row['data_type'] for row in columns}
                 parameters={'id':identity,'src':source,'kind':table};assignments=[]
                 for index,(name,value) in enumerate(fields.items()):
@@ -346,7 +417,7 @@ async def repair_references(db, mongo, registered, prefix, record_id):
                     elif types[name] in {'text','character varying'}:
                         parameters[parameter]=value;assignments.append(quoted+'=:'+parameter)
                     else:raise RuntimeError('Unexpected storage reference column type: '+table+'.'+name)
-                result=await session.execute(text(f'UPDATE ts_ods.ods_{table} SET '+','.join(assignments)+',updated_at=NOW() WHERE record_id=:id AND data_source=:src AND data_type=:kind'),parameters)
+                result=await session.execute(text(f'UPDATE {ods} SET '+','.join(assignments)+',updated_at=NOW() WHERE record_id=:id AND data_source=:src AND data_type=:kind'),parameters)
                 if result.rowcount!=1:raise RuntimeError('Expected one existing ODS row: '+table+'/'+identity)
 
 
@@ -363,18 +434,20 @@ def resource_references_match(expected, actual, paths):
     return not (isinstance(expected, str) and any(path in expected for path in paths)) or expected == actual
 
 
+@reference_binding()
 async def verify_group(db, client, mongo, registered, prefix, record_id):
     from app.adapters.runtime import get_source_module
     from app.etl.schema.catalogs import validate_table_name
     from app.etl.source_fences import business_version
     rows=db.execute('SELECT old,new FROM objects WHERE prefix=? AND record_id=? AND phase="source_updated"',(prefix,record_id)).fetchall()
     docs=source_documents(mongo,registered,prefix,record_id)
-    pg=get_business_pg_client()
+    pg=business_database.get_layer_pg_client('rds')
     if not docs:
         raise RuntimeError('Source document disappeared; keep old object for review')
     for route, doc in docs:
         source=route['collection_name'];kind=validate_table_name(route['data_type'])
-        raw=await pg.fetch_all(f'SELECT raw_data FROM ts_rds.rds_{kind} WHERE record_id=:id AND data_source=:source AND data_type=:kind', {'id':record_id,'source':source,'kind':kind})
+        _, rds = await current_table('rds', kind)
+        raw=await pg.fetch_all(f'SELECT raw_data FROM {rds} WHERE record_id=:id AND data_source=:source AND data_type=:kind', {'id':record_id,'source':source,'kind':kind})
         if not raw:
             return False
         snapshot = raw[0]['raw_data']
@@ -401,7 +474,8 @@ async def verify_group(db, client, mongo, registered, prefix, record_id):
             if not relevant:
                 continue
             table=validate_table_name(output.get('data_type') or kind)
-            found=await pg.fetch_all(f'SELECT to_jsonb(t) AS row FROM ts_ods.ods_{table} t WHERE record_id=:id AND data_source=:source AND data_type=:kind', {'id':output.get('record_id') or record_id,'source':source,'kind':table})
+            _, ods = await current_table('ods', table)
+            found=await pg.fetch_all(f'SELECT to_jsonb(t) AS row FROM {ods} t WHERE record_id=:id AND data_source=:source AND data_type=:kind', {'id':output.get('record_id') or record_id,'source':source,'kind':table})
             if not found or not resource_references_match(output, found[0]['row'], relevant):
                 return False
     for old,new in rows:
@@ -410,10 +484,12 @@ async def verify_group(db, client, mongo, registered, prefix, record_id):
     db.commit();return True
 
 
-def prepare_retry_errors(db, shard, mode):
+def prepare_retry_errors(db, shard, mode, path=None):
     phase='planned' if mode=='apply' else 'source_updated' if mode=='verify' else 'verified'
     phases=(phase,'source_updated') if mode=='apply' else (phase,)
     while True:
+        if path is not None:
+            check_pause(path)
         try:
             db.execute('BEGIN IMMEDIATE')
             rows=db.execute('SELECT rowid,old,prefix,record_id,error FROM objects WHERE shard=? AND error IS NOT NULL AND phase IN ('+
@@ -429,29 +505,36 @@ def prepare_retry_errors(db, shard, mode):
 
 
 def worker(path, shard, mode, db_gate):
+    handle_stop_signals(path)
+    check_pause(path)
     db,client=journal(path),storage()
     with db_gate:registered=asyncio.run(routes())
     mongo_client=MongoClient(settings.db_url,serverSelectionTimeoutMS=15000)
     mongo=mongo_client[settings.db_name]
-    with db_gate:prepare_retry_errors(db,shard,mode)
     async def run():
-        pg=get_business_pg_client()
-        if mode in {'apply','verify'}:
-            with db_gate:await connect_pg()
+        pg=business_database.get_layer_pg_client('rds') if mode in {'apply','verify'} else None
         try:
+            with db_gate:
+                prepare_retry_errors(db,shard,mode,path)
+                check_pause(path)
+                if mode in {'apply','verify'}:
+                    await connect_pg()
+                    async with reference_binding():
+                        pass  # Fail before changing a Mongo source if the two layers live on different connections.
             phases=('planned','error','source_updated') if mode=='apply' else ('source_updated',) if mode=='verify' else ('verified',)
             last=('', '')
             while True:
+                check_pause(path)
                 groups=db.execute('SELECT DISTINCT prefix,record_id FROM objects WHERE shard=? AND phase IN ('+','.join('?' for _ in phases)+') AND error IS NULL AND (prefix,record_id)>(?,?) ORDER BY prefix,record_id LIMIT ?', (shard,*phases,*last,BATCH)).fetchall()
                 if not groups:
                     if mode=='apply' and last!=('', ''):
                         last=('', '');continue
                     finished=db.execute('SELECT done FROM progress WHERE prefix="__inventory__"').fetchone()
                     if mode=='apply' and (not finished or not finished[0]):
-                        import time
                         time.sleep(2);last=('', '');continue
                     break
                 for prefix,record_id in groups:
+                    check_pause(path)
                     assert int(record_id,16)%WORKERS==shard
                     try:
                         if mode=='apply':
@@ -462,43 +545,135 @@ def worker(path, shard, mode, db_gate):
                         elif mode=='verify':
                             with db_gate:await verify_group(db,client,mongo,registered,prefix,record_id)
                         else:
-                            for old,new in db.execute('SELECT old,new FROM objects WHERE prefix=? AND record_id=? AND phase="verified"',(prefix,record_id)).fetchall():
-                                client.stat_object(settings.minio_bucket,new)
-                                client.remove_object(settings.minio_bucket,old)
-                                db.execute('UPDATE objects SET phase="complete",error=NULL WHERE old=? AND prefix=? AND record_id=?',(old,prefix,record_id));db.commit()
-                            db.commit()
+                            clean_group(path,db,client,prefix,record_id)
                     except Exception as error:
                         db.rollback()
+                        if mode == 'clean':
+                            raise
                         detail=f'{type(error).__name__}: {error}'
-                        db.execute('UPDATE objects SET error=? WHERE prefix=? AND record_id=? AND phase NOT IN ("verified","canonical","unreferenced")',(detail[:1000],prefix,record_id));db.commit()
+                        db.execute('UPDATE objects SET error=? WHERE prefix=? AND record_id=? AND phase NOT IN ("complete","verified","canonical","unreferenced")',(detail[:1000],prefix,record_id))
+                        db.commit()
                         print(json.dumps({'shard':shard,'prefix':prefix,'record_id':record_id,'error':detail[:500]}),flush=True)
                 last=groups[-1]
                 print(json.dumps({'shard':shard,'mode':mode,'checkpoint':last}),flush=True)
         finally:
-            if mode in {'apply','verify'}:await pg.close()
+            if pg is not None:await pg.close()
             await get_pg_client().close()
-    asyncio.run(run());mongo_client.close();db.close()
+    try:
+        asyncio.run(run())
+    finally:
+        mongo_client.close();db.close()
 
 
-def main():
-    parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode',choices=['inventory','apply','verify','clean','status'])
-    parser.add_argument('--journal',type=Path,required=True)
-    args=parser.parse_args();args.journal.parent.mkdir(parents=True,exist_ok=True)
+def clean_group(path, db, client, prefix, record_id):
+    rows = db.execute('SELECT old,new FROM objects WHERE prefix=? AND record_id=? AND phase="verified"',
+                      (prefix, record_id)).fetchall()
+    for old, new in rows:
+        check_pause(path)
+        try:
+            client.stat_object(settings.minio_bucket, new)
+            check_pause(path)
+            client.remove_object(settings.minio_bucket, old)
+            db.execute('UPDATE objects SET phase="complete",error=NULL WHERE old=? AND prefix=? AND record_id=?',
+                       (old, prefix, record_id))
+            db.commit()
+        except Exception as error:
+            db.rollback()
+            db.execute('UPDATE objects SET error=? WHERE old=? AND prefix=? AND record_id=?',
+                       (f'{type(error).__name__}: {error}'[:1000], old, prefix, record_id))
+            db.commit()
+            raise
+
+
+def supervise(path, items, start, poll, wait):
+    """Drain all started processes before returning or reporting a failure."""
+    children = []
+    try:
+        for item in items:
+            check_pause(path)
+            children.append(start(item))
+        while True:
+            codes = [poll(child) for child in children]
+            if any(code not in (None, 0) for code in codes) and not pause_marker(path).exists():
+                pause_marker(path).touch(exist_ok=True)
+            if None not in codes:
+                break
+            time.sleep(0.25)
+    except BaseException:
+        pause_marker(path).touch(exist_ok=True)
+        raise
+    finally:
+        for child in children:
+            wait(child)
+    for code in codes:
+        if code not in (0, PAUSED):
+            raise SystemExit(code)
+    if PAUSED in codes:
+        raise SystemExit(PAUSED)
+    check_pause(path)
+
+
+def run_phases(path, modes):
+    def start(mode):
+        return subprocess.Popen([sys.executable, '-u', __file__, mode, '--journal', str(path)])
+    supervise(path, modes, start, lambda c: c.poll(), lambda c: c.wait())
+
+
+def run_managed(path):
+    run_phases(path, ('inventory', 'apply'))
+    while True:
+        run_phases(path, ('verify',))
+        with closing(journal(path)) as db:
+            pending = db.execute('SELECT count(*) FROM objects WHERE phase IN ("planned","error","source_updated")').fetchone()[0]
+        if not pending:
+            break
+        print(json.dumps({'waiting_for_downstream': pending}), flush=True)
+        for _ in range(30):
+            check_pause(path)
+            time.sleep(1)
+    run_phases(path, ('clean',))
+    result = Path(path).parent / 'result.json'
+    result.write_text(json.dumps({'exit_code': 0}))
+
+
+def main(args=None):
+    args = args or parse_args()
+    if check_control(args):
+        return
+    if args.mode in {'run', 'apply', 'verify'}:
+        # Check the mounted script's image dependencies before starting inventory or opening the journal.
+        from app.etl.schema import registry
+        for module, names in ((business_database, ('get_layer_pg_client', 'layer_binding_lease')),
+                              (registry, ('require_registered_object', 'object_table_ref'))):
+            for name in names:
+                if not callable(getattr(module, name, None)):
+                    raise SystemExit(f'This download migration requires {module.__name__}.{name} in its image')
+    args.journal.parent.mkdir(parents=True,exist_ok=True)
+    if args.mode != 'status':
+        handle_stop_signals(args.journal)
+        check_pause(args.journal)
+    if args.mode == 'run':
+        run_managed(args.journal)
+        return
     if args.mode=='inventory':inventory(args.journal)
     elif args.mode in {'apply','verify','clean'}:
         # Immutable shard ownership and a durable shared journal make restarts safe.
         ctx=multiprocessing.get_context('spawn')
         db_gate=ctx.BoundedSemaphore(1)
-        processes=[ctx.Process(target=worker,args=(str(args.journal),n,args.mode,db_gate)) for n in range(WORKERS)]
-        for process in processes:process.start()
-        for process in processes:process.join()
-        if any(p.exitcode for p in processes):raise SystemExit(1)
+        def start(shard):
+            process = ctx.Process(target=worker, args=(str(args.journal), shard, args.mode, db_gate))
+            process.start()
+            return process
+        supervise(args.journal, range(WORKERS), start, lambda p: p.exitcode, lambda p: p.join())
+    if args.mode != 'status':
+        check_pause(args.journal)
     db=journal(args.journal)
     print(json.dumps({'objects':dict(db.execute('SELECT phase,count(*) FROM objects GROUP BY phase')),'errors':db.execute('SELECT count(*) FROM objects WHERE error IS NOT NULL').fetchone()[0],'inventory':list(db.execute('SELECT * FROM progress'))}),flush=True)
     errors=db.execute('SELECT count(*) FROM objects WHERE error IS NOT NULL').fetchone()[0]
     db.close()
     if errors:raise SystemExit(2)
+    if args.mode != 'status':
+        check_pause(args.journal)
 
 
-if __name__=='__main__':main()
+if __name__=='__main__':main(command)

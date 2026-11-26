@@ -51,7 +51,7 @@ async def test_verification_requires_the_current_source_contract(tmp_path, chang
     snapshot = deepcopy(doc)
     if changed:
         snapshot['_meta'].update(changed)
-    pg = SimpleNamespace(fetch_all=AsyncMock(side_effect=[
+    pg = SimpleNamespace(connection_id='warehouse', revision=1, fetch_all=AsyncMock(side_effect=[
         [{'raw_data': snapshot}], [{'row': {'url': new}}],
     ]))
     module = SimpleNamespace(NORMALIZERS={'tweet': lambda raw: {
@@ -59,7 +59,10 @@ async def test_verification_requires_the_current_source_contract(tmp_path, chang
     runtime = SimpleNamespace(get_source_module=AsyncMock(return_value=module))
     client = Mock()
     with patch.object(migration, 'source_documents', return_value=[(route, doc)]), \
-            patch.object(migration, 'get_pg_client', return_value=pg), \
+            patch.object(migration.business_database, 'get_layer_pg_client', return_value=pg), \
+            patch.object(migration.business_database, 'layer_binding_lease', return_value=nullcontext()), \
+            patch('app.etl.schema.registry.require_registered_object', new=AsyncMock(side_effect=lambda _, layer, kind, role:
+                         {'schema_name':'warehouse.' + layer, 'table_name':'current_' + kind})), \
             patch.dict(sys.modules, {'app.adapters.runtime': runtime}):
         result = await migration.verify_group(db, client, None, [], 'tweet/twitter', record_id)
     assert result is (changed is None)
@@ -68,6 +71,8 @@ async def test_verification_requires_the_current_source_contract(tmp_path, chang
         client.stat_object.assert_not_called()
     else:
         assert db.execute('SELECT phase FROM objects').fetchone()[0] == 'verified'
+        assert '"warehouse.rds"."current_tweet"' in pg.fetch_all.await_args_list[0].args[0]
+        assert '"warehouse.ods"."current_social_media"' in pg.fetch_all.await_args_list[1].args[0]
     db.close()
 
 

@@ -271,12 +271,24 @@ async def test_reference_repair_preserves_delivery_positions_and_updates_only_pa
     @asynccontextmanager
     async def session():yield SimpleNamespace(execute=execute)
     module=SimpleNamespace(NORMALIZERS={'news':lambda doc:{'url':new,'images':[{'url':new}],'title':'source title'}})
-    with patch.object(migration,'source_documents',return_value=[(route,doc)]),patch.object(migration,'get_business_pg_client',return_value=SimpleNamespace(session=session)),patch('app.adapters.runtime.get_source_module',AsyncMock(return_value=module)):
+    from contextlib import nullcontext
+    pg = SimpleNamespace(session=session, connection_id='warehouse', revision=1)
+    async def lookup(metadata, layer, kind, role):
+        assert (kind, role) == ('news', 'current')
+        return {'schema_name': 'test.' + layer, 'table_name': 'registered_news'}
+    with patch.object(migration,'source_documents',return_value=[(route,doc)]), \
+            patch.object(migration.business_database,'get_layer_pg_client',return_value=pg), \
+            patch.object(migration.business_database,'layer_binding_lease',return_value=nullcontext()) as lease, \
+            patch('app.etl.schema.registry.require_registered_object',side_effect=lookup), \
+            patch('app.adapters.runtime.get_source_module',AsyncMock(return_value=module)):
         await migration.repair_references(db,Mock(),[], 'news/source',record_id)
-    rds=[(sql,p) for sql,p in calls if sql.startswith('UPDATE ts_rds')][0]
+    assert lease.call_args.kwargs['expected'] == {key: ('warehouse', 1) for key in ('rds', 'ods')}
+    rds=[(sql,p) for sql,p in calls if sql.startswith('UPDATE "test.rds"."registered_news"')][0]
     assert json.loads(rds[1]['raw'])['_kafka_meta']=={'kafka_offset':123}
     assert 'kafka_offset=' not in rds[0]
-    ods=[sql for sql,p in calls if sql.startswith('UPDATE ts_ods')][0]
+    assert [p for sql,p in calls if 'information_schema.columns' in sql] == [
+        {'schema':'test.ods','table':'registered_news'}]
+    ods=[sql for sql,p in calls if sql.startswith('UPDATE "test.ods"."registered_news"')][0]
     assert '"url"=' in ods and '"images"=CAST(' in ods
     assert 'title=' not in ods
     assert any('FOR UPDATE' in sql for sql,p in calls)
@@ -310,6 +322,144 @@ def test_source_record_lookup_uses_owner_index(tmp_path):
     assert not any('SCAN objects' in row[3] for row in plan)
     plan=db.execute('EXPLAIN QUERY PLAN SELECT old,error FROM objects WHERE shard=? AND phase=? AND error IS NOT NULL',(0,'planned')).fetchall()
     assert any('USING INDEX objects_errors' in row[3] for row in plan)
+    db.close()
+
+
+@pytest.mark.parametrize('mode', ['run', 'inventory', 'apply', 'verify', 'clean'])
+def test_existing_stop_prevents_old_phase_commands_and_managed_run(tmp_path, mode):
+    import subprocess
+    import sys
+    path = tmp_path / 'journal.sqlite'
+    # -S prevents importing the app's third-party dependencies, just like an older image.
+    base = [sys.executable, '-I', '-S', '-B', migration.__file__]
+    subprocess.run([*base, 'pause', '--journal', str(path)], check=True, timeout=10)
+    stopped = subprocess.run([*base, mode, '--journal', str(path)], timeout=10)
+    assert stopped.returncode == migration.PAUSED
+    assert not path.exists()
+    assert not (tmp_path / 'result.json').exists()
+
+
+def test_verify_in_previous_image_fails_before_opening_journal(tmp_path, monkeypatch):
+    path = tmp_path / 'unopened' / 'journal.sqlite'
+    monkeypatch.delattr(migration.business_database, 'get_layer_pg_client')
+    with pytest.raises(SystemExit, match='requires app.storage.business_database.get_layer_pg_client'):
+        migration.main(SimpleNamespace(mode='verify', journal=path))
+    assert not path.parent.exists()
+
+
+def test_stop_after_verify_never_dispatches_clean(tmp_path, monkeypatch):
+    path = tmp_path / 'journal.sqlite'
+    migration.journal(path).close()
+    modes = []
+    class Child:
+        returncode = 0
+        def __init__(self, cmd):
+            modes.append(cmd[3])
+        def poll(self):
+            return self.returncode
+        def wait(self):
+            if modes[-1] == 'verify':
+                migration.pause_marker(path).touch()
+            return self.returncode
+    monkeypatch.setattr(migration.subprocess, 'Popen', Child)
+    with pytest.raises(SystemExit) as stopped:
+        migration.run_managed(path)
+    assert stopped.value.code == migration.PAUSED
+    assert modes == ['inventory', 'apply', 'verify']
+    assert not (tmp_path / 'result.json').exists()
+
+
+def test_inventory_drains_its_current_page_and_preserves_resume_cursor(tmp_path):
+    from datetime import datetime, timezone
+    from unittest.mock import MagicMock
+    from bson.json_util import loads
+    path = tmp_path / 'journal.sqlite'
+    db = migration.journal(path)
+    collection = MagicMock()
+    collection.index_information.return_value = {'downloads': {'key': [
+        ('_meta.download_status',1),('_meta.updated_at',1),('_id',1)]}}
+    doc = {'_id': 1, '_meta': {'record_id': 'a' * 32, 'updated_at': datetime.now(timezone.utc)},
+           'assets': {'photo': 'old/source/image.jpg'}}
+    def page(*_, **kwargs):
+        migration.pause_marker(path).touch()
+        return [doc]
+    collection.find.return_value.sort.return_value.hint.return_value.batch_size.return_value.limit.return_value.max_time_ms.side_effect = page
+    with pytest.raises(SystemExit) as stopped:
+        migration.scan_inventory(path, db, {'collection': collection},
+                                 [{'collection_name':'collection','data_type':'news','template_name':'source'}])
+    assert stopped.value.code == migration.PAUSED
+    db.close()
+    db = migration.journal(path)
+    cursor, done = db.execute('SELECT last_key,done FROM progress WHERE prefix="mongo:collection:downloaded"').fetchone()
+    assert loads(cursor)[1] == 1 and done == 0
+    assert list(db.execute('SELECT old,phase FROM objects')) == [('old/source/image.jpg', 'planned')]
+    assert not db.execute('SELECT 1 FROM progress WHERE prefix="__inventory__"').fetchone()
+    db.close()
+
+
+@pytest.mark.asyncio
+async def test_split_layer_connections_reject_repair_before_accessing_source_or_work_tables():
+    from contextlib import asynccontextmanager
+    from unittest.mock import AsyncMock
+    from app.storage.business_database import LayerBindingChanged
+    business = SimpleNamespace(connection_id='rds-id', revision=1, session=Mock())
+    result = Mock()
+    result.mappings.return_value = [{'layer':key, 'id':key + '-id', 'updated_at':1} for key in ('rds','ods')]
+    @asynccontextmanager
+    async def session():
+        yield SimpleNamespace(execute=AsyncMock(return_value=result))
+    with patch.object(migration, 'get_pg_client', return_value=SimpleNamespace(session=session)), \
+            patch.object(migration.business_database, 'get_layer_pg_client', return_value=business), \
+            patch.object(migration, 'source_documents') as docs:
+        with pytest.raises(LayerBindingChanged):
+            await migration.repair_references(None, None, [], 'source', 'id')
+    docs.assert_not_called()
+    business.session.assert_not_called()
+
+
+def test_controller_drains_both_children_when_one_fails(tmp_path, monkeypatch):
+    path = tmp_path / 'journal.sqlite'
+    waited = []
+    class Child:
+        def __init__(self, cmd):
+            self.mode = cmd[3]
+        def poll(self):
+            self.returncode = 2 if self.mode == 'apply' else (
+                migration.PAUSED if migration.pause_marker(path).exists() else None)
+            return self.returncode
+        def wait(self):
+            waited.append((self.mode, self.returncode))
+    monkeypatch.setattr(migration.subprocess, 'Popen', Child)
+    monkeypatch.setattr(migration.time, 'sleep', lambda _: None)
+    with pytest.raises(SystemExit) as failure:
+        migration.run_managed(path)
+    assert failure.value.code == 2
+    assert waited == [('inventory', migration.PAUSED), ('apply', 2)]
+
+
+def test_clean_finishes_only_admitted_object_and_resumes_same_journal(tmp_path):
+    path = tmp_path / 'journal.sqlite'
+    db = migration.journal(path)
+    db.executemany('INSERT INTO objects(old,new,prefix,record_id,shard,phase) VALUES(?,?,"owner","id",0,"verified")',
+                   [('a','new-a'), ('b','new-b')])
+    db.commit()
+    client = Mock()
+    client.remove_object.side_effect = lambda *_: migration.pause_marker(path).touch()
+    with pytest.raises(SystemExit) as stopped:
+        migration.clean_group(path, db, client, 'owner', 'id')
+    assert stopped.value.code == migration.PAUSED
+    assert sorted(db.execute('SELECT phase FROM objects')) == [('complete',), ('verified',)]
+    client.remove_object.assert_called_once()
+    migration.pause_marker(path).unlink()
+    client.remove_object.side_effect = OSError('delete failed')
+    with pytest.raises(OSError):
+        migration.clean_group(path, db, client, 'owner', 'id')
+    assert db.execute('SELECT error FROM objects WHERE phase="verified"').fetchone() == ('OSError: delete failed',)
+    migration.prepare_retry_errors(db, 0, 'clean')
+    client.remove_object.side_effect = None
+    migration.clean_group(path, db, client, 'owner', 'id')
+    assert list(db.execute('SELECT DISTINCT phase FROM objects')) == [('complete',)]
+    assert list(db.execute('SELECT error FROM error_history')) == [('OSError: delete failed',)]
     db.close()
 
 
