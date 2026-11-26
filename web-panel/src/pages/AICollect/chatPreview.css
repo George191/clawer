@@ -304,7 +304,8 @@
 .scout-toolbar-button:focus-visible, .scout-file-tab button:focus-visible { outline: 1px solid #ffffff66; outline-offset: 2px; }
 .scout-file-body { position: relative; flex: 1; min-height: 0; }
 .scout-file-body .scout-result-code:not(.scout-template-sheet) pre { padding: 20px 24px 40px; background: transparent; font-size: 12.5px; line-height: 1.7; }
-.scout-file-body .scout-result-code-line { min-height: 21px; }
+.scout-file-body .scout-result-code-line { display: flex; min-height: 21px; padding: 0; gap: 0; }
+.scout-file-body .scout-result-code-line code { flex: none; white-space: pre; word-break: normal; }
 .scout-file-body .scout-line-number { width: 30px; margin-right: 20px; color: #78818d; font-size: 11px; }
 .scout-yaml-key { color: #8be9fd; }
 .scout-yaml-literal { color: #bd93f9; }
@@ -329,3 +330,6 @@
 .scout-persistent-composer .scout-send .scout-toolbar-icon { width: 20px; height: 20px; }
 @media (max-width: 1279px) { .scout-summary-pin { display: none; } }
 @media (max-width: 767px) { .scout-file-header { gap: 4px; padding-inline: 6px; } .scout-chat-preview.has-results .scout-chat-messages { top: calc(42% + 48px); } .scout-conversation-toolbar { right: 8px; } }
+
+.scout-chat-preview.has-results > .ai-chat-dot { top: 44px; }
+.scout-chat-preview.has-results > .scout-chat-dot-frost { top: 14px; }

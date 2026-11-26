@@ -103,7 +103,7 @@ export default function PreviewResults({ turn, step, running, structured = false
         : (phase === 'template' || phase === 'adapter') && <>
           <div className={`scout-result-code ${phase === 'template' && structured ? 'scout-template-sheet' : ''} ${wrap ? 'is-wrapped' : ''} ${lineNumbers ? '' : 'without-line-numbers'}`}>
             {phase === 'template' && structured ? <TemplateSheet text={text} writing={writing} />
-              : <pre>{text.split('\n').map((line, index) => <div className="scout-result-code-line ai-session-inspector-editor-line" key={index}><span className="scout-line-number" aria-hidden="true">{index + 1}</span><code>{phase === 'adapter' ? renderPythonPreviewContent(line || ' ', `preview-${turn?.id}-${index}`) : renderYamlLine(line)}{writing && index === text.split('\n').length - 1 && <i className="scout-result-caret" />}</code></div>)}</pre>}
+              : <pre>{text.split('\n').map((line, index) => <div className="scout-result-code-line" key={index}><span className="scout-line-number" aria-hidden="true">{index + 1}</span><code>{phase === 'adapter' ? renderPythonPreviewContent(line || ' ', `preview-${turn?.id}-${index}`) : renderYamlLine(line)}{writing && index === text.split('\n').length - 1 && <i className="scout-result-caret" />}</code></div>)}</pre>}
 
           </div>
         </>}

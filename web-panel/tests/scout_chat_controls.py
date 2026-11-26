@@ -139,6 +139,10 @@ with sync_playwright() as p:
     expect(results.locator(".scout-result-content")).to_have_attribute("data-phase", "template")
     expect(results.locator(".scout-result-code")).to_contain_text("collection_articles")
     expect(results.locator(".scout-template-sheet")).to_have_count(0)
+    raw_line = results.locator(".scout-result-code-line").first
+    assert raw_line.evaluate("e=>getComputedStyle(e).display") == "flex"
+    assert raw_line.locator("code").bounding_box()["height"] < 30
+    assert raw_line.locator("code").bounding_box()["width"] > 120
     expect(page.locator(".ai-chat-dot")).to_have_attribute("data-activity", "Working")
     expect(results.get_by_text("Example artifact", exact=False)).to_have_count(0)
     expect(page.get_by_role("button", name="Confirm Template", exact=True)).to_be_visible()
@@ -212,7 +216,7 @@ with sync_playwright() as p:
     assert abs(bounds["width"] - root_bounds["width"] / 2) < 1
     assert abs(bounds["x"] + bounds["width"] - chat_bounds["x"]) < 1
     assert abs(dot_bounds["x"] + dot_bounds["width"] / 2 - bounds["x"] - bounds["width"]) < 2
-    assert abs(dot_bounds["y"] + dot_bounds["height"] / 2 - root_bounds["y"] - 37) < 2
+    assert abs(dot_bounds["y"] + dot_bounds["height"] / 2 - root_bounds["y"] - 104) < 2
     divider = page.locator(".scout-chat-preview").evaluate(
         "e=>{const s=getComputedStyle(e,'::after');return [s.content,s.width,s.backgroundImage]}"
     )
