@@ -2,20 +2,20 @@
   "services": {
     "rds-worker": {
       "deploy": {
-        "replicas": 5
+        "replicas": 6
       },
       "environment": {
-        "SPIDER_PG_POOL_MIN": "1",
-        "SPIDER_PG_POOL_MAX": "3"
+        "SPIDER_PG_POOL_MIN": "2",
+        "SPIDER_PG_POOL_MAX": "10"
       }
     },
     "ods-worker": {
       "deploy": {
-        "replicas": 5
+        "replicas": 6
       },
       "environment": {
-        "SPIDER_PG_POOL_MIN": "1",
-        "SPIDER_PG_POOL_MAX": "3"
+        "SPIDER_PG_POOL_MIN": "2",
+        "SPIDER_PG_POOL_MAX": "10"
       }
     }
   }
