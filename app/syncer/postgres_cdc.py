@@ -190,7 +190,10 @@ async def check_unrouted_raw_topics(identity: dict[str, str], objects) -> set[st
     name = identity["prefix"]
     retained = {f"{name}.{schema}.{table}" for schema, table in objects}
     admin = AIOKafkaAdminClient(**build_admin_client_kwargs(request_timeout_ms=8000))
-    reader = AIOKafkaConsumer(**build_consumer_kwargs(group_id=None, request_timeout_ms=8000))
+    # Use the physical end so a paused topic with an open transaction is not considered empty.
+    reader = AIOKafkaConsumer(**build_consumer_kwargs(
+        group_id=None, isolation_level="read_uncommitted", request_timeout_ms=8000,
+    ))
     try:
         async with asyncio.timeout(15):
             await admin.start()
@@ -206,13 +209,23 @@ async def check_unrouted_raw_topics(identity: dict[str, str], objects) -> set[st
             partitions = [TopicPartition(item["topic"], part["partition"])
                           for item in descriptions for part in item["partitions"]]
             await reader.start()
-            ends, committed = await asyncio.gather(
-                reader.end_offsets(partitions), admin.list_consumer_group_offsets(f"{name}-relay"),
+            starts, ends, committed = await asyncio.gather(
+                reader.beginning_offsets(partitions), reader.end_offsets(partitions),
+                admin.list_consumer_group_offsets(f"{name}-relay"),
             )
-            pending = sorted({part.topic for part in partitions
-                              if ends[part] != (max(0, committed[part].offset) if part in committed else 0)})
+            paused = set(settings.kafka_paused_topics)
+            pending = set()
+            for part in partitions:
+                offset = committed[part].offset if part in committed else -1
+                if ends[part] == max(0, offset):
+                    continue
+                # A paused, empty partition proves that there are no retained
+                # records, even if the group has no position at this boundary.
+                if part.topic in paused and starts[part] == ends[part] and offset < ends[part]:
+                    continue
+                pending.add(part.topic)
             if pending:
-                raise SetupError(f"Unverified CDC backlog for {len(pending)} unrouted raw topic(s): {', '.join(pending[:10])}")
+                raise SetupError(f"Unverified CDC backlog for {len(pending)} unrouted raw topic(s): {', '.join(sorted(pending)[:10])}")
             return set(removed)
     except SetupError:
         raise

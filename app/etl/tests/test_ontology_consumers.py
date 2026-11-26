@@ -357,6 +357,7 @@ class CdcOntologyConsumerTests(unittest.IsolatedAsyncioTestCase):
         admin, reader = AsyncMock(), AsyncMock()
         admin.list_topics.return_value = [retained, removed.topic, "fixture-pg.transaction"]
         admin.describe_topics.return_value = [{"topic": removed.topic, "partitions": [{"partition": 0}]}]
+        reader.beginning_offsets.return_value = {removed: 10}
         reader.end_offsets.return_value = {removed: 20}
         with patch.object(cdc, "AIOKafkaAdminClient", return_value=admin), \
              patch.object(cdc, "AIOKafkaConsumer", return_value=reader), patch.object(cdc.settings, "kafka_brokers", "broker"):
@@ -369,6 +370,40 @@ class CdcOntologyConsumerTests(unittest.IsolatedAsyncioTestCase):
         admin.describe_topics.assert_awaited_with([removed.topic])
         admin.list_consumer_group_offsets.assert_awaited_with("fixture-pg-relay")
         reader.getmany.assert_not_awaited()
+
+    async def test_unrouted_pause_accepts_missing_or_expired_offsets_only_on_empty_partitions(self):
+        topic = "fixture-pg.Legacy.Catalog.ArchiveRows"
+        expired, peer = TopicPartition(topic, 0), TopicPartition(topic, 1)
+        admin, reader = AsyncMock(), AsyncMock()
+        admin.list_topics.return_value = [topic]
+        admin.describe_topics.return_value = [{"topic": topic, "partitions": [{"partition": 0}, {"partition": 1}]}]
+        for paused, start, end, position, peer_position, allowed in [
+            (True, 20, 20, 15, 30, True),
+            (False, 20, 20, 15, 30, False),
+            (True, 19, 20, 15, 30, False),
+            (True, 20, 20, 21, 30, False),
+            (True, 20, 20, None, 30, True),
+            (False, 20, 20, None, 30, False),
+            (True, 19, 20, None, 30, False),
+            (False, 0, 0, None, 30, True),
+            (True, 20, 20, 15, 29, False),
+        ]:
+            with self.subTest(paused=paused, start=start, end=end, position=position, peer_position=peer_position):
+                reader.beginning_offsets.return_value = {expired: start, peer: 25}
+                reader.end_offsets.return_value = {expired: end, peer: 30}
+                commit = {peer: OffsetAndMetadata(peer_position, "")}
+                if position is not None:
+                    commit[expired] = OffsetAndMetadata(position, "")
+                admin.list_consumer_group_offsets.return_value = commit
+                with patch.object(cdc, "AIOKafkaAdminClient", return_value=admin), \
+                     patch.object(cdc, "AIOKafkaConsumer", return_value=reader), \
+                     patch.object(cdc.settings, "kafka_brokers", "broker"), \
+                     patch.object(cdc.settings, "kafka_paused_topics", [topic] if paused else []):
+                    if allowed:
+                        self.assertEqual(await cdc.check_unrouted_raw_topics(IDENTITY, self.objects), {topic})
+                    else:
+                        with self.assertRaisesRegex(cdc.SetupError, "Unverified CDC backlog"):
+                            await cdc.check_unrouted_raw_topics(IDENTITY, self.objects)
 
     async def test_dynamic_publication_checks_exact_registration_before_add(self):
         for registered, covered in [(True, False), (True, True), (False, False)]:
@@ -424,6 +459,21 @@ class CdcOntologyConsumerTests(unittest.IsolatedAsyncioTestCase):
             await worker._refresh_subscription()
             empty = re.compile(worker._consumer.subscribe.call_args.kwargs["pattern"])
             self.assertIsNone(empty.fullmatch("fixture-pg.OddWarehouse.DailyRollup"))
+
+    async def test_relay_pause_keeps_old_and_new_topic_assignments_separate(self):
+        worker = postgres_worker.PostgresSyncWorker(Pg(), IDENTITY)
+        worker._consumer = Mock()
+        old_topic = "fixture-pg.OldWarehouse.DailyRollup"
+        target = "fixture-pg.New.Warehouse.DailyRollup"
+        with patch.object(postgres_worker, "published_cdc_objects",
+                          AsyncMock(return_value={("New.Warehouse", "DailyRollup"): ("ods", "fixture")})), \
+             patch.object(postgres_worker, "check_unrouted_raw_topics", AsyncMock(return_value={old_topic})), \
+             patch.object(cdc.settings, "kafka_paused_topics", [old_topic]):
+            await worker._refresh_subscription()
+        pattern = re.compile(worker._consumer.subscribe.call_args.kwargs["pattern"])
+        self.assertIsNone(pattern.fullmatch(old_topic))
+        self.assertTrue(pattern.fullmatch(target))
+        self.assertIsNone(pattern.fullmatch("fixture-pg.NewXWarehouse.DailyRollup"))
 
     async def test_readonly_cdc_preflight_rejects_an_extra_publication_member(self):
         external = {"nspname": "OddWarehouse", "relname": "unbound", "full_table": True}
