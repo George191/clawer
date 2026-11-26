@@ -58,6 +58,12 @@ with sync_playwright() as p:
     expect(entry).to_be_visible()
     entry.fill("Plan a collection")
     entry.press("Enter")
+    progress = page.get_by_role("complementary", name="Live collection progress")
+    expect(progress).to_be_visible()
+    expect(progress.get_by_text("Analyzing the webpage", exact=True)).to_be_visible()
+    expect(progress.get_by_text("Writing the adapter", exact=True)).to_be_visible()
+    expect(progress.locator("li.is-current h3")).to_have_text("Analyzing the webpage")
+    expect(progress.locator("li.is-current h3")).to_have_text("Writing the adapter")
     canvas = page.frame_locator(".scout-dot-host iframe").locator("canvas")
     expect(canvas).to_have_attribute("data-ready", "true", timeout=90000)
     expect(page.get_by_role("button", name="Confirm and continue")).to_be_visible()
@@ -65,6 +71,18 @@ with sync_playwright() as p:
     page.get_by_role("button", name="Confirm and continue").click()
     expect(page.get_by_role("button", name="Copy response")).to_be_visible()
     expect(canvas).to_have_attribute("data-activity", "Ready")
+    expect(progress.locator("li.is-done")).to_have_count(6)
+    expect(progress.locator("li.is-current")).to_have_count(0)
+    bounds = progress.bounding_box()
+    chat_bounds = page.locator(".scout-chat-messages").bounding_box()
+    dot_bounds = page.locator(".ai-chat-dot").bounding_box()
+    assert abs(bounds["x"] + bounds["width"] - chat_bounds["x"]) < 1
+    assert abs(dot_bounds["x"] + dot_bounds["width"] / 2 - chat_bounds["x"]) < 1
+    page.get_by_role("button", name="Hide live progress").click()
+    expect(progress).to_be_hidden()
+    page.get_by_role("button", name="Show live progress").click()
+    expect(progress).to_be_visible()
+    page.wait_for_timeout(700)
     toggle = page.locator(".scout-worked-toggle").first
     panel = page.locator(".scout-step-content").first
     expect(toggle).to_have_attribute("aria-expanded", "false")
@@ -174,12 +192,16 @@ with sync_playwright() as p:
     page.set_viewport_size({"width": 390, "height": 844})
     page.wait_for_timeout(700)
     expect(rail).to_be_visible()
+    expect(progress).to_be_visible()
+    bounds = progress.bounding_box()
+    chat_bounds = page.locator(".scout-chat-messages").bounding_box()
+    assert abs(bounds["y"] + bounds["height"] - chat_bounds["y"]) < 1
     box = page.locator(".scout-persistent-composer").bounding_box()
     assert box["x"] >= 0 and box["x"] + box["width"] <= 390
     assert not posts, posts
     assert not errors, errors
     print(
-        "Native state actions, confirmation/retry, animated steps, centered arrow, history widths/scroll, feedback keyboard, clipboard and speech cancellation passed",
+        "Live progress, responsive split panels, Dot alignment, native state actions, animated steps, history, feedback, clipboard and speech passed",
         flush=True,
     )
     b.close()
