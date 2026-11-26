@@ -597,6 +597,7 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
             <Button type="text" disabled={blocked || captureBusy || sourcePaused || !viewedType} onClick={() => openSource(viewedSource)}>Edit name</Button>
             <Button disabled={blocked || captureBusy || sourcePaused || !viewedType?.driverAvailable} loading={operation === 'test'} onClick={() => void testSaved()}>Test saved connection</Button>
             <Button type="primary" disabled={blocked || captureBusy || sourcePaused || !viewedType} onClick={() => openSource(viewedSource)}>Edit connection</Button>
+            <Button danger icon={<DeleteOutlined />} disabled={blocked || captureBusy || panelDirty} onClick={() => void reviewDisconnect(viewedSource)}>Disconnect connection</Button>
             {pauseAvailable && <Button disabled={blocked || captureBusy || panelDirty} title={panelDirty ? 'Save or discard the open setup before changing the connection status.' : undefined} loading={operation === 'pause'} onClick={changePause}>{sourcePaused ? 'Resume connection' : 'Pause connection'}</Button>}
             {panelDirty && <span className="source-detail-badge" role="status">Unsaved setup</span>}
           </div>
@@ -640,16 +641,17 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
           {sourcePaused && <div><dt>Paused at</dt><dd>{formatDate(viewedSource.pausedAt)}</dd></div>}
         </dl>
         <details className="source-detail-advanced"><summary>Connection capabilities and source identity</summary>
+        <div className="source-detail-advanced__panels">
         {viewedSource.engine === 'postgresql' && <SourceRuntimeStatus key={`runtime:${proofKey}`} source={viewedSource} />}
         <SavedConnectionCapabilities capabilities={viewedSource.capabilities} />
-        <p className="ontology-connectors__scope"><DatabaseOutlined /> These settings do not import or synchronize tables.</p>
         {sourcePaused && <p>This source cannot be tested, explored, verified or edited while paused. Sync history remains available.</p>}
         {viewedSource.engine === 'postgresql' && !sourcePaused && <SourceIdentity key={`identity:${proofKey}`} source={viewedSource} identity={activeProof}
           onIdentity={value => { if (current()) setSourceProof({ key: proofKey, value }); }}
           onVerificationStarted={() => invalidateVerificationCapability(viewedSource.id)}
           onVerificationSettled={() => { metadataVerifying.current.delete(viewedSource.id); refreshCapabilities(viewedSource.id); }} disabled={blocked} />}
+        <p className="ontology-connectors__scope"><DatabaseOutlined /> These settings do not import or synchronize tables.</p>
+        </div>
         </details>
-        <div className="ontology-connections-detail__destructive"><Button size="small" danger icon={<DeleteOutlined />} disabled={blocked || captureBusy} onClick={() => void reviewDisconnect(viewedSource)}>Disconnect connection</Button></div>
         </>}
         {sourcePanel === 'catalog' && exploring && catalogAvailable && <SourceCatalog key={JSON.stringify(["catalog", sessionIdentity, viewedSource.id, sourceSchema])} sourceId={viewedSource.id} sourceRevision={viewedSource.updatedAt} initialSchema={sourceSchema} onSetUpSync={selection => { setParams(currentParams => { const next = new URLSearchParams(currentParams); next.set('sourceSchema', selection.schema); return next; }); setSyncSelection({ sourceId: viewedSource.id, selection }); openSourcePanel('sync'); }} />}
         {sourcePanel === 'sync' && <>

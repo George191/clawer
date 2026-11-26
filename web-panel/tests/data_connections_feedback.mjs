@@ -298,6 +298,7 @@ test('unsaved sync setup requires confirmation before changing tabs or closing d
   const saved = source('mysql');
   const ui = await mount({ sources: [saved], selected: saved.id, query: 'sourcePanel=sync' });
   ui.nodes().find(node => node.type === 'SourceNodeSyncs').props.onStateChange({ busy: false, dirty: true }); ui.render();
+  assert.equal(ui.button('Disconnect connection').props.disabled, true);
   ui.click('Overview');
   assert.equal(ui.button('Syncs').props['aria-selected'], true);
   assert.equal(ui.confirmation().props.title, 'Discard unsaved setup?');
