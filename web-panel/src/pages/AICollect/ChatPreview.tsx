@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import * as Popover from '@radix-ui/react-popover';
 import { Dropdown } from '@/components/ui';
 import { DOT_ACTIVITIES, type DotActivity } from '@/components/NativeDot';
 import { useThemeStore } from '@/stores/settings';
 import { previewAdapter, previewTemplate } from './PreviewResults';
 import PreviewWorkspace from './PreviewWorkspace';
-import ScoutToolbarIcon from './ScoutToolbarIcon';
 import { ArtifactIcon } from './StageArtifacts';
 import ConversationContext, { SourcePreview } from './ConversationContext';
 import ChatComposer, { type ComposerField, type QueuedMessage } from './ChatComposer';
@@ -239,15 +239,11 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
     catch { utteranceRef.current = null; setSpeaking(null); setSpeechError(true); setNotice('Read aloud could not start.'); }
   }
 
-  return <section className={`scout-chat-preview ${entered ? 'is-entered' : ''} ${entered && resultsOpen ? 'has-results' : ''} ${entered && contextOpen ? 'has-context' : ''} ${entered && contextOpen && contextPinned && wideLayout ? 'has-pinned-context' : ''}`} aria-label="Scout conversation" style={{ '--scout-composer-height': `${composerHeight}px` } as React.CSSProperties}>
+  return <Popover.Root open={contextOpen} onOpenChange={setContextOpen}><section className={`scout-chat-preview ${entered ? 'is-entered' : ''} ${entered && resultsOpen ? 'has-results' : ''} ${entered && contextOpen ? 'has-context' : ''} ${entered && contextOpen && contextPinned && wideLayout ? 'has-pinned-context' : ''}`} aria-label="Scout conversation" style={{ '--scout-composer-height': `${composerHeight}px` } as React.CSSProperties}>
     <div className={`ai-chat-dot ${!entered ? 'is-landing' : ''}`} data-activity={dotActivity} />
     {entered && <div className="scout-chat-dot-frost" aria-hidden="true" />}
     <h1 className="scout-chat-greeting ai-prompt-title" aria-hidden={entered}>Hi{userLoading || userName ? <>, <span className="scout-greeting-name">{userLoading ? <span className="native-dot-loading scout-profile-loading" role="status" aria-label="Loading your profile"><i /><i /><i /></span> : <span key={userName} className="ai-prompt-name scout-loaded-name">{userName}</span>}</span></> : null}, any new ideas?</h1>
-    <PreviewWorkspace open={entered && resultsOpen} turn={resultTurn} step={previewStep} running={running && resultTurn?.id === latest?.id} onSelect={(artifact) => { setResultsOpen(true); setResultTurnId(artifact.turn); setResultStep(artifact.step); }} onClose={() => setResultsOpen(false)} summaryOpen={contextOpen} summaryPinned={contextOpen && contextPinned && wideLayout} canPin={wideLayout} onToggleSummary={() => setContextOpen(value => !value)} onTogglePinned={togglePinned} onNotice={setNotice} />
-    {entered && <div className="scout-conversation-toolbar" role="toolbar" aria-label="Conversation actions">
-      <button type="button" className="scout-toolbar-button scout-context-toggle" aria-label="Conversation context" title="Toggle summary panel" aria-expanded={contextOpen} aria-controls="scout-conversation-context" onClick={() => setContextOpen(value => !value)}><ScoutToolbarIcon name="panel" active={contextOpen} /></button>
-      <Dropdown trigger={['click']} placement="bottomRight" overlayClassName="scout-file-menu scout-conversation-menu" menu={{ selectedKeys: [`activity:${activity}`], items: [{ key: 'preview', label: resultsOpen ? 'Hide file preview' : 'Show file preview' }, { key: 'copy', label: 'Copy conversation', disabled: !turns.length }, { key: 'agents', label: 'Manage agents' }, { type: 'divider' }, { key: 'activity', label: 'Dot activity', children: (Object.keys(DOT_ACTIVITIES) as DotActivity[]).map(value => ({ key: `activity:${value}`, label: labels[value] })) }], onClick: ({ key }) => { if (key === 'preview') setResultsOpen(value => !value); else if (key === 'copy') void copyConversation(); else if (key === 'agents') navigate('/agents'); else if (key.startsWith('activity:')) selectActivity(key.slice(9) as DotActivity); } }}><button type="button" className="scout-toolbar-button" aria-label="More conversation actions" title="More"><ScoutToolbarIcon name="more" /></button></Dropdown>
-    </div>}
+    <PreviewWorkspace visible={entered} conversationMenu={{ selectedKeys: [`activity:${activity}`], items: [{ key: 'preview', label: resultsOpen ? 'Hide file preview' : 'Show file preview' }, { key: 'copy', label: 'Copy conversation', disabled: !turns.length }, { key: 'agents', label: 'Manage agents' }, { type: 'divider' }, { key: 'activity', label: 'Dot activity', children: (Object.keys(DOT_ACTIVITIES) as DotActivity[]).map(value => ({ key: `activity:${value}`, label: labels[value] })) }], onClick: ({ key }) => { if (key === 'preview') setResultsOpen(value => !value); else if (key === 'copy') void copyConversation(); else if (key === 'agents') navigate('/agents'); else if (key.startsWith('activity:')) selectActivity(key.slice(9) as DotActivity); } }} open={entered && resultsOpen} turn={resultTurn} step={previewStep} running={running && resultTurn?.id === latest?.id} onSelect={(artifact) => { setResultsOpen(true); setResultTurnId(artifact.turn); setResultStep(artifact.step); }} onClose={() => setResultsOpen(false)} summaryOpen={contextOpen} summaryPinned={contextOpen && contextPinned && wideLayout} canPin={wideLayout} onTogglePinned={togglePinned} onNotice={setNotice} />
     {entered && <aside className="scout-history-rail" aria-label="Conversation history" onMouseLeave={() => setHoveredHistory(null)} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setHoveredHistory(null); }}>
       <div className="ai-session-stage-bars">{history.map((entry, index) => {
         const distance = hoveredHistory === null ? -1 : Math.abs(index - hoveredHistory);
@@ -281,7 +277,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
     <ChatComposer ref={input} entered={entered} value={draft} running={running} files={pendingFiles} queued={queued} onChange={setDraft} onSubmit={submit} onPause={pauseResponse} onAddFiles={addSourceFiles} onRemoveFile={removePendingFile} onPreviewFile={setSelectedSource} onViewSources={() => { if (!entered) onEnter(); setContextOpen(true); }} onHeightChange={setComposerHeight} onEditQueued={(item) => { setQueued((prev) => prev.filter((value) => value.id !== item.id)); setDraft(item.prompt); setPendingFiles(item.files); input.current?.focus(); }} onDeleteQueued={(id) => setQueued((prev) => prev.filter((item) => item.id !== id))} onSendQueued={(item) => { setQueued((prev) => prev.filter((value) => value.id !== item.id)); startTurn(item.prompt, item.files, false); }} />
     {selectedSource && <SourcePreview file={selectedSource} onClose={() => setSelectedSource(null)} />}
     <span className="scout-action-notice" role="status">{notice}</span>
-  </section>;
+  </section></Popover.Root>;
 }
 
 function FeedbackIcon({ down = false }: { down?: boolean }) {

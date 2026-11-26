@@ -1,0 +1,34 @@
+/* Codex Sm6l toolbar/ghostActive, W4GL summary, rsCP island and menu-o5IS9p.
+   Utility declarations are scoped here so Codex's global reset does not affect Scout. */
+.scout-chat-preview, .codex-menu { --codex-spacing: 4px; --codex-text: #ededed; --codex-hover: #ffffff0d; --codex-surface: #282828; }
+.scout-chat-preview .conversation-header-control { display: flex; align-items: center; justify-content: center; flex-shrink: 0; box-sizing: border-box; width: 32px; height: 32px; padding: 0; border: 1px solid transparent; border-radius: 9999px; background: transparent; color: var(--codex-text); font: inherit; user-select: none; cursor: default; transform: none; transition: none; -webkit-app-region: no-drag; }
+.scout-chat-preview .conversation-header-control:not(:disabled):is(:hover,[data-state=open],[aria-pressed=true]) { background: var(--codex-hover); }
+.scout-chat-preview .conversation-header-control:focus-visible { outline: 2px solid #ffffff59; outline-offset: 0; }
+.scout-chat-preview .conversation-header-control:disabled { opacity: .4; cursor: default; }
+.codex-menu { --app-menu-gutter: var(--codex-spacing); --app-menu-item-height: calc(var(--codex-spacing) * 9); --app-menu-item-padding: calc(var(--codex-spacing) * 2) calc(var(--codex-spacing) * 2.5); --app-menu-item-font-size: 14px; --app-menu-item-line-height: calc(var(--codex-spacing) * 5); --spacing-menu-item-content: calc(var(--codex-spacing) * 1.5); --shadow-dropdown-overlay: 0 8px 12px #00000014, 0 0 1px #0000009e; z-index: 1100; box-sizing: border-box; width: max-content; min-width: 220px; max-width: calc(100vw - 16px); max-height: var(--radix-dropdown-menu-content-available-height); padding: var(--app-menu-gutter); overflow: auto; border: .5px solid #ffffff14; border-radius: 16px; background: var(--codex-surface); color: var(--codex-text); box-shadow: var(--shadow-dropdown-overlay); outline: none; transform-origin: var(--radix-dropdown-menu-content-transform-origin); }
+.codex-menu-item { display: flex; align-items: center; gap: var(--spacing-menu-item-content); min-height: var(--app-menu-item-height); padding: var(--app-menu-item-padding); box-sizing: border-box; border-radius: 12px; outline: none; font-size: var(--app-menu-item-font-size); line-height: var(--app-menu-item-line-height); user-select: none; cursor: default; }
+.codex-menu-item[data-highlighted] { background: var(--codex-hover); }
+.codex-menu-item[data-disabled] { opacity: .4; pointer-events: none; }
+.codex-menu-separator { height: .5px; margin: 4px 6px; background: #ffffff14; }
+.codex-menu-trailing { margin-left: auto; color: #ffffff80; }
+.codex-menu-trailing svg { display: block; width: 16px; height: 16px; }
+.codex-submenu-chevron { transform: rotate(-90deg); }
+/* Nwje.Section and MIZk.Item: original inset, section spacing and row hover area. */
+.scout-context-panel .scout-context-section { position: relative; z-index: 0; display: flex; flex-direction: column; padding-bottom: 8px; }
+.scout-context-panel .scout-context-section + .scout-context-section { margin-top: 0; padding-top: 8px; border-top: .5px solid #ffffff1f; }
+.scout-context-panel .scout-context-section-head { position: sticky; top: 8px; z-index: 10; display: flex; align-items: center; gap: 8px; min-height: 28px; margin: 0; padding: 0 8px 2px; background: inherit; color: #ffffff80; }
+.scout-context-panel .scout-context-section-head > button:first-child { display: inline-flex; align-items: center; flex: 1; min-width: 0; gap: 4px; margin-left: -3.5px; padding: 2px 4px 2px 3.5px; border-radius: 12px; font-size: 12px; line-height: 20px; font-weight: 400; cursor: default; }
+.scout-context-section-head .scout-toolbar-icon { width: 12px; height: 12px; transform: rotate(-90deg); transition: transform 180ms; }
+.scout-context-section-head [aria-expanded=true] .scout-toolbar-icon { transform: none; opacity: 0; }
+.scout-context-section-head button:is(:hover,:focus-visible) .scout-toolbar-icon { opacity: 1; }
+.scout-context-panel .scout-context-section-content > div { display: flex; flex-direction: column; gap: 2px; padding: 0 8px; }
+.scout-context-panel .scout-context-row { position: relative; isolation: isolate; gap: 6px; min-height: 28px; padding: 4px 0; border-radius: 4px; line-height: 20px; cursor: default; background: transparent; }
+.scout-context-panel .scout-context-row::before { position: absolute; z-index: -1; inset: 0 -8px; border-radius: 4px; content: ''; }
+.scout-context-panel .scout-context-row:is(:hover,[aria-pressed=true])::before { background: var(--codex-hover); }
+.scout-context-panel .scout-context-row > .scout-toolbar-icon { fill: currentColor; stroke: none; }
+.scout-context-panel[data-state] { z-index: 50; outline: none; transform-origin: var(--radix-popover-content-transform-origin); }
+.scout-context-panel[data-state=open] { animation: codex-summary-enter 300ms cubic-bezier(.16,1,.3,1); }
+.scout-context-panel[data-state=closed] { animation: codex-summary-exit 180ms ease-in; }
+@keyframes codex-summary-enter { from { opacity: 0; transform: translateX(100%); } to { opacity: 1; transform: translateX(0); } }
+@keyframes codex-summary-exit { to { opacity: 0; transform: translateX(100%); } }
+@media (prefers-reduced-motion: reduce) { .scout-context-panel[data-state] { animation: none; } }

@@ -1,18 +1,21 @@
 import { useEffect, useState } from 'react';
-import { Button, Dropdown, Modal } from '@/components/ui';
+import { Button, Modal, type MenuProps } from '@/components/ui';
+import * as Popover from '@radix-ui/react-popover';
+import { CodexToolbarButton, CodexToolbarMenu } from './CodexToolbar';
 import PreviewResults, { previewFile, type PreviewResult } from './PreviewResults';
 import { ArtifactIcon, type StageArtifact } from './StageArtifacts';
 import ScoutToolbarIcon from './ScoutToolbarIcon';
 
 type Props = {
+  visible: boolean; conversationMenu: MenuProps;
   open: boolean; turn?: PreviewResult; step: number; running: boolean;
   onSelect: (artifact: StageArtifact) => void; onClose: () => void;
   summaryOpen: boolean; summaryPinned: boolean; canPin: boolean;
-  onToggleSummary: () => void; onTogglePinned: () => void; onNotice: (message: string) => void;
+  onTogglePinned: () => void; onNotice: (message: string) => void;
 };
 
 export default function PreviewWorkspace(props: Props) {
-  const { open, turn, step, running, onSelect, onClose, summaryOpen, summaryPinned, canPin, onToggleSummary, onTogglePinned, onNotice } = props;
+  const { visible, conversationMenu, open, turn, step, running, onSelect, onClose, summaryOpen, summaryPinned, canPin, onTogglePinned, onNotice } = props;
   const [tabs, setTabs] = useState<StageArtifact[]>([]);
   const [structured, setStructured] = useState(false);
   const [wrap, setWrap] = useState(false);
@@ -65,17 +68,21 @@ export default function PreviewWorkspace(props: Props) {
             <button type="button" className="scout-tab-close" aria-label={`Close ${previewFile(undefined, tab.step).name}`} title="Close tab" onClick={() => closeTab(tab)}><ScoutToolbarIcon name="close" /></button>
           </div>)}
         </div>
-        <div className="scout-file-actions" role="toolbar" aria-label="File actions">
-          <Dropdown trigger={['click']} placement="bottomRight" overlayClassName="scout-file-menu" menu={{ items: [{ key: 'copy', label: 'Copy file contents' }, { key: 'download', label: 'Download file' }, { type: 'divider' }, { key: 'others', label: 'Close other tabs', disabled: tabs.length < 2 }, { key: 'close', label: 'Close file preview' }], onClick: ({ key }) => { if (key === 'copy') void copy(); else if (key === 'download') download(); else if (key === 'others') setTabs(current => current.filter(tab => tab.key === activeKey)); else onClose(); } }}><button type="button" className="scout-toolbar-button" aria-label="More file actions" title="More"><ScoutToolbarIcon name="more" /></button></Dropdown>
-          <button type="button" className="scout-toolbar-button" aria-label="Share file" title="Share" onClick={() => { setCopied(false); setCanShare(Boolean(navigator.canShare?.({ files: [new File([file.content], file.name, { type: 'text/plain' })] }))); setSharing(true); }}><ScoutToolbarIcon name="share" /></button>
-          <Dropdown trigger={['click']} placement="bottomRight" overlayClassName="scout-file-menu" menu={{ selectedKeys: [structured ? 'structured' : '', wrap ? 'wrap' : '', lineNumbers ? 'numbers' : ''], items: [{ key: 'structured', label: 'Structured template preview' }, { key: 'wrap', label: 'Wrap lines' }, { key: 'numbers', label: 'Line numbers' }, { type: 'divider' }, { key: 'summary', label: summaryOpen ? 'Hide summary' : 'Show summary' }], onClick: ({ key }) => { if (key === 'structured') setStructured(value => !value); else if (key === 'wrap') setWrap(value => !value); else if (key === 'numbers') setLineNumbers(value => !value); else onToggleSummary(); } }}><button type="button" className="scout-toolbar-button is-round" aria-label="Preview options" title="Preview options"><ScoutToolbarIcon name="summary" /></button></Dropdown>
-          <button type="button" className="scout-toolbar-button scout-summary-pin" aria-label={summaryPinned ? 'Unpin summary panel' : 'Pin summary panel'} title={canPin ? summaryPinned ? 'Unpin summary panel' : 'Pin summary panel' : 'Pin summary on a wider window'} aria-pressed={summaryPinned} disabled={!canPin} onClick={onTogglePinned}><ScoutToolbarIcon name="panel" active={summaryPinned} /></button>
-        </div>
+
       </header>
       <div id="scout-file-panel" className="scout-file-body" role="tabpanel" aria-labelledby={activeKey ? `scout-tab-${activeKey}` : undefined}>
         <PreviewResults turn={turn} step={step} running={running} structured={structured} wrap={wrap} lineNumbers={lineNumbers} />
       </div>
     </aside>
+    {visible && <Popover.Anchor asChild><div className="scout-conversation-toolbar" role="toolbar" aria-label="Conversation actions">
+      <CodexToolbarMenu menu={{ selectedKeys: [...(conversationMenu.selectedKeys ?? []), ...(structured ? ['file:structured'] : []), ...(wrap ? ['file:wrap'] : []), ...(lineNumbers ? ['file:numbers'] : [])], items: [
+        ...(conversationMenu.items ?? []),
+        ...(open && turn ? [{ type: 'divider' as const }, { key: 'file:copy', label: 'Copy file contents' }, { key: 'file:download', label: 'Download file' }, { key: 'file:structured', label: 'Structured template preview' }, { key: 'file:wrap', label: 'Wrap lines' }, { key: 'file:numbers', label: 'Line numbers' }, { type: 'divider' as const }, { key: 'file:others', label: 'Close other tabs', disabled: tabs.length < 2 }, { key: 'file:close', label: 'Close file preview' }] : []),
+      ], onClick: ({ key }) => { if (key === 'file:copy') void copy(); else if (key === 'file:download') download(); else if (key === 'file:structured') setStructured(value => !value); else if (key === 'file:wrap') setWrap(value => !value); else if (key === 'file:numbers') setLineNumbers(value => !value); else if (key === 'file:others') setTabs(current => current.filter(tab => tab.key === activeKey)); else if (key === 'file:close') onClose(); else conversationMenu.onClick?.({ key }); } }}><CodexToolbarButton aria-label="More conversation actions" title="More"><ScoutToolbarIcon name="more" /></CodexToolbarButton></CodexToolbarMenu>
+      <CodexToolbarButton aria-label="Share file" title="Share file" disabled={!turn} onClick={() => { setCopied(false); setCanShare(Boolean(navigator.canShare?.({ files: [new File([file.content], file.name, { type: 'text/plain' })] }))); setSharing(true); }}><ScoutToolbarIcon name="share" /></CodexToolbarButton>
+      <Popover.Trigger asChild><CodexToolbarButton className="scout-context-toggle" aria-label="Conversation context" title="Toggle summary" aria-pressed={summaryOpen} aria-controls="scout-conversation-context"><ScoutToolbarIcon name="summary" /></CodexToolbarButton></Popover.Trigger>
+      <CodexToolbarButton className="scout-summary-pin" aria-label={summaryPinned ? 'Unpin summary panel' : 'Pin summary panel'} title={canPin ? summaryPinned ? 'Unpin summary panel' : 'Pin summary panel' : 'Pin summary on a wider window'} aria-pressed={summaryPinned} disabled={!canPin} onClick={onTogglePinned}><ScoutToolbarIcon name="panel" /></CodexToolbarButton>
+    </div></Popover.Anchor>}
     <Modal open={sharing} title={`Share ${file.name}`} onCancel={() => setSharing(false)} width={560} className="scout-share-dialog" footer={<><Button onClick={download}>Download file</Button><Button onClick={() => void copy()}>{copied ? 'Copied' : 'Copy contents'}</Button>{canShare && <Button type="primary" onClick={() => void systemShare()}>System share</Button>}</>}>
       <p>Share the contents of the current file.</p>
       <textarea aria-label="Shared file contents" readOnly value={file.content} rows={10} />
