@@ -4,8 +4,12 @@ import { ConfigProvider, Dropdown, Modal, NativeSelect, Select, theme } from '..
 import '../../src/styles/global.css';
 import '../../src/pages/ProductWorkspace/workspace.css';
 import '../../src/pages/Pipeline/ontology-frame.css';
+import '../../src/pages/Pipeline/ontology-explorer.css';
 import '../../src/pages/Pipeline/semantic-object-wizard.css';
 import '../../src/pages/Pipeline/data-connections.css';
+import '../../src/pages/Pipeline/storage-relationship-types.css';
+import '../../src/pages/Pipeline/explorer-explore-view.css';
+import '../../src/pages/AccountSettings/account-settings.css';
 
 function Fixture() {
   const light = new URLSearchParams(location.search).get('theme') === 'light';
@@ -36,6 +40,18 @@ function Fixture() {
       <div style={{ marginTop: 24 }}><Dropdown trigger={['click']} overlayClassName="flow-menu-popup" menu={{ items: [{ key: 'open', label: 'Open dialog' }, { key: 'disabled', label: 'Disabled action', disabled: true }], onClick: () => setDialog(true) }}><button type="button" style={{ width: 220 }}>Actions</button></Dropdown></div>
       <Modal open={dialog} title="Selection dialog" onCancel={() => setDialog(false)} footer={null} className="flow-surface-modal flow-semantic-wizard"><Select popupClassName="flow-select-popup" aria-label="Dialog connection" options={options} style={{ width: '100%' }} /></Modal>
       <NativeSelect aria-label="Footer page size" style={{ position: 'fixed', bottom: 16, right: 24, width: 150 }} defaultValue="10"><option value="10">10 / page</option><option value="20">20 / page</option><option value="50">50 / page</option></NativeSelect>
+      <section aria-label="Page select spacing" style={{ display: 'grid', gap: 12, maxWidth: 380, marginTop: 24 }}>
+        <div className="flow-semantic-wizard"><Select aria-label="Upstream connection" className="flow-ontology__select flow-source-connection" showSearch value="a" options={options} /></div>
+        <Select aria-label="Ontology visibility" className="flow-ontology__select" value="a" options={options} />
+        <div className="storage-relationship-types"><div className="ontology-tool-fields"><NativeSelect aria-label="Relationship type"><option>Alpha</option></NativeSelect></div></div>
+        <div className="explore-analysis"><NativeSelect aria-label="Analysis field"><option>Alpha</option></NativeSelect></div>
+        <div className="acc-form"><Select aria-label="Account setting" value="a" options={options} /></div>
+        <div className="flow-data-table"><div className="ui-pagination-options"><Select aria-label="Table page size" value="a" options={options} /></div></div>
+        <div className="flow-td-fields-table"><Select aria-label="Designer field" value="a" options={options} /><Select aria-label="Designer multiple fields" mode="multiple" value={['a']} options={options} /></div>
+        <div className="flow-offset-modal"><Select aria-label="Offset" value="a" options={options} /></div>
+        <div className="flow-filter-rule"><Select aria-label="Filter field" value="a" options={options} /></div>
+        <div className="flow-filter-sort-field"><Select aria-label="Sort field" value="a" options={options} /></div>
+      </section>
     </main>
   </ConfigProvider>;
 }

@@ -176,8 +176,21 @@ with (ARTIFACTS / 'vite.log').open('w') as log:
                 assert abs(anchor_box['y'] - menu_box['y'] - menu_box['height'] - 4) < 1
                 page.get_by_role('option', name='50 / page', exact=True).click()
                 expect(footer).to_contain_text('50 / page')
+                spacing = page.get_by_role('region', name='Page select spacing').locator('.ui-select').evaluate_all('''nodes => nodes.map(node => {
+                  const box = node.getBoundingClientRect(), style = getComputedStyle(node);
+                  const selector = node.querySelector('.ui-select-selector').getBoundingClientRect();
+                  const arrow = node.querySelector('.ui-select-arrow').getBoundingClientRect();
+                  return { name: node.getAttribute('aria-label') || node.querySelector('input')?.getAttribute('aria-label'),
+                    leading: selector.left - box.left - parseFloat(style.borderLeftWidth),
+                    trailing: box.right - arrow.right - parseFloat(style.borderRightWidth),
+                    gap: arrow.left - node.querySelector('.ui-select-selection-wrap').getBoundingClientRect().right };
+                })''')
+                assert len(spacing) == 11, spacing
+                for insets in spacing:
+                    assert abs(insets['leading'] - insets['trailing']) < 1, insets
+                    assert 0 <= insets['trailing'] <= 13 and insets['gap'] >= 6, insets
                 assert not errors, errors
-                results.append({'theme': mode, 'geometry': geometry, 'surface': surface, 'form_values': values, 'page_errors': errors})
+                results.append({'theme': mode, 'geometry': geometry, 'surface': surface, 'page_spacing': spacing, 'form_values': values, 'page_errors': errors})
                 page.close()
             page = browser.new_page(viewport={'width': 390, 'height': 844}, reduced_motion='reduce')
             page.goto(url + '?theme=dark')

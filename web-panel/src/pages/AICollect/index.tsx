@@ -7934,7 +7934,7 @@ const AICollect: React.FC = () => {
             border: 1px solid rgba(255, 255, 255, 0.14) !important;
             border-radius: 4px !important;
             background: rgba(255, 255, 255, 0.025) !important;
-            padding-inline: 6px 36px !important;
+            padding-inline: 6px !important;
           }
           .ai-template-field-value .ui-select:hover {
             background: rgba(0, 0, 0, 0.14) !important;

@@ -639,7 +639,7 @@ const renderDownloadLogText = (message: string): React.ReactNode => {
   });
 };
 
-const renderConsoleLogMessage = (message: string): React.ReactNode => {
+export const renderConsoleLogMessage = (message: string): React.ReactNode => {
   const match = message.match(consoleLogPrefixPattern);
   if (!match) return renderDownloadLogText(message);
   const level = match[4].toLowerCase();
@@ -4771,7 +4771,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           justify-content: center !important;
           height: 22px !important;
           min-height: 22px !important;
-          padding: 0 36px 0 8px !important;
+          padding: 0 8px !important;
           border: 0 !important;
           background: transparent !important;
           box-shadow: none !important;

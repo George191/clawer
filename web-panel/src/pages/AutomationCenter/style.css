@@ -1,523 +1,88 @@
-.automation-page {
-  width: calc(100% - 48px);
-  max-width: 1100px;
-  margin: 0 auto;
-  height: 100%;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  color: #e4e7eb;
-  font-size: 13px;
-  padding: 24px 0 16px;
-}
-
-.automation-page > .automation-header,
-.automation-page > .automation-tabs { outline: 2px solid var(--ui-focus-ring); outline-offset: 1px; }
-
-.automation-load-alert {
-  flex: none;
-}
-
-.automation-header {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 20px;
-  margin-bottom: 18px;
-}
-
-.automation-header h2 {
-  margin: 4px 0 2px;
-  color: inherit;
-  font-size: 28px;
-  line-height: 35px;
-}
-
-.automation-kicker {
-  color: #8ab4ff !important;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: .14em;
-}
-
-.automation-page .automation-tabs {
-  flex-wrap: wrap;
-  margin-bottom: 0;
-  padding: 12px 14px;
-}
-
-.automation-domain-select { min-width: 170px; }
-.automation-data-type-select { min-width: 150px; }
-.automation-search { width: 250px; }
-
-.automation-filters .ui-select-selection-item,
-.automation-filters .ui-select-selection-placeholder,
-.automation-filter-dropdown.ui-select-dropdown .ui-select-item {
-  font-size: 13px;
-  text-align: left;
-}
-
-.automation-filter-dropdown.ui-select-dropdown .ui-select-item {
-  justify-content: flex-start;
-}
-
-.automation-filter-option {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 7px;
-  min-width: 0;
-  text-align: left;
-}
-
-.automation-filter-option > span:last-child {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.automation-domain-initial {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 5px;
-  color: #fff;
-  font-size: 9px;
-  font-weight: 800;
-}
-
-.automation-filter-option .workspace-glyph {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-}
-
-.automation-filter-option .workspace-glyph svg {
-  width: 16px;
-  height: 16px;
-}
-
-.automation-filter-option .workspace-glyph .ui-icon {
-  font-size: 16px;
-}
-
-.automation-filters .ui-select,
-.automation-filters .ui-input,
-.automation-filters .ui-btn {
-  font-size: 13px;
-}
-
-.automation-filters .ui-select,
-.automation-filters .ui-select:hover,
-.automation-filters .ui-select-focused,
-.automation-filters .ui-input-affix-wrapper,
-.automation-filters .ui-input-affix-wrapper:hover,
-.automation-filters .ui-input-affix-wrapper-focused,
-.automation-filters .ui-btn,
-.automation-filters .ui-btn:hover,
-.automation-filters .ui-btn:focus-visible {
-  border: 0 !important;
-  box-shadow: none !important;
-}
-
-.automation-filters .ui-select,
-.automation-filters .ui-input-affix-wrapper,
-.automation-filters .ui-btn-default {
-  background: #343947 !important;
-  color: #e4e7eb !important;
-}
-
-.automation-filters .ui-select:hover,
-.automation-filters .ui-input-affix-wrapper:hover,
-.automation-filters .ui-btn-default:hover {
-  background: #292e3b !important;
-}
-
-.automation-filters .ui-btn-default:hover,
-.automation-filters .ui-btn-default:focus-visible {
-  color: #e4e7eb !important;
-}
-
-
-.automation-load-alert {
-  margin-top: 10px;
-  padding: 6px 10px;
-  border-radius: 6px;
-  border-color: rgba(148, 163, 184, .14);
-  background: rgba(148, 163, 184, .08);
-}
-
-.automation-load-alert .ui-alert-message {
-  color: #94a3b8;
-}
-
-.automation-load-alert.ui-alert-warning .ui-alert-icon {
-  color: #f5b942;
-}
-
-.automation-load-alert .ui-alert-message {
-  overflow: hidden;
-  font-size: 12px;
-  line-height: 18px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.automation-load-alert .ui-alert-icon {
-  margin-inline-end: 7px;
-  font-size: 13px;
-}
-
-.automation-page .ui-btn:hover {
-  box-shadow: none !important;
-}
-
-.automation-table-card {
-  flex: 1;
-  height: 100%;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  border: 0;
-  background: #171a22;
-  box-shadow: none;
-}
-
-.automation-task-panel {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-.automation-task-panel > .ui-card-body {
-  flex: 1;
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.automation-table-card > .ui-card-body,
-.automation-table-card .ui-spin-nested-loading,
-.automation-table-card .ui-spin-container,
-.automation-table-card .ui-table-wrapper {
-  min-height: 0;
-}
-
-.automation-table-card > .ui-card-body,
-.automation-table-card .ui-spin-container {
-  display: flex;
-  height: 100%;
-  flex-direction: column;
-}
-
-.automation-table-card > .ui-card-body {
-  width: 100%;
-  flex: 1;
-}
-
-.automation-table-card .ui-spin-nested-loading,
-.automation-table-card .ui-spin-container {
-  flex: 1;
-}
-
-.automation-table-card .ui-table-wrapper {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-}
-
-.automation-table-card .ui-table {
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.automation-table-card .ui-table-wrapper .ui-table {
-  background: transparent;
-}
-
-.automation-table-card .ui-table-container {
-  display: flex;
-  height: 100%;
-  min-height: 0;
-  flex-direction: column;
-  background: #242836;
-}
-
-.automation-table-card .ui-table-header {
-  flex: none;
-}
-
-.automation-table-card .ui-table-container,
-.automation-table-card .ui-table-cell {
-  border-color: rgba(148, 163, 184, .08);
-}
-
-.automation-table-card .ui-table-body {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto !important;
-}
-
-.automation-table-card .ui-table-pagination {
-  flex: none;
-  margin: 10px 14px 0 !important;
-}
-
-
-.automation-table-card .ui-table,
-.automation-table-card .ui-table .ui-badge-status-text,
-.automation-table-card .ui-table .ui-typography,
-.automation-table-card .ui-table .ui-btn {
-  font-size: 12px;
-}
-
-.automation-table-card .ui-table-thead > tr > th {
-  padding: 8px 14px;
-  background: #1a1d27;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: .025em;
-  line-height: 16px;
-}
-
-.automation-table-card .ui-table-tbody > tr > td {
-  padding: 8px 14px;
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.automation-table-card .ui-table .ui-btn {
-  height: 30px;
-  padding: 0 8px;
-}
-
-.automation-table-card .ui-table .ui-tag {
-  min-height: 20px;
-  padding: 2px 7px;
-  border: 0;
-  border-radius: 4px;
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 16px;
-}
-
-.automation-page .ui-pagination,
-.automation-page .ui-pagination .ui-select {
-  font-size: 12px;
-}
-
-.automation-page .ui-pagination .ui-pagination-item,
-.automation-page .ui-pagination .ui-pagination-prev,
-.automation-page .ui-pagination .ui-pagination-next {
-  min-width: 30px;
-  height: 30px;
-  border: 0 !important;
-  background: #343947 !important;
-  line-height: 30px;
-}
-
-.automation-page .ui-pagination .ui-pagination-item a { line-height: 30px; }
-.automation-page .ui-pagination .ui-pagination-jump-prev,
-.automation-page .ui-pagination .ui-pagination-jump-next {
-  min-width: 30px;
-  height: 30px;
-  line-height: 30px;
-}
-.automation-page .ui-pagination .ui-pagination-item a,
-.automation-page .ui-pagination .ui-pagination-prev button,
-.automation-page .ui-pagination .ui-pagination-next button { color: #9299a6 !important; }
-.automation-page .ui-pagination .ui-pagination-item:hover,
-.automation-page .ui-pagination .ui-pagination-prev:not(.ui-pagination-disabled):hover,
-.automation-page .ui-pagination .ui-pagination-next:not(.ui-pagination-disabled):hover { background: #292e3b !important; }
-.automation-page .ui-pagination .ui-pagination-item-active { background: #454c5d !important; }
-.automation-page .ui-pagination .ui-pagination-item-active a { color: #e4e7eb !important; }
-.automation-page .ui-pagination .ui-pagination-options { display: flex; height: 30px; align-items: center; }
-.automation-page .ui-pagination .ui-pagination-options .ui-select { height: 30px; cursor: pointer; }
-.automation-page .ui-pagination .ui-pagination-options .ui-select {
-  height: 30px !important;
-  min-height: 30px !important;
-  align-items: center;
-  border: 0 !important;
-  background: #343947 !important;
-  color: #b7bdc8 !important;
-  cursor: pointer;
-}
-.automation-page .ui-pagination .ui-pagination-options .ui-select-selection-item,
-.automation-page .ui-pagination .ui-pagination-options .ui-select-arrow { cursor: pointer; }
-.automation-page .ui-pagination .ui-select:hover { background: #292e3b !important; }
-.automation-page .ui-pagination .ui-select-arrow { color: #9299a6 !important; }
-
-.automation-name {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-
-.automation-name > .ui-icon {
-  display: grid;
-  flex: none;
-  width: 26px;
-  height: 26px;
-  place-items: center;
-  border-radius: 6px;
-  color: #8ab4ff;
-  background: rgba(1, 139, 255, .12);
-}
-
-.automation-name strong { font-size: 12px; font-weight: 600; }
-.automation-name strong,
-.automation-name small { display: block; }
-.automation-name small { margin-top: 2px; color: #94a3b8; font-size: 10px; }
-.automation-code { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; }
-
-html[data-theme='light'] .automation-page { color: #172033; }
-html[data-theme='light'] .automation-filters .ui-select,
-html[data-theme='light'] .automation-filters .ui-input-affix-wrapper,
-html[data-theme='light'] .automation-filters .ui-btn-default { background: #edf0f4 !important; color: #172033 !important; }
-html[data-theme='light'] .automation-filters .ui-select:hover,
-html[data-theme='light'] .automation-filters .ui-input-affix-wrapper:hover,
-html[data-theme='light'] .automation-filters .ui-btn-default:hover { background: #dfe3e9 !important; }
-html[data-theme='light'] .automation-filters .ui-btn-default:hover,
-html[data-theme='light'] .automation-filters .ui-btn-default:focus-visible { color: #172033 !important; }
-html[data-theme='light'] .automation-table-card { background: #fff; }
-html[data-theme='light'] .automation-table-card .ui-table-thead > tr > th,
-html[data-theme='light'] .automation-table-card .ui-table-container { background: #fff; }
-html[data-theme='light'] .automation-page .ui-pagination .ui-pagination-item,
-html[data-theme='light'] .automation-page .ui-pagination .ui-pagination-prev,
-html[data-theme='light'] .automation-page .ui-pagination .ui-pagination-next { background: #edf0f4 !important; }
-html[data-theme='light'] .automation-page .ui-pagination .ui-pagination-item:hover,
-html[data-theme='light'] .automation-page .ui-pagination .ui-pagination-prev:not(.ui-pagination-disabled):hover,
-html[data-theme='light'] .automation-page .ui-pagination .ui-pagination-next:not(.ui-pagination-disabled):hover { background: #dfe3e9 !important; }
-html[data-theme='light'] .automation-page .ui-pagination .ui-pagination-item-active { background: #cfd4dc !important; }
-html[data-theme='light'] .automation-page .ui-pagination .ui-pagination-item-active a { color: #343947 !important; }
-html[data-theme='light'] .automation-page .ui-pagination .ui-pagination-options .ui-select { background: #edf0f4 !important; color: #4b5563 !important; }
-html[data-theme='light'] .automation-page .ui-pagination .ui-select:hover { background: #dfe3e9 !important; }
-
-.automation-page.is-schedules,
+.automation-page,
 .automation-schedule-modal,
 .automation-schedule-delete-modal {
-  --schedule-toolbar: #1a1d27;
-  --schedule-surface: #242836;
-  --schedule-row: #2a2f3b;
-  --schedule-hover: #303645;
-  --schedule-border: rgba(196, 203, 218, .1);
-  --schedule-text: #e4e7eb;
-  --schedule-muted: #a0a9ba;
-  --schedule-subtle: #8791a5;
-  --schedule-active: #65d5a3;
-  --schedule-danger: #ff7a7a;
-  --schedule-danger-soft: rgba(255, 122, 122, .1);
+  --schedule-toolbar: var(--ui-bg);
+  --schedule-surface: var(--ui-panel);
+  --schedule-row: var(--ui-elevated);
+  --schedule-hover: color-mix(in srgb, var(--ui-text) 6%, var(--ui-panel));
+  --schedule-border: var(--ui-border);
+  --schedule-text: var(--ui-text);
+  --schedule-muted: var(--ui-muted);
+  --schedule-subtle: var(--ui-muted);
+  --schedule-active: var(--ui-success);
+  --schedule-danger: var(--ui-error);
+  --schedule-danger-soft: color-mix(in srgb, var(--ui-error) 10%, var(--ui-panel));
   --schedule-link: var(--ui-action-link);
-  --schedule-cron: #c4b5fd;
-  --schedule-cron-soft: rgba(167, 139, 250, .12);
-  --schedule-interval: #67d8cf;
-  --schedule-interval-soft: rgba(45, 212, 191, .1);
 }
+.automation-page { display:flex; flex:1; flex-direction:column; width:100%; height:100%; min-width:0; min-height:0; overflow:hidden; background:var(--ontology-bg); }
+.automation-page :is(button,input) { font-family:inherit; }
+.automation-header { display:flex; flex:none; align-items:center; justify-content:space-between; gap:16px; min-height:44px; padding:6px 20px; border-bottom:1px solid var(--ontology-border); background:var(--ontology-panel); }
+.automation-breadcrumb,.automation-header-actions { display:flex; align-items:center; gap:12px; }
+.automation-breadcrumb { color:var(--ontology-muted); font-size:12px; }
+.automation-breadcrumb > .ui-icon { color:var(--ontology-text); font-size:18px; }
+.automation-breadcrumb strong { color:var(--ontology-text); font-weight:600; }
+.automation-connection { display:inline-flex; align-items:center; gap:6px; color:var(--ontology-muted); font-size:11px; }
+.automation-connection i,.automation-schedule-status i { width:5px; height:5px; border-radius:50%; background:currentColor; }
+.automation-connection.is-live i { color:var(--ui-success); }
+.automation-workspace { display:flex; flex:1; min-width:0; min-height:0; }
+.automation-sidebar { display:flex; flex:none; flex-direction:column; width:210px; padding:20px 12px 12px; overflow:auto; border-right:1px solid var(--ontology-border); background:var(--ontology-panel); }
+.automation-sidebar-title { margin:0 10px 9px; color:var(--ontology-muted); font-size:11px; font-weight:600; }
+.automation-sidebar nav { display:flex; flex-direction:column; gap:3px; margin-bottom:26px; }
+.automation-sidebar nav :is(a,button),.automation-ontology-link { display:flex; align-items:center; gap:10px; min-height:34px; padding:7px 10px; border:0; border-radius:3px; background:transparent; color:var(--ontology-muted); font:inherit; font-size:12px; text-align:left; text-decoration:none; cursor:pointer; }
+.automation-sidebar nav :is(a,button):hover,.automation-ontology-link:hover { background:var(--ontology-hover); color:var(--ontology-text); }
+.automation-sidebar nav .is-active { background:var(--ontology-hover); color:var(--ontology-text); font-weight:600; }
+.automation-sidebar nav :is(a,button) > .ui-icon { font-size:15px; }
+.automation-domain-mark { display:grid; flex:none; place-items:center; width:18px; height:18px; border:1px solid var(--ontology-control-border); border-radius:3px; font-size:10px; font-weight:500; }
+.automation-ontology-link { margin-top:auto; border-top:1px solid var(--ontology-border); border-radius:0; padding-top:14px; }
+.automation-ontology-link > span:nth-child(2) { flex:1; }
+.automation-main { display:flex; flex:1; flex-direction:column; min-width:0; min-height:0; padding:14px 24px 12px; overflow:hidden; }
+.automation-page-heading { display:flex; flex:none; align-items:center; justify-content:space-between; gap:24px; margin-bottom:12px; }
+.automation-eyebrow { color:var(--ontology-muted); font-size:11px; }
+.automation-page-heading h1 { margin:2px 0 3px; font-size:20px; font-weight:600; line-height:1.3; }
+.automation-page-heading p { margin:0; color:var(--ontology-muted); font-size:12px; }
+.automation-summary { display:flex; gap:28px; }
+.automation-summary > div { display:flex; flex-direction:column; gap:5px; min-width:48px; }
+.automation-summary strong { font-size:22px; font-weight:500; font-variant-numeric:tabular-nums; line-height:1.2; }
+.automation-summary span { color:var(--ontology-muted); font-size:11px; }
+.automation-toolbar { display:flex; flex:none; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; }
+.automation-search { width:300px; max-width:100%; }
+.automation-data-type-select { min-width:160px; }
+.automation-status-filters { display:flex; gap:2px; padding:2px; border:1px solid var(--ontology-border); border-radius:3px; background:var(--ontology-panel); }
+.automation-status-filters button { padding:4px 12px; border:0; border-radius:2px; background:transparent; color:var(--ontology-muted); font-size:12px; cursor:pointer; }
+.automation-status-filters button:is(:hover,.is-active) { background:var(--ontology-hover); color:var(--ontology-text); }
+.automation-filter-option { display:flex; align-items:center; gap:8px; }
+.automation-load-alert { flex:none; margin-bottom:12px; font-size:12px; }
+.automation-table-card,.automation-task-panel { display:flex; flex:1; flex-direction:column; min-height:0; overflow:hidden; border:1px solid var(--ontology-border); border-radius:3px; background:var(--ontology-panel); box-shadow:none; }
+.automation-table-card > .ui-card-body,.automation-table-card .ui-spin-nested-loading,.automation-table-card .ui-spin-container,.automation-table-card .ui-table-wrapper,.automation-task-panel > .ui-card-body { display:flex; flex:1; flex-direction:column; width:100%; height:100%; min-height:0; }
+.automation-table-card .ui-table { flex:1; min-height:0; overflow:hidden; background:transparent; }
+.automation-table-card .ui-table-container { display:flex; flex-direction:column; height:100%; min-height:0; }
+.automation-table-card .ui-table-header { flex:none; }
+.automation-table-card .ui-table-body { flex:1; min-height:0; overflow-y:auto; }
+.automation-table-card .ui-table-thead > tr > th { padding:9px 14px; background:var(--ontology-bg); color:var(--ontology-muted); font-size:11px; font-weight:500; }
+.automation-table-card .ui-table-tbody > tr > td { padding:13px 14px; border-color:var(--ontology-border); font-size:12px; }
+.automation-table-card .ui-table-tbody > tr:hover > td { background:var(--ontology-hover); }
+.automation-table-card .ui-table-pagination { flex:none; margin:10px 14px !important; }
+.automation-name { display:flex; align-items:center; gap:10px; min-width:0; }
+.automation-name > .ui-icon { display:grid; flex:none; place-items:center; width:28px; height:28px; border:1px solid var(--ontology-control-border); border-radius:3px; color:var(--ontology-muted); font-size:15px; }
+.automation-name > span { min-width:0; }
+.automation-name strong { font-size:12px; font-weight:600; }
+.automation-name :is(strong,small) { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:320px; }
+.automation-name small { margin-top:4px; color:var(--ontology-muted); font-size:11px; }
+.automation-table-card .ui-tag { padding:1px 6px; border:1px solid var(--ontology-control-border); background:transparent; color:var(--ontology-muted); font-size:11px; }
+.automation-trigger { display:flex; flex-direction:column; gap:4px; }
+.automation-trigger > span { color:var(--ontology-muted); font-size:11px; }
+.automation-trigger code,.automation-code { font-family:'SFMono-Regular',Consolas,monospace; font-size:11px; overflow-wrap:anywhere; }
+.automation-node-path { display:flex; align-items:center; gap:6px; max-width:260px; }
+.automation-node-path > span:not(.ui-icon) { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:3px 6px; border:1px solid var(--ontology-control-border); border-radius:3px; font-size:11px; }
+.automation-node-path > .ui-icon,.automation-muted { color:var(--ontology-muted); }
+.automation-node-path > small { flex:none; color:var(--ontology-muted); }
+.automation-schedule-status { display:inline-flex; align-items:center; gap:6px; color:var(--schedule-muted); }
+.automation-schedule-status.is-enabled { color:var(--schedule-active); }
+.automation-main.is-schedules .automation-table-card { min-height:180px; }
+.automation-task-panel { border:0; }
+.automation-detail .ui-descriptions { margin-bottom:24px; }
 
-.automation-page.is-schedules { color: var(--schedule-text); }
-.is-schedules .automation-table-card .ui-table,
-.is-schedules .automation-table-card .ui-table-container { border-radius: 0 0 8px 8px; overflow: hidden; background: var(--schedule-surface); }
-.is-schedules .automation-tabs { border-radius: 8px 8px 0 0; background: var(--schedule-toolbar); }
-.automation-page.is-schedules .automation-table-card { border-radius: 0 0 8px 8px; background: transparent; }
-.is-schedules .automation-table-card .ui-table-pagination { margin: 12px 14px !important; }
-
-.automation-schedule-toolbar {
-  flex: none;
-  padding: 12px 14px 10px;
-  background: var(--schedule-surface);
-}
-
-.automation-schedule-caption {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 10px;
-  color: var(--schedule-subtle);
-  font-size: 10px;
-}
-
-.automation-schedule-connection,
-.automation-schedule-status { display: inline-flex; flex: none; align-items: center; gap: 6px; }
-.automation-schedule-connection i,
-.automation-schedule-status i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
-.automation-schedule-connection.is-live,
-.automation-schedule-status.is-enabled { color: var(--schedule-active); }
-.automation-schedule-toolbar .ui-segmented { padding: 3px; background: rgba(135, 145, 165, .08); font-size: 12px; }
-.automation-schedule-toolbar .ui-segmented-item { color: var(--schedule-muted); }
-.automation-schedule-toolbar .ui-segmented-item-label { min-height: 28px; line-height: 28px; }
-.automation-schedule-toolbar .ui-segmented-item-selected,
-.automation-schedule-toolbar .ui-segmented-thumb { background: var(--schedule-hover); color: var(--schedule-text); box-shadow: none; }
-.automation-schedule-toolbar small { margin-left: 5px; color: var(--schedule-subtle); font-size: 10px; font-variant-numeric: tabular-nums; }
-
-.is-schedules .automation-table-card .ui-table-tbody > tr > td {
-  padding: 3px 10px;
-  border: 0;
-  background: transparent !important;
-}
-
-.automation-schedule-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px 20px;
-  padding: 12px 14px;
-  border: 1px solid var(--schedule-border);
-  border-left: 2px solid var(--schedule-subtle);
-  border-radius: 6px;
-  background: var(--schedule-row);
-  transition: background 150ms ease, border-color 150ms ease;
-}
-
-.automation-schedule-row.is-enabled { border-left-color: var(--schedule-active); }
-.automation-schedule-row:hover { background: var(--schedule-hover); border-color: rgba(138, 180, 255, .35); }
-.automation-schedule-main { display: flex; min-width: 0; align-items: center; gap: 10px; }
-.automation-schedule-icon { display: inline-flex; flex: none; color: #8ab4ff; font-size: 18px; }
-.automation-schedule-row.is-paused .automation-schedule-icon { color: var(--schedule-subtle); }
-.automation-schedule-heading { flex: 1; min-width: 0; }
-.automation-schedule-title,
-.automation-schedule-heading > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.automation-schedule-title { max-width: 100%; padding: 0; border: 0; border-radius: 2px; background: transparent; color: var(--schedule-text); font: inherit; font-size: 12px; font-weight: 600; line-height: 1.35; text-align: left; cursor: pointer; }
-.automation-schedule-title:focus-visible { outline: 2px solid var(--ui-focus-ring); outline-offset: 3px; }
-.automation-schedule-heading > span { margin-top: 2px; color: var(--schedule-muted); font-size: 10px; line-height: 1.4; }
-.automation-schedule-status { min-width: 66px; color: var(--schedule-subtle); font-size: 10px; }
-.automation-schedule-meta { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 8px 16px; color: var(--schedule-muted); font-size: 10px; line-height: 20px; }
-.automation-schedule-domain { display: inline-flex; flex: none; align-items: center; gap: 6px; color: var(--schedule-muted); font-size: 10px; }
-.automation-schedule-domain .automation-domain-initial { width: 16px; height: 16px; border-radius: 4px; font-size: 8px; }
-.automation-schedule-trigger { display: inline-flex; min-width: 0; align-items: center; gap: 7px; padding: 1px 7px; border-radius: 4px; color: var(--schedule-cron); background: var(--schedule-cron-soft); }
-.automation-schedule-trigger.is-interval { color: var(--schedule-interval); background: var(--schedule-interval-soft); }
-.automation-schedule-trigger > span { font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
-.automation-schedule-trigger code { max-width: 320px; overflow: hidden; color: inherit; font-family: inherit; font-size: 10px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
-.automation-schedule-updated { margin-left: auto; color: var(--schedule-subtle); }
-.automation-schedule-source { color: var(--schedule-subtle); }
-.automation-schedule-source.is-linked { color: var(--schedule-link); text-decoration: none; text-underline-offset: 3px; }
-.automation-schedule-source.is-linked:hover,
-.automation-schedule-source.is-linked:focus-visible { color: var(--schedule-link); text-decoration: underline; }
-.automation-schedule-source.is-linked:focus-visible { outline: 2px solid var(--ui-focus-ring); outline-offset: 3px; border-radius: 2px; }
-.automation-schedule-actions { display: flex; grid-column: 2; grid-row: 1 / 3; min-width: 30px; align-items: center; justify-content: flex-end; }
-.automation-schedule-actions .ui-switch { background: #555e6f; }
-.automation-schedule-actions .ui-switch-checked { background: #3d9c77; }
-.automation-schedule-actions .ui-switch:focus-visible { outline: 2px solid var(--ui-focus-ring); outline-offset: 3px; }
-.is-schedules .automation-table-card .ui-empty { margin: 56px 0; }
-.is-schedules .automation-table-card .ui-empty-description { color: var(--schedule-muted); font-size: 12px; }
-
-.automation-schedule-modal-root .ui-modal-mask { background: rgba(9, 12, 19, .65); backdrop-filter: blur(3px); }
+.automation-schedule-modal-root .ui-modal-mask { background: rgba(9, 12, 19, .65);  }
 .automation-schedule-delete-root .ui-modal-mask { background: rgba(9, 12, 19, .36); }
 .automation-schedule-modal,
 .automation-schedule-delete-modal { padding-bottom: 0; }
@@ -529,7 +94,7 @@ html[data-theme='light'] .automation-page .ui-pagination .ui-select:hover { back
   padding: 0;
   overflow: hidden;
   border: 1px solid var(--schedule-border);
-  border-radius: 12px;
+  border-radius: 3px;
   background: var(--schedule-surface);
   box-shadow: 0 24px 80px rgba(0, 0, 0, .35);
 }
@@ -539,12 +104,12 @@ html[data-theme='light'] .automation-page .ui-pagination .ui-select:hover { back
 .automation-schedule-modal .ui-modal-body,
 .automation-schedule-delete-modal .ui-modal-body { min-height: 0; overflow-y: auto; padding: 22px 24px; }
 .automation-schedule-modal-heading { display: flex; min-width: 0; align-items: flex-start; gap: 12px; }
-.automation-schedule-modal-mark { display: grid; flex: none; width: 36px; height: 36px; place-items: center; border-radius: 9px; background: rgba(138, 180, 255, .12); color: #8ab4ff; font-size: 19px; }
+.automation-schedule-modal-mark { display: grid; flex: none; width: 36px; height: 36px; place-items: center; border-radius: 3px; background: var(--schedule-row); color: var(--schedule-muted); font-size: 19px; }
 .automation-schedule-modal-heading-copy { flex: 1; min-width: 0; }
 .automation-schedule-modal-eyebrow { display: block; margin-bottom: 4px; color: var(--schedule-subtle); font-size: 9px; font-weight: 600; letter-spacing: .1em; }
 .automation-schedule-modal-heading h3 { margin: 0; color: var(--schedule-text); font-size: 15px; font-weight: 600; line-height: 22px; overflow-wrap: anywhere; }
 .automation-schedule-modal-actions { display: flex; flex: none; align-items: center; gap: 3px; }
-.automation-schedule-modal-actions .ui-btn { width: 30px; height: 30px; padding: 0; border-radius: 6px; }
+.automation-schedule-modal-actions .ui-btn { width: 30px; height: 30px; padding: 0; border-radius: 3px; }
 .automation-schedule-modal-actions .ui-btn-text:not(.ui-btn-dangerous),
 .automation-schedule-delete-heading > .ui-btn { color: var(--schedule-muted); }
 .automation-schedule-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 24px; }
@@ -565,8 +130,8 @@ html[data-theme='light'] .automation-page .ui-pagination .ui-select:hover { back
 .automation-schedule-status-copy { min-width: 0; }
 .automation-schedule-status-copy > span { display: block; color: var(--schedule-text); font-size: 12px; font-weight: 500; line-height: 20px; }
 .automation-schedule-status-copy > small { display: block; margin-top: 2px; color: var(--schedule-subtle); font-size: 11px; line-height: 17px; }
-.automation-schedule-status-control .ui-switch { flex: none; min-width: 36px; height: 20px; background: #555e6f; box-shadow: none; }
-.automation-schedule-status-control .ui-switch-checked { background: #3d9c77; }
+.automation-schedule-status-control .ui-switch { flex: none; min-width: 36px; height: 20px; background: var(--schedule-muted); box-shadow: none; }
+.automation-schedule-status-control .ui-switch-checked { background: var(--schedule-active); }
 .automation-schedule-status-control .automation-schedule-status-switch .ui-switch-handle { top: 50%; width: 16px; height: 16px; transform: translateY(-50%); }
 .automation-schedule-status-control .ui-switch-checked .ui-switch-handle { inset-inline-start: calc(100% - 18px); }
 .automation-schedule-status-control .ui-switch-inner { display: none; }
@@ -598,13 +163,13 @@ html[data-theme='light'] .automation-page .ui-pagination .ui-select:hover { back
 .automation-schedule-delete-modal .ui-modal-header { padding-bottom: 0; }
 .automation-schedule-delete-modal .ui-modal-body { padding-top: 0; }
 .automation-schedule-delete-heading { display: flex; align-items: flex-start; gap: 12px; }
-.automation-schedule-delete-mark { display: grid; flex: none; width: 42px; height: 42px; place-items: center; border-radius: 11px; background: var(--schedule-danger-soft); color: var(--schedule-danger); font-size: 20px; }
+.automation-schedule-delete-mark { display: grid; flex: none; width: 42px; height: 42px; place-items: center; border-radius: 3px; background: var(--schedule-danger-soft); color: var(--schedule-danger); font-size: 20px; }
 .automation-schedule-delete-heading-copy { flex: 1; min-width: 0; }
 .automation-schedule-delete-heading > .ui-btn { flex: none; width: 26px; height: 26px; padding: 0; }
 .automation-schedule-delete-eyebrow { display: block; margin-bottom: 5px; color: var(--schedule-danger); font-size: 9px; font-weight: 600; letter-spacing: .1em; }
 .automation-schedule-delete-heading h3 { margin: 0; color: var(--schedule-text); font-size: 18px; font-weight: 600; line-height: 25px; }
 .automation-schedule-delete-modal p { margin: 18px 0; color: var(--schedule-muted); font-size: 13px; line-height: 21px; }
-.automation-schedule-delete-target { display: flex; min-width: 0; align-items: flex-start; gap: 10px; padding: 14px; border: 1px solid var(--schedule-border); border-radius: 8px; background: var(--schedule-row); }
+.automation-schedule-delete-target { display: flex; min-width: 0; align-items: flex-start; gap: 10px; padding: 14px; border: 1px solid var(--schedule-border); border-radius: 3px; background: var(--schedule-row); }
 .automation-schedule-delete-target > .ui-icon { flex: none; margin-top: 2px; color: var(--schedule-subtle); font-size: 17px; }
 .automation-schedule-delete-target > div { min-width: 0; }
 .automation-schedule-delete-target strong { display: block; color: var(--schedule-text); font-size: 13px; font-weight: 600; line-height: 20px; overflow-wrap: anywhere; }
@@ -614,75 +179,8 @@ html[data-theme='light'] .automation-page .ui-pagination .ui-select:hover { back
 .automation-schedule-delete-footer .ui-btn-dangerous { border-color: #d95762 !important; background: #d95762 !important; color: #fff; font-weight: 600; box-shadow: none; }
 .automation-schedule-delete-footer .ui-btn-dangerous:hover { border-color: #e96a74 !important; background: #e96a74 !important; color: #fff; }
 
-.automation-page.is-schedules.is-light,
-.automation-schedule-modal.is-light,
-.automation-schedule-delete-modal.is-light {
-  --schedule-toolbar: #fff;
-  --schedule-surface: #fff;
-  --schedule-row: #f7f8fa;
-  --schedule-hover: #edf0f4;
-  --schedule-border: rgba(71, 85, 105, .12);
-  --schedule-text: #172033;
-  --schedule-muted: #596579;
-  --schedule-subtle: #758095;
-  --schedule-active: #23845c;
-  --schedule-danger: #c53948;
-  --schedule-danger-soft: rgba(197, 57, 72, .08);
-  --schedule-cron: #7c3aed;
-  --schedule-cron-soft: rgba(124, 58, 237, .08);
-  --schedule-interval: #0f766e;
-  --schedule-interval-soft: rgba(15, 118, 110, .08);
-}
 
-
-.is-schedules.is-light .automation-filters .ui-select,
-.is-schedules.is-light .automation-filters .ui-input-affix-wrapper,
-.is-schedules.is-light .automation-filters .ui-btn-default,
-.is-schedules.is-light .ui-pagination .ui-pagination-item,
-.is-schedules.is-light .ui-pagination .ui-pagination-prev,
-.is-schedules.is-light .ui-pagination .ui-pagination-next { background: #edf0f4 !important; color: var(--schedule-text) !important; }
-.is-schedules.is-light .automation-filters .ui-select:hover,
-.is-schedules.is-light .automation-filters .ui-input-affix-wrapper:hover,
-.is-schedules.is-light .automation-filters .ui-btn-default:hover,
-.is-schedules.is-light .ui-pagination .ui-pagination-item-active { background: #dfe3e9 !important; }
-.is-schedules.is-light .automation-tabs .ui-segmented-item { color: var(--schedule-muted); }
-.is-schedules.is-light .automation-tabs .ui-segmented-item-selected,
-.is-schedules.is-light .automation-tabs .ui-segmented-thumb,
-.is-schedules.is-light .automation-tabs .ui-segmented-item:hover { background: var(--schedule-hover); color: var(--schedule-text); }
-.is-schedules.is-light .ui-pagination .ui-pagination-item-active a { color: var(--schedule-text) !important; }
-
-@media (max-width: 700px) {
-  .automation-schedule-row { gap: 10px; padding: 10px; }
-  .automation-schedule-meta { grid-column: 1 / -1; gap: 6px 12px; }
-  .automation-schedule-actions { grid-row: 1; min-width: 0; gap: 4px; }
-  .automation-schedule-status { min-width: 0; }
-  .automation-schedule-trigger code { max-width: 210px; }
-  .automation-schedule-updated { margin-left: 0; }
-  .automation-schedule-source:not(.is-linked) { display: none; }
-}
-
-@media (max-width: 520px) {
-  .automation-schedule-fields { grid-template-columns: minmax(0, 1fr); gap: 16px; }
-  .automation-schedule-modal .ui-modal-header,
-  .automation-schedule-modal .ui-modal-body,
-  .automation-schedule-modal .ui-modal-footer { padding: 18px; }
-  .automation-schedule-modal-mark { display: none; }
-  .automation-schedule-modal-heading h3 { font-size: 16px; line-height: 22px; }
-}
-
-@media (max-width: 900px) {
-  .automation-header,
-  .automation-tabs { align-items: flex-start; flex-direction: column; }
-  .automation-page .automation-filters { margin-left: 0; max-width: 100%; }
-  .automation-search { width: min(250px, 100%); }
-}
-
-@media (max-width: 600px) {
-  .automation-header > .ui-space { width: 100%; }
-  .automation-header > .ui-space .ui-btn { flex: 1; }
-}
-
-.automation-transfer-schedules { margin-block: 0 12px; max-height: 180px; overflow: auto; border: 1px solid var(--ui-border); border-radius: 5px; background: var(--ui-panel); }
+.automation-transfer-schedules { flex: none; margin-block: 0 14px; max-height: 220px; overflow: auto; border: 1px solid var(--ui-border); border-radius: 3px; background: var(--ui-panel); }
 .automation-transfer-schedules > header { display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--ui-border); }
 .automation-transfer-schedules h3 { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 13px; }
 .automation-transfer-schedules ul { margin: 0; padding: 0; list-style: none; }
@@ -694,3 +192,133 @@ html[data-theme='light'] .automation-page .ui-pagination .ui-select:hover { back
 .automation-transfer-schedules li > section { flex: 1 0 100%; }
 .automation-transfer-schedules ol { margin: 0; padding: 0; list-style: none; }
 .automation-transfer-schedules ol > li { justify-content: flex-start; padding: 4px 0; font-size: 12px; }
+
+
+@media(max-width:1000px) {
+  .automation-sidebar { width:180px; }
+  .automation-main { padding:14px 18px 12px; }
+  .automation-summary { gap:18px; }
+}
+@media(max-width:700px) {
+  .automation-header { padding:10px 14px; }
+  .automation-connection { display:none; }
+  .automation-workspace { flex-direction:column; }
+  .automation-sidebar { flex-direction:row; align-items:center; width:100%; padding:6px 10px; border-right:0; border-bottom:1px solid var(--ontology-border); gap:12px; overflow-x:auto; }
+  .automation-sidebar-title,.automation-ontology-link { display:none; }
+  .automation-sidebar nav { flex-direction:row; flex:none; margin:0; }
+  .automation-sidebar nav[aria-label="Filter by product domain"] { border-left:1px solid var(--ontology-border); padding-left:10px; }
+  .automation-sidebar nav :is(a,button) { white-space:nowrap; }
+  .automation-main { padding:12px 14px 10px; }
+  .automation-page-heading { align-items:flex-start; gap:16px; margin-bottom:10px; }
+  .automation-summary { gap:12px; }
+  .automation-summary strong { font-size:18px; }
+  .automation-summary > div { min-width:35px; }
+  .automation-page-heading p { max-width:240px; }
+  .automation-toolbar { flex-wrap:wrap; }
+  .automation-search { flex:1; min-width:170px; }
+  .automation-status-filters button { padding-inline:8px; }
+  .automation-schedule-fields { grid-template-columns:minmax(0,1fr); }
+}
+@media(prefers-reduced-motion:reduce) { .automation-page * { scroll-behavior:auto; } }
+
+.automation-sidebar { width:190px; }
+.automation-node-editor { display:grid; grid-template-columns:minmax(0,1.3fr) minmax(0,1fr); gap:24px; }
+.automation-node-fields { display:flex; flex-direction:column; gap:12px; }
+.automation-node-field { padding:14px; border:1px solid var(--ontology-border); border-radius:3px; }
+.automation-node-field header { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+.automation-node-field label { display:flex; flex-direction:column; gap:5px; font-size:11px; color:var(--ontology-muted); }
+.automation-node-config { display:grid; grid-template-columns:110px 1fr; gap:10px; margin-top:10px; }
+.automation-node-preview { padding:18px; background:var(--ontology-bg); border:1px solid var(--ontology-border); border-radius:3px; }
+.automation-workflow-path { list-style:none; margin:16px 0 0; padding:0; }
+.automation-workflow-path li { position:relative; display:flex; align-items:flex-start; gap:12px; padding:0 0 28px; }
+.automation-workflow-path li:not(:last-child)::after { content:''; position:absolute; top:28px; bottom:0; left:13px; width:1px; background:var(--ontology-control-border); }
+.automation-step-number { display:grid; flex:none; place-items:center; width:28px; height:28px; border:1px solid var(--ontology-control-border); border-radius:3px; color:var(--ontology-muted); font-size:11px; }
+.automation-workflow-path strong { display:block; font-size:12px; font-weight:500; }
+.automation-workflow-path small { display:block; margin-top:5px; font-size:11px; color:var(--ontology-muted); }
+.automation-rule-preview { grid-column:1/-1; padding:12px 14px; border:1px solid var(--ontology-border); background:var(--ontology-bg); }
+.automation-rule-preview span { display:block; margin-bottom:7px; color:var(--ontology-muted); font-size:10px; }
+.automation-runs-workspace { display:flex; flex:1; flex-direction:column; min-height:0; gap:10px; }
+.automation-run-stats { display:grid; grid-template-columns:repeat(4,1fr); border:1px solid var(--ontology-border); border-radius:3px; background:var(--ontology-panel); }
+.automation-run-stats button { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 14px; border:0; border-right:1px solid var(--ontology-border); background:transparent; color:var(--ontology-text); cursor:pointer; }
+.automation-run-stats button:last-child { border-right:0; }
+.automation-run-stats button[aria-pressed='true'] { background:var(--ontology-hover); }
+.automation-run-stats span { font-size:12px; text-transform:capitalize; color:var(--ontology-muted); }
+.automation-run-stats strong { font-size:20px; font-weight:500; }
+.automation-runs-workspace > .automation-toolbar { justify-content:flex-start; margin:0; flex-wrap:wrap; }
+.automation-runs-workspace > .automation-toolbar > .ui-select { min-width:150px; margin-left:auto; }
+.automation-runs-body { display:flex; flex:1; min-height:0; gap:16px; }
+.automation-run-list { flex:1; min-width:0; overflow:auto; border:1px solid var(--ontology-border); border-radius:3px; background:var(--ontology-panel); }
+.automation-run-list .ui-table-thead > tr > th { background:var(--ontology-bg); color:var(--ontology-muted); font-size:11px; font-weight:500; }
+.automation-run-list .ui-table-tbody > tr > td { padding:14px 12px; border-color:var(--ontology-border); font-size:12px; }
+.automation-run-list tr.is-selected > td { background:var(--ontology-hover); }
+.automation-record-link { display:block; max-width:260px; padding:0; border:0; background:transparent; color:var(--ontology-text); text-align:left; cursor:pointer; }
+.automation-record-link strong { display:block; font-weight:500; }
+.automation-record-link small { display:block; overflow:hidden; margin-top:5px; color:var(--ontology-muted); font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
+.automation-progress { display:flex; flex-direction:column; gap:6px; width:65px; font-size:11px; color:var(--ontology-muted); }
+.automation-progress progress { width:65px; height:3px; accent-color:var(--ontology-primary); }
+.automation-run-inspector { display:flex; flex-direction:column; width:430px; max-width:45%; min-height:0; padding:18px; overflow:auto; border:1px solid var(--ontology-border); border-radius:3px; background:var(--ontology-panel); }
+.automation-run-inspector > header { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+.automation-run-inspector h2 { margin:5px 0 16px; font-size:16px; font-weight:500; }
+.automation-run-facts { display:grid; grid-template-columns:1fr 1fr; gap:18px 12px; margin:8px 0 20px; }
+.automation-run-facts div { min-width:0; }
+.automation-run-facts dt { margin-bottom:6px; color:var(--ontology-muted); font-size:10px; }
+.automation-run-facts dd { margin:0; font-size:12px; overflow-wrap:anywhere; }
+.automation-run-facts code { font-size:10px; }
+.automation-inspector-section { margin-top:16px; padding-top:16px; border-top:1px solid var(--ontology-border); }
+.automation-inspector-section h3 { display:flex; justify-content:space-between; margin:0 0 12px; font-size:12px; font-weight:600; }
+.automation-inspector-section h3 small { color:var(--ontology-muted); font-size:10px; font-weight:400; }
+.automation-inspector-section > .ui-select { width:100%; margin-bottom:8px; }
+.automation-logs .workspace-dock-log-list { display:flex; flex-direction:column; gap:6px; margin-top:10px; overflow:auto; overscroll-behavior:contain; }
+.automation-logs .workspace-dock-log-row { display:block; color:#C4CBDA; font-size:10px; line-height:1.5; }
+.automation-logs .workspace-dock-log-row code { display:block; color:inherit; font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace; font-size:inherit; letter-spacing:normal; font-variant-numeric:tabular-nums; white-space:pre-wrap; word-break:break-word; }
+.automation-logs .workspace-dock-log-bracket { color:rgba(255,255,255,.38); }
+.automation-logs .workspace-dock-log-time { color:#7DD3FC; }
+.automation-logs .workspace-dock-log-level { color:#8AB4FF; font-weight:600; }
+.automation-logs .workspace-dock-log-level.is-debug { color:#BFA8FF; }
+.automation-logs .workspace-dock-log-level.is-info { color:#65D5A3; }
+.automation-logs .workspace-dock-log-level.is-warning { color:#F6C35B; }
+.automation-logs .workspace-dock-log-level:is(.is-error,.is-critical) { color:#F87171; }
+.automation-logs .workspace-dock-log-process { color:#C4A7FF; font-weight:500; }
+.automation-logs .workspace-dock-download-bar { display:inline-flex; align-items:center; height:1em; overflow:hidden; line-height:1; vertical-align:middle; white-space:nowrap; }
+.automation-logs .workspace-dock-download-cell { display:inline-block; flex:0 0 1ch; width:1ch; height:.75em; overflow:hidden; color:transparent; background:rgba(255,255,255,.14); }
+.automation-logs .workspace-dock-download-cell.is-filled { background:#fff; }
+@media(max-width:1000px) { .automation-runs-body.has-detail { flex-direction:column; overflow:auto; } .automation-run-inspector { width:100%; max-width:none; min-height:360px; flex:none; } .automation-run-list { min-height:280px; } }
+@media(max-width:700px) { .automation-sidebar { width:100%; } .automation-run-stats button { flex-direction:column; align-items:flex-start; padding:10px; } .automation-node-editor { grid-template-columns:1fr; } .automation-node-preview { display:none; } }
+.automation-workflow-modal .ui-modal-content { display:flex; flex-direction:column; max-height:calc(100dvh - 64px); overflow:hidden; border-radius:3px; }
+.automation-workflow-modal .ui-modal-header,.automation-workflow-modal .ui-modal-footer { flex:none; }
+.automation-workflow-modal .ui-modal-body { min-height:0; overflow:auto; }
+.automation-workflow-modal .automation-form { display:grid; grid-template-columns:1fr 1fr; gap:12px 20px; }
+.automation-workflow-modal .ui-form-item { margin-bottom:0; }
+.automation-workflow-modal .ui-form-item:nth-child(3),.automation-workflow-modal .ui-form-item:nth-child(4) { grid-column:1/-1; }
+.automation-node-fields { max-height:350px; overflow:auto; padding-right:8px; }
+.automation-node-preview { align-self:start; }
+.automation-run-actions { display:flex; gap:8px; margin-bottom:14px; }
+@media(max-width:700px) { .automation-workflow-modal .automation-form { grid-template-columns:1fr; } .automation-workflow-modal .ui-form-item { grid-column:1/-1; } }
+.automation-run-inspector { flex:2; width:auto; max-width:none; padding:12px 14px; overflow:hidden; }
+.automation-run-inspector > header { flex:none; align-items:center; }
+.automation-run-inspector h2 { margin:0; font-size:14px; }
+.automation-run-inspector > header > div { min-width:0; }
+.automation-run-inspector h2 { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.automation-run-actions { flex:none; gap:6px; margin:8px 0; }
+.automation-run-actions .ui-btn { min-height:24px; height:24px; padding:2px 8px; font-size:11px; }
+.automation-run-meta { display:flex; flex:none; align-items:center; flex-wrap:wrap; gap:6px 14px; padding:6px 0; color:var(--ontology-muted); font-size:11px; }
+.automation-run-metadata { position:relative; margin-left:auto; }
+.automation-run-metadata summary { cursor:pointer; color:var(--ontology-link); }
+.automation-run-metadata .automation-run-facts { position:absolute; right:0; z-index:2; width:360px; max-width:70vw; max-height:220px; overflow:auto; margin:6px 0 0; padding:12px; gap:12px; border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-panel); box-shadow:0 4px 12px #0003; }
+.automation-run-history { display:flex; flex:none; align-items:center; flex-wrap:wrap; gap:8px; padding:8px 0; border-top:1px solid var(--ontology-border); }
+.automation-run-history h3 { margin:0; font-size:12px; }
+.automation-run-history .ui-select { flex:1; min-width:150px; font-size:11px; }
+.automation-run-diff { display:flex; gap:8px; font:11px monospace; }
+.automation-run-diff span:nth-child(1) { color:var(--ui-success); }
+.automation-run-diff span:nth-child(2) { color:var(--ui-warning); }
+.automation-run-diff span:nth-child(3) { color:var(--ui-error); }
+.automation-worker-notices { flex:none; display:flex; flex-direction:column; gap:4px; }
+.automation-worker-notice { display:flex; align-items:center; flex-wrap:wrap; gap:4px 10px; padding:5px 8px; border:1px solid var(--ontology-border); background:var(--ontology-hover); font-size:10px; }
+.automation-worker-notice.is-sync { color:#8ab4ff; }
+.automation-worker-notice.is-download { color:#65d5a3; }
+.automation-worker-notice strong { min-width:54px; font-weight:500; }
+.automation-notice-record { flex:1; min-width:90px; overflow-wrap:anywhere; }
+.automation-worker-notice code { font-size:inherit; }
+.automation-run-inspector .automation-logs { display:flex; flex:1; flex-direction:column; min-height:140px; margin-top:8px; padding-top:0; border:0; overflow:hidden; }
+.automation-logs .workspace-dock-log-list { flex:1; min-height:0; margin-top:0; }
+@media(max-width:1000px) { .automation-run-inspector { flex:none; min-height:500px; } }
