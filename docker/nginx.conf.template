@@ -6,8 +6,11 @@ http {
         '' close;
     }
 
+    resolver 127.0.0.11 valid=10s ipv6=off;
+
     upstream spider_web {
-        server web:8000;
+        zone spider_web 64k;
+        server web:8000 resolve;
     }
 
     client_max_body_size 100m;
