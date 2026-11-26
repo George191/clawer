@@ -33,3 +33,21 @@ def test_reset_removes_only_affected_completion_and_uses_generation_guards():
 def test_active_download_is_not_reset():
     with pytest.raises(RuntimeError,match='Active download'):
         reset_operation({'_id':1,'_meta':{'download_status':'downloading'}},{'assets.file':'bad'})
+
+
+def test_resume_after_reset_commit_requires_replacement_object_check(tmp_path,monkeypatch):
+    import json,sqlite3
+    from unittest.mock import MagicMock
+    from tools import repair_download_resources as repair
+    db=sqlite3.connect(tmp_path/'audit.sqlite')
+    db.execute('CREATE TABLE repairs(collection,identity,paths,reasons,state)')
+    db.execute('INSERT INTO repairs VALUES(?,?,?,?,?)',('source','1',json.dumps({'assets.file':'news/source/id/bad.pdf'}),'{}','planned'));db.commit()
+    mongo=MagicMock()
+    mongo.__getitem__.return_value.find_one.return_value={'_meta':{'download_status':'downloaded'},'assets':{'file':'news/source/id/good.pdf'}}
+    calls=[]
+    def inspect(client,key):calls.append(key)
+    monkeypatch.setattr(repair,'inspect',inspect)
+    repair.verify_repairs(db,mongo,object())
+    assert calls==['news/source/id/good.pdf']
+    assert db.execute('SELECT state FROM repairs').fetchone()[0]=='verified'
+    db.close()

@@ -80,7 +80,7 @@ def reset_operation(doc, invalid):
 
 
 def verify_repairs(db, mongo, client):
-    for collection, identity, paths, state in db.execute("SELECT collection,identity,paths,state FROM repairs WHERE state IN ('planned','reset')").fetchall():
+    for collection, identity, paths, state in db.execute("SELECT collection,identity,paths,state FROM repairs WHERE state IN ('planned','reset')"):
         doc = mongo[collection].find_one({'_id':loads(identity)})
         if not doc: raise RuntimeError('Repaired source disappeared: '+collection+'/'+identity)
         previous=json.loads(paths)
@@ -115,6 +115,10 @@ def worker(directory, shard, sources):
             docs=list(collection.find(query,{'assets':1,'_meta':1}).sort('_id',1).limit(-100).batch_size(100))
             count=checkpoint[2] if checkpoint else 0
             for doc in docs:
+                while doc.get('_meta',{}).get('download_status')=='downloading':
+                    time.sleep(5)
+                    doc=collection.find_one({'_id':doc['_id']})
+                    if not doc:raise RuntimeError('Source disappeared while waiting for its download owner')
                 invalid={}
                 for field,value in strings(doc.get('assets',{})):
                     key=object_key(value)
@@ -153,6 +157,12 @@ def main():
     ctx=multiprocessing.get_context('spawn')
     children=[ctx.Process(target=worker,args=(str(args.journal_dir),n,registered[n::WORKERS])) for n in range(WORKERS)]
     for child in children:child.start()
+    while any(child.exitcode is None for child in children):
+        if any(child.exitcode not in (None,0) for child in children):
+            for child in children:
+                if child.is_alive():child.terminate()
+            break
+        time.sleep(1)
     for child in children:child.join()
     if any(child.exitcode for child in children):raise SystemExit(1)
 
