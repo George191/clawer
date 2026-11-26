@@ -70,3 +70,17 @@ test('Published JSON column actions cannot sort but scalar media URLs remain sor
   menus[1].onClick({ key: 'desc' });
   assert.deepEqual(sorted, [{ field: 'media_url', direction: 'desc' }]);
 });
+
+test('SQL NULL has a muted marker for scalar, JSON and array fields without changing literal values', () => {
+  for (const type of ['text', 'jsonb', 'text[]']) {
+    const [column] = workbench.explorerResultColumns({
+      layout: { columns: [{ field: 'value', visible: true, width: 100 }], layout: { wrap: false } },
+      types: { value: type }, sorts: [], addFilter() {}, openFilter() {}, setSort() {}, clearSorts() {}, filterValue() {},
+    });
+    const nullMarker = descendants(column.render(null)).find(node => node.props?.className === 'flow-explorer-null');
+    assert.equal(nullMarker.props.children, '(Null)');
+    for (const value of ['', 'null', '(Null)']) {
+      assert.ok(!descendants(column.render(value)).some(node => node.props?.className === 'flow-explorer-null'));
+    }
+  }
+});
