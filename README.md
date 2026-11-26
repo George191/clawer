@@ -152,6 +152,8 @@ MongoDB、Redis、MinIO、Kafka 和 PostgreSQL/TimescaleDB 由外部环境提供
 | Kafka | `9092`, `29092` | 采集数据与 ETL 层间消息 |
 | PostgreSQL/TimescaleDB | `5432` | ETL 结构化数据仓库 |
 
+MinIO 分布式存储池的目标配置、磁盘就绪检查及后续扩池步骤见 [基础架构部署说明](infra/minio/README.md)。
+
 ## 快速开始
 
 ### 1. 准备环境

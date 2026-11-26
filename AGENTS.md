@@ -15,6 +15,7 @@ When instructions conflict, follow them in this order:
 
 ## Git-Based Code Deployment
 
+- Do not create new branches. Commit all subsequent work directly to `master`; keep local `master`, remote `master`, and the deployed server commit synchronized.
 - Code changes must follow `git add` → `git commit` → `git push` → server `git pull` → restart the affected containers.
 - Update server code through Git only. Do not deploy by copying source files, using `docker cp`, or editing application code directly on the server.
 - After pulling, rebuild images that contain the changed code before restarting the corresponding containers. Preserve existing deployment environment, mounts, host mappings, and unrelated services.
@@ -31,6 +32,12 @@ When instructions conflict, follow them in this order:
 
 - Use **6 separate OS worker processes** and a **batch size limit of 3,000** for subsequent bulk data migrations.
 - Resume committed checkpoints and preserve existing journals when changing the execution layout. Keep worker ranges disjoint and verify complete coverage.
+
+## Generated Output
+
+- Use only `output/` for runtime output and task artifacts; do not create `outputs/`.
+- Put disposable inspection, test, and build files in the operating system temporary directory and remove them when finished. Do not leave completed task scripts, screenshots, package copies, or build caches in the repository.
+- Preserve active migration checkpoints, journals, and required verification hashes. Delete completed artifacts only after checking their completion evidence and references.
 
 ## Fix Root Causes; Keep Migration Code Out of Production Paths
 

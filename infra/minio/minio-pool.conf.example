@@ -1,0 +1,7 @@
+# All nodes use the same values. Keep actual credentials outside Git.
+# Empty credentials deliberately prevent minio-pool.service from starting.
+MINIO_ROOT_USER=
+MINIO_ROOT_PASSWORD=
+MINIO_VOLUMES="http://minio-p1n{1...4}:9000/mnt/minio/data1/minio"
+MINIO_OPTS="--address :9000 --console-address :9001"
+MINIO_STORAGE_CLASS_STANDARD="EC:2"

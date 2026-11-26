@@ -125,7 +125,7 @@ class ObjectRelationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((row["source_schema"], row["target_schema"]), ("ts_ods", "ts_ods"))
             self.assertIn("Twitter platform", row["description"])
             self.assertIn("account_twitter and tweet_twitter are distinct", row["description"])
-            self.assertIn("outputs/ods_social_media_design_20261012/ODS社交媒体数据表设计与真实示例.md", row["provenance"])
+            self.assertIn("output/ods_social_media_design_20261012/ODS社交媒体数据表设计与真实示例.md", row["provenance"])
             self.assertIn("not a physical uniqueness constraint", row["provenance"])
             source_field, target_field = row["source_fields"][0], row["target_fields"][0]
             for side, field in (("source", source_field), ("target", target_field)):

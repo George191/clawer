@@ -13,10 +13,19 @@
 .env
 *.tsbuildinfo
 
-output/
+output/*
+!output/sec_migration_20261104/
+output/sec_migration_20261104/*
+!output/sec_migration_20261104/build_facts_burst_evidence.py
+!output/sec_migration_20261104/facts_direct_baseline.py
+!output/sec_migration_20261104/patent_direct_baseline.py
+!output/sec_migration_20261104/source_safe_migration.py
+!output/source_dedup_20261109/
+output/source_dedup_20261109/*
+!output/source_dedup_20261109/pg_worker.py
+!output/source_dedup_20261109/progress_table.py
 docs/
 scripts/
-outputs/
 static/
 logs/
 LLM/

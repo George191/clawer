@@ -103,7 +103,7 @@ export const layerColors: Record<string, string> = {
 
 export function schemaColor(key: string): string {
   const normalized = key.trim().toLowerCase();
-  const known = normalized.replace(/^ts_/, '').toUpperCase();
+  const known = normalized.toUpperCase();
   if (layerColors[known]) return layerColors[known];
   if (known === 'DIM') return '#38BDF8';
   let hash = 2166136261;

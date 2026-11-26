@@ -1,0 +1,25 @@
+[Unit]
+Description=MinIO distributed server pool
+Wants=network-online.target
+After=network-online.target
+RequiresMountsFor=/mnt/minio/data1
+AssertPathIsMountPoint=/mnt/minio/data1
+
+[Service]
+Type=notify
+User=minio-user
+Group=minio-user
+EnvironmentFile=/etc/minio/minio-pool.conf
+ExecStartPre=/usr/bin/test -n "${MINIO_ROOT_USER}"
+ExecStartPre=/usr/bin/test -n "${MINIO_ROOT_PASSWORD}"
+ExecStartPre=/usr/bin/test -n "${MINIO_VOLUMES}"
+ExecStartPre=/usr/bin/test -d /mnt/minio/data1/minio
+ExecStartPre=/usr/bin/test -w /mnt/minio/data1/minio
+ExecStart=/usr/local/bin/minio server $MINIO_VOLUMES $MINIO_OPTS
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target
