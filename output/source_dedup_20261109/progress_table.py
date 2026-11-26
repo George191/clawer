@@ -98,7 +98,7 @@ def read_migration(kind):
   need(root_name.startswith('facts-migration-20261116' if kind=='facts' else 'patent-source-safe-20261116'))
   root=base/root_name
   need(owner['root']=='/data/clawer/output/sec_migration_20261104/'+root.name
-    and (owner['workers'],owner['page_size']) in ((6,3000),(5,8000))
+    and (owner['workers'],owner['page_size']) in ((6,3000),(5,8000),(6,8000))
     and owner['mongo_cdc_replay'] is False and fingerprint(owner['source_sha256'])
     and owner['container'].startswith(('source-safe-facts-full-20261116' if kind=='facts' else 'source-safe-patent-20261116'))
     and isinstance(owner['image'],str))

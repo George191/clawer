@@ -166,9 +166,9 @@ def runtime_layout(root, plan):
                                           "sql_batch_size": SQL_BATCH, "plan_sha256": plan["plan_sha256"]})
     value = {key: layout.get(key) for key in ("workers", "page_size", "sql_batch_size", "plan_sha256")}
     require(all(type(value[key]) is int for key in ("workers", "page_size", "sql_batch_size"))
-            and (value["workers"], value["page_size"]) in ((WORKERS, PAGE_SIZE), (5, 8000))
+            and (value["workers"], value["page_size"]) in ((WORKERS, PAGE_SIZE), (5, 8000), (6, 8000))
             and 1 <= value["sql_batch_size"] <= PAGE_SIZE and value["plan_sha256"] == plan["plan_sha256"],
-            "runtime layout requires 6x3000 or 5x8000, with SQL batches at most 3000")
+            "runtime layout requires 6x3000, 5x8000 or 6x8000, with SQL batches at most 3000")
     require(plan["kind"] != "facts" or (value["sql_batch_size"] == SQL_BATCH
             and value["workers"] == WORKERS and value["page_size"] == PAGE_SIZE),
             "bounded facts cleanup requires 300-row SQL batches")
