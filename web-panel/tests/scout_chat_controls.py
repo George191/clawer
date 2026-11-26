@@ -141,7 +141,12 @@ with sync_playwright() as p:
     expect(results.locator(".scout-result-overflow-hint.is-bottom")).not_to_have_class(re.compile("is-visible"))
     assert scroll.evaluate("e=>getComputedStyle(e).scrollbarWidth") == "none"
     assert page.get_by_role("button", name="View adapter.py", exact=True).count() == 0
+    context.get_by_role("button", name="Inspect Generating the template", exact=True).click()
+    expect(results).to_be_hidden()
     page.get_by_role("button", name="Confirm Template", exact=True).click()
+    expect(results).to_be_hidden()
+    context.get_by_role("button", name="Inspect Writing the adapter", exact=True).click()
+    expect(results).to_be_visible()
     expect(results.locator(".scout-result-content")).to_have_attribute("data-phase", "adapter")
     expect(results.locator(".scout-result-caret")).to_be_visible()
     expect(page.locator(".ai-chat-dot")).to_have_attribute("data-activity", "Working")
@@ -204,6 +209,14 @@ with sync_playwright() as p:
     context.get_by_role("button", name="Changes", exact=True).click()
     expect(context.get_by_role("button", name="Open adapter.py", exact=True)).to_be_visible()
     context.get_by_role("button", name="Inspect Writing the adapter", exact=True).click()
+    expect(results).to_be_hidden()
+    expect(context.get_by_role("button", name="Inspect Writing the adapter", exact=True)).to_have_attribute("aria-pressed", "false")
+    page.wait_for_timeout(700)
+    expanded_composer = page.locator(".scout-persistent-composer").bounding_box()
+    assert expanded_composer["width"] > 500
+    context.get_by_role("button", name="Inspect Writing the adapter", exact=True).click()
+    expect(results).to_be_visible()
+    expect(context.get_by_role("button", name="Inspect Writing the adapter", exact=True)).to_have_attribute("aria-pressed", "true")
     expect(results.locator(".scout-result-content")).to_have_attribute("data-phase", "adapter")
     context.locator('input[type="file"]').set_input_files(
         {"name": "source-notes.txt", "mimeType": "text/plain", "buffer": b"Collection source notes"}

@@ -289,3 +289,6 @@
 .scout-response-actions .scout-codex-icon, .scout-feedback-menu .scout-codex-icon, .scout-activity-menu .scout-codex-icon { display: block; width: 16px; height: 16px; fill: currentColor; stroke: none; }
 .scout-response-actions { gap: 4px; }
 .scout-response-actions button { width: 30px; height: 30px; padding: 7px; }
+
+.scout-chat-preview.is-entered:not(.has-results) > .ai-chat-dot { left: calc((100% - var(--scout-context-width))/2 - 60px); top: -23px; }
+.scout-context-row[aria-pressed=true] { background: #ffffff09; }

@@ -32,6 +32,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
   const [queued, setQueued] = useState<QueuedMessage[]>([]);
   const [composerHeight, setComposerHeight] = useState(108);
   const [contextOpen, setContextOpen] = useState(false);
+  const [resultsOpen, setResultsOpen] = useState(true);
   const [resultTurnId, setResultTurnId] = useState<number | null>(null);
   const [resultStep, setResultStep] = useState<number | undefined>();
   const [copied, setCopied] = useState<number | null>(null);
@@ -53,6 +54,8 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
   const follow = useRef(true);
   const latest = turns[turns.length - 1];
   const resultTurn = turns.find((turn) => turn.id === resultTurnId) ?? latest;
+  const previewStep = resultStep ?? (resultTurn && resultTurn.step < 2 ? 1 : Math.min(resultTurn?.step ?? 0, 3));
+  const activePreview = resultsOpen && resultTurn ? `${resultTurn.id}-${previewStep}` : undefined;
   const dotActivity = running ? activity : speaking !== null ? 'Working' : speechError ? 'Error' : activity;
   const history = turns.flatMap((turn) => [
     { key: `turn-${turn.id}`, turn: turn.id, target: `scout-turn-${turn.id}`, step: 0, title: turn.prompt || 'Message' },
@@ -101,7 +104,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
   }, [running, latest?.id, latest?.complete, queued]);
   useEffect(() => {
     if (follow.current) thread.current?.scrollTo({ top: thread.current.scrollHeight, behavior: 'smooth' });
-  }, [turns, entered, composerHeight, contextOpen]);
+  }, [turns, entered, composerHeight, contextOpen, resultsOpen]);
   useEffect(() => {
     if (!notice) return;
     const timer = window.setTimeout(() => { setNotice(''); setCopied(null); }, 1800);
@@ -129,6 +132,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
     if (!entered) setContextOpen(window.innerWidth >= 1280);
     setResultTurnId(null);
     setResultStep(undefined);
+    setResultsOpen(true);
     setSelectedHistory(null);
     follow.current = true;
     onEnter();
@@ -161,6 +165,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
     setRunning(true);
   }
   function jumpHistory(entry: typeof history[number]) {
+    setResultsOpen(true);
     setSelectedHistory(entry.key);
     setResultTurnId(entry.turn);
     setResultStep(entry.step);
@@ -218,11 +223,11 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
     catch { utteranceRef.current = null; setSpeaking(null); setSpeechError(true); setNotice('Read aloud could not start.'); }
   }
 
-  return <section className={`scout-chat-preview ${entered ? 'is-entered' : ''} ${entered ? 'has-results' : ''} ${entered && contextOpen ? 'has-context' : ''}`} aria-label="Scout conversation" style={{ '--scout-composer-height': `${composerHeight}px` } as React.CSSProperties}>
+  return <section className={`scout-chat-preview ${entered ? 'is-entered' : ''} ${entered && resultsOpen ? 'has-results' : ''} ${entered && contextOpen ? 'has-context' : ''}`} aria-label="Scout conversation" style={{ '--scout-composer-height': `${composerHeight}px` } as React.CSSProperties}>
     <div className={`ai-chat-dot ${!entered ? 'is-landing' : ''}`} data-activity={dotActivity} />
     {entered && <div className="scout-chat-dot-frost" aria-hidden="true" />}
     <h1 className="scout-chat-greeting ai-prompt-title" aria-hidden={entered}>Hi{userLoading || userName ? <>, <span className="scout-greeting-name">{userLoading ? <span className="native-dot-loading scout-profile-loading" role="status" aria-label="Loading your profile"><i /><i /><i /></span> : <span key={userName} className="ai-prompt-name scout-loaded-name">{userName}</span>}</span></> : null}, any new ideas?</h1>
-    <aside id="scout-collection-results" className="scout-collection-results" aria-label="Collection results" aria-hidden={!entered}>
+    <aside id="scout-collection-results" className="scout-collection-results" aria-label="Collection results" aria-hidden={!entered || !resultsOpen}>
       <PreviewResults turn={resultTurn} step={resultStep} running={running && resultTurn?.id === latest?.id} />
     </aside>
     {entered && <div className="scout-activity-menu"><Dropdown trigger={['click']} placement="bottomRight" overlayClassName="scout-dot-state-menu" menu={{ selectedKeys: [activity], items: (Object.keys(DOT_ACTIVITIES) as DotActivity[]).map((value) => ({ key: value, label: labels[value] })), onClick: ({ key }) => selectActivity(key as DotActivity) }}><button type="button" aria-label="Dot activity"><CodexReplyIcon name="more" /></button></Dropdown></div>}
@@ -255,7 +260,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
         <button type="button" className="scout-resume" onClick={resume}>{activity === 'Error' ? 'Retry' : latest.waiting === 'template' ? 'Confirm Template' : latest.waiting === 'adapter' ? 'Confirm Adapter' : 'Continue'}</button>
       </div>}
     </div>
-    {entered && <><button type="button" className="scout-context-toggle" aria-label="Conversation context" title="Conversation context" aria-expanded={contextOpen} aria-controls="scout-conversation-context" onClick={() => setContextOpen((prev) => !prev)}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M15 4v16" /></svg></button><ConversationContext open={contextOpen} turn={resultTurn} steps={steps} running={running && resultTurn?.id === latest?.id} activity={labels[activity]} onClose={() => { setContextOpen(false); document.querySelector<HTMLButtonElement>('.scout-context-toggle')?.focus(); }} onView={(artifact) => { setResultTurnId(artifact.turn); setResultStep(artifact.step); }} onPause={pauseResponse} sources={sourceFiles} onAddFiles={addSourceFiles} onPreviewFile={setSelectedSource} /></>}
+    {entered && <><button type="button" className="scout-context-toggle" aria-label="Conversation context" title="Conversation context" aria-expanded={contextOpen} aria-controls="scout-conversation-context" onClick={() => setContextOpen((prev) => !prev)}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M15 4v16" /></svg></button><ConversationContext open={contextOpen} turn={resultTurn} steps={steps} running={running && resultTurn?.id === latest?.id} activity={labels[activity]} onClose={() => { setContextOpen(false); document.querySelector<HTMLButtonElement>('.scout-context-toggle')?.focus(); }} activePreview={activePreview} onView={(artifact) => { setResultsOpen(activePreview !== artifact.key); setResultTurnId(artifact.turn); setResultStep(artifact.step); }} onPause={pauseResponse} sources={sourceFiles} onAddFiles={addSourceFiles} onPreviewFile={setSelectedSource} /></>}
     <ChatComposer ref={input} entered={entered} value={draft} running={running} files={pendingFiles} queued={queued} onChange={setDraft} onSubmit={submit} onPause={pauseResponse} onAddFiles={addSourceFiles} onRemoveFile={removePendingFile} onPreviewFile={setSelectedSource} onViewSources={() => { if (!entered) onEnter(); setContextOpen(true); }} onHeightChange={setComposerHeight} onEditQueued={(item) => { setQueued((prev) => prev.filter((value) => value.id !== item.id)); setDraft(item.prompt); setPendingFiles(item.files); input.current?.focus(); }} onDeleteQueued={(id) => setQueued((prev) => prev.filter((item) => item.id !== id))} onSendQueued={(item) => { setQueued((prev) => prev.filter((value) => value.id !== item.id)); startTurn(item.prompt, item.files, false); }} />
     {selectedSource && <SourcePreview file={selectedSource} onClose={() => setSelectedSource(null)} />}
     <span className="scout-action-notice" role="status">{notice}</span>
