@@ -105,6 +105,8 @@ with sync_playwright() as p:
     context.get_by_role("button", name="Pause Understanding the request", exact=True).click()
     expect(page.get_by_role("button", name="Continue", exact=True)).to_be_visible()
     page.get_by_role("button", name="Continue", exact=True).click()
+    expect(results.locator(".scout-result-viewport")).to_have_attribute("data-browser-active", "true")
+    expect(results.locator(".scout-browser-control-border")).to_have_attribute("data-active", "true")
     expect(results.locator(".scout-result-content")).to_have_attribute("data-phase", "source")
     entry.fill("Queued changes")
     entry.press("Enter")
@@ -122,6 +124,22 @@ with sync_playwright() as p:
     expect(page.locator(".ai-chat-dot")).to_have_attribute("data-activity", "Working")
     expect(results.get_by_text("Example artifact", exact=False)).to_have_count(0)
     expect(page.get_by_role("button", name="Confirm Template", exact=True)).to_be_visible()
+    expect(results.locator(".scout-browser-control-border")).not_to_have_attribute("data-active", "true")
+    template_rows = results.locator(".scout-template-sheet .ai-template-field")
+    assert template_rows.count() > 15
+    assert results.locator(".scout-template-row,.is-item-group").count() == 0
+    metrics = template_rows.filter(has=page.locator(".ai-template-field-value")).first.evaluate("e=>[getComputedStyle(e).paddingTop,getComputedStyle(e).paddingBottom,getComputedStyle(e.querySelector('pre')).lineHeight]")
+    assert metrics == ["2px", "2px", "17.4px"], metrics
+    scroll = results.locator(".scout-result-content")
+    scroll.evaluate("e=>e.scrollTo(0,0)")
+    expect(results.locator(".scout-result-overflow-hint.is-top")).not_to_have_class(re.compile("is-visible"))
+    expect(results.locator(".scout-result-overflow-hint.is-bottom")).to_have_class(re.compile("is-visible"))
+    scroll.evaluate("e=>e.scrollTo(0,(e.scrollHeight-e.clientHeight)/2)")
+    expect(results.locator(".scout-result-overflow-hint.is-top")).to_have_class(re.compile("is-visible"))
+    expect(results.locator(".scout-result-overflow-hint.is-bottom")).to_have_class(re.compile("is-visible"))
+    scroll.evaluate("e=>e.scrollTo(0,e.scrollHeight)")
+    expect(results.locator(".scout-result-overflow-hint.is-bottom")).not_to_have_class(re.compile("is-visible"))
+    assert scroll.evaluate("e=>getComputedStyle(e).scrollbarWidth") == "none"
     assert page.get_by_role("button", name="View adapter.py", exact=True).count() == 0
     page.get_by_role("button", name="Confirm Template", exact=True).click()
     expect(results.locator(".scout-result-content")).to_have_attribute("data-phase", "adapter")
@@ -152,9 +170,10 @@ with sync_playwright() as p:
     assert abs(dot_bounds["x"] + dot_bounds["width"] / 2 - bounds["x"] - bounds["width"]) < 2
     assert abs(dot_bounds["y"] + dot_bounds["height"] / 2 - root_bounds["y"] - 37) < 2
     divider = page.locator(".scout-chat-preview").evaluate(
-        "e=>{const s=getComputedStyle(e,'::after');return [s.content,s.width,s.backgroundColor]}"
+        "e=>{const s=getComputedStyle(e,'::after');return [s.content,s.width,s.backgroundImage]}"
     )
     assert divider[0] != "none" and divider[1] == "1px"
+    assert "repeating-linear-gradient" in divider[2]
     assert context.bounding_box()["x"] >= chat_bounds["x"] + chat_bounds["width"]
     assert page.get_by_role("navigation", name="Stage results").count() == 0
     assert results.locator(".scout-result-actions,.scout-result-sample,header,h2").count() == 0
@@ -201,6 +220,10 @@ with sync_playwright() as p:
     rail = page.get_by_role("complementary", name="Conversation history")
     bars = rail.get_by_role("button")
     rail_bounds = rail.bounding_box()
+    composer_bounds = page.locator(".scout-persistent-composer").bounding_box()
+    chat_area = page.locator(".scout-chat-messages").bounding_box()
+    assert rail_bounds["x"] + rail_bounds["width"] <= composer_bounds["x"] - 8
+    assert abs(composer_bounds["x"] - chat_area["x"] - (chat_area["x"] + chat_area["width"] - composer_bounds["x"] - composer_bounds["width"])) < 1
     chat_bounds = page.locator(".scout-chat-messages").bounding_box()
     assert page.locator(".ai-collect-workbench").evaluate("e=>[e.scrollLeft,e.scrollTop]") == [0, 0]
     assert chat_bounds["x"] <= rail_bounds["x"] < chat_bounds["x"] + 56
