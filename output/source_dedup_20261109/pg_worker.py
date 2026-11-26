@@ -10,8 +10,12 @@ import multiprocessing
 import os
 from pathlib import Path
 import re
+import sys
 import uuid
 from datetime import datetime, timezone
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import registry_targets as targets
 
 WORKERS = 6
 PAGE_SIZE = 3000
@@ -19,6 +23,7 @@ BATCH = 300
 MAX_ROWS = 3000
 MAX_BYTES = 8 * 1024 * 1024
 GUARD_TABLE = 'public.source_dedup_20261109_tx'
+# Immutable historical layout labels, never physical SQL targets.
 FILING_WORKER_GROUPS = {'ts_rds.rds_filing': [0, 1, 4], 'ts_ods.ods_filing': [2, 3, 5]}
 
 
@@ -31,13 +36,102 @@ def sha(raw):
 
 
 def quote(name):
-    if not re.fullmatch('[a-z][a-z0-9_]*', name):
-        raise ValueError('Unexpected SQL identifier')
-    return '"' + name + '"'
+    return targets.quote(name)
 
 
 def qualified(schema, table):
     return quote(schema) + '.' + quote(table)
+
+
+def registered_object(unit):
+    rows = [row for row in targets.OBJECTS if row['id'] == unit['_object_id'] and row['layer'] == unit['layer']]
+    if len(rows) != 1:
+        raise RuntimeError('Historical registered object is missing or ambiguous')
+    return rows[0]
+
+
+def unit_parent(unit):
+    row = registered_object(unit)
+    return qualified(row['schema_name'], row['table_name'])
+
+
+def unit_leaf(unit):
+    return qualified(unit['_physical_leaf_schema'], unit['_physical_leaf_name'])
+
+
+async def target_identity(connection, unit):
+    parent = registered_object(unit)
+    row = await connection.fetchrow('''SELECT d.oid::bigint AS database_oid,
+        to_regclass($1)::oid::bigint AS parent_oid, c.oid::bigint AS leaf_oid,
+        n.nspname AS leaf_schema, c.relname AS leaf_name,
+        pg_get_expr(c.relpartbound,c.oid) AS bound
+        FROM pg_database d, pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+        WHERE d.datname=current_database() AND c.oid=$2::oid
+          AND c.oid IN (SELECT relid FROM pg_partition_tree($1::regclass) WHERE isleaf)''',
+        unit_parent(unit), unit['oid'])
+    if row is None or row['parent_oid'] is None:
+        raise RuntimeError('Historical partition no longer belongs to its registered parent')
+    return {'connection_id': targets.CONNECTION_ID, 'object_id': parent['id'], **dict(row)}
+
+
+async def target_manifest(connection, root, plan):
+    """Read identities only; the caller chooses where to persist this candidate."""
+    entries = {}
+    for unit in plan['units']:
+        objects = [row for row in targets.OBJECTS if row['layer'] == unit['layer']
+                   and (row['schema_name'], row['table_name']) == (unit['schema'], unit['table'])]
+        if len(objects) != 1:
+            raise RuntimeError('Historical parent requires one active registered object')
+        unit = {**unit, '_object_id': objects[0]['id']}
+        entry = await target_identity(connection, unit)
+        original = await connection.fetchval('SELECT to_regclass($1)::oid::bigint',
+                                            qualified(unit['schema'], unit['table']))
+        if original != entry['parent_oid']:
+            raise RuntimeError('Capture the identity manifest before renaming the original parent')
+        entries[str(unit['unit'])] = entry
+    return {'plan_sha256': plan['plan_sha256'],
+            'plan_file_sha256': sha((root / 'plan.json').read_bytes()), 'units': entries}
+
+
+async def prepare_targets(root, plan):
+    """Capture the old physical identity once, without rewriting its signed plan."""
+    connection = await connect('source-dedup-target-preparation')
+    try:
+        if (root / 'targets.json').exists():
+            for unit in plan['units']:
+                await bind_unit(connection, root, plan, unit)
+        else:
+            immutable(root / 'targets.json', encoded(await target_manifest(connection, root, plan)))
+    finally:
+        await connection.close()
+
+
+async def bind_unit(connection, root, plan, unit):
+    manifest = read(root / 'targets.json')
+    if (manifest is None or manifest['plan_sha256'] != plan['plan_sha256']
+            or manifest['plan_file_sha256'] != sha((root / 'plan.json').read_bytes())
+            or set(manifest['units']) != {str(u['unit']) for u in plan['units']}):
+        raise RuntimeError('Prepare and verify the historical target identity manifest first')
+    expected = manifest['units'][str(unit['unit'])]
+    unit = {**unit, '_object_id': expected['object_id']}
+    actual = await target_identity(connection, unit)
+    for key in ('connection_id', 'database_oid', 'object_id', 'parent_oid', 'leaf_oid', 'bound'):
+        if actual[key] != expected[key]:
+            raise RuntimeError('Historical target identity changed: ' + key)
+    # SQL follows the verified OID; journal/advisory identities keep the original
+    # signed schema/table values, including when reconciling an old transaction.
+    return {**unit, '_physical_leaf_schema': actual['leaf_schema'],
+            '_physical_leaf_name': actual['leaf_name']}
+
+
+async def check_targets(root, plan):
+    connection = await connect('source-dedup-target-check')
+    try:
+        for unit in plan['units']:
+            await bind_unit(connection, root, plan, unit)
+    finally:
+        await connection.close()
+    print(json.dumps({'target_identity': 'verified', 'units': len(plan['units'])}))
 
 
 def atomic(path, value):
@@ -117,8 +211,10 @@ async def discover(connection, scopes):
         for relation in scope['relations']:
             schema, table, layer = relation['schema'], relation['name'], relation['layer']
             kind = relation.get('row_data_type', relation.get('data_type', scope['data_type']))
-            if layer not in ('rds', 'ods') or schema != 'ts_' + layer or table != layer + '_' + kind:
+            if layer not in ('rds', 'ods'):
                 raise ValueError('Unexpected current-state relation')
+            registered = targets.TARGETS[(layer, kind)]
+            schema, table = registered['schema_name'], registered['table_name']
             parent = qualified(schema, table)
             layout = await connection.fetchval('SELECT pg_get_partkeydef($1::regclass)', parent)
             if layout != 'HASH (record_id, data_source, data_type)':
@@ -161,7 +257,7 @@ async def discover(connection, scopes):
 
 
 async def locked_rows(connection, unit, keys):
-    parent = qualified(unit['schema'], unit['table'])
+    parent = unit_parent(unit)
     parameters = [{**key, 'data_source': source} for key in keys for source in (unit['old'], unit['new'])]
     rows = await connection.fetch(f'''
         WITH k AS MATERIALIZED(SELECT * FROM jsonb_to_recordset($1::jsonb)
@@ -192,7 +288,7 @@ async def verify_after(connection, unit, rows):
 
 
 async def apply_batch(connection, root, plan, unit, keys, state, state_path):
-    parent, leaf = qualified(unit['schema'], unit['table']), qualified(unit['schema'], unit['leaf'])
+    parent, leaf = unit_parent(unit), unit_leaf(unit)
     pending_path = root / 'transactions' / ('batch-' + str(unit['unit']) + '-' + uuid.uuid4().hex + '.prepared.json')
     async with connection.transaction():
         await connection.execute("SET LOCAL TIME ZONE 'UTC'")
@@ -340,17 +436,7 @@ async def recover_pending(connection, root, plan, unit, state, state_path):
 
 
 async def connect(application_name='source-dedup-prepare'):
-    import asyncpg
-    from app.storage.business_database import business_connection_options, selected_business_connection
-    from app.storage.postgres_client import get_pg_client
-    try:
-        url, options = business_connection_options(await selected_business_connection())
-    finally:
-        # Each migration process needs only its business session after this lookup.
-        await get_pg_client().close()
-    connection = await asyncpg.connect(url.replace('postgresql+asyncpg://', 'postgresql://', 1),
-                                      timeout=15, command_timeout=150,
-                                      server_settings={'application_name': application_name}, **options)
+    connection = await targets.connect(application_name)
     await connection.execute("SET TIME ZONE 'UTC'")
     return connection
 
@@ -378,14 +464,13 @@ def runtime_layout(root, plan):
     scope = read(root / 'scope.json', {})
     if scope.get('protocol') == 'source_safe_facts_full_alias_tail_v1':
         scopes = scope.get('scopes', [])
-        relations = {('ts_rds', 'rds_financial_fact', 'rds'), ('ts_ods', 'ods_financial_fact', 'ods')}
         if (scope.get('workers') != WORKERS or scope.get('batch_size') != BATCH
                 or scope.get('guard_table') is not None or len(scopes) != 2
                 or {s.get('old') for s in scopes} != {'sec_edgar_financial_fact', 'sec_edgar_company'}
                 or any(s.get('new') != 'financial_fact_sec_edgar' or s.get('data_type') != 'financial_fact'
                        or len(s.get('relations', [])) != 2
                        or any(set(r) != {'schema', 'name', 'layer'} for r in s['relations'])
-                       or {(r['schema'], r['name'], r['layer']) for r in s['relations']} != relations
+                       or {r['layer'] for r in s['relations']} != {'rds', 'ods'}
                        for s in scopes)):
             raise RuntimeError('Unexpected dedicated facts source-tail scope')
         value['scope'] = 'facts_full'
@@ -396,7 +481,7 @@ def runtime_layout(root, plan):
         if groups != FILING_WORKER_GROUPS or scope.get('protocol') != 'sec_history_source_dedup_v1':
             raise RuntimeError('Unexpected filing worker groups')
         documents = [unit for unit in plan['units']
-                     if (unit['schema'], unit['table']) == ('ts_ods', 'ods_filing_document')]
+                     if (unit['layer'], unit['data_type']) == ('ods', 'filing_document')]
         if len(documents) != 32 or {unit['ordinal'] for unit in documents} != set(range(32)):
             raise RuntimeError('Document completion coverage differs')
         for unit in documents:
@@ -409,34 +494,34 @@ def runtime_layout(root, plan):
 
 
 def unit_owner(unit, layout):
-    table = (unit['schema'], unit['table'])
+    table = (unit['layer'], unit['data_type'])
     groups = layout.get('worker_groups')
     if groups is not None:
         if groups != FILING_WORKER_GROUPS:
             raise ValueError('Unexpected filing worker groups')
-        if table == ('ts_ods', 'ods_filing_document'):
+        if table == ('ods', 'filing_document'):
             return None
-        name = '.'.join(table)
-        if name in groups:
-            return groups[name][unit['ordinal'] % 3]
-    if table in (('ts_rds', 'rds_financial_fact'), ('ts_ods', 'ods_financial_fact')):
+        for label, owners in groups.items():
+            if label.rsplit('.', 1)[-1] == unit['layer'] + '_' + unit['data_type']:
+                return owners[unit['ordinal'] % 3]
+    if table in (('rds', 'financial_fact'), ('ods', 'financial_fact')):
         if layout.get('scope') == 'facts_full':
             if (unit['old'] not in ('sec_edgar_financial_fact', 'sec_edgar_company')
                     or unit['new'] != 'financial_fact_sec_edgar' or unit['data_type'] != 'financial_fact'):
                 raise ValueError('Unexpected dedicated facts source identity')
             return unit['unit'] % WORKERS
         return None
-    slots = {('ts_rds', 'rds_filing'): 0, ('ts_ods', 'ods_filing'): 2,
-             ('ts_ods', 'ods_filing_document'): 4}
+    slots = {('rds', 'filing'): 0, ('ods', 'filing'): 2,
+             ('ods', 'filing_document'): 4}
     if table in slots:
         return slots[table] + unit['ordinal'] % 2
-    if table in (('ts_rds', 'rds_patent'), ('ts_ods', 'ods_patent')):
+    if table in (('rds', 'patent'), ('ods', 'patent')):
         return unit['unit'] % WORKERS
     raise ValueError('Unexpected SEC history repair table')
 
 
 def keyset_page_query(unit, cursor, page_size):
-    leaf = qualified(unit['schema'], unit['leaf'])
+    leaf = unit_leaf(unit)
     parameters = [unit['old'], unit['data_type']]
     lower_bound = ''
     if cursor is not None:
@@ -463,6 +548,7 @@ async def worker_run(root, number):
         for unit in plan['units']:
             if unit_owner(unit, layout) != number:
                 continue
+            unit = await bind_unit(connection, root, plan, unit)
             state_path = root / 'checkpoints' / ('unit-' + str(unit['unit']) + '.json')
             state = read(state_path, {'plan_sha256': plan['plan_sha256'], 'unit': unit['unit'],
                 'worker': number, 'cursor': None, 'processed': 0, 'renamed': 0, 'deduplicated': 0,
@@ -504,6 +590,7 @@ async def worker_run(root, number):
                     failures += 1
                     if connection.is_closed():
                         connection = await owned_connection(root, number)
+                        unit = await bind_unit(connection, root, plan, unit)
                     state = read(state_path, state)
                     state = await recover_pending(connection, root, plan, unit, state, state_path)
                     if failures >= 5:
@@ -533,7 +620,9 @@ async def prepare(root):
     if path.exists():
         if read(path)['plan_sha256'] != sha(raw):
             raise RuntimeError('Existing plan cannot be replaced')
-        return read(path)
+        plan = read(path)
+        await prepare_targets(root, plan)
+        return plan
     connection = await connect()
     try:
         units = await discover(connection, scope['scopes'])
@@ -542,11 +631,18 @@ async def prepare(root):
     value = {'workers': WORKERS, 'batch_size': batch, 'plan_sha256': sha(raw), 'units': units,
              'guard_table': scope.get('guard_table')}
     immutable(path, encoded(value))
+    await prepare_targets(root, value)
     return value
 
 
 def main(args):
     root = Path(args.root).resolve(); root.mkdir(parents=True, exist_ok=True)
+    if getattr(args, 'prepare_targets', False) or getattr(args, 'check_targets', False):
+        if args.prepare or args.worker is not None:
+            raise ValueError('Target verification cannot run together with migration execution')
+        operation = prepare_targets if args.prepare_targets else check_targets
+        asyncio.run(operation(root, read(root / 'plan.json')))
+        return
     if args.prepare:
         plan = asyncio.run(prepare(root)); layout = runtime_layout(root, plan)
         if not (root / 'layout.json').exists():
@@ -555,6 +651,7 @@ def main(args):
     if args.worker is not None:
         if not 0 <= args.worker < WORKERS:
             raise ValueError('Worker must be 0 through 5')
+        asyncio.run(prepare(root))
         worker_entry(str(root), args.worker); return
     plan = asyncio.run(prepare(root)); layout = runtime_layout(root, plan)
     if not (root / 'layout.json').exists():
@@ -583,4 +680,7 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(); parser.add_argument('--root', required=True)
     parser.add_argument('--prepare', action='store_true'); parser.add_argument('--worker', type=int, default=None)
+    target_mode = parser.add_mutually_exclusive_group()
+    target_mode.add_argument('--prepare-targets', action='store_true', help='Capture immutable parent/partition OIDs before a rename')
+    target_mode.add_argument('--check-targets', action='store_true', help='Verify registered targets against the unchanged historical plan')
     main(parser.parse_args())

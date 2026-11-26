@@ -10,6 +10,7 @@ import multiprocessing
 import os
 from pathlib import Path
 import signal
+import sys
 import time
 from typing import Any
 
@@ -17,11 +18,12 @@ import asyncpg
 from bson import ObjectId
 from pymongo import MongoClient
 from pymongo.errors import AutoReconnect, CursorNotFound, ExecutionTimeout, PyMongoError
-from sqlalchemy.engine import make_url
 
 from app.config.settings import settings
 from app.etl.normalizers.financial_fact import normalize_sec_edgar_financial_fact
-from app.storage.business_database import business_connection_options, selected_business_connection
+
+sys.path.append(str(Path(__file__).resolve().parent.parent / 'source_dedup_20261109'))
+import registry_targets as targets
 
 
 PROTOCOL = "sec_direct_baseline_v1"
@@ -33,7 +35,7 @@ SQL_BATCH = 300
 LOCK = Path("/data/clawer/output/sec_migration_20261104/.facts-direct-baseline.lock")
 
 RDS_SQL = """
-INSERT INTO ts_rds.rds_financial_fact
+INSERT INTO {table}
  (record_id,data_source,data_type,raw_data,kafka_offset,kafka_partition,kafka_topic,created_at,updated_at)
 SELECT x.record_id,x.data_source,x.data_type,x.raw_data,NULL,NULL,NULL,x.created_at,x.updated_at
 FROM jsonb_to_recordset($1::jsonb) AS x(
@@ -43,7 +45,7 @@ ON CONFLICT (record_id,data_source,data_type) DO NOTHING
 """
 
 ODS_SQL = """
-INSERT INTO ts_ods.ods_financial_fact
+INSERT INTO {table}
  (record_id,data_source,data_type,cik,entity_name,taxonomy,concept,concept_label,
   unit,value,accn,form,filed,fy,fp,frame,start_date,end_date,is_amendment,created_at,updated_at)
 SELECT x.record_id,x.data_source,x.data_type,x.cik,x.entity_name,x.taxonomy,x.concept,x.concept_label,
@@ -155,15 +157,7 @@ def prepare_rows(docs: list[dict[str, Any]]) -> tuple[str, str, str]:
 
 
 async def pg_connect(worker: int) -> asyncpg.Connection:
-    selected_url, options = business_connection_options(await selected_business_connection())
-    url = make_url(selected_url).set(drivername="postgresql")
-    return await asyncpg.connect(
-        url.render_as_string(hide_password=False),
-        timeout=30,
-        command_timeout=900,
-        server_settings={"application_name": f"sec-facts-baseline-{worker}"},
-        **options,
-    )
+    return await targets.connect(f"sec-facts-baseline-{worker}", timeout=30, command_timeout=900)
 
 
 async def write_batch(connection: asyncpg.Connection, docs: list[dict[str, Any]]) -> None:
@@ -173,10 +167,10 @@ async def write_batch(connection: asyncpg.Connection, docs: list[dict[str, Any]]
         async with connection.transaction():
             await connection.execute("SET LOCAL statement_timeout='900s'")
             await connection.execute("SET LOCAL lock_timeout='30s'")
-            await connection.execute(RDS_SQL, rds)
-            await connection.execute(ODS_SQL, ods)
-            rds_count = await connection.fetchval(VERIFY_SQL.format(table="ts_rds.rds_financial_fact"), keys)
-            ods_count = await connection.fetchval(VERIFY_SQL.format(table="ts_ods.ods_financial_fact"), keys)
+            await connection.execute(targets.render(RDS_SQL, 'rds', KIND), rds)
+            await connection.execute(targets.render(ODS_SQL, 'ods', KIND), ods)
+            rds_count = await connection.fetchval(targets.render(VERIFY_SQL, 'rds', KIND), keys)
+            ods_count = await connection.fetchval(targets.render(VERIFY_SQL, 'ods', KIND), keys)
             if rds_count != len(chunk) or ods_count != len(chunk):
                 raise RuntimeError(f"facts baseline batch verification failed: rds={rds_count} ods={ods_count} expected={len(chunk)}")
 
@@ -267,11 +261,11 @@ async def exact_pg_counts() -> tuple[int, int]:
     try:
         await connection.execute("SET statement_timeout='3600s'")
         rds = await connection.fetchval(
-            "SELECT count(*) FROM ts_rds.rds_financial_fact WHERE data_source=$1 AND data_type=$2",
+            f"SELECT count(*) FROM {targets.table('rds', KIND)} WHERE data_source=$1 AND data_type=$2",
             COLLECTION, KIND,
         )
         ods = await connection.fetchval(
-            "SELECT count(*) FROM ts_ods.ods_financial_fact WHERE data_source=$1 AND data_type=$2",
+            f"SELECT count(*) FROM {targets.table('ods', KIND)} WHERE data_source=$1 AND data_type=$2",
             COLLECTION, KIND,
         )
         return int(rds), int(ods)

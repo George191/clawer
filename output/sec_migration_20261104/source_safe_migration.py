@@ -49,7 +49,7 @@ def document_ids(docs, plan):
 
 
 def table_name(plan, layer):
-    return pg.qualified("ts_" + layer, layer + "_" + plan["data_type"])
+    return pg.targets.table(layer, plan["data_type"])
 
 
 def validate_plan(plan):
@@ -321,7 +321,8 @@ async def apply_chunk(connection, root, plan, worker, state, docs):
             inserted[layer] = len(missing)
             if missing:
                 rds, ods, _ = baseline.prepare_rows(missing)
-                await connection.execute(baseline.RDS_SQL if layer == "rds" else baseline.ODS_SQL,
+                await connection.execute(pg.targets.render(baseline.RDS_SQL if layer == "rds" else baseline.ODS_SQL,
+                                                          layer, plan["data_type"]),
                                          rds if layer == "rds" else ods)
         after = await verify_chunk(connection, plan, ids)
         for layer, rows in retained.items():

@@ -31,9 +31,9 @@ BATCH = 3000
 SQL_BATCH = 300
 LOCK = Path("/data/clawer/output/sec_migration_20261104/.patent-direct-baseline.lock")
 
-RDS_SQL = base.RDS_SQL.replace("rds_financial_fact", "rds_patent")
+RDS_SQL = base.RDS_SQL
 ODS_SQL = """
-INSERT INTO ts_ods.ods_patent
+INSERT INTO {table}
  (record_id,data_source,data_type,title,publication_number,application_number,assignee,inventor,
   publication_date,filing_date,priority_date,grant_date,abstract,claims,legal_status,
   ipc_classification,cpc_classification,patent_type,url,thumbnail,figures,created_at,updated_at)
@@ -92,10 +92,10 @@ async def write_batch(connection: asyncpg.Connection, docs: list[dict[str, Any]]
         async with connection.transaction():
             await connection.execute("SET LOCAL statement_timeout='900s'")
             await connection.execute("SET LOCAL lock_timeout='30s'")
-            await connection.execute(RDS_SQL, rds)
-            await connection.execute(ODS_SQL, ods)
-            rds_count = await connection.fetchval(base.VERIFY_SQL.format(table="ts_rds.rds_patent"), keys)
-            ods_count = await connection.fetchval(base.VERIFY_SQL.format(table="ts_ods.ods_patent"), keys)
+            await connection.execute(base.targets.render(RDS_SQL, 'rds', KIND), rds)
+            await connection.execute(base.targets.render(ODS_SQL, 'ods', KIND), ods)
+            rds_count = await connection.fetchval(base.targets.render(base.VERIFY_SQL, 'rds', KIND), keys)
+            ods_count = await connection.fetchval(base.targets.render(base.VERIFY_SQL, 'ods', KIND), keys)
             if rds_count != len(chunk) or ods_count != len(chunk):
                 raise RuntimeError(f"patent baseline batch verification failed: rds={rds_count} ods={ods_count} expected={len(chunk)}")
 
@@ -215,8 +215,8 @@ async def exact_pg_counts() -> tuple[int, int]:
     connection = await base.pg_connect(299)
     try:
         await connection.execute("SET statement_timeout='3600s'")
-        rds = await connection.fetchval("SELECT count(*) FROM ts_rds.rds_patent WHERE data_source=$1 AND data_type=$2", COLLECTION, KIND)
-        ods = await connection.fetchval("SELECT count(*) FROM ts_ods.ods_patent WHERE data_source=$1 AND data_type=$2", COLLECTION, KIND)
+        rds = await connection.fetchval(f"SELECT count(*) FROM {base.targets.table('rds', KIND)} WHERE data_source=$1 AND data_type=$2", COLLECTION, KIND)
+        ods = await connection.fetchval(f"SELECT count(*) FROM {base.targets.table('ods', KIND)} WHERE data_source=$1 AND data_type=$2", COLLECTION, KIND)
         return int(rds), int(ods)
     finally:
         await connection.close()
