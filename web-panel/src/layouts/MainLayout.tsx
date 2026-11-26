@@ -64,34 +64,34 @@ type HeaderMenuKey = 'projects' | 'automation' | 'access' | 'settings' | 'help';
 
 const headerMenus: { key: Exclude<HeaderMenuKey, 'projects'>; label: string; items: MenuProps['items'] }[] = [
   { key: 'automation', label: 'AUTOMATION', items: [
-    { key: 'execution', type: 'group', label: 'EXECUTION', children: [
-      { key: '/automation/workflows', label: 'WORKFLOWS', icon: <BranchesOutlined /> },
-      { key: '/automation/schedules', label: 'SCHEDULES', icon: <ScheduleOutlined /> },
-      { key: '/automation/runs', label: 'RUNS', icon: <HistoryOutlined /> },
+    { key: 'execution', type: 'group', label: 'Execution', children: [
+      { key: '/automation/workflows', label: 'Workflows', icon: <BranchesOutlined /> },
+      { key: '/automation/schedules', label: 'Schedules', icon: <ScheduleOutlined /> },
+      { key: '/automation/runs', label: 'Runs', icon: <HistoryOutlined /> },
     ] },
   ] },
   { key: 'access', label: 'ACCESS', items: [
-    { key: 'management', type: 'group', label: 'ADMINISTRATION', children: [
-      { key: '/organization?view=users', label: 'USERS', icon: <UserOutlined /> },
-      { key: '/organization?view=roles', label: 'ROLES', icon: <SafetyCertificateOutlined /> },
-      { key: '/organization?view=permissions', label: 'PERMISSIONS', icon: <AuditOutlined /> },
-      { key: '/organization?view=tenants', label: 'ORGANIZATIONS', icon: <ApartmentOutlined /> },
-      { key: '/organization?view=teams', label: 'TEAMS', icon: <TeamOutlined /> },
+    { key: 'management', type: 'group', label: 'Administration', children: [
+      { key: '/organization?view=users', label: 'Users', icon: <UserOutlined /> },
+      { key: '/organization?view=roles', label: 'Roles', icon: <SafetyCertificateOutlined /> },
+      { key: '/organization?view=permissions', label: 'Permissions', icon: <AuditOutlined /> },
+      { key: '/organization?view=tenants', label: 'Organizations', icon: <ApartmentOutlined /> },
+      { key: '/organization?view=teams', label: 'Teams', icon: <TeamOutlined /> },
     ] },
   ] },
   { key: 'settings', label: 'SETTINGS', items: [
-    { key: 'preferences', type: 'group', label: 'PREFERENCES', children: [
-      { key: '/settings', label: 'SYSTEM SETTINGS', icon: <SettingOutlined /> },
-      { key: '/account/settings', label: 'ACCOUNT SETTINGS', icon: <UserOutlined /> },
+    { key: 'preferences', type: 'group', label: 'Preferences', children: [
+      { key: '/settings', label: 'System Settings', icon: <SettingOutlined /> },
+      { key: '/account/settings', label: 'Account Settings', icon: <UserOutlined /> },
     ] },
   ] },
   { key: 'help', label: 'HELP', items: [
-    { key: '/faq', label: 'HELP CENTER', icon: <QuestionCircleOutlined /> },
-    { key: 'legal', label: 'LEGAL', icon: <BookOutlined />, children: [
-      { key: '/legal/privacy', label: 'PRIVACY POLICY', icon: <SafetyCertificateOutlined /> },
-      { key: '/legal/terms', label: 'TERMS OF SERVICE', icon: <FileTextOutlined /> },
-      { key: '/legal/cookies', label: 'COOKIE POLICY', icon: <ControlOutlined /> },
-      { key: '/legal/licenses', label: 'COPYRIGHT & LICENSES', icon: <BookOutlined /> },
+    { key: '/faq', label: 'Help Center', icon: <QuestionCircleOutlined /> },
+    { key: 'legal', label: 'Legal', icon: <BookOutlined />, children: [
+      { key: '/legal/privacy', label: 'Privacy Policy', icon: <SafetyCertificateOutlined /> },
+      { key: '/legal/terms', label: 'Terms of Service', icon: <FileTextOutlined /> },
+      { key: '/legal/cookies', label: 'Cookie Policy', icon: <ControlOutlined /> },
+      { key: '/legal/licenses', label: 'Copyright & Licenses', icon: <BookOutlined /> },
     ] },
   ] },
 ];
@@ -569,7 +569,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                 {project.shortLabel.slice(0, 1)}
               </span>
               <span style={{ flex: 1, minWidth: 0 }}>
-                <span style={{ display: 'block', fontSize: 12, fontWeight: isActive ? 600 : 400 }}>{project.shortLabel.toUpperCase()}</span>
+                <span style={{ display: 'block', fontSize: 12, fontWeight: isActive ? 600 : 400 }}>{project.shortLabel}</span>
               </span>
               {isDisabled ? (
                 <span style={{ color: '#8f99a8', fontSize: 11, fontWeight: 400 }}>Not enabled yet</span>
@@ -656,9 +656,9 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
 
   const renderAccountPanel = () => {
     const accountRows = [
-      { key: 'account', icon: <SettingOutlined />, label: 'ACCOUNT SETTINGS', onClick: () => { setAccountMenuOpen(false); navigate('/account/settings'); } },
+      { key: 'account', icon: <SettingOutlined />, label: 'Account Settings', onClick: () => { setAccountMenuOpen(false); navigate('/account/settings'); } },
       { key: 'faq', icon: <QuestionCircleOutlined />, label: 'FAQ', onClick: () => { setAccountMenuOpen(false); navigate('/faq'); } },
-      { key: 'legal', icon: <SafetyCertificateOutlined />, label: 'LEGAL', onClick: () => { setAccountMenuOpen(false); navigate('/legal/privacy'); } },
+      { key: 'legal', icon: <SafetyCertificateOutlined />, label: 'Legal', onClick: () => { setAccountMenuOpen(false); navigate('/legal/privacy'); } },
     ];
 
     return (
