@@ -58,9 +58,17 @@ const sampleRows = [
   { title: 'Designing reliable collection workflows', url: 'https://example.org/articles/workflows' },
   { title: 'A guide to structured article data', url: 'https://example.org/articles/structured-data' },
 ];
-type PreviewResult = { id: number; prompt: string; step: number; template: string; adapter: string; complete: boolean };
+export type PreviewResult = { id: number; prompt: string; step: number; template: string; adapter: string; complete: boolean };
 
-export default function PreviewResults({ turn, step, running }: { turn?: PreviewResult; step?: number; running: boolean }) {
+export function previewFile(turn: PreviewResult | undefined, step: number) {
+  if (step === 2) return { name: 'template.yaml', content: turn?.template ?? '' };
+  if (step === 3) return { name: 'adapter.py', content: turn?.adapter ?? '' };
+  if (step === 5) return { name: 'sample-data.json', content: JSON.stringify(sampleRows, null, 2) };
+  if (step === 1) return { name: 'Source.md', content: '# https://example.org/articles\n\nIdeas worth collecting.\n\n' + sampleRows.map(row => `[${row.title}](${row.url})`).join('\n\n') };
+  return { name: step === 4 ? 'Review.md' : 'Request.md', content: (turn?.prompt ?? '') + (step === 4 ? '\n\nOutput fields: title, url\nPagination: up to 20 pages\nFiles: template.yaml, adapter.py' : '') };
+}
+
+export default function PreviewResults({ turn, step, running, structured = false, wrap = false, lineNumbers = true }: { turn?: PreviewResult; step?: number; running: boolean; structured?: boolean; wrap?: boolean; lineNumbers?: boolean }) {
   const displayStep = step ?? turn?.step ?? 0;
   const phase = step === 0 ? 'brief' : step === 4 ? 'review' : step === 5 ? 'data' : displayStep < 2 ? 'source' : displayStep === 2 ? 'template' : 'adapter';
   const code = useRef<HTMLDivElement>(null);
@@ -93,9 +101,9 @@ export default function PreviewResults({ turn, step, running }: { turn?: Preview
         : phase === 'data' ? <div className="scout-result-data"><table><thead><tr><th>title</th><th>url</th></tr></thead><tbody>{sampleRows.map((row) => <tr key={row.url}><td>{row.title}</td><td>{row.url}</td></tr>)}</tbody></table></div> : null}
       {phase === 'source' ? <div className={`scout-source-preview ${running && turn?.step === 1 ? 'is-scanning' : ''}`}><div className="scout-source-address">https://example.org/articles </div><div className="scout-source-page"><small>THE COLLECTION JOURNAL</small><h3>Ideas worth collecting.</h3><p>Articles, research, and collection workflows.</p>{sampleRows.map((row, index) => <article key={row.url}><span>0{index + 1} · ARTICLE</span><h4>{row.title}</h4><p>Read the article and explore its sources.</p></article>)}</div></div>
         : (phase === 'template' || phase === 'adapter') && <>
-          <div className={`scout-result-code ${phase === 'template' ? 'scout-template-sheet' : ''}`}>
-            {phase === 'template' ? <TemplateSheet text={text} writing={writing} />
-              : <pre>{text.split('\n').map((line, index) => <div className="scout-result-code-line ai-session-inspector-editor-line" key={index}><span aria-hidden="true">{index + 1}</span><span className="scout-code-prefix" aria-hidden="true">+</span><code>{renderPythonPreviewContent(line || ' ', `preview-${turn?.id}-${index}`)}{writing && index === text.split('\n').length - 1 && <i className="scout-result-caret" />}</code></div>)}</pre>}
+          <div className={`scout-result-code ${phase === 'template' && structured ? 'scout-template-sheet' : ''} ${wrap ? 'is-wrapped' : ''} ${lineNumbers ? '' : 'without-line-numbers'}`}>
+            {phase === 'template' && structured ? <TemplateSheet text={text} writing={writing} />
+              : <pre>{text.split('\n').map((line, index) => <div className="scout-result-code-line ai-session-inspector-editor-line" key={index}><span className="scout-line-number" aria-hidden="true">{index + 1}</span><code>{phase === 'adapter' ? renderPythonPreviewContent(line || ' ', `preview-${turn?.id}-${index}`) : renderYamlLine(line)}{writing && index === text.split('\n').length - 1 && <i className="scout-result-caret" />}</code></div>)}</pre>}
 
           </div>
         </>}
@@ -104,6 +112,12 @@ export default function PreviewResults({ turn, step, running }: { turn?: Preview
     <div className={`scout-result-overflow-hint is-bottom ${edges.bottom ? 'is-visible' : ''}`} aria-hidden="true" />
     <div className="scout-browser-control-border" data-active={browserActive || undefined} aria-hidden="true"><div className="scout-browser-trace is-left"><div /></div><div className="scout-browser-trace is-right"><div /></div></div>
   </div>;
+}
+
+function renderYamlLine(line: string) {
+  if (line.trimStart().startsWith('#')) return <span className="scout-yaml-comment">{line}</span>;
+  const match = line.match(/^(\s*(?:-\s+)?)([\w.-]+)(:)(.*)$/);
+  return match ? <>{match[1]}<span className="scout-yaml-key">{match[2]}</span>{match[3]}<span className={/^\s*(true|false|null|\d+)\s*$/.test(match[4]) ? 'scout-yaml-literal' : undefined}>{match[4]}</span></> : line || ' ';
 }
 
 const sections = ['site', 'request', 'response', 'pagination', 'fields', 'dedup'] as const;

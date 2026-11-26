@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Dropdown } from '@/components/ui';
 import { DOT_ACTIVITIES, type DotActivity } from '@/components/NativeDot';
 import { useThemeStore } from '@/stores/settings';
-import PreviewResults, { previewAdapter, previewTemplate } from './PreviewResults';
+import { previewAdapter, previewTemplate } from './PreviewResults';
+import PreviewWorkspace from './PreviewWorkspace';
+import ScoutToolbarIcon from './ScoutToolbarIcon';
 import { ArtifactIcon } from './StageArtifacts';
 import ConversationContext, { SourcePreview } from './ConversationContext';
 import ChatComposer, { type ComposerField, type QueuedMessage } from './ChatComposer';
@@ -32,6 +35,8 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
   const [queued, setQueued] = useState<QueuedMessage[]>([]);
   const [composerHeight, setComposerHeight] = useState(108);
   const [contextOpen, setContextOpen] = useState(false);
+  const [contextPinned, setContextPinned] = useState(() => localStorage.getItem('scout.summaryPinned') === 'true');
+  const [wideLayout, setWideLayout] = useState(() => window.innerWidth >= 1280);
   const [resultsOpen, setResultsOpen] = useState(true);
   const [resultTurnId, setResultTurnId] = useState<number | null>(null);
   const [resultStep, setResultStep] = useState<number | undefined>();
@@ -43,6 +48,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
   const [selectedHistory, setSelectedHistory] = useState<string | null>(null);
   const [reveal, setReveal] = useState({ turn: 0, sequence: 0 });
   const language = useThemeStore((state) => state.language);
+  const navigate = useNavigate();
   const goodLabel = language === 'zh-CN' ? '回复优秀' : 'Good response';
   const badLabel = language === 'zh-CN' ? '回复不佳' : 'Bad response';
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
@@ -63,10 +69,11 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
   ]);
   const currentHistory = selectedHistory ?? history[history.length - 1]?.key;
 
-  useEffect(() => { setResultStep(undefined); setResultTurnId(null); }, [latest?.id, latest?.step]);
+  useEffect(() => { setResultStep(undefined); setResultTurnId(null); }, [latest?.id]);
+  useEffect(() => { localStorage.setItem('scout.summaryPinned', String(contextPinned)); }, [contextPinned]);
   useEffect(() => {
     const wide = window.matchMedia('(min-width: 1280px)');
-    const onChange = () => { if (!wide.matches) setContextOpen(false); };
+    const onChange = () => { setWideLayout(wide.matches); if (!wide.matches) setContextOpen(false); };
     wide.addEventListener('change', onChange);
     return () => wide.removeEventListener('change', onChange);
   }, []);
@@ -129,7 +136,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
     setTurns((prev) => [...prev, { id, prompt, files, step: 0, reply: '', template: '', adapter: '', done: 0, complete: false }]);
     setActivity('Thinking');
     setRunning(true);
-    if (!entered) setContextOpen(window.innerWidth >= 1280);
+    if (!entered) setContextOpen(contextPinned && wideLayout);
     setResultTurnId(null);
     setResultStep(undefined);
     setResultsOpen(true);
@@ -189,6 +196,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
     if (!turns.some((turn) => turn.files.includes(file)) && !queued.some((item) => item.files.includes(file))) setSourceFiles((prev) => prev.filter((item) => item !== file));
   }
   function submit() {
+    if (!draft.trim() && !pendingFiles.length) return;
     if (running) {
       const id = ++nextQueuedId.current;
       setQueued((prev) => [...prev, { id, prompt: draft, files: pendingFiles }]);
@@ -200,6 +208,14 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
   async function copy(turn: Turn) {
     try { await navigator.clipboard.writeText(turn.reply); setCopied(turn.id); setNotice('Copied to clipboard'); }
     catch { setCopied(null); setNotice('Clipboard is unavailable. Select the response to copy it.'); }
+  }
+  function togglePinned() {
+    setContextPinned(!(contextOpen && contextPinned));
+    setContextOpen(true);
+  }
+  async function copyConversation() {
+    try { await navigator.clipboard.writeText(turns.map(turn => `You\n${turn.prompt}\n\nScout\n${turn.reply}`).join('\n\n')); setNotice('Conversation copied'); }
+    catch { setNotice('Unable to copy this conversation.'); }
   }
   function vote(id: number, value: 'up' | 'down') {
     setTurns((prev) => prev.map((turn) => turn.id === id ? { ...turn, vote: turn.vote === value ? undefined : value } : turn));
@@ -223,14 +239,15 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
     catch { utteranceRef.current = null; setSpeaking(null); setSpeechError(true); setNotice('Read aloud could not start.'); }
   }
 
-  return <section className={`scout-chat-preview ${entered ? 'is-entered' : ''} ${entered && resultsOpen ? 'has-results' : ''} ${entered && contextOpen ? 'has-context' : ''}`} aria-label="Scout conversation" style={{ '--scout-composer-height': `${composerHeight}px` } as React.CSSProperties}>
+  return <section className={`scout-chat-preview ${entered ? 'is-entered' : ''} ${entered && resultsOpen ? 'has-results' : ''} ${entered && contextOpen ? 'has-context' : ''} ${entered && contextOpen && contextPinned && wideLayout ? 'has-pinned-context' : ''}`} aria-label="Scout conversation" style={{ '--scout-composer-height': `${composerHeight}px` } as React.CSSProperties}>
     <div className={`ai-chat-dot ${!entered ? 'is-landing' : ''}`} data-activity={dotActivity} />
     {entered && <div className="scout-chat-dot-frost" aria-hidden="true" />}
     <h1 className="scout-chat-greeting ai-prompt-title" aria-hidden={entered}>Hi{userLoading || userName ? <>, <span className="scout-greeting-name">{userLoading ? <span className="native-dot-loading scout-profile-loading" role="status" aria-label="Loading your profile"><i /><i /><i /></span> : <span key={userName} className="ai-prompt-name scout-loaded-name">{userName}</span>}</span></> : null}, any new ideas?</h1>
-    <aside id="scout-collection-results" className="scout-collection-results" aria-label="Collection results" aria-hidden={!entered || !resultsOpen}>
-      <PreviewResults turn={resultTurn} step={resultStep} running={running && resultTurn?.id === latest?.id} />
-    </aside>
-    {entered && <div className="scout-activity-menu"><Dropdown trigger={['click']} placement="bottomRight" overlayClassName="scout-dot-state-menu" menu={{ selectedKeys: [activity], items: (Object.keys(DOT_ACTIVITIES) as DotActivity[]).map((value) => ({ key: value, label: labels[value] })), onClick: ({ key }) => selectActivity(key as DotActivity) }}><button type="button" aria-label="Dot activity"><CodexReplyIcon name="more" /></button></Dropdown></div>}
+    <PreviewWorkspace open={entered && resultsOpen} turn={resultTurn} step={previewStep} running={running && resultTurn?.id === latest?.id} onSelect={(artifact) => { setResultsOpen(true); setResultTurnId(artifact.turn); setResultStep(artifact.step); }} onClose={() => setResultsOpen(false)} summaryOpen={contextOpen} summaryPinned={contextOpen && contextPinned && wideLayout} canPin={wideLayout} onToggleSummary={() => setContextOpen(value => !value)} onTogglePinned={togglePinned} onNotice={setNotice} />
+    {entered && <div className="scout-conversation-toolbar" role="toolbar" aria-label="Conversation actions">
+      <button type="button" className="scout-toolbar-button scout-context-toggle" aria-label="Conversation context" title="Toggle summary panel" aria-expanded={contextOpen} aria-controls="scout-conversation-context" onClick={() => setContextOpen(value => !value)}><ScoutToolbarIcon name="panel" active={contextOpen} /></button>
+      <Dropdown trigger={['click']} placement="bottomRight" overlayClassName="scout-file-menu scout-conversation-menu" menu={{ selectedKeys: [`activity:${activity}`], items: [{ key: 'preview', label: resultsOpen ? 'Hide file preview' : 'Show file preview' }, { key: 'copy', label: 'Copy conversation', disabled: !turns.length }, { key: 'agents', label: 'Manage agents' }, { type: 'divider' }, { key: 'activity', label: 'Dot activity', children: (Object.keys(DOT_ACTIVITIES) as DotActivity[]).map(value => ({ key: `activity:${value}`, label: labels[value] })) }], onClick: ({ key }) => { if (key === 'preview') setResultsOpen(value => !value); else if (key === 'copy') void copyConversation(); else if (key === 'agents') navigate('/agents'); else if (key.startsWith('activity:')) selectActivity(key.slice(9) as DotActivity); } }}><button type="button" className="scout-toolbar-button" aria-label="More conversation actions" title="More"><ScoutToolbarIcon name="more" /></button></Dropdown>
+    </div>}
     {entered && <aside className="scout-history-rail" aria-label="Conversation history" onMouseLeave={() => setHoveredHistory(null)} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setHoveredHistory(null); }}>
       <div className="ai-session-stage-bars">{history.map((entry, index) => {
         const distance = hoveredHistory === null ? -1 : Math.abs(index - hoveredHistory);
@@ -260,7 +277,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
         <button type="button" className="scout-resume" onClick={resume}>{activity === 'Error' ? 'Retry' : latest.waiting === 'template' ? 'Confirm Template' : latest.waiting === 'adapter' ? 'Confirm Adapter' : 'Continue'}</button>
       </div>}
     </div>
-    {entered && <><button type="button" className="scout-context-toggle" aria-label="Conversation context" title="Conversation context" aria-expanded={contextOpen} aria-controls="scout-conversation-context" onClick={() => setContextOpen((prev) => !prev)}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M15 4v16" /></svg></button><ConversationContext open={contextOpen} turn={resultTurn} steps={steps} running={running && resultTurn?.id === latest?.id} activity={labels[activity]} onClose={() => { setContextOpen(false); document.querySelector<HTMLButtonElement>('.scout-context-toggle')?.focus(); }} activePreview={activePreview} onView={(artifact) => { setResultsOpen(activePreview !== artifact.key); setResultTurnId(artifact.turn); setResultStep(artifact.step); }} onPause={pauseResponse} sources={sourceFiles} onAddFiles={addSourceFiles} onPreviewFile={setSelectedSource} /></>}
+    {entered && <ConversationContext open={contextOpen} pinned={contextPinned && wideLayout} canPin={wideLayout} onTogglePinned={togglePinned} turn={resultTurn} steps={steps} running={running && resultTurn?.id === latest?.id} activity={labels[activity]} onClose={() => { setContextOpen(false); document.querySelector<HTMLButtonElement>('.scout-context-toggle')?.focus(); }} activePreview={activePreview} onView={(artifact) => { setResultsOpen(true); setResultTurnId(artifact.turn); setResultStep(artifact.step); }} onPause={pauseResponse} sources={sourceFiles} onAddFiles={addSourceFiles} onPreviewFile={setSelectedSource} />}
     <ChatComposer ref={input} entered={entered} value={draft} running={running} files={pendingFiles} queued={queued} onChange={setDraft} onSubmit={submit} onPause={pauseResponse} onAddFiles={addSourceFiles} onRemoveFile={removePendingFile} onPreviewFile={setSelectedSource} onViewSources={() => { if (!entered) onEnter(); setContextOpen(true); }} onHeightChange={setComposerHeight} onEditQueued={(item) => { setQueued((prev) => prev.filter((value) => value.id !== item.id)); setDraft(item.prompt); setPendingFiles(item.files); input.current?.focus(); }} onDeleteQueued={(id) => setQueued((prev) => prev.filter((item) => item.id !== id))} onSendQueued={(item) => { setQueued((prev) => prev.filter((value) => value.id !== item.id)); startTurn(item.prompt, item.files, false); }} />
     {selectedSource && <SourcePreview file={selectedSource} onClose={() => setSelectedSource(null)} />}
     <span className="scout-action-notice" role="status">{notice}</span>

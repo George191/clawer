@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Modal } from '@/components/ui';
 import { ArtifactIcon, type StageArtifact } from './StageArtifacts';
+import ScoutToolbarIcon from './ScoutToolbarIcon';
 
 type ContextTurn = { id: number; prompt: string; step: number; done: number; template: string; adapter: string; complete: boolean };
 type Step = { title: string; detail: string };
 
 // Mirrors Codex's Changes / Background processes / Sources interactions using collection preview state.
-export default function ConversationContext({ open, turn, steps, running, activity, onClose, onView, activePreview, onPause, sources, onAddFiles, onPreviewFile }: { open: boolean; turn?: ContextTurn; steps: Step[]; running: boolean; activity: string; onClose: () => void; onView: (artifact: StageArtifact) => void; activePreview?: string; onPause: () => void; sources: File[]; onAddFiles: (files: File[]) => void; onPreviewFile: (file: File) => void }) {
+export default function ConversationContext({ open, pinned, canPin, onTogglePinned, turn, steps, running, activity, onClose, onView, activePreview, onPause, sources, onAddFiles, onPreviewFile }: { open: boolean; pinned: boolean; canPin: boolean; onTogglePinned: () => void; turn?: ContextTurn; steps: Step[]; running: boolean; activity: string; onClose: () => void; onView: (artifact: StageArtifact) => void; activePreview?: string; onPause: () => void; sources: File[]; onAddFiles: (files: File[]) => void; onPreviewFile: (file: File) => void }) {
   const [showAll, setShowAll] = useState(false);
   const picker = useRef<HTMLInputElement>(null);
   const files = turn ? [{ name: 'template.yaml', content: turn.template, step: 2 }, { name: 'adapter.py', content: turn.adapter, step: 3 }].filter((file) => file.content) : [];
@@ -14,8 +15,8 @@ export default function ConversationContext({ open, turn, steps, running, activi
     if (turn) onView({ key: `${turn.id}-${step}`, turn: turn.id, step });
   }
   return <>
-    <aside id="scout-conversation-context" className={`scout-context-panel ${open ? 'is-open' : ''}`} aria-label="Conversation context" aria-hidden={!open} onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
-      <button type="button" className="scout-context-close" aria-label="Close context panel" onClick={onClose}>×</button>
+    <aside id="scout-conversation-context" className={`scout-context-panel ${open ? 'is-open' : ''} ${pinned ? 'is-pinned' : ''}`} aria-label="Conversation context" aria-hidden={!open} onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
+      <header className="scout-context-heading"><span>Summary</span><div>{canPin && <button type="button" className="scout-toolbar-button" aria-label={pinned ? 'Unpin summary' : 'Pin summary'} title={pinned ? 'Unpin summary' : 'Pin summary'} aria-pressed={pinned} onClick={onTogglePinned}><ScoutToolbarIcon name="panel" active={pinned} /></button>}<button type="button" className="scout-toolbar-button" aria-label="Close context panel" title="Close summary" onClick={onClose}><ScoutToolbarIcon name="close" /></button></div></header>
       <ContextSection title="Changes">
         {files.length ? files.map((file) => <button type="button" key={file.name} className="scout-context-row" aria-label={`Open ${file.name}`} aria-pressed={activePreview === `${turn!.id}-${file.step}`} aria-controls="scout-collection-results" onClick={() => view(file.step)}><ArtifactIcon step={file.step} /><span>{file.name}<small>{turn!.done > file.step ? 'Generated · example' : 'Writing · example'}</small></span><b className="scout-context-added" aria-label={`${file.content.trimEnd().split('\n').length} generated lines`}>+{file.content.trimEnd().split('\n').length}</b></button>) : <p className="scout-context-empty">Generated files appear here.</p>}
       </ContextSection>

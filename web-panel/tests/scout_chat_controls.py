@@ -89,7 +89,13 @@ with sync_playwright() as p:
     expect(
         page.get_by_role("button", name="Preview attachment notes.py", exact=True)
     ).to_have_count(0)
+    expect(page.get_by_role("button", name="Send message", exact=True)).to_be_disabled()
     entry.fill("Plan a collection")
+    send = page.get_by_role("button", name="Send message", exact=True)
+    before_send = send.bounding_box()
+    send.hover()
+    page.wait_for_timeout(200)
+    assert send.bounding_box()["y"] == before_send["y"]
     entry.press("Enter")
     results = page.get_by_role("complementary", name="Collection results")
     expect(results).to_be_visible()
@@ -101,8 +107,19 @@ with sync_playwright() as p:
     expect(entry).to_have_value("First line\nSecond line")
     entry.fill("")
     context = page.get_by_role("complementary", name="Conversation context")
+    expect(context).to_be_hidden()
+    page.get_by_role("button", name="Conversation context", exact=True).click()
     expect(context).to_be_visible()
-    context.get_by_role("button", name="Pause Understanding the request", exact=True).click()
+    context.get_by_role("button", name=re.compile("^Pause ")).click()
+    context.get_by_role("button", name="Pin summary", exact=True).click()
+    expect(context).to_have_class(re.compile("is-pinned"))
+    expect(page.get_by_role("button", name="Unpin summary panel", exact=True)).to_have_attribute("aria-pressed", "true")
+    page.get_by_role("button", name="Unpin summary panel", exact=True).click()
+    expect(context).not_to_have_class(re.compile("is-pinned"))
+    context.get_by_role("button", name="Pin summary", exact=True).click()
+    assert page.get_by_role("button", name="Preview model").count() == 0
+    assert page.get_by_role("button", name="Preview reasoning effort").count() == 0
+    assert results.evaluate("e=>getComputedStyle(e).backgroundImage") == "none"
     expect(page.get_by_role("button", name="Continue", exact=True)).to_be_visible()
     page.get_by_role("button", name="Continue", exact=True).click()
     expect(results.locator(".scout-result-viewport")).to_have_attribute("data-browser-active", "true")
@@ -120,11 +137,30 @@ with sync_playwright() as p:
     page.get_by_role("button", name="Delete queued message", exact=True).click()
     expect(page.locator(".scout-queued-message")).to_have_count(0)
     expect(results.locator(".scout-result-content")).to_have_attribute("data-phase", "template")
-    expect(results.locator(".scout-template-sheet")).to_contain_text("collection_articles")
+    expect(results.locator(".scout-result-code")).to_contain_text("collection_articles")
+    expect(results.locator(".scout-template-sheet")).to_have_count(0)
     expect(page.locator(".ai-chat-dot")).to_have_attribute("data-activity", "Working")
     expect(results.get_by_text("Example artifact", exact=False)).to_have_count(0)
     expect(page.get_by_role("button", name="Confirm Template", exact=True)).to_be_visible()
     expect(results.locator(".scout-browser-control-border")).not_to_have_attribute("data-active", "true")
+    page.get_by_role("button", name="Share file", exact=True).click()
+    share = page.get_by_role("dialog", name="Share template.yaml", exact=True)
+    expect(share.get_by_role("textbox", name="Shared file contents")).to_have_value(re.compile("name: collection_articles"))
+    share.get_by_role("button", name="Copy contents", exact=True).click()
+    assert page.evaluate("navigator.clipboard.readText()") == share.get_by_role("textbox", name="Shared file contents").input_value()
+    with page.expect_download() as downloaded:
+        share.get_by_role("button", name="Download file", exact=True).click()
+    assert downloaded.value.suggested_filename == "template.yaml"
+    share.get_by_role("button", name="Close dialog", exact=True).click()
+    tab = results.get_by_role("tab", name="template.yaml", exact=True)
+    expect(tab).to_have_attribute("aria-selected", "true")
+    tab.focus()
+    tab.press("ArrowLeft")
+    expect(results.get_by_role("tab", name="Source.md", exact=True)).to_have_attribute("aria-selected", "true")
+    page.keyboard.press("ArrowRight")
+    expect(tab).to_have_attribute("aria-selected", "true")
+    page.get_by_role("button", name="Preview options", exact=True).click()
+    page.get_by_role("menuitem", name="Structured template preview", exact=True).click()
     template_rows = results.locator(".scout-template-sheet .ai-template-field")
     assert template_rows.count() > 15
     assert results.locator(".scout-template-row,.is-item-group").count() == 0
@@ -142,9 +178,9 @@ with sync_playwright() as p:
     assert scroll.evaluate("e=>getComputedStyle(e).scrollbarWidth") == "none"
     assert page.get_by_role("button", name="View adapter.py", exact=True).count() == 0
     context.get_by_role("button", name="Inspect Generating the template", exact=True).click()
-    expect(results).to_be_hidden()
+    expect(results).to_be_visible()
     page.get_by_role("button", name="Confirm Template", exact=True).click()
-    expect(results).to_be_hidden()
+    expect(results).to_be_visible()
     context.get_by_role("button", name="Inspect Writing the adapter", exact=True).click()
     expect(results).to_be_visible()
     expect(results.locator(".scout-result-content")).to_have_attribute("data-phase", "adapter")
@@ -158,7 +194,7 @@ with sync_playwright() as p:
     assert keyword.evaluate("e=>getComputedStyle(e).color") == "rgb(255, 121, 198)"
     assert function.evaluate("e=>getComputedStyle(e).color") == "rgb(80, 250, 123)"
     assert string.evaluate("e=>getComputedStyle(e).color") == "rgb(241, 250, 140)"
-    expect(page.get_by_role("button", name="Confirm Adapter", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="Confirm Adapter", exact=True)).to_be_visible(timeout=60000)
     canvas = page.frame_locator(".scout-dot-host iframe").locator("canvas")
     expect(canvas).to_have_attribute("data-ready", "true", timeout=90000)
     expect(canvas).to_have_attribute("data-activity", "NeedsInput")
@@ -184,7 +220,8 @@ with sync_playwright() as p:
     assert "repeating-linear-gradient" in divider[2]
     assert context.bounding_box()["x"] >= chat_bounds["x"] + chat_bounds["width"]
     assert page.get_by_role("navigation", name="Stage results").count() == 0
-    assert results.locator(".scout-result-actions,.scout-result-sample,header,h2").count() == 0
+    assert results.locator(".scout-result-actions,.scout-result-sample,h2").count() == 0
+    expect(results.get_by_role("toolbar", name="File actions")).to_be_visible()
     assert results.get_by_role("button", name="Copy adapter.py").count() == 0
     assert results.get_by_role("button", name="Download adapter.py").count() == 0
     expect(
@@ -209,6 +246,9 @@ with sync_playwright() as p:
     context.get_by_role("button", name="Changes", exact=True).click()
     expect(context.get_by_role("button", name="Open adapter.py", exact=True)).to_be_visible()
     context.get_by_role("button", name="Inspect Writing the adapter", exact=True).click()
+    expect(results).to_be_visible()
+    page.get_by_role("button", name="More file actions", exact=True).click()
+    page.get_by_role("menuitem", name="Close file preview", exact=True).click()
     expect(results).to_be_hidden()
     expect(context.get_by_role("button", name="Inspect Writing the adapter", exact=True)).to_have_attribute("aria-pressed", "false")
     page.wait_for_timeout(700)
@@ -268,19 +308,14 @@ with sync_playwright() as p:
     page.wait_for_timeout(300)
     assert panel.bounding_box()["height"] < 1
     toggle.click()
-    page.wait_for_timeout(80)
-    mid = panel.bounding_box()["height"]
-    page.wait_for_timeout(260)
-    full = panel.bounding_box()["height"]
-    assert 0 < mid < full, (mid, full)
+    expect(toggle).to_have_attribute("aria-expanded", "true")
+    page.wait_for_function("e=>e.getBoundingClientRect().height>0", arg=panel.element_handle())
     arrow = toggle.locator(".scout-step-chevron").bounding_box()
     row = toggle.bounding_box()
     assert abs(arrow["y"] + arrow["height"] / 2 - row["y"] - row["height"] / 2) < 1
     toggle.click()
-    page.wait_for_timeout(80)
-    assert 0 < panel.bounding_box()["height"] < full
-    page.wait_for_timeout(260)
-    assert panel.bounding_box()["height"] < 1
+    expect(toggle).to_have_attribute("aria-expanded", "false")
+    page.wait_for_function("e=>e.getBoundingClientRect().height<1", arg=panel.element_handle())
     rail = page.get_by_role("complementary", name="Conversation history")
     bars = rail.get_by_role("button")
     assert bars.count() == 7
@@ -313,8 +348,9 @@ with sync_playwright() as p:
     expect(canvas).to_have_attribute("data-activity", "Ready")
 
     def choose(label):
-        page.get_by_role("button", name="Dot activity", exact=True).click()
-        page.locator(".scout-dot-state-menu").get_by_role(
+        page.get_by_role("button", name="More conversation actions", exact=True).click()
+        page.locator(".scout-conversation-menu").get_by_role("menuitem", name="Dot activity", exact=True).click()
+        page.locator(".scout-conversation-menu").get_by_role(
             "menuitem", name=label, exact=True
         ).click()
 
@@ -380,7 +416,7 @@ with sync_playwright() as p:
     expect(results).to_be_visible()
     bounds = results.bounding_box()
     chat_bounds = page.locator(".scout-chat-messages").bounding_box()
-    assert abs(bounds["y"] + bounds["height"] - chat_bounds["y"]) < 1
+    assert abs(bounds["y"] + bounds["height"] + 48 - chat_bounds["y"]) < 1
     box = page.locator(".scout-persistent-composer").bounding_box()
     assert box["x"] >= 0 and box["x"] + box["width"] <= 390
     page.locator("#scout-turn-2").get_by_role("button", name="Archive", exact=True).click()

@@ -1,8 +1,9 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Dropdown, Input } from '@/components/ui';
-import { ArrowUpOutlined, AudioOutlined, StopOutlined, DownOutlined, EditOutlined, GlobalOutlined } from '@/components/ui/icons';
+import { ArrowUpOutlined, AudioOutlined, EditOutlined, GlobalOutlined } from '@/components/ui/icons';
 import { ArtifactIcon } from './StageArtifacts';
+import ScoutToolbarIcon from './ScoutToolbarIcon';
 
 export type ComposerField = HTMLInputElement | HTMLTextAreaElement;
 export type QueuedMessage = { id: number; prompt: string; files: File[] };
@@ -20,7 +21,6 @@ export default forwardRef<ComposerField, Props>(function ChatComposer(props, ref
   const field = useRef<ComposerField | null>(null);
   const picker = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
-  const [reasoning, setReasoning] = useState('High');
   const navigate = useNavigate();
   useImperativeHandle(ref, () => field.current!, [entered]);
   useEffect(() => { if (entered) field.current?.focus(); }, [entered]);
@@ -57,15 +57,13 @@ export default forwardRef<ComposerField, Props>(function ChatComposer(props, ref
     <div className="scout-composer-body" onPaste={(event) => { const pasted = Array.from(event.clipboardData.files); if (pasted.length) { event.preventDefault(); onAddFiles(pasted); } }}>
       {!entered && <span className="scout-composer-leading" aria-hidden="true"><GlobalOutlined /></span>}
       {entered ? <textarea ref={(node) => { field.current = node; }} className="scout-message-textarea" aria-label="Message Scout" placeholder="Ask for changes or describe a collection" rows={1} value={value} onChange={(event) => onChange(event.target.value)} onKeyDown={onKeyDown} /> : <Input ref={(node) => { field.current = node; }} className="scout-message-input" aria-label="Message Scout" placeholder="Ask anything or describe what you want to collect" value={value} onChange={(event) => onChange(event.target.value.replace(/[\r\n]+/g, ''))} onKeyDown={onKeyDown} />}
-      {!entered && <><button type="button" className="scout-voice" aria-label="Voice input" title="Voice input is unavailable in this preview" disabled><AudioOutlined /></button><button type="submit" className="scout-send" aria-label="Send message"><ArrowUpOutlined /></button></>}
+      {!entered && <><button type="button" className="scout-voice" aria-label="Voice input" title="Voice input is unavailable in this preview" disabled><AudioOutlined /></button><button type="submit" className="scout-send" aria-label="Send message" disabled={!value.trim() && !files.length}><ScoutToolbarIcon name="send" /></button></>}
     </div>
     {entered && <div className="scout-composer-footer">
-      <Dropdown trigger={['click']} placement="topLeft" menu={{ items: [{ key: 'files', label: 'Add files and photos' }, { key: 'sources', label: 'View sources' }], onClick: ({ key }) => key === 'files' ? picker.current?.click() : onViewSources() }}><button type="button" className="scout-composer-add" aria-label="Add files and more" title="Add files and more">+</button></Dropdown>
-      <Dropdown trigger={['click']} placement="topLeft" menu={{ selectedKeys: ['model'], items: [{ key: 'model', label: 'GPT-6 Sol' }, { key: 'settings', label: 'Agent settings' }], onClick: ({ key }) => { if (key === 'settings') navigate('/agents'); } }}><button type="button" className="scout-composer-model" aria-label="Preview model" title="Preview model">GPT-6 Sol <DownOutlined /></button></Dropdown>
-      <Dropdown trigger={['click']} placement="topLeft" menu={{ selectedKeys: [reasoning], items: ['Low', 'Medium', 'High', 'XHigh', 'Max'].map((value) => ({ key: value, label: value })), onClick: ({ key }) => setReasoning(key) }}><button type="button" className="scout-composer-reasoning" aria-label="Preview reasoning effort" title="Preview reasoning effort">{reasoning}<DownOutlined /></button></Dropdown>
+      <Dropdown trigger={['click']} placement="topLeft" menu={{ items: [{ key: 'files', label: 'Add files and photos' }, { key: 'sources', label: 'View sources' }, { key: 'agents', label: 'Manage agents' }], onClick: ({ key }) => { if (key === 'files') picker.current?.click(); else if (key === 'agents') navigate('/agents'); else onViewSources(); } }}><button type="button" className="scout-composer-add" aria-label="Add files and more" title="Add files and more">+</button></Dropdown>
       <span className="scout-composer-spacer" />
       <button type="button" className="scout-voice" aria-label="Voice input" title="Voice input is unavailable in this preview" disabled><AudioOutlined /></button>
-      {running ? <button type="button" className="scout-send is-stop" aria-label="Stop response" title="Stop response" onClick={onPause}><StopOutlined /></button> : <button type="submit" className="scout-send" aria-label="Send message" title={entered ? 'Send · Enter' : 'Send message'}><ArrowUpOutlined /></button>}
+      {running ? <button type="button" className="scout-send is-stop" aria-label="Stop response" title="Stop response" onClick={onPause}><ScoutToolbarIcon name="stop" /></button> : <button type="submit" className="scout-send" aria-label="Send message" title="Send · Enter" disabled={!value.trim() && !files.length}><ScoutToolbarIcon name="send" /></button>}
     </div>}
   </form>;
 });
