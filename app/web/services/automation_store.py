@@ -6,7 +6,7 @@ from typing import Any
 from app.storage.postgres_client import get_pg_client
 
 _DDL = """
-CREATE TABLE IF NOT EXISTS app.scout_workflows (
+CREATE TABLE IF NOT EXISTS app.automation_workflows (
     id BIGSERIAL PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     product_domain TEXT NOT NULL,
@@ -31,20 +31,20 @@ class AutomationStore:
 
     async def list_workflows(self) -> list[dict[str, Any]]:
         await self._ensure()
-        return await self._pg.fetch_all("SELECT * FROM app.scout_workflows ORDER BY updated_at DESC")
+        return await self._pg.fetch_all("SELECT * FROM app.automation_workflows ORDER BY updated_at DESC")
 
     async def save_workflow(self, payload: dict[str, Any], name: str | None = None) -> dict[str, Any]:
         await self._ensure()
         if name:
             row = await self._pg.fetch_one(
-                """UPDATE app.scout_workflows SET product_domain=:product_domain,
+                """UPDATE app.automation_workflows SET product_domain=:product_domain,
                 description=:description, nodes=CAST(:nodes AS jsonb), enabled=:enabled, updated_at=now()
                 WHERE name=:name RETURNING *""",
                 {**payload, "name": name, "nodes": json.dumps(payload.get("nodes", []), ensure_ascii=False)},
             )
         else:
             row = await self._pg.fetch_one(
-                """INSERT INTO app.scout_workflows
+                """INSERT INTO app.automation_workflows
                 (name, product_domain, description, nodes, enabled)
                 VALUES (:name, :product_domain, :description, CAST(:nodes AS jsonb), :enabled)
                 RETURNING *""",
@@ -57,7 +57,7 @@ class AutomationStore:
     async def delete_workflow(self, name: str) -> bool:
         await self._ensure()
         row = await self._pg.fetch_one(
-            "DELETE FROM app.scout_workflows WHERE name=:name RETURNING id",
+            "DELETE FROM app.automation_workflows WHERE name=:name RETURNING id",
             {"name": name},
         )
         return row is not None

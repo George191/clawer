@@ -23,7 +23,7 @@ PROGRESS_LINE_PREFIXES = ("download progress:", "download finished:")
 
 
 class TaskLogCapture(logging.Handler):
-    """Copy task-scoped console records to ``scout_task_logs``."""
+    """Copy task-scoped console records to ``automation_task_logs``."""
 
     executor = "Scheduler"
 

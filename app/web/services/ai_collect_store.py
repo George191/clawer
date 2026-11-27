@@ -283,7 +283,7 @@ class AICollectStore(AutomationTaskStore):
         rows = await self._pg.fetch_all(
             """
             SELECT t.*,
-                   COALESCE((SELECT count(*) FROM app.scout_tasks task
+                   COALESCE((SELECT count(*) FROM app.automation_tasks task
                              WHERE task.template_name = t.name
                                AND task.deleted_at IS NULL), 0)::int AS task_count
             FROM app.scout_templates t
@@ -312,7 +312,7 @@ class AICollectStore(AutomationTaskStore):
         rows = await self._pg.fetch_all(
             """
             SELECT t.*,
-                   COALESCE((SELECT count(*) FROM app.scout_tasks task
+                   COALESCE((SELECT count(*) FROM app.automation_tasks task
                              WHERE task.template_name = t.name
                                AND task.deleted_at IS NULL), 0)::int AS task_count
             FROM app.scout_templates t
@@ -363,7 +363,7 @@ class AICollectStore(AutomationTaskStore):
         row = await self._pg.fetch_one(
             f"""
             SELECT t.*,
-                   COALESCE((SELECT count(*) FROM app.scout_tasks task
+                   COALESCE((SELECT count(*) FROM app.automation_tasks task
                              WHERE task.template_name = t.name
                                AND task.deleted_at IS NULL), 0)::int AS task_count
             FROM app.scout_templates t
@@ -397,7 +397,7 @@ class AICollectStore(AutomationTaskStore):
             WHERE target.name = :name
               AND target.version = :version
               AND NOT EXISTS (
-                  SELECT 1 FROM app.scout_tasks task
+                  SELECT 1 FROM app.automation_tasks task
                   WHERE task.template_name = target.name
                     AND task.deleted_at IS NULL
               )

@@ -11,6 +11,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 
 migration = import_module("app.web.alembic.versions.f6a8c2d901be_product_table_prefixes")
+restore_automation = import_module("app.web.alembic.versions.c7b9d3e502af_restore_automation_table_names")
 URL = os.getenv("PRODUCT_PREFIX_TEST_DATABASE_URL")
 
 
@@ -49,6 +50,12 @@ class ProductTablePrefixTests(unittest.IsolatedAsyncioTestCase):
         await db.execute(text("UPDATE app.helio_object_properties SET value=1 WHERE id=1"))
         self.assertEqual(await db.scalar(text("SELECT value FROM app.helio_objects WHERE id=1")), 1)
         self.assertEqual(await db.scalar(text("SELECT confrelid FROM pg_constraint WHERE conname='parent_fk' AND connamespace='app'::regnamespace")), before['ontology_objects'])
+        await db.run_sync(run_migration, restore_automation.upgrade)
+        for old, new in migration.TABLE_RENAMES:
+            final = old if old.startswith("automation_") else new
+            self.assertEqual(await db.scalar(text("SELECT to_regclass(:name)::oid"), {"name": f"app.{final}"}), before[old])
+            self.assertEqual(await db.scalar(text(f'SELECT count(*) FROM app."{final}"')), 1)
+        await db.run_sync(run_migration, restore_automation.downgrade)
         await db.run_sync(run_migration, migration.downgrade)
         await db.execute(text("UPDATE app.ontology_object_properties SET value=2 WHERE id=1"))
         self.assertEqual(await db.scalar(text("SELECT value FROM app.ontology_objects WHERE id=1")), 2)
