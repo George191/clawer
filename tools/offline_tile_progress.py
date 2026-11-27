@@ -60,7 +60,8 @@ def markdown(value):
         lines.append(f"| {title} | {current['tiles']:,} / {current['total']:,} | {done} | {sum(s['tiles'] for s in levels.values()):,} |")
     lines.append(f"已落盘 {value['bytes'] / 1024**2:,.1f} MiB；目录：`{value['root']}`。")
     lines.append('数据源：Google 卫星(s) / 电子地图(m) / 透明道路(h)；不含 Earth 实景三维。网络：' + value.get('network', '未核定') + '。')
-    errors = [error for levels in value['levels'].values() for state in levels.values() for error in state['errors']]
+    errors = [error for levels in value['levels'].values() for level, state in levels.items()
+              if int(level) <= value['level'] for error in state['errors']]
     if value.get('error') or errors:
         lines.append('下载错误：' + (value.get('error') or errors[0]))
     return '\n'.join(lines)
