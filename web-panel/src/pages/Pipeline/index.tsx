@@ -1106,7 +1106,7 @@ filterButton: showPreview && <ExplorerFilterButton open={filterOpen} count={filt
                     {!selectedTableAvailable ? <div className="flow-inspector-body" aria-busy={!requestError && (explorerLoading || !runtimeItem)}>
                         {requestError ? <div className="flow-schema-state" role={requestError === 'Loading cancelled' ? 'status' : 'alert'}><strong>{requestError === 'Loading cancelled' ? 'Loading cancelled' : 'Unable to open this object type'}</strong>{requestError !== 'Loading cancelled' && <p>{requestError}</p>}<Button onClick={refreshWorkspace}>Retry</Button></div>
                           : explorerLoading || !catalogLoaded ? <Table className="flow-data-table" size="small" pagination={false} columns={dataColumns} dataSource={[]}
-                              locale={{ emptyText: <div className="flow-schema-state" role="status"><Spin size="small" /><span>{previewColumns.length ? 'Loading object data…' : 'Loading object columns…'}</span></div> }} />
+                              locale={{ emptyText: <div className="flow-schema-state" role="status"><LoadingIndicator size={20}>{previewColumns.length ? 'Loading object data…' : 'Loading object columns…'}</LoadingIndicator></div> }} />
                           : <div className="flow-schema-state" role="status">{requestedSchema && requestedTable ? 'Object type is unavailable.' : 'Choose an object type from the catalog.'}</div>}
                     </div> : <>
                     <div  className="flow-table-header">
