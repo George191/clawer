@@ -275,7 +275,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
     <div className={`ai-chat-dot ${!entered ? 'is-landing' : ''}`} data-activity={entered ? dotActivity : landingActivity} />
     {entered && <div className="scout-chat-dot-frost" aria-hidden="true" />}
     <button type="button" className="codex-chat-title" title="Open chats" onClick={() => setLibraryOpen(true)}>{entered ? `${chatStore.chat.pinned ? '● ' : ''}${chatStore.chat.title}` : 'Chats'}</button>
-    <PreviewWorkspace chatId={chatStore.chat.id} visible={entered} snapshot={chatSnapshot} onSave={() => chatStore.save()} onRefresh={chatStore.refresh} conversationMenu={{ items: [
+    <PreviewWorkspace userName={userName} chatId={chatStore.chat.id} visible={entered} snapshot={chatSnapshot} onSave={() => chatStore.save()} onRefresh={chatStore.refresh} conversationMenu={{ items: [
       { key: 'rename', label: localized('Rename', '重命名'), icon: <ScoutToolbarIcon name="rename" />, disabled: chatStore.loading },
       { key: 'pin', label: chatStore.chat.pinned ? localized('Unpin chat', '取消置顶聊天') : localized('Pin chat', '置顶聊天'), icon: <ScoutToolbarIcon name="pin" />, disabled: !turns.length || chatStore.loading },
       { key: 'branch', label: localized('Branch chat', '创建聊天分支'), icon: <ScoutToolbarIcon name="branch" />, disabled: !turns.length || chatStore.loading },

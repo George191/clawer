@@ -8,7 +8,7 @@ import PreviewResults, { type PreviewResult } from './PreviewResults';
 import ScoutToolbarIcon from './ScoutToolbarIcon';
 
 type Props = {
-  chatId: string; visible: boolean; conversationMenu: MenuProps;
+  userName: string; chatId: string; visible: boolean; conversationMenu: MenuProps;
   snapshot: ShareSnapshot; onSave: () => Promise<SavedChat>;
   onRefresh: () => Promise<void>;
   open: boolean; turn?: PreviewResult; step: number; running: boolean;
@@ -27,7 +27,7 @@ export default function PreviewWorkspace(props: Props) {
   return <>
     <aside id="scout-collection-results" className="scout-collection-results" aria-label="Collection results" aria-hidden={!open}>
       {browsing && <><header className="scout-file-header">https://example.org/articles</header><div className="scout-file-body"><PreviewResults turn={turn} step={step} running={running} /></div></>}
-      <div className="scout-review-surface" hidden={browsing}><CodexChangeReview chatId={chatId} turns={snapshot.turns} activeTurn={turn?.id} activeStep={step} selectionRequest={selectionRequest} running={running} onChange={onReviewChange} onRefresh={onRefresh} onNotice={onNotice} onRequestChanges={onRequestChanges} /></div>
+      <div className="scout-review-surface" hidden={browsing}><CodexChangeReview userName={props.userName} chatId={chatId} turns={snapshot.turns} activeTurn={turn?.id} activeStep={step} selectionRequest={selectionRequest} running={running} onChange={onReviewChange} onRefresh={onRefresh} onNotice={onNotice} onRequestChanges={onRequestChanges} /></div>
     </aside>
     {visible && <div className="scout-conversation-toolbar" role="toolbar" aria-label="Conversation actions">
       <CodexToolbarMenu menu={conversationMenu} shortcuts={{ rename: 'R', pin: 'P', archive: 'A' }}><CodexToolbarButton aria-label="More conversation actions" title="More"><ScoutToolbarIcon name="more" /></CodexToolbarButton></CodexToolbarMenu>

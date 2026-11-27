@@ -139,7 +139,7 @@ with sync_playwright() as playwright:
     file_gutter = panel.locator('#codex-file-panel diffs-container [data-column-number]').first
     file_line = int(file_gutter.get_attribute('data-column-number'))
     file_gutter.click()
-    file_comment_dialog = page.get_by_role('dialog', name='Leave a comment', exact=True)
+    file_comment_dialog = panel.get_by_role('form', name='Leave a comment', exact=True)
     file_comment_dialog.get_by_role('textbox', name='Comment', exact=True).fill('Full-file line comment')
     file_comment_dialog.get_by_role('button', name='Add comment', exact=True).click()
     expect(file_comment_dialog).to_be_hidden()
@@ -327,8 +327,23 @@ with sync_playwright() as playwright:
 
     # Comments persist, resolve/reopen and can prefill a new correction request.
     renderer.locator("[data-column-number]").first.click()
-    comment_dialog = page.get_by_role("dialog", name="Leave a comment", exact=True)
+    comment_dialog = panel.get_by_role("form", name="Leave a comment", exact=True)
+    expect(page.get_by_role("dialog", name="Leave a comment", exact=True)).to_have_count(0)
+    expect(comment_dialog.get_by_role("button", name="Add comment", exact=True)).to_be_disabled()
+    expect(comment_dialog.get_by_role("textbox", name="Comment", exact=True)).to_be_focused()
+    assert comment_dialog.locator("xpath=ancestor::diffs-container").count() == 1
+    comment_dialog.get_by_role("textbox", name="Comment", exact=True).fill("   ")
+    expect(comment_dialog.get_by_role("button", name="Add comment", exact=True)).to_be_disabled()
+    comment_dialog.get_by_role("button", name="Cancel", exact=True).click()
+    expect(comment_dialog).to_have_count(0)
+    renderer.locator("[data-column-number]").first.click()
     comment_dialog.get_by_role("textbox", name="Comment", exact=True).fill("Please verify the article name")
+    reject_next[0] = True
+    comment_dialog.get_by_role("button", name="Add comment", exact=True).click()
+    expect(comment_dialog.get_by_role("alert")).to_contain_text("Injected save failure")
+    expect(comment_dialog.get_by_role("textbox", name="Comment", exact=True)).to_have_value("Please verify the article name")
+    if args.screenshot:
+        page.screenshot(path=args.screenshot.replace(".png", "-comment.png"))
     comment_dialog.get_by_role("button", name="Add comment", exact=True).click()
     expect(comment_dialog).to_be_hidden()
     comment = panel.locator(".codex-inline-comment").filter(has_text="Please verify the article name")
@@ -382,7 +397,7 @@ with sync_playwright() as playwright:
     gutter = renderer.locator("[data-column-number]").first
     line_number = int(gutter.get_attribute("data-column-number"))
     gutter.click()
-    line_dialog = page.get_by_role("dialog", name="Leave a comment", exact=True)
+    line_dialog = panel.get_by_role("form", name="Leave a comment", exact=True)
     line_dialog.get_by_role("textbox", name="Comment", exact=True).fill("Preserve this line coordinate")
     line_dialog.get_by_role("button", name="Add comment", exact=True).click()
     expect(line_dialog).to_be_hidden()
