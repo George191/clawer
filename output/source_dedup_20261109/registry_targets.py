@@ -32,7 +32,7 @@ async def connect(application_name, *, timeout=15, command_timeout=150):
         sources = await metadata.fetch_all("""SELECT b.layer, s.id, s.engine, s.config,
                 s.credentials_ciphertext, s.paused_at
             FROM app.etl_layer_connections b
-            JOIN app.ontology_data_connections s ON s.id=b.connection_id
+            JOIN app.helio_data_connections s ON s.id=b.connection_id
             WHERE b.layer IN ('rds','ods') AND s.paused_at IS NULL""")
         if ({row['layer'] for row in sources} != {'rds', 'ods'} or len(sources) != 2
                 or any(row['engine'] != 'postgresql' for row in sources)
@@ -40,7 +40,7 @@ async def connect(application_name, *, timeout=15, command_timeout=150):
             raise RuntimeError('Source migration requires RDS and ODS on the same authorized connection')
         url, options = business_connection_options(sources[0])
         rows = await metadata.fetch_all("""SELECT o.id, o.layer, o.data_type, o.schema_name, o.table_name
-            FROM app.ontology_objects o
+            FROM app.helio_objects o
             JOIN app.etl_layer_connections b ON b.layer=o.layer
             WHERE o.is_active AND o.table_role='current' AND o.layer IN ('rds','ods')
               AND b.connection_id=:connection_id""",
