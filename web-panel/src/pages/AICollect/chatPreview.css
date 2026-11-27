@@ -117,9 +117,6 @@
 
 .scout-chat-messages { bottom: calc(var(--scout-composer-height) + 34px); }
 .scout-adapter-milestones { display: grid; gap: 8px; padding-top: 12px; color: #8e9fb9; font-size: 11px; }
-.scout-source-preview.is-scanning .scout-source-page article { animation: scout-page-inspect 4.2s ease both; }
-.scout-source-preview.is-scanning .scout-source-page article:nth-of-type(2) { animation-delay: 600ms; }
-@keyframes scout-page-inspect { 0% { opacity: .2; filter: blur(2px); } 45% { opacity: 1; filter: blur(0); background: #82b6ff0b; } 100% { opacity: 1; filter: blur(0); } }
 
 .scout-adapter-milestones section > button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 0; border: 0; background: transparent; color: #aab9cf; font: inherit; text-align: left; cursor: pointer; }
 .scout-adapter-milestones button small { margin-left: auto; padding: 0; font-size: 10px; white-space: nowrap; }
@@ -262,19 +259,25 @@
 .scout-result-overflow-hint.is-top { top: 0; background: linear-gradient(#141a29b3, transparent); mask-image: linear-gradient(#000, transparent); }
 .scout-result-overflow-hint.is-bottom { bottom: 0; background: linear-gradient(transparent, #141a29b3); mask-image: linear-gradient(transparent, #000); }
 .scout-result-overflow-hint.is-visible { opacity: 1; }
-/* Codex computer-control border: masked outline, two traces, 320ms reveal. */
-.scout-browser-control-border { position: absolute; z-index: 4; inset: 3px; padding: 4px; border-radius: 15px; pointer-events: none; visibility: hidden; mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0); mask-composite: exclude; container-type: size; transition: visibility 0s 240ms; }
-.scout-browser-control-border[data-active] { visibility: visible; transition-delay: 0s; }
-.scout-browser-trace { position: absolute; top: 0; bottom: 0; width: calc(50% + 1px); overflow: hidden; }
-.scout-browser-trace.is-left { left: 0; }
-.scout-browser-trace.is-right { right: 0; }
-.scout-browser-trace > div { position: absolute; top: calc(50% - 100cqmax); right: 0; width: 100cqmax; height: 200cqmax; background: #538cff; transform-origin: 100%; transform: rotate(-180deg); transition: transform 240ms cubic-bezier(.4,0,.2,1); }
-.scout-browser-trace.is-right > div { left: 0; right: auto; transform-origin: 0; transform: rotate(180deg); }
-.scout-browser-control-border[data-active] .scout-browser-trace > div { transform: rotate(0); transition-duration: 320ms; transition-delay: 50ms; }
-.scout-result-viewport::after { content: ''; position: absolute; z-index: 2; inset: 0; border-radius: 18px; box-shadow: inset 0 0 36px #4583ff55, inset 0 0 8px #79aaff88; opacity: 0; pointer-events: none; transition: opacity 320ms ease; }
-.scout-result-viewport[data-browser-active]::after { opacity: 1; }
+/* Windows CompositionOverlay: four source-over fades, not an outlined frame.
+   Native stops/metrics: 0/.58, .18/.36, .58/.12, 1/0; min(96px, W/2, H/2).
+   500ms entry, 1.5s each breathing leg; extent .88+.12p, opacity .76+.24p. */
+@property --scout-control-progress { syntax: '<number>'; inherits: true; initial-value: 0; }
+.scout-computer-control { position: absolute; z-index: 4; inset: 0; overflow: hidden; isolation: isolate; container-type: size; pointer-events: none; visibility: hidden; opacity: 0; --scout-control-color: 0 177 255; --scout-control-progress: 0; --scout-control-fade: min(96px, 50cqw, 50cqh); transition: opacity 240ms ease, visibility 0s 240ms; }
+.scout-computer-control[data-active] { visibility: visible; opacity: 1; transition-delay: 0s; animation: scout-control-enter 500ms ease-out both, scout-control-breathe 3s ease-in-out 500ms infinite; }
+.scout-computer-control > span { position: absolute; pointer-events: none; background: linear-gradient(var(--scout-control-direction), rgb(var(--scout-control-color) / .580392157) 0%, rgb(var(--scout-control-color) / .360784314) 18%, rgb(var(--scout-control-color) / .121568627) 58%, rgb(var(--scout-control-color) / 0) 100%); }
+.scout-computer-control > [data-edge=top], .scout-computer-control > [data-edge=bottom] { left: 0; right: 0; height: var(--scout-control-fade); transform: scaleY(calc(.88 + .12 * var(--scout-control-progress))); }
+.scout-computer-control > [data-edge=left], .scout-computer-control > [data-edge=right] { top: 0; bottom: 0; width: var(--scout-control-fade); transform: scaleX(calc(.88 + .12 * var(--scout-control-progress))); }
+.scout-computer-control > [data-edge=top] { top: 0; transform-origin: top; --scout-control-direction: to bottom; }
+.scout-computer-control > [data-edge=bottom] { bottom: 0; transform-origin: bottom; --scout-control-direction: to top; }
+.scout-computer-control > [data-edge=left] { left: 0; transform-origin: left; --scout-control-direction: to right; }
+.scout-computer-control > [data-edge=right] { right: 0; transform-origin: right; --scout-control-direction: to left; }
+@keyframes scout-control-enter { from { opacity: 0; } to { opacity: 1; } }
+@keyframes scout-control-breathe { 0%, 100% { opacity: .76; --scout-control-progress: 0; } 50% { opacity: 1; --scout-control-progress: 1; } }
+:root[data-reduced-motion=true] .scout-computer-control { animation: none; transition: none; --scout-control-progress: 1; }
+@media (prefers-reduced-motion: reduce) { .scout-computer-control, .scout-computer-control[data-active] { animation: none; transition: none; --scout-control-progress: 1; } }
 @media (max-width: 767px) { .scout-chat-preview { --scout-chat-gutter: 40px; } .scout-chat-preview.has-results::after { background: repeating-linear-gradient(to right, #d2def214 0 3px, transparent 3px 8px); } }
-@media (prefers-reduced-motion: reduce) { .scout-result-overflow-hint, .scout-browser-control-border, .scout-browser-trace > div, .scout-result-viewport::after { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .scout-result-overflow-hint { transition: none; } }
 
 /* Codex's native SVGs already contain their outline thickness in the filled paths. */
 .scout-response-actions .scout-codex-icon, .scout-feedback-menu .scout-codex-icon { display: block; width: 16px; height: 16px; fill: currentColor; stroke: none; }

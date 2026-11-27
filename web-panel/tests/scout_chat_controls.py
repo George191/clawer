@@ -2,6 +2,7 @@
 
 import argparse
 import re
+from pathlib import Path
 from ipaddress import ip_address
 from urllib.parse import urlsplit
 
@@ -12,13 +13,15 @@ parser = argparse.ArgumentParser(
 )
 parser.add_argument("base")
 parser.add_argument("--composer-only", action="store_true", help="Verify homepage and conversation composer controls only")
+parser.add_argument("--control-effect-only", action="store_true", help="Verify the scoped computer takeover gradients")
+parser.add_argument("--screenshot", help="Optional control effect screenshot path")
 parser.add_argument(
     "--channel", default=None, help="Installed Playwright browser channel, for example msedge"
 )
 args = parser.parse_args()
 if not ip_address(urlsplit(args.base).hostname).is_loopback:
     raise ValueError("Expected a loopback frontend URL")
-expect.set_options(timeout=30000)
+expect.set_options(timeout=90000 if args.control_effect_only else 30000)
 with sync_playwright() as p:
     b = p.chromium.launch(
         channel=args.channel, args=["--no-proxy-server", "--enable-unsafe-swiftshader"]
@@ -88,6 +91,53 @@ with sync_playwright() as p:
         pending.fulfill(json=profile)
     expect(page.locator(".scout-loaded-name")).to_have_text("Alex")
     expect(loading).to_have_count(0)
+    if args.control_effect_only:
+        entry.fill("Inspect the source page")
+        entry.press("Enter")
+        results = page.get_by_role("complementary", name="Collection results")
+        viewport = results.locator(".scout-result-viewport")
+        effect = results.locator(".scout-computer-control")
+
+        def search():
+            page.get_by_role("button", name="More conversation actions", exact=True).click()
+            page.get_by_role("menuitem", name="Dot activity", exact=True).click()
+            page.get_by_role("menuitem", name="Searching", exact=True).click()
+            expect(effect).to_have_attribute("data-active", "true")
+
+        for width, height in [(1920, 1080), (390, 844)]:
+            page.set_viewport_size({"width": width, "height": height})
+            search()
+            page.wait_for_timeout(700)
+            expect(effect.locator(":scope > [data-edge]")).to_have_count(4)
+            expect(effect).to_have_css("pointer-events", "none")
+            expect(effect).to_have_css("border-width", "0px")
+            expect(effect).to_have_css("box-shadow", "none")
+            assert viewport.evaluate("e=>getComputedStyle(e,'::after').content") == "none"
+            gradient = effect.locator("[data-edge=top]").evaluate("e=>getComputedStyle(e).backgroundImage")
+            assert "linear-gradient" in gradient and "18%" in gradient and "58%" in gradient
+            assert viewport.evaluate("e=>e.getBoundingClientRect().toJSON()") == effect.evaluate("e=>e.getBoundingClientRect().toJSON()")
+            assert effect.evaluate("e=>e.getAnimations().some(a=>a.animationName==='scout-control-breathe')")
+            bounds = effect.bounding_box()
+            edge = effect.locator("[data-edge=left]").bounding_box()
+            assert 0 < edge["width"] <= min(96, bounds["width"] / 2, bounds["height"] / 2) + 1
+            assert effect.evaluate("e=>{const b=e.getBoundingClientRect(); return !e.contains(document.elementFromPoint(b.x+b.width/2,b.y+b.height/2))}")
+            assert page.locator(".scout-browser-control-border, .scout-browser-trace").count() == 0
+            if args.screenshot:
+                target = Path(args.screenshot)
+                page.screenshot(path=str(target if width == 1920 else target.with_name(target.stem + "-mobile.png")))
+            page.get_by_role("button", name="Stop response", exact=True).click()
+            expect(effect).not_to_have_attribute("data-active", "true")
+            expect(effect).to_have_css("visibility", "hidden")
+            assert effect.evaluate("e=>e.getAnimations().length") == 0
+        page.emulate_media(reduced_motion="reduce")
+        search()
+        expect(effect).to_have_css("animation-name", "none")
+        expect(effect).to_have_css("opacity", "1")
+        assert not posts, posts
+        assert not errors, errors
+        print("Scoped four-edge takeover gradients, native stops/extent, breathing, pause cleanup, input pass-through and reduced motion passed", flush=True)
+        b.close()
+        raise SystemExit(0)
     assert entry.evaluate("e=>e.tagName") == "INPUT"
     add = page.get_by_role("button", name="Add files and more", exact=True)
     expect(add.locator('[data-codex-icon="plus-md-light-20"]')).to_have_count(1)
@@ -203,7 +253,7 @@ with sync_playwright() as p:
     expect(page.get_by_role("button", name="Continue", exact=True)).to_be_visible()
     page.get_by_role("button", name="Continue", exact=True).click()
     expect(results.locator(".scout-result-viewport")).to_have_attribute("data-browser-active", "true")
-    expect(results.locator(".scout-browser-control-border")).to_have_attribute("data-active", "true")
+    expect(results.locator(".scout-computer-control")).to_have_attribute("data-active", "true")
     expect(results.locator(".scout-result-content")).to_have_attribute("data-phase", "source")
     entry.fill("Queued changes")
     entry.press("Enter")
@@ -226,7 +276,7 @@ with sync_playwright() as p:
     expect(page.locator(".ai-chat-dot")).to_have_attribute("data-activity", "Working")
     expect(results.get_by_text("Example artifact", exact=False)).to_have_count(0)
     expect(page.get_by_role("button", name="Confirm Template", exact=True)).to_be_visible()
-    expect(results.locator(".scout-browser-control-border")).not_to_have_attribute("data-active", "true")
+    expect(results.locator(".scout-computer-control")).not_to_have_attribute("data-active", "true")
     page.get_by_role("button", name="Share file", exact=True).click()
     share = page.get_by_role("dialog", name="Share template.yaml", exact=True)
     expect(share.get_by_role("textbox", name="Shared file contents")).to_have_value(re.compile("name: collection_articles"))

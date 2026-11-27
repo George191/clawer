@@ -99,7 +99,7 @@ export default function PreviewResults({ turn, step, running, structured = false
     <div ref={code} className="scout-result-content" data-phase={phase} onScroll={() => { const node = code.current; if (node) follow.current = node.scrollHeight - node.scrollTop - node.clientHeight < 60; updateEdges(); }}>
       {phase === 'brief' || phase === 'review' ? <div className="scout-result-brief"><p>{turn?.prompt || 'Collection request'}</p>{phase === 'review' && <><p>https://example.org/articles</p><dl><dt>Output fields</dt><dd>title, url</dd><dt>Pagination</dt><dd>page · up to 20 pages</dd><dt>Files</dt><dd>template.yaml · adapter.py</dd></dl></>}</div>
         : phase === 'data' ? <div className="scout-result-data"><table><thead><tr><th>title</th><th>url</th></tr></thead><tbody>{sampleRows.map((row) => <tr key={row.url}><td>{row.title}</td><td>{row.url}</td></tr>)}</tbody></table></div> : null}
-      {phase === 'source' ? <div className={`scout-source-preview ${running && turn?.step === 1 ? 'is-scanning' : ''}`}><div className="scout-source-address">https://example.org/articles </div><div className="scout-source-page"><small>THE COLLECTION JOURNAL</small><h3>Ideas worth collecting.</h3><p>Articles, research, and collection workflows.</p>{sampleRows.map((row, index) => <article key={row.url}><span>0{index + 1} · ARTICLE</span><h4>{row.title}</h4><p>Read the article and explore its sources.</p></article>)}</div></div>
+      {phase === 'source' ? <div className="scout-source-preview"><div className="scout-source-address">https://example.org/articles </div><div className="scout-source-page"><small>THE COLLECTION JOURNAL</small><h3>Ideas worth collecting.</h3><p>Articles, research, and collection workflows.</p>{sampleRows.map((row, index) => <article key={row.url}><span>0{index + 1} · ARTICLE</span><h4>{row.title}</h4><p>Read the article and explore its sources.</p></article>)}</div></div>
         : (phase === 'template' || phase === 'adapter') && <>
           <div className={`scout-result-code ${phase === 'template' && structured ? 'scout-template-sheet' : ''} ${wrap ? 'is-wrapped' : ''} ${lineNumbers ? '' : 'without-line-numbers'}`}>
             {phase === 'template' && structured ? <TemplateSheet text={text} writing={writing} />
@@ -110,7 +110,7 @@ export default function PreviewResults({ turn, step, running, structured = false
     </div>
     <div className={`scout-result-overflow-hint is-top ${edges.top ? 'is-visible' : ''}`} aria-hidden="true" />
     <div className={`scout-result-overflow-hint is-bottom ${edges.bottom ? 'is-visible' : ''}`} aria-hidden="true" />
-    <div className="scout-browser-control-border" data-active={browserActive || undefined} aria-hidden="true"><div className="scout-browser-trace is-left"><div /></div><div className="scout-browser-trace is-right"><div /></div></div>
+    <div className="scout-computer-control" data-active={browserActive || undefined} aria-hidden="true"><span data-edge="top" /><span data-edge="bottom" /><span data-edge="left" /><span data-edge="right" /></div>
   </div>;
 }
 
