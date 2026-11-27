@@ -317,7 +317,7 @@ function StepProgress({ turn, running, current, activity, expandSignal }: { turn
   useEffect(() => { if (expandSignal) setOpen(true); }, [expandSignal]);
   const title = turn.complete ? 'Worked through 6 steps' : !current ? 'Response stopped' : !running ? labels[activity] : turn.step === steps.length - 1 ? 'Writing response' : steps[turn.step].title;
   return <section className={`scout-worked ${open ? 'is-open' : ''}`}>
-    <button type="button" className="scout-worked-toggle" aria-expanded={open} aria-controls={`scout-steps-${turn.id}`} onClick={() => setOpen((value) => !value)}>{running ? <LoadingOrb state="solving" /> : <span className="scout-step-orb" />}<span>{title}</span><span className="scout-step-chevron"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg></span></button>
+    <button type="button" className="scout-worked-toggle" aria-expanded={open} aria-controls={`scout-steps-${turn.id}`} onClick={() => setOpen((value) => !value)}>{running ? <LoadingOrb state={activity === 'Thinking' ? 'thinking' : 'solving'} /> : <span className="scout-step-orb" />}<span>{title}</span><span className="scout-step-chevron"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg></span></button>
     <div id={`scout-steps-${turn.id}`} className="scout-step-content" aria-hidden={!open}><div className="scout-step-content-inner"><ol>{steps.slice(0, turn.step + 1).map((step, index) => <li id={`scout-step-${turn.id}-${index}`} key={step.title}><span className="scout-step-mark">{index < turn.done ? '✓' : '·'}</span><span>{step.title}<small>{step.detail}</small>{index === 3 && <AdapterBuildProgress code={turn.adapter} complete={turn.done > 3} />}</span></li>)}</ol></div></div>
   </section>;
 }

@@ -9,6 +9,7 @@ import {
   Divider,
   Input,
   InputNumber,
+  LoadingOrb,
   Progress,
   Segmented,
   Select,
@@ -4207,7 +4208,8 @@ const AICollect: React.FC = () => {
                   return next;
                 })}
               >
-                <span>{isActive ? 'Working for' : 'Worked for'} {formatDuration(durationMs)}</span>
+                {isActive && dotActivity === 'Thinking' && <LoadingOrb state="thinking" />}
+                <span>{isActive ? dotActivity === 'Thinking' ? 'Thinking for' : 'Working for' : 'Worked for'} {formatDuration(durationMs)}</span>
                 <i className={expanded ? 'is-expanded' : ''} aria-hidden="true">›</i>
               </button> : null}
               {showAnalysisTiming && expanded ? (
