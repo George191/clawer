@@ -117,18 +117,8 @@
 .flow-ontology__schema-tag { min-width: 0; min-height: 24px; padding: 2px 7px; border: 1px solid var(--ontology-border); border-radius: 3px; background: var(--ontology-elevated); color: var(--ontology-muted); font-size: 11px; font-weight: 400; line-height: 18px; }
 .flow-ontology__assets { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 12px; }
 .flow-ontology__assets.is-list { grid-template-columns: minmax(0, 1fr); }
-.flow-catalog-skeleton__status { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; color: var(--ontology-muted); font-size: 12px; }
-.flow-catalog-skeleton__status > .ui-icon { font-size: 16px; }
-.flow-catalog-skeleton__status strong { color: var(--ontology-text); font-size: 13px; font-weight: 500; }
-.flow-catalog-skeleton__status p { margin: 3px 0 0; }
-.flow-catalog-skeleton .flow-ontology__asset { gap: 12px; padding: 10px 15px; pointer-events: none; }
-.flow-catalog-skeleton :is(i, span) { display: block; background: linear-gradient(100deg, var(--ontology-elevated) 30%, var(--ontology-border) 50%, var(--ontology-elevated) 70%); background-size: 200% 100%; border-radius: 3px; animation: flow-catalog-shimmer 1.8s ease-in-out infinite; }
-.flow-catalog-skeleton i { flex: none; width: 30px; height: 30px; }
-.flow-catalog-skeleton__lines { display: flex; flex: 1; flex-direction: column; gap: 8px; }
-.flow-catalog-skeleton__lines span { width: 65%; height: 10px; }
-.flow-catalog-skeleton__lines span:last-child { width: 85%; height: 7px; }
-@keyframes flow-catalog-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
-@media (prefers-reduced-motion: reduce) { .flow-catalog-skeleton :is(i, span) { animation: none; } }
+.flow-ontology__main:has(>.ui-page-loading) { align-self: stretch; min-height: 0; }
+.flow-ontology__main:has(>.ui-page-loading)>.flow-ontology__catalog-footer { display: none; }
 /* Keep glyphs on the same paint boundary when card motion settles. */
 .flow-ontology__asset { position: relative; contain: paint; display: flex; align-items: center; min-width: 0; height: 62px; border: 1px solid var(--ontology-border); border-radius: 4px; background: var(--ontology-surface); transition: border-color .12s; }
 .flow-ontology__asset-ghost { z-index: 2; pointer-events: none; user-select: none; }

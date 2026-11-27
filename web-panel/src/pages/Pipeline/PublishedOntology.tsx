@@ -92,7 +92,7 @@ export default function PublishedOntology({ selection, view, includeHidden, incl
     <section className="flow-create-section">
       {connectionsFailed && <p className="flow-create-error" role="alert">Unable to load saved connections.<Button size="small" icon={<ReloadOutlined />} onClick={onRetryConnections}>Retry connections</Button></p>}
       {catalogError && <p className="flow-create-error" role="alert">{catalogError}<Button size="small" icon={<ReloadOutlined />} onClick={reload}>Retry</Button></p>}
-      {loading && !catalogPage && <OntologyCatalogSkeleton view={view} label="Loading published object types" />}
+      {loading && !catalogPage && <OntologyCatalogSkeleton label="Loading published object types" />}
       {catalogPage && <>
         {!!catalogPage.items.length && view === 'grid' && <div className="flow-published-catalog-scroll flow-published-catalog-cards" role="region" aria-label="Published type cards" ref={element => { if (element) element.inert = loading; }}>
           <div className="flow-ontology__assets">

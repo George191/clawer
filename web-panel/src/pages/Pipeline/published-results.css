@@ -17,7 +17,7 @@
 .flow-published-catalog > .flow-create-section > :is([role="status"], [role="alert"]) { margin: 16px; }
 .flow-published-catalog-scroll { flex: 1; overflow: auto;  }
 .flow-published-catalog-cards { padding: 12px; background: var(--ontology-bg); font: 400 13px/18px var(--ontology-font); }
-.flow-published-catalog .flow-catalog-skeleton { padding: 12px; background: var(--ontology-bg); }
+.flow-published-catalog>.flow-create-section>.ui-page-loading { margin: 0; }
 .flow-published-catalog-cards .flow-ontology__asset-description { padding-inline-end: 0; }
 .flow-published-catalog-cards .flow-semantic-type-glyph { width: 30px; height: 30px; }
 .flow-published-type-actions button { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 3px; background: transparent; color: var(--ontology-text); font-size: 16px; cursor: pointer; }

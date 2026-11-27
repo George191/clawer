@@ -15,5 +15,5 @@ export function LoadingIndicator({ children, state = 'working', size = 32 }: { c
 }
 
 export function PageLoading({ tip = 'Loading workspace…', state = 'working', fullscreen = false }: { tip?: ReactNode; state?: LoadingState; fullscreen?: boolean }) {
-  return <div className={`ui-page-loading${fullscreen ? ' ui-page-loading-fullscreen' : ''}`} role="status" aria-live="polite" aria-busy="true"><LoadingIndicator state={state} size={64}>{tip}</LoadingIndicator></div>;
+  return <div className={`ui-page-loading${fullscreen ? ' ui-page-loading-fullscreen' : ''}`} role="status" aria-label={typeof tip === 'string' ? tip : undefined} aria-live="polite" aria-busy="true"><LoadingIndicator state={state} size={64}>{tip}</LoadingIndicator></div>;
 }

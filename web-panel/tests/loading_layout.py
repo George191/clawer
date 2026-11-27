@@ -33,9 +33,10 @@ with sync_playwright() as p:
       const { default: SharedChatPage } = await import('/src/pages/AICollect/SharedChatPage.tsx');
       const { default: Preview } = await import('/src/pages/Pipeline/ObjectTypePreview.tsx');
       const { default: Selection } = await import('/src/pages/Pipeline/ExplorerSelection.tsx');
+      const { default: CatalogLoading } = await import('/src/pages/Pipeline/OntologyCatalogSkeleton.tsx');
       for (const path of ['styles/global.css', 'pages/ProductWorkspace/workspace.css',
         'pages/Pipeline/ontology-frame.css', 'pages/Pipeline/foundry-workbench-tokens.css',
-        'pages/Pipeline/ontology-workspace.css', 'pages/Pipeline/ontology-explorer.css', 'pages/Dashboard/style.css']) {
+        'pages/Pipeline/ontology-workspace.css', 'pages/Pipeline/ontology-explorer.css', 'pages/Pipeline/published-results.css', 'pages/Dashboard/style.css']) {
         await import('/src/' + path);
       }
       document.querySelector('.sp-auth-boot').remove();
@@ -45,6 +46,14 @@ with sync_playwright() as p:
         let content;
         const region = child => h('main', { style: { height: 420, display: 'flex', flexDirection: 'column', background: 'var(--ui-bg)' } }, child);
         if (mode === 'fullscreen') content = h(PageLoading, { fullscreen: true });
+        else if (mode === 'warehouse-catalog') content = region(h('div', { className: 'flow-ontology' },
+          h('div', { className: 'flow-ontology__body' }, h('aside', { className: 'flow-ontology__sidebar' }, 'Table groups'),
+            h('main', { className: 'flow-ontology__main' }, h(CatalogLoading, { label: 'Loading warehouse tables' }),
+              h('footer', { className: 'flow-ontology__catalog-footer' }, 'Updating catalog…')))));
+        else if (mode === 'published-catalog') content = region(h('div', { className: 'flow-ontology' },
+          h('div', { className: 'flow-ontology__body' }, h('main', { className: 'flow-ontology__published flow-foundry-workbench flow-published-catalog' },
+            h('header', { className: 'flow-ontology__published-header' }, 'Published object types'),
+            h('section', { className: 'flow-create-section' }, h(CatalogLoading, { label: 'Loading published object types' }))))));
         else if (mode === 'shared') {
           history.replaceState(null, '', '/share/scout/loading-test');
           content = h(SharedChatPage);
@@ -86,9 +95,9 @@ with sync_playwright() as p:
         assert result["background"] == "rgba(0, 0, 0, 0)", result
         assert result["border"] == "0px", result
 
-    for width, dark in [(1280, True), (1280, False), (375, True), (375, False)]:
+    for width, dark in [(3200, True), (3200, False), (1280, True), (1280, False), (375, True), (375, False)]:
         page.set_viewport_size({"width": width, "height": 900})
-        for mode in ["fullscreen", "page", "dashboard", "management", "shared"]:
+        for mode in ["fullscreen", "page", "dashboard", "management", "shared", "warehouse-catalog", "published-catalog"]:
             page.evaluate("([mode, dark]) => renderLoading(mode, dark)", [mode, dark])
             try:
                 page.locator(".ui-page-loading .ui-loading-indicator").wait_for(timeout=5000)
@@ -108,6 +117,12 @@ with sync_playwright() as p:
             }""")
             assert placement["x"] < 1 and placement["y"] < 1, (mode, placement)
             assert placement["orb"] == 64 and placement["fits"], (mode, placement)
+            if mode in ["warehouse-catalog", "published-catalog"]:
+                assert page.locator(".flow-ontology__assets, .flow-ontology__asset").count() == 0
+                assert page.locator(".flow-catalog-skeleton").count() == 0
+                assert page.locator(".flow-ontology__catalog-footer:visible").count() == 0
+                if dark and width == 3200 and mode == "warehouse-catalog" and args.screenshot_prefix:
+                    page.screenshot(path=args.screenshot_prefix + "-catalog.png")
             if mode in ["fullscreen", "shared"]:
                 expected = "rgb(23, 27, 33)" if dark else "rgb(243, 245, 247)"
                 assert placement["background"] == expected, (mode, placement)
