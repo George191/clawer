@@ -210,7 +210,7 @@ class SQLHintEngine:
         await pg.connect()
         rows = await pg.fetch_all("""
             SELECT o.schema_name AS table_schema, o.table_name, p.name AS column_name, p.sql_type AS data_type
-            FROM app.ontology_objects o JOIN app.ontology_object_properties p ON p.object_id=o.id
+            FROM app.helio_objects o JOIN app.helio_object_properties p ON p.object_id=o.id
             WHERE o.is_active AND o.visibility <> 'hidden'
             ORDER BY o.schema_name, o.table_name, p.ordinal_position
         """)

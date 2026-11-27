@@ -5,6 +5,9 @@ from alembic import op
 from app.etl.schema.ontology import ONTOLOGY_DDL_STATEMENTS
 
 
+# Preserve the SQL contract of this historical revision.
+ONTOLOGY_DDL_STATEMENTS = tuple(sql.replace("helio_", "ontology_") for sql in ONTOLOGY_DDL_STATEMENTS)
+
 revision = "d5f226a61b80"
 down_revision = "c731f0d2a6b9"
 branch_labels = None

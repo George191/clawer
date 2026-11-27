@@ -69,7 +69,7 @@ class TestCommittedTargetCatalog(IsolatedAsyncioTestCase):
                         "CREATE TABLE ts_batch_sync_sandbox.committed_batch_fixture(id bigint PRIMARY KEY, value text NOT NULL)",
                         "CREATE TABLE ts_batch_sync_sandbox.regular_batch_target(id bigint PRIMARY KEY)",
                         "CREATE TABLE ts_other.committed_batch_fixture(id bigint PRIMARY KEY)",
-                        """CREATE TABLE app.ontology_objects(schema_name text, table_name text, is_active bool,
+                        """CREATE TABLE app.helio_objects(schema_name text, table_name text, is_active bool,
                                                         data_type text, description text)""",
                         """CREATE TABLE app.flow_publications(token text, schema_name text, table_name text,
                                                         scope jsonb, valid_from timestamptz, valid_until timestamptz)""",

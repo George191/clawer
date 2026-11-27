@@ -4,6 +4,10 @@ from sqlalchemy import text
 
 from app.etl.schema.data_connections import DATA_CONNECTIONS_ENGINE_DDL, ENGINE_CHECK_INSTALLED
 
+# Preserve the SQL contract of this historical revision.
+DATA_CONNECTIONS_ENGINE_DDL = DATA_CONNECTIONS_ENGINE_DDL.replace("helio_", "ontology_")
+ENGINE_CHECK_INSTALLED = ENGINE_CHECK_INSTALLED.replace("helio_", "ontology_")
+
 revision = "18f214f739c5"
 down_revision = "8e35b4e1c682"
 branch_labels = None

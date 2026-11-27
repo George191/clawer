@@ -55,14 +55,14 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
                 await session.execute(text(f"CREATE SCHEMA {schema}"))
             for statement in (*ontology.ONTOLOGY_DDL_STATEMENTS, *OBJECT_RELATIONS_DDL_STATEMENTS, *OBJECT_LINKS_DDL_STATEMENTS):
                 await session.execute(text(statement))
-            await session.execute(text("""DELETE FROM app.ontology_object_links WHERE relation_id IN (
-                SELECT id FROM app.ontology_object_relations
+            await session.execute(text("""DELETE FROM app.helio_object_links WHERE relation_id IN (
+                SELECT id FROM app.helio_object_relations
                 WHERE source_schema IN (:source, :target) OR target_schema IN (:source, :target))"""),
                 {"source": SCHEMA, "target": TARGET_SCHEMA})
-            await session.execute(text("""DELETE FROM app.ontology_object_relations
+            await session.execute(text("""DELETE FROM app.helio_object_relations
                 WHERE source_schema IN (:source, :target) OR target_schema IN (:source, :target)"""),
                 {"source": SCHEMA, "target": TARGET_SCHEMA})
-            await session.execute(text("DELETE FROM app.ontology_objects WHERE schema_name IN (:source, :target)"),
+            await session.execute(text("DELETE FROM app.helio_objects WHERE schema_name IN (:source, :target)"),
                 {"source": SCHEMA, "target": TARGET_SCHEMA})
         self.layers = object.__new__(EtlLayers)
         self.layers._pg = self.pg
@@ -73,14 +73,14 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
         await self.pg.close()
 
     async def metadata(self, table="firms"):
-        return await self.pg.fetch_one("SELECT * FROM app.ontology_objects WHERE schema_name=:schema AND table_name=:table",
+        return await self.pg.fetch_one("SELECT * FROM app.helio_objects WHERE schema_name=:schema AND table_name=:table",
                                        {"schema": SCHEMA, "table": table})
 
     async def assert_absent(self, table):
         self.assertIsNone((await self.pg.fetch_one("SELECT to_regclass(:qualified) AS name", {"qualified": f"{SCHEMA}.{table}"}))["name"])
         self.assertIsNone(await self.metadata(table))
-        self.assertEqual(await self.pg.fetch_all("""SELECT p.name FROM app.ontology_object_properties p
-            JOIN app.ontology_objects o ON o.id=p.object_id WHERE o.schema_name=:schema AND o.table_name=:table""",
+        self.assertEqual(await self.pg.fetch_all("""SELECT p.name FROM app.helio_object_properties p
+            JOIN app.helio_objects o ON o.id=p.object_id WHERE o.schema_name=:schema AND o.table_name=:table""",
             {"schema": SCHEMA, "table": table}), [])
 
     async def relation_payload(self):
@@ -241,7 +241,7 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
                 f"CREATE INDEX ON {SCHEMA}.shape (plain, (expression_key + 1))",
                 f"CREATE INDEX ON {SCHEMA}.shape (code_id)",
                 f"CREATE ROLE {role} NOLOGIN",
-                f"GRANT SELECT ON app.ontology_objects TO {role}",
+                f"GRANT SELECT ON app.helio_objects TO {role}",
                 f"GRANT USAGE ON SCHEMA {SCHEMA} TO {role}",
                 f"GRANT SELECT (id) ON {SCHEMA}.shape TO {role}",
             ):
@@ -294,7 +294,7 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
                 f"CREATE INDEX ON {SCHEMA}.shapes USING hash (expr_two)",
                 f"CREATE INDEX ON {SCHEMA}.shapes (expr_one, expr_two, (separate + 1))",
                 f"CREATE ROLE {role} NOLOGIN",
-                f"GRANT SELECT ON app.ontology_objects TO {role}",
+                f"GRANT SELECT ON app.helio_objects TO {role}",
                 f"GRANT USAGE ON SCHEMA {SCHEMA} TO {role}",
                 f"GRANT SELECT (a, b, kind) ON {SCHEMA}.shapes TO {role}",
             ):
@@ -353,7 +353,7 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
                 f"CREATE INDEX ON {SCHEMA}.scalar_shapes (pattern_label varchar_pattern_ops)",
                 f"CREATE INDEX ON {SCHEMA}.scalar_shapes (custom_type)",
                 f"CREATE ROLE {role} NOLOGIN",
-                f"GRANT SELECT ON app.ontology_objects TO {role}",
+                f"GRANT SELECT ON app.helio_objects TO {role}",
                 f"GRANT USAGE ON SCHEMA {SCHEMA} TO {role}",
                 f"GRANT SELECT (code, label) ON {SCHEMA}.scalar_shapes TO {role}",
             ):
@@ -408,7 +408,7 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
                 f"CREATE INDEX ON {SCHEMA}.sort_shapes (custom_type)",
                 f"CREATE INDEX ON {SCHEMA}.sort_shapes USING hash (hash_key)",
                 f"CREATE ROLE {role} NOLOGIN",
-                f"GRANT SELECT ON app.ontology_objects TO {role}",
+                f"GRANT SELECT ON app.helio_objects TO {role}",
                 f"GRANT USAGE ON SCHEMA {SCHEMA} TO {role}",
                 f"GRANT SELECT (a, b, code) ON {SCHEMA}.sort_shapes TO {role}",
             ):
@@ -469,7 +469,7 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
                     (record_id text REFERENCES {SCHEMA}.firms(record_id))"""))
             await session.execute(text(f"CREATE VIEW {SCHEMA}.not_table AS SELECT * FROM {SCHEMA}.firms"))
             await session.execute(text(f"""
-                INSERT INTO app.ontology_object_relations
+                INSERT INTO app.helio_object_relations
                     (name, source_schema, source_table, source_fields, target_schema, target_table,
                      target_fields, relationship_kind, cardinality, provenance, enabled)
                 VALUES ('missing_column', :schema, 'firms', ARRAY['removed'], :schema,
@@ -512,12 +512,12 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
                 f"CREATE TABLE {SCHEMA}.tree (id bigint PRIMARY KEY, parent_id bigint REFERENCES {SCHEMA}.tree(id))",
                 f"CREATE ROLE {role} NOLOGIN",
                 f"GRANT USAGE ON SCHEMA {SCHEMA} TO {role}",
-                f"GRANT SELECT ON app.ontology_objects, app.ontology_object_relations TO {role}",
+                f"GRANT SELECT ON app.helio_objects, app.helio_object_relations TO {role}",
                 f"GRANT SELECT (a) ON {SCHEMA}.child TO {role}",
             ):
                 await session.execute(text(sql))
             await session.execute(text("""
-                INSERT INTO app.ontology_object_relations (
+                INSERT INTO app.helio_object_relations (
                     name, source_schema, source_table, source_fields, target_schema, target_table, target_fields,
                     relationship_kind, cardinality, provenance
                 ) VALUES
@@ -556,7 +556,7 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
                              (404, "Table or column reference is unavailable"))
         await self.pg.execute(f"GRANT SELECT (y) ON {SCHEMA}.parent TO {role}")
         self.assertEqual((await refs("child", "a", "outgoing", as_reader=True))["references"][0]["kinds"], dual)
-        await self.pg.execute(f"REVOKE SELECT ON app.ontology_object_relations FROM {role}")
+        await self.pg.execute(f"REVOKE SELECT ON app.helio_object_relations FROM {role}")
         self.assertEqual((await refs("child", "a", "outgoing", as_reader=True))["references"][0]["kinds"], ["foreign_key"])
         await self.pg.execute(f"REVOKE USAGE ON SCHEMA {SCHEMA} FROM {role}")
         with self.assertRaises(HTTPException) as error:
@@ -566,8 +566,8 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
         await self.workspace.set_object_visibility(SCHEMA, "parent", "hidden", "fixture")
         self.assertEqual((await refs("child", "a", "outgoing"))["references"], [])
         await self.workspace.set_object_visibility(SCHEMA, "parent", "normal", "fixture")
-        await self.pg.execute("DROP TABLE app.ontology_object_links")
-        await self.pg.execute("DROP TABLE app.ontology_object_relations")
+        await self.pg.execute("DROP TABLE app.helio_object_links")
+        await self.pg.execute("DROP TABLE app.helio_object_relations")
         self.assertEqual((await refs("child", "a", "outgoing"))["references"][0]["kinds"], ["foreign_key"])
 
     async def test_column_reference_cap_applies_after_visibility(self):
@@ -596,8 +596,8 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
             await session.execute(text(f"CREATE TABLE {SCHEMA}.parent (id bigint PRIMARY KEY)"))
             await session.execute(text(f"""CREATE TABLE {SCHEMA}.child
                 (parent_id bigint REFERENCES {SCHEMA}.parent(id))"""))
-            await session.execute(text("DROP TABLE app.ontology_object_links"))
-            await session.execute(text("DROP TABLE app.ontology_object_relations"))
+            await session.execute(text("DROP TABLE app.helio_object_links"))
+            await session.execute(text("DROP TABLE app.helio_object_relations"))
         for root, direction, other in (("parent", "incoming", "child"), ("child", "outgoing", "parent")):
             page = await self.layers.lineage_neighbors(SCHEMA, root, direction)
             self.assertEqual(page.model_dump(by_alias=True), {
@@ -608,12 +608,12 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(path.state, "found")
         self.assertEqual(path.edges[0].kinds, ["foreign_key"])
         self.assertIsNone((await self.pg.fetch_one(
-            "SELECT to_regclass('app.ontology_object_relations') AS registry"))["registry"])
+            "SELECT to_regclass('app.helio_object_relations') AS registry"))["registry"])
 
     async def add_lineage_declarations(self, session, edges):
         for start, end in edges:
             await session.execute(text("""
-                INSERT INTO app.ontology_object_relations
+                INSERT INTO app.helio_object_relations
                     (name, source_schema, source_table, source_fields, target_schema, target_table,
                      target_fields, relationship_kind, cardinality, provenance)
                 VALUES (:name, :schema, :start, ARRAY['id'], :schema, :end,
@@ -650,7 +650,7 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(destinations(await path("root", "goal")), ["b", "mid", "tail", "goal"])
         await self.workspace.set_object_visibility(SCHEMA, "b", "normal", "fixture")
         await self.pg.execute("""
-            UPDATE app.ontology_objects SET is_active=false WHERE schema_name=:schema AND table_name='b'
+            UPDATE app.helio_objects SET is_active=false WHERE schema_name=:schema AND table_name='b'
         """, {"schema": SCHEMA})
         self.assertEqual((await path("root", "goal")).state, "not_found_within_limit")
         self.assertEqual((await self.layers.lineage_neighbors(SCHEMA, "root", "outgoing")).neighbors, [])
@@ -779,7 +779,7 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
         await self.workspace.set_object_visibility(SCHEMA, names[0], "hidden", "fixture")
         await self.workspace.set_object_visibility(SCHEMA, names[1], "normal", "fixture")
         await self.pg.execute("""
-            UPDATE app.ontology_objects SET is_active=false WHERE schema_name=:schema AND table_name='choice_01'
+            UPDATE app.helio_objects SET is_active=false WHERE schema_name=:schema AND table_name='choice_01'
         """, {"schema": SCHEMA})
         page = await self.layers.lineage_path_targets(SCHEMA, root, f"{SCHEMA.upper()}.CHOICE")
         self.assertFalse(page.truncated)
@@ -805,7 +805,7 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
     async def test_logical_relation_is_persisted_cross_schema_and_visible_from_both_objects_without_foreign_keys(self):
         payload = await self.relation_payload()
         await self.workspace.create_table(SCHEMA, payload)
-        row = await self.pg.fetch_one("SELECT * FROM app.ontology_object_relations WHERE name='firms_company'")
+        row = await self.pg.fetch_one("SELECT * FROM app.helio_object_relations WHERE name='firms_company'")
         self.assertEqual((row["source_schema"], row["target_schema"], row["source_fields"], row["target_fields"]),
                          (SCHEMA, TARGET_SCHEMA, ["record_id"], ["record_id"]))
         self.assertEqual((row["provenance"], row["relationship_kind"], row["cardinality"]),
@@ -839,7 +839,7 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
             await self.workspace.create_table(SCHEMA, payload)
         self.assertEqual(error.exception.status_code, 422)
         await self.assert_absent("firms")
-        self.assertIsNone(await self.pg.fetch_one("SELECT name FROM app.ontology_object_relations WHERE name='firms_company'"))
+        self.assertIsNone(await self.pg.fetch_one("SELECT name FROM app.helio_object_relations WHERE name='firms_company'"))
 
     async def test_relation_write_failure_rolls_back_table_indexes_properties_and_earlier_relation(self):
         payload = await self.relation_payload()
@@ -851,20 +851,20 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
                 RAISE EXCEPTION 'Isolated relation rejection' USING ERRCODE='23514';
                 END; $$"""))
             await session.execute(text(f"""CREATE TRIGGER creation_reject_relation BEFORE INSERT
-                ON app.ontology_object_relations FOR EACH ROW WHEN (NEW.name='firms_company_rejected')
+                ON app.helio_object_relations FOR EACH ROW WHEN (NEW.name='firms_company_rejected')
                 EXECUTE FUNCTION {SCHEMA}.reject_relation()"""))
         try:
             with self.assertRaises(HTTPException) as error:
                 await self.workspace.create_table(SCHEMA, payload)
             self.assertEqual(error.exception.status_code, 422)
             await self.assert_absent("firms")
-            self.assertEqual(await self.pg.fetch_all("SELECT name FROM app.ontology_object_relations WHERE source_schema=:schema",
+            self.assertEqual(await self.pg.fetch_all("SELECT name FROM app.helio_object_relations WHERE source_schema=:schema",
                                                      {"schema": SCHEMA}), [])
             self.assertIsNone((await self.pg.fetch_one("SELECT to_regclass(:table) AS name",
                                                      {"table": f"{SCHEMA}.company_name_lookup"}))["name"])
         finally:
             async with self.pg.session() as session:
-                await session.execute(text("DROP TRIGGER creation_reject_relation ON app.ontology_object_relations"))
+                await session.execute(text("DROP TRIGGER creation_reject_relation ON app.helio_object_relations"))
                 await session.execute(text(f"DROP FUNCTION {SCHEMA}.reject_relation()"))
 
     async def test_creation_commits_ddl_registration_properties_and_comments(self):
@@ -877,7 +877,7 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(row["is_active"])
         self.assertIn(f'CREATE TABLE "{SCHEMA}"."firms"', row["ddl_sql"])
         columns = await self.pg.fetch_all("""SELECT name, sql_type, ordinal_position, is_nullable,
-            is_primary_key, primary_key_position, comment FROM app.ontology_object_properties
+            is_primary_key, primary_key_position, comment FROM app.helio_object_properties
             WHERE object_id=:id ORDER BY ordinal_position""", {"id": row["id"]})
         self.assertEqual(columns, [
             {"name": "record_id", "sql_type": "text", "ordinal_position": 1, "is_nullable": False,
@@ -947,7 +947,7 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
                 RAISE EXCEPTION 'Isolated metadata write rejection' USING ERRCODE='23514';
                 END; $$"""))
             await session.execute(text(f"""CREATE TRIGGER creation_reject_property BEFORE INSERT
-                ON app.ontology_object_properties FOR EACH ROW WHEN (NEW.name='company_name')
+                ON app.helio_object_properties FOR EACH ROW WHEN (NEW.name='company_name')
                 EXECUTE FUNCTION {SCHEMA}.reject_property()"""))
         try:
             with self.assertRaises(HTTPException) as raised:
@@ -958,5 +958,5 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
                                                      {"qualified": f"{SCHEMA}.company_name_lookup"}))["name"])
         finally:
             async with self.pg.session() as session:
-                await session.execute(text("DROP TRIGGER creation_reject_property ON app.ontology_object_properties"))
+                await session.execute(text("DROP TRIGGER creation_reject_property ON app.helio_object_properties"))
                 await session.execute(text(f"DROP FUNCTION {SCHEMA}.reject_property()"))

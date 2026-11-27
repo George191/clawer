@@ -11,9 +11,9 @@ from app.etl.schema.catalogs import TABLE_DEFINITIONS
 from app.etl.schema.ddl import ddl_checksum
 from app.etl.schema.layout import normalize_table_role, sql_identifier
 
-ONTOLOGY_OBJECTS_TABLE = "app.ontology_objects"
-ONTOLOGY_PROPERTIES_TABLE = "app.ontology_object_properties"
-ONTOLOGY_FAVORITES_TABLE = "app.ontology_object_favorites"
+ONTOLOGY_OBJECTS_TABLE = "app.helio_objects"
+ONTOLOGY_PROPERTIES_TABLE = "app.helio_object_properties"
+ONTOLOGY_FAVORITES_TABLE = "app.helio_object_favorites"
 _EXTRA_OBJECT_COLUMNS = (
     "data_type TEXT NOT NULL DEFAULT ''",
     "data_type_source TEXT NOT NULL DEFAULT 'not_configured'",
@@ -23,15 +23,15 @@ _EXTRA_OBJECT_COLUMNS = (
     "visibility TEXT NOT NULL DEFAULT 'normal' CONSTRAINT ontology_objects_visibility_check CHECK (visibility IN ('normal','prominent','hidden'))",
 )
 ONTOLOGY_OBJECT_COLUMNS_ADD_STATEMENTS = tuple(
-    f"ALTER TABLE app.ontology_objects ADD COLUMN IF NOT EXISTS {column}"
+    f"ALTER TABLE app.helio_objects ADD COLUMN IF NOT EXISTS {column}"
     for column in _EXTRA_OBJECT_COLUMNS
 )
 ONTOLOGY_OBJECT_DEFAULT_STATEMENTS = (
-    "ALTER TABLE app.ontology_objects ALTER COLUMN ddl_sql SET DEFAULT ''",
-    "ALTER TABLE app.ontology_objects ALTER COLUMN checksum SET DEFAULT ''",
-    "ALTER TABLE app.ontology_objects ALTER COLUMN version SET DEFAULT 0",
+    "ALTER TABLE app.helio_objects ALTER COLUMN ddl_sql SET DEFAULT ''",
+    "ALTER TABLE app.helio_objects ALTER COLUMN checksum SET DEFAULT ''",
+    "ALTER TABLE app.helio_objects ALTER COLUMN version SET DEFAULT 0",
 )
-ONTOLOGY_OBJECTS_DDL = """CREATE TABLE IF NOT EXISTS app.ontology_objects (
+ONTOLOGY_OBJECTS_DDL = """CREATE TABLE IF NOT EXISTS app.helio_objects (
     id BIGSERIAL PRIMARY KEY,
     layer TEXT NOT NULL,
     table_role TEXT NOT NULL DEFAULT 'current',
@@ -66,8 +66,8 @@ ONTOLOGY_OBJECTS_DDL = """CREATE TABLE IF NOT EXISTS app.ontology_objects (
         OR (partition_type = 'range' AND partition_column IS NOT NULL AND partition_granularity IS NOT NULL AND partition_count IS NULL)
         OR (partition_type = 'hash' AND partition_column IS NOT NULL AND partition_granularity IS NULL AND partition_count > 0))
 )"""
-ONTOLOGY_PROPERTIES_DDL = """CREATE TABLE IF NOT EXISTS app.ontology_object_properties (
-    object_id BIGINT NOT NULL REFERENCES app.ontology_objects(id) ON DELETE CASCADE,
+ONTOLOGY_PROPERTIES_DDL = """CREATE TABLE IF NOT EXISTS app.helio_object_properties (
+    object_id BIGINT NOT NULL REFERENCES app.helio_objects(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     sql_type TEXT NOT NULL,
     ordinal_position INTEGER NOT NULL CHECK (ordinal_position > 0),
@@ -85,13 +85,13 @@ ONTOLOGY_PROPERTIES_DDL = """CREATE TABLE IF NOT EXISTS app.ontology_object_prop
     UNIQUE (object_id, ordinal_position)
 )"""
 ONTOLOGY_INDEX_DDL_STATEMENTS = (
-    "CREATE INDEX IF NOT EXISTS ix_ontology_objects_physical_identity ON app.ontology_objects (schema_name, table_name)",
-    "CREATE UNIQUE INDEX IF NOT EXISTS uq_ontology_objects_table ON app.ontology_objects (layer, table_role, schema_name, table_name)",
-    "CREATE INDEX IF NOT EXISTS idx_ontology_objects_lookup ON app.ontology_objects (layer, table_role, schema_name, table_name, version DESC)",
+    "CREATE INDEX IF NOT EXISTS ix_ontology_objects_physical_identity ON app.helio_objects (schema_name, table_name)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_ontology_objects_table ON app.helio_objects (layer, table_role, schema_name, table_name)",
+    "CREATE INDEX IF NOT EXISTS idx_ontology_objects_lookup ON app.helio_objects (layer, table_role, schema_name, table_name, version DESC)",
 )
-ONTOLOGY_FAVORITES_DDL = """CREATE TABLE IF NOT EXISTS app.ontology_object_favorites (
+ONTOLOGY_FAVORITES_DDL = """CREATE TABLE IF NOT EXISTS app.helio_object_favorites (
     user_id UUID NOT NULL,
-    object_id BIGINT NOT NULL REFERENCES app.ontology_objects(id) ON DELETE CASCADE,
+    object_id BIGINT NOT NULL REFERENCES app.helio_objects(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (user_id, object_id)
 )"""
@@ -116,9 +116,9 @@ def _constant_type(expression: str | None) -> str:
 
 
 async def _replace_properties(session, object_id: int, properties: list[dict[str, Any]], provenance: str) -> None:
-    await session.execute(text("DELETE FROM ontology_object_properties WHERE object_id = :object_id"), {"object_id": object_id})
+    await session.execute(text("DELETE FROM helio_object_properties WHERE object_id = :object_id"), {"object_id": object_id})
     if properties:
-        await session.execute(text("""INSERT INTO ontology_object_properties (
+        await session.execute(text("""INSERT INTO helio_object_properties (
             object_id, name, sql_type, ordinal_position, default_expression, is_nullable,
             is_primary_key, primary_key_position, identity_kind, generated_kind,
             generation_expression, comment, provenance)
@@ -198,7 +198,7 @@ async def sync_object_metadata(session, schema: str, table: str, *, catalog_sess
         table_role = normalize_table_role(table_role)
         scope = " AND layer = :layer AND table_role = :role"
     matches = list((await session.execute(text(
-        "SELECT * FROM ontology_objects WHERE schema_name = :schema AND table_name = :table"
+        "SELECT * FROM helio_objects WHERE schema_name = :schema AND table_name = :table"
         + scope + " LIMIT 2 FOR UPDATE"
     ), {**identity, **({"layer": layer, "role": table_role} if scope else {})})).mappings())
     if len(matches) > 1:
@@ -255,7 +255,7 @@ async def sync_object_metadata(session, schema: str, table: str, *, catalog_sess
               "description": actual_description, "description_source": desc_source,
               "provenance": provenance, "resource_group": resource_group(layer)}
     result = await session.execute(text("""
-        INSERT INTO ontology_objects (layer, table_role, schema_name, table_name,
+        INSERT INTO helio_objects (layer, table_role, schema_name, table_name,
             ddl_sql, version, checksum, partition_type, partition_column, partition_granularity,
             partition_count, data_type, data_type_source, description, description_source, provenance, resource_group)
         VALUES (:layer, :role, :schema, :table, :ddl_sql, :version, :checksum, :partition_type,

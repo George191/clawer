@@ -48,11 +48,11 @@ async def graph_db():
                         "team",
                         "invite_codes",
                         "team_user_join",
-                        "ontology_registry_definitions",
-                        "ontology_runtime_records",
-                        "ontology_transactions",
-                        "ontology_action_events",
-                        "ontology_markings",
+                        "helio_registry_definitions",
+                        "helio_runtime_records",
+                        "helio_transactions",
+                        "helio_action_events",
+                        "helio_markings",
                     )
                 ],
             )
@@ -273,7 +273,7 @@ async def test_concurrent_cardinality_and_deleted_endpoint(graph_db):
     async with g.sessions() as other_project, g.sessions() as writer:
         foreign_id = g.r[2][0]
         await other_project.execute(
-            text("SELECT id FROM ontology_runtime_records WHERE id = :id FOR UPDATE"),
+            text("SELECT id FROM helio_runtime_records WHERE id = :id FOR UPDATE"),
             {"id": foreign_id},
         )
         await writer.execute(text("SET LOCAL lock_timeout = '500ms'"))

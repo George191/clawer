@@ -117,8 +117,8 @@ class TableExportSenderIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def drop_fixture(self):
         async with self.pg.session() as session:
-            await session.execute(text("DROP TABLE ontology_table_export_attempts, ontology_table_export_receipts, ontology_table_export_requests, ontology_table_export_plan"))
-            await session.execute(text("DROP TABLE ontology_table_export_grants"))
+            await session.execute(text("DROP TABLE helio_table_export_attempts, helio_table_export_receipts, helio_table_export_requests, helio_table_export_plan"))
+            await session.execute(text("DROP TABLE helio_table_export_grants"))
             await session.execute(text("DROP FUNCTION IF EXISTS public.guard_table_export_write_mode()"))
             await session.execute(text("DROP SCHEMA ts_table_export_sandbox CASCADE"))
 
@@ -216,7 +216,7 @@ class TableExportSenderIntegration(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(sized.status_code, 422, sized.text)
                 receiver.assert_not_awaited()
                 for table in ("plan", "grants", "requests", "attempts", "receipts"):
-                    self.assertEqual(await self.pg.fetch_all(f"SELECT 1 FROM ontology_table_export_{table}"), [])
+                    self.assertEqual(await self.pg.fetch_all(f"SELECT 1 FROM helio_table_export_{table}"), [])
 
     @unittest.skipUnless(SECONDARY_URL, "Requires a separate disposable loopback receiver")
     async def test_secondary_real_commit_and_lost_ack_never_use_primary(self):
@@ -308,7 +308,7 @@ class TableExportSenderIntegration(unittest.IsolatedAsyncioTestCase):
                         bad = await client.post(ENDPOINT + "/runs", params=secondary, json=request)
                         self.assertEqual(bad.status_code, 409, bad.text)
                         self.assertIsNone(await self.pg.fetch_one(
-                            "SELECT request_id FROM ontology_table_export_requests WHERE request_id=CAST(:id AS uuid)",
+                            "SELECT request_id FROM helio_table_export_requests WHERE request_id=CAST(:id AS uuid)",
                             {"id": request["requestId"]},
                         ))
                         self.assertEqual((await secondary_grant(False, 1)).status_code, 409)
@@ -404,13 +404,13 @@ class TableExportSenderIntegration(unittest.IsolatedAsyncioTestCase):
                          "marking": "sandbox-synthetic", "reason": "Review exact Append mode"}
                 self.assertEqual((await client.put(ENDPOINT + "/grant", json=grant)).status_code, 409)
                 old_shaped = (
-                    """INSERT INTO ontology_table_export_grants
+                    """INSERT INTO helio_table_export_grants
                          (destination,generation,id,action,marking,reason,actor_id,scope_digest,plan_updated_at,recorded_at)
                        SELECT destination,1,:id,'approved','sandbox-synthetic','old binary',reviewed_by,
-                              binding_digest,updated_at,clock_timestamp() FROM ontology_table_export_plan""",
-                    """INSERT INTO ontology_table_export_requests
+                              binding_digest,updated_at,clock_timestamp() FROM helio_table_export_plan""",
+                    """INSERT INTO helio_table_export_requests
                          (destination,request_id,plan_updated_at,binding_digest)
-                       SELECT destination,:id,updated_at,binding_digest FROM ontology_table_export_plan""",
+                       SELECT destination,:id,updated_at,binding_digest FROM helio_table_export_plan""",
                 )
                 for sql in old_shaped:
                     with self.assertRaisesRegex(DBAPIError, "Export admission mode or revision"):
@@ -458,7 +458,7 @@ class TableExportSenderIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await target.fetch_one("SELECT count(*) AS n FROM ts_table_export_receiver.receipts"))["n"], 1)
                 self.assertEqual((await client.get(ENDPOINT + "/runs")).json(), [recovered.json()])
                 self.assertEqual((await client.get(ENDPOINT + "/lineage")).json()["latestObservation"]["writeMode"], "append")
-                for relation in ("ontology_table_export_requests", "ontology_table_export_grants"):
+                for relation in ("helio_table_export_requests", "helio_table_export_grants"):
                     with self.assertRaisesRegex(DBAPIError, "Export admission scope is immutable"):
                         await self.pg.execute(f"UPDATE {relation} SET write_mode='upsert'")
                 switch = await client.put(ENDPOINT, json={
@@ -500,12 +500,12 @@ class TableExportSenderIntegration(unittest.IsolatedAsyncioTestCase):
 
         async def receive(config, request_id, version, digest, rows):
             pinned = await self.pg.fetch_one(
-                "SELECT payload_digest FROM ontology_table_export_requests WHERE request_id=:id", {"id": request_id},
+                "SELECT payload_digest FROM helio_table_export_requests WHERE request_id=:id", {"id": request_id},
             )
             self.assertEqual(pinned["payload_digest"], digest)  # Independent transaction sees it before receiver work.
             with self.assertRaises(DBAPIError) as blocked:
                 async with self.pg.session() as contender:
-                    await contender.execute(text("SELECT singleton FROM ontology_table_export_plan FOR UPDATE NOWAIT"))
+                    await contender.execute(text("SELECT singleton FROM helio_table_export_plan FOR UPDATE NOWAIT"))
             self.assertEqual(getattr(blocked.exception.orig, "sqlstate", None), "55P03")
             delivered.append((request_id, rows))
             if len(delivered) == 1:
@@ -631,7 +631,7 @@ class TableExportSenderIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNone(history["latestObservation"])
                 self.assertEqual(history["receipts"], [])
                 self.assertEqual(history["declaration"]["state"], "blocked")
-                retained = await self.pg.fetch_one("SELECT recorded_at FROM ontology_table_export_receipts WHERE id=:id",
+                retained = await self.pg.fetch_one("SELECT recorded_at FROM helio_table_export_receipts WHERE id=:id",
                                                    {"id": visible["id"]})
                 self.assertEqual(retained["recorded_at"], recorded)
                 with patch.object(settings, "TABLE_EXPORT_RECEIVER_MARKER", uuid4()):
@@ -699,13 +699,13 @@ class TableExportSenderIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await client.get(ENDPOINT + "/attempts")).json(), [])
                 self.assertEqual((await client.get(ENDPOINT + "/lineage")).json()["receipts"], [])
                 self.assertIsNotNone(await self.pg.fetch_one(
-                    "SELECT id FROM ontology_table_export_receipts WHERE request_id=:id", {"id": key},
+                    "SELECT id FROM helio_table_export_receipts WHERE request_id=:id", {"id": key},
                 ))
 
                 legacy = str(uuid4())
                 await self.pg.execute(
-                    "INSERT INTO ontology_table_export_requests(request_id, plan_updated_at, binding_digest) "
-                    "SELECT CAST(:id AS uuid), updated_at, binding_digest FROM ontology_table_export_plan", {"id": legacy},
+                    "INSERT INTO helio_table_export_requests(request_id, plan_updated_at, binding_digest) "
+                    "SELECT CAST(:id AS uuid), updated_at, binding_digest FROM helio_table_export_plan", {"id": legacy},
                 )
                 self.assertEqual((await self.decision(client, version, generation=2)).json()["generation"], 3)
                 self.assertEqual((await run(1)).json()["detail"]["code"], "grant_changed")

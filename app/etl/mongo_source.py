@@ -44,7 +44,7 @@ async def resolve_mongo_collection(metadata, database: str, source: str, data_ty
     route = await collection_route_store.resolve_for_write(source, data_type)
     collection = route["collection_name"]
     registered = await metadata.fetch_one(
-        """SELECT id FROM app.ontology_objects WHERE layer = 'rds' AND table_role = 'current'
+        """SELECT id FROM app.helio_objects WHERE layer = 'rds' AND table_role = 'current'
             AND schema_name = :database AND table_name = :collection
             AND data_type = :data_type AND ddl_sql = '' AND is_active""",
         {"database": database, "collection": collection, "data_type": data_type},
@@ -86,7 +86,7 @@ class MongoOdsSource:
 
     async def data_types(self) -> list[str]:
         rows = await self.metadata.fetch_all(
-            """SELECT DISTINCT data_type FROM app.ontology_objects
+            """SELECT DISTINCT data_type FROM app.helio_objects
                 WHERE layer = 'rds' AND table_role = 'current' AND is_active
                   AND schema_name = :database AND ddl_sql = '' AND data_type <> ''
                 ORDER BY data_type""",

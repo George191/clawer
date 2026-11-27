@@ -32,7 +32,7 @@ async def _constraints(session):
         pg_get_constraintdef(c.oid) AS definition,
         ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY k(attnum,position)
             JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=k.attnum ORDER BY k.position) AS columns
-        FROM pg_constraint c WHERE c.conrelid='app.ontology_object_relations'::regclass ORDER BY c.conname"""))).mappings().all()
+        FROM pg_constraint c WHERE c.conrelid='app.helio_object_relations'::regclass ORDER BY c.conname"""))).mappings().all()
 
 
 def _plan(constraints):
@@ -53,7 +53,7 @@ def _plan(constraints):
 
 async def _snapshot(session):
     result = {}
-    for table in ("ontology_object_relations", "ontology_object_links"):
+    for table in ("helio_object_relations", "helio_object_links"):
         row = (await session.execute(text(f"""SELECT count(*) AS rows,
             md5(COALESCE(string_agg(md5(to_jsonb(t)::text), '' ORDER BY id), '')) AS md5
             FROM public.{table} t"""))).mappings().one()
@@ -67,14 +67,14 @@ async def migrate_relationship_type_definitions(session, *, apply=False):
     await session.execute(text("SET LOCAL lock_timeout='3s'"))
     await session.execute(text("SET LOCAL statement_timeout='30s'"))
     await session.execute(text("SET LOCAL TIME ZONE 'UTC'"))
-    installed = await session.scalar(text("""SELECT to_regclass('app.ontology_object_relations') IS NOT NULL
-        AND to_regclass('app.ontology_object_links') IS NOT NULL"""))
+    installed = await session.scalar(text("""SELECT to_regclass('app.helio_object_relations') IS NOT NULL
+        AND to_regclass('app.helio_object_links') IS NOT NULL"""))
     if not installed:
         raise ValueError("Stored relationship metadata must be initialized before this migration")
     if apply:
-        await session.execute(text("SELECT pg_advisory_xact_lock(hashtext('app.ontology_object_relations'))"))
-        await session.execute(text("LOCK TABLE app.ontology_object_relations IN ACCESS EXCLUSIVE MODE"))
-        await session.execute(text("LOCK TABLE app.ontology_object_links IN SHARE MODE"))
+        await session.execute(text("SELECT pg_advisory_xact_lock(hashtext('app.helio_object_relations'))"))
+        await session.execute(text("LOCK TABLE app.helio_object_relations IN ACCESS EXCLUSIVE MODE"))
+        await session.execute(text("LOCK TABLE app.helio_object_links IN SHARE MODE"))
     before = await _snapshot(session)
     old_check, endpoint_unique = _plan(await _constraints(session))
     required = bool(old_check or endpoint_unique)
@@ -83,10 +83,10 @@ async def migrate_relationship_type_definitions(session, *, apply=False):
         # The names come only from constraints whose exact reviewed definition/columns were checked above.
         for row in ([old_check] if old_check else []) + endpoint_unique:
             quoted_name = '"' + row["name"].replace('"', '""') + '"'
-            await session.execute(text(f"ALTER TABLE app.ontology_object_relations DROP CONSTRAINT {quoted_name}"))
+            await session.execute(text(f"ALTER TABLE app.helio_object_relations DROP CONSTRAINT {quoted_name}"))
             changed.append(row["name"])
         if old_check:
-            await session.execute(text("ALTER TABLE app.ontology_object_relations ADD CONSTRAINT "
+            await session.execute(text("ALTER TABLE app.helio_object_relations ADD CONSTRAINT "
                 "ck_ontology_relation_import_fields CHECK (" + RELATION_IMPORT_FIELDS_CHECK + ")"))
         remaining_check, remaining_unique = _plan(await _constraints(session))
         if remaining_check or remaining_unique:

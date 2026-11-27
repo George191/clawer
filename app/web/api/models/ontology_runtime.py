@@ -12,7 +12,7 @@ from sqlmodel import Field, SQLModel
 class OntologyRuntimeRecord(SQLModel, table=True):
     """A single editable no-source business record with an optimistic revision."""
 
-    __tablename__ = "ontology_runtime_records"
+    __tablename__ = "helio_runtime_records"
     __table_args__ = (
         UniqueConstraint("definition_id", "key_digest", name="uq_ontology_runtime_record_key"),
         CheckConstraint("revision > 0", name="ck_ontology_runtime_record_revision"),
@@ -20,7 +20,7 @@ class OntologyRuntimeRecord(SQLModel, table=True):
     )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
-    definition_id: UUID = Field(foreign_key="ontology_registry_definitions.id", nullable=False)
+    definition_id: UUID = Field(foreign_key="helio_registry_definitions.id", nullable=False)
     key_digest: str = Field(max_length=64)
     values: dict[str, Any] = Field(sa_column=Column(JSONB, nullable=False))
     revision: int = Field(default=1)
@@ -30,7 +30,7 @@ class OntologyRuntimeRecord(SQLModel, table=True):
 class OntologyActionEvent(SQLModel, table=True):
     """An immutable edit. Values are projected under the current history policy."""
 
-    __tablename__ = "ontology_action_events"
+    __tablename__ = "helio_action_events"
     markings: list[str] = Field(default_factory=list, sa_column=Column(JSONB, nullable=False, server_default="[]"))
     __table_args__ = (
         UniqueConstraint("record_id", "revision", name="uq_ontology_action_event_revision"),
@@ -41,13 +41,13 @@ class OntologyActionEvent(SQLModel, table=True):
     )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
-    record_id: UUID = Field(foreign_key="ontology_runtime_records.id", nullable=False)
+    record_id: UUID = Field(foreign_key="helio_runtime_records.id", nullable=False)
     actor_id: UUID
     kind: str = Field(max_length=6)
     revision: int
     changes: dict | None = Field(default=None, sa_column=Column(JSONB(none_as_null=True)))
     restricted_history: bool = Field(default=False)
-    transaction_id: UUID | None = Field(default=None, foreign_key="ontology_transactions.id")
+    transaction_id: UUID | None = Field(default=None, foreign_key="helio_transactions.id")
     occurred_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), server_default=func.now(), nullable=False),
@@ -57,7 +57,7 @@ class OntologyActionEvent(SQLModel, table=True):
 class OntologyTransaction(SQLModel, table=True):
     """A replayable receipt. Steps point to exact edits, never to mutable business keys."""
 
-    __tablename__ = "ontology_transactions"
+    __tablename__ = "helio_transactions"
     markings: list[str] = Field(default_factory=list, sa_column=Column(JSONB, nullable=False, server_default="[]"))
     __table_args__ = (
         UniqueConstraint("project_id", "actor_id", "request_id", name="uq_ontology_tx_request"),

@@ -24,9 +24,9 @@ from app.storage.postgres_client import get_pg_client
 from app.storage.business_database import get_business_pg_client
 
 OLD_OBJECTS = "ts_meta.ddlregistry"
-OBJECTS = "app.ontology_objects"
-PROPERTIES = "app.ontology_object_properties"
-RELATIONS = "app.ontology_object_relations"
+OBJECTS = "app.helio_objects"
+PROPERTIES = "app.helio_object_properties"
+RELATIONS = "app.helio_object_relations"
 OLD_RELATIONS = "ts_meta.object_relations"
 IDENTITY_COLUMNS = "id,layer,table_role,schema_name,table_name,ddl_sql,version,checksum,partition_type,partition_column,partition_granularity,partition_count"
 
@@ -136,14 +136,14 @@ async def migrate(pg, *, catalog_pg, apply: bool = False) -> dict:
             return report
         if before["installed"][OLD_OBJECTS]:
             await session.execute(text("ALTER TABLE ts_meta.ddlregistry SET SCHEMA app"))
-            await session.execute(text("ALTER TABLE app.ddlregistry RENAME TO ontology_objects"))
+            await session.execute(text("ALTER TABLE app.ddlregistry RENAME TO helio_objects"))
             # Rename the old catalog's own objects, preserving their OIDs, ACLs and ownership.
-            constraints = await rows(session, "SELECT conname FROM pg_constraint WHERE conrelid = 'app.ontology_objects'::regclass")
+            constraints = await rows(session, "SELECT conname FROM pg_constraint WHERE conrelid = 'app.helio_objects'::regclass")
             for value in constraints:
                 name = value["conname"]
                 if "ddlregistry" in name:
-                    await session.execute(text(f'ALTER TABLE app.ontology_objects RENAME CONSTRAINT {identifier(name)} TO {identifier(name.replace("ddlregistry", "ontology_objects"))}'))
-            await rename_metadata_indexes(session, OBJECTS, "ddlregistry", "ontology_objects")
+                    await session.execute(text(f'ALTER TABLE app.helio_objects RENAME CONSTRAINT {identifier(name)} TO {identifier(name.replace("ddlregistry", "helio_objects"))}'))
+            await rename_metadata_indexes(session, OBJECTS, "ddlregistry", "helio_objects")
             if await exists(session, "app.ddlregistry_id_seq"):
                 await session.execute(text("ALTER SEQUENCE app.ddlregistry_id_seq RENAME TO ontology_objects_id_seq"))
         for statement in ONTOLOGY_DDL_STATEMENTS:
@@ -154,7 +154,7 @@ async def migrate(pg, *, catalog_pg, apply: bool = False) -> dict:
             await session.execute(text(statement))
         if before["installed"][OLD_RELATIONS]:
             await session.execute(text("ALTER TABLE ts_meta.object_relations SET SCHEMA app"))
-            await session.execute(text("ALTER TABLE app.object_relations RENAME TO ontology_object_relations"))
+            await session.execute(text("ALTER TABLE app.object_relations RENAME TO helio_object_relations"))
         for statement in OBJECT_RELATIONS_DDL_STATEMENTS:
             await session.execute(text(statement))
         existing_identities = {(row["schema_name"], row["table_name"]) for row in before["registered"]}
@@ -176,7 +176,7 @@ async def migrate(pg, *, catalog_pg, apply: bool = False) -> dict:
             raise RuntimeError("Migration changed an existing object's identity or registered DDL")
         counts = await rows(session, """
             SELECT o.schema_name AS schema, o.table_name AS name, count(p.name) AS fields
-            FROM app.ontology_objects o LEFT JOIN app.ontology_object_properties p ON p.object_id = o.id
+            FROM app.helio_objects o LEFT JOIN app.helio_object_properties p ON p.object_id = o.id
             GROUP BY o.id, o.schema_name, o.table_name
         """)
         actual = {(row["schema"], row["name"]): int(row["fields"]) for row in counts}
@@ -197,14 +197,14 @@ async def restore_registration(pg) -> dict:
         if await exists(session, OLD_OBJECTS) or not await exists(session, OBJECTS):
             raise RuntimeError("Rollback requires the migrated registry and no previous registry")
         await session.execute(text("CREATE SCHEMA IF NOT EXISTS ts_meta"))
-        await session.execute(text("ALTER TABLE app.ontology_objects SET SCHEMA ts_meta"))
-        await session.execute(text("ALTER TABLE ts_meta.ontology_objects RENAME TO ddlregistry"))
+        await session.execute(text("ALTER TABLE app.helio_objects SET SCHEMA ts_meta"))
+        await session.execute(text("ALTER TABLE ts_meta.helio_objects RENAME TO ddlregistry"))
         constraints = await rows(session, "SELECT conname FROM pg_constraint WHERE conrelid = 'ts_meta.ddlregistry'::regclass")
         for row in constraints:
             name = row["conname"]
-            if "ontology_objects" in name:
-                await session.execute(text(f"ALTER TABLE ts_meta.ddlregistry RENAME CONSTRAINT {identifier(name)} TO {identifier(name.replace('ontology_objects', 'ddlregistry'))}"))
-        await rename_metadata_indexes(session, OLD_OBJECTS, "ontology_objects", "ddlregistry")
+            if "helio_objects" in name:
+                await session.execute(text(f"ALTER TABLE ts_meta.ddlregistry RENAME CONSTRAINT {identifier(name)} TO {identifier(name.replace('helio_objects', 'ddlregistry'))}"))
+        await rename_metadata_indexes(session, OLD_OBJECTS, "helio_objects", "ddlregistry")
         return {"restored_previous_registration": True, "business_rows_read": 0, "business_rows_written": 0}
 
 

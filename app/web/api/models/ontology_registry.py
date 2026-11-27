@@ -29,7 +29,7 @@ class ProjectCreate(Payload):
 class OntologyProjectProfile(SQLModel, table=True):
     """A named ontology project uses its existing team as the access boundary."""
 
-    __tablename__ = "ontology_project_profiles"
+    __tablename__ = "helio_project_profiles"
 
     team_id: UUID = DBField(foreign_key="team.id", primary_key=True)
     name: str = DBField(max_length=64, nullable=False)
@@ -119,7 +119,7 @@ class ValidationResult(Payload):
 
 
 class OntologyDefinitionRow(SQLModel, table=True):
-    __tablename__ = "ontology_registry_definitions"
+    __tablename__ = "helio_registry_definitions"
 
     id: UUID = DBField(default_factory=uuid4, primary_key=True)
     project_id: UUID = DBField(foreign_key="team.id", index=True, nullable=False)

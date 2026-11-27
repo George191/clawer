@@ -85,12 +85,12 @@ def browser_scalar(value):
 RESERVED_BATCH_RANGE_TARGET = (BATCH_TARGET_SCHEMA, BATCH_RANGE_TARGET)
 _RESERVED_BATCH_REGCLASS = ".".join(RESERVED_BATCH_TARGET)
 _RESERVED_BATCH_RANGE_REGCLASS = ".".join(RESERVED_BATCH_RANGE_TARGET)
-_BATCH_RECEIPTS_REGCLASS = "app.ontology_batch_sync_receipts"
-_PUSH_INBOX_RECEIPTS = "app.ontology_push_inbox_receipts"
-_PUSH_INBOX_MARKER = "app.ontology_push_inbox_state"
+_BATCH_RECEIPTS_REGCLASS = "app.helio_batch_sync_receipts"
+_PUSH_INBOX_RECEIPTS = "app.helio_push_inbox_receipts"
+_PUSH_INBOX_MARKER = "app.helio_push_inbox_state"
 _PUSH_APPLY_REGCLASS = f"{PUSH_APPLY_SCHEMA}.{PUSH_APPLY_TARGET}"
-_PUSH_APPLY_BINDING = "app.ontology_push_inbox_apply_binding"
-_PUSH_APPLY_RECEIPTS = "app.ontology_push_inbox_apply_receipts"
+_PUSH_APPLY_BINDING = "app.helio_push_inbox_apply_binding"
+_PUSH_APPLY_RECEIPTS = "app.helio_push_inbox_apply_receipts"
 _PROTECTED_SCHEMAS = frozenset({
     "app", "information_schema", "ts_meta", "ts_meta_hist", "batch_sync_identity", "batch_sync_stream",
     PROTECTED_SYNTHETIC_SCHEMA, PUSH_APPLY_SCHEMA, HANDOFF_PRIVATE_SCHEMA,
@@ -145,7 +145,7 @@ _LINEAGE_VISIBLE_SQL = f"""{_OBJECT_TABLE_SQL} AND o.visibility <> 'hidden'
     AND o.table_role = 'current'
     AND NOT (n.nspname = :index_schema AND c.relname = :index_table)"""
 _LINEAGE_SCOPE = {"index_schema": INDEX_SANDBOX_SCHEMA, "index_table": INDEX_SANDBOX_TABLE}
-_LINEAGE_REGISTRY_PRESENT = text("SELECT pg_catalog.to_regclass('app.ontology_object_relations') IS NOT NULL")
+_LINEAGE_REGISTRY_PRESENT = text("SELECT pg_catalog.to_regclass('app.helio_object_relations') IS NOT NULL")
 _LINEAGE_NEIGHBOR_LIMIT = 12
 _LINEAGE_HOP_LIMIT = 4
 _LINEAGE_NODE_LIMIT = 24
@@ -338,7 +338,7 @@ class EtlLayers:
         if logical_layer is not None:
             candidates = {logical_layer}
         elif schema is not None:
-            rows = await self._metadata_pg.fetch_all("""SELECT layer FROM app.ontology_objects
+            rows = await self._metadata_pg.fetch_all("""SELECT layer FROM app.helio_objects
                 WHERE is_active AND schema_name = :schema AND
                     (CAST(:table AS text) IS NULL OR table_name = :table)
             """, {"schema": schema, "table": table})
@@ -436,7 +436,7 @@ class EtlLayers:
                     SELECT layer, schema_name, table_name, table_role, data_type, visibility,
                         ddl_sql = '' AS without_ddl,
                         count(*) OVER (PARTITION BY layer, table_role, data_type) AS type_count
-                    FROM app.ontology_objects WHERE is_active
+                    FROM app.helio_objects WHERE is_active
                 ), mongo_rds AS (
                     SELECT schema_name, array_agg(DISTINCT data_type) AS mongo_types
                     FROM active WHERE layer = 'rds' AND table_role = 'current' AND without_ddl AND data_type <> ''
@@ -626,8 +626,8 @@ class EtlLayers:
             await self._require_ontology(session)
             rows = await session.execute(text("""SELECT o.id, o.layer, o.table_role, o.schema_name,
                 o.table_name, o.data_type, o.data_type_source, o.description, o.description_source, o.visibility,
-                o.resource_group, (SELECT count(*) FROM app.ontology_object_properties p WHERE p.object_id = o.id)
-                AS properties_count FROM app.ontology_objects o WHERE o.is_active
+                o.resource_group, (SELECT count(*) FROM app.helio_object_properties p WHERE p.object_id = o.id)
+                AS properties_count FROM app.helio_objects o WHERE o.is_active
                   AND (:include_hidden OR o.visibility <> 'hidden')
                 ORDER BY (o.visibility <> 'prominent'), o.schema_name, o.table_name
             """), {"include_hidden": include_hidden})
@@ -642,7 +642,7 @@ class EtlLayers:
             records = []
             if relations and await session.scalar(_LINEAGE_REGISTRY_PRESENT):
                 query = await session.execute(text("""SELECT source_schema, source_table, target_schema, target_table
-                    FROM app.ontology_object_relations WHERE enabled"""))
+                    FROM app.helio_object_relations WHERE enabled"""))
                 records = [dict(row) for row in query.mappings()]
         return objects, records
 
@@ -662,7 +662,7 @@ class EtlLayers:
     async def _registered_columns(self, object_id: int) -> list[dict]:
         return await self._metadata_pg.fetch_all("""SELECT name, sql_type AS type, comment, is_nullable AS nullable,
             is_primary_key AS primary, primary_key_position AS "primaryPosition", ordinal_position AS "ordinalPosition"
-            FROM app.ontology_object_properties WHERE object_id = :id ORDER BY ordinal_position
+            FROM app.helio_object_properties WHERE object_id = :id ORDER BY ordinal_position
         """, {"id": object_id})
 
     async def _external_data(self, asset, payload, *, started):
@@ -745,9 +745,9 @@ class EtlLayers:
     @staticmethod
     async def _require_ontology(session) -> None:
         installed = (await session.execute(text(
-            "SELECT to_regclass('app.ontology_objects') IS NOT NULL "
-            "AND to_regclass('app.ontology_object_properties') IS NOT NULL "
-            "AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('app.ontology_objects') "
+            "SELECT to_regclass('app.helio_objects') IS NOT NULL "
+            "AND to_regclass('app.helio_object_properties') IS NOT NULL "
+            "AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('app.helio_objects') "
             "AND attname = 'visibility' AND attnum > 0 AND NOT attisdropped)"
         ))).scalar_one()
         if not installed:
@@ -804,7 +804,7 @@ class EtlLayers:
             schema = _object_schema(schema)
         favorite_ids = None
         if favorite_user_id is not None:
-            favorites = await self._metadata_pg.fetch_all("""SELECT object_id FROM app.ontology_object_favorites
+            favorites = await self._metadata_pg.fetch_all("""SELECT object_id FROM app.helio_object_favorites
                 WHERE user_id=CAST(:user_id AS uuid)""", {"user_id": favorite_user_id})
             favorite_ids = {row["object_id"] for row in favorites}
         requested = None
@@ -1681,7 +1681,7 @@ class EtlLayers:
                         OR pg_catalog.to_regclass(:push_sink) IS NOT NULL),
                        EXISTS (
                            SELECT 1 FROM pg_catalog.pg_attribute
-                           WHERE attrelid = pg_catalog.to_regclass('app.ontology_cdc_sandbox_versions')
+                           WHERE attrelid = pg_catalog.to_regclass('app.helio_cdc_sandbox_versions')
                              AND attname = 'marking_level' AND attnum > 0 AND NOT attisdropped
                        ),
                        pg_catalog.to_regclass(:push_marker) IS NOT NULL,
@@ -1738,7 +1738,7 @@ class EtlLayers:
                                WHERE target_table = '{BATCH_RANGE_TARGET}' AND range_min IS NOT NULL)
             """))
             if protected_push or protected_private or protected_range or (marked_history_column and await metadata_session.scalar(text("""
-                SELECT EXISTS (SELECT 1 FROM app.ontology_cdc_sandbox_versions WHERE marking_level IS NOT NULL)
+                SELECT EXISTS (SELECT 1 FROM app.helio_cdc_sandbox_versions WHERE marking_level IS NOT NULL)
             """))):
                 raise HTTPException(403, "Free-form SQL is unavailable in the protected synthetic workspace")
             result = await session.execute(text(f"SELECT * FROM ({sql}) AS flow_query LIMIT 500".replace(":", r"\:")))

@@ -110,7 +110,7 @@ class PipelineSandboxRecordHistory(SyntheticMarked):
 
 
 class PipelineSandboxOutputRow(SQLModel, table=True):
-    __tablename__ = "ontology_pipeline_sandbox_outputs"
+    __tablename__ = "helio_pipeline_sandbox_outputs"
     __table_args__ = (
         CheckConstraint("reviewed_generation > 0 AND config_hash ~ '^[0-9a-f]{64}$' "
                         "AND result_hash ~ '^[0-9a-f]{64}$' AND input_rows BETWEEN 1 AND 100 "
@@ -131,12 +131,12 @@ class PipelineSandboxOutputRow(SQLModel, table=True):
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     request_id: UUID = Field(unique=True)
-    reviewed_generation: int = Field(foreign_key="ontology_pipeline_sandbox_revisions.generation")
+    reviewed_generation: int = Field(foreign_key="helio_pipeline_sandbox_revisions.generation")
     config_hash: str = Field(max_length=64)
     result_hash: str = Field(max_length=64)
     marking_level: int | None = Field(default=None, sa_column=Column(SmallInteger))
-    input_version_id: UUID = Field(foreign_key="ontology_cdc_sandbox_versions.receipt_id")
-    match_version_id: UUID | None = Field(default=None, foreign_key="ontology_cdc_sandbox_versions.receipt_id")
+    input_version_id: UUID = Field(foreign_key="helio_cdc_sandbox_versions.receipt_id")
+    match_version_id: UUID | None = Field(default=None, foreign_key="helio_cdc_sandbox_versions.receipt_id")
     stream_marker: UUID
     physical_digest: str = Field(max_length=64)
     columns: list[str] = Field(sa_column=Column(ARRAY(Text), nullable=False))
@@ -148,7 +148,7 @@ class PipelineSandboxOutputRow(SQLModel, table=True):
 
 
 class PipelineSandboxOutputRecordRow(SQLModel, table=True):
-    __tablename__ = "ontology_pipeline_sandbox_output_rows"
+    __tablename__ = "helio_pipeline_sandbox_output_rows"
     __table_args__ = (
         CheckConstraint("position BETWEEN 1 AND 100 AND array_ndims(row_values) = 1 AND array_lower(row_values, 1) = 1 "
                         "AND cardinality(row_values) BETWEEN 1 AND 2 AND array_position(row_values, NULL) IS NULL "
@@ -157,6 +157,6 @@ class PipelineSandboxOutputRecordRow(SQLModel, table=True):
                         name="ck_ontology_pipeline_sandbox_output_row"),
     )
 
-    output_id: UUID = Field(primary_key=True, foreign_key="ontology_pipeline_sandbox_outputs.id")
+    output_id: UUID = Field(primary_key=True, foreign_key="helio_pipeline_sandbox_outputs.id")
     position: int = Field(primary_key=True)
     row_values: list[str] = Field(sa_column=Column(ARRAY(Text), nullable=False))

@@ -52,9 +52,9 @@ async def get_source_module(data_source: str, *, export: str = "RECORD_ADAPTERS"
         return cached[1]
     query = """
         SELECT name, adapter
-        FROM app.ai_collect_templates
+        FROM app.scout_templates
         WHERE name = COALESCE(
-            (SELECT template_name FROM app.ai_collect_template_alias
+            (SELECT template_name FROM app.scout_template_alias
              WHERE collection_name = :source LIMIT 1), :source)
         ORDER BY (status = 'active') DESC, updated_at DESC
         LIMIT 1

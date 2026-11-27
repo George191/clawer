@@ -51,14 +51,14 @@ class MigrationPg:
         sql = " ".join(str(statement).split())
         self.calls.append(sql)
         if sql.startswith("SELECT to_regclass"):
-            return Result(scalar=self.favorites if "ontology_object_favorites" in sql else self.installed)
+            return Result(scalar=self.favorites if "helio_object_favorites" in sql else self.installed)
         if sql.startswith("SELECT format_type"):
             return Result([self.column] if self.column else [])
         if sql.startswith("SELECT c.relkind"):
             return Result([self.favorite_definition] if self.favorites else [])
-        if sql.startswith("ALTER TABLE app.ontology_objects ADD COLUMN visibility"):
+        if sql.startswith("ALTER TABLE app.helio_objects ADD COLUMN visibility"):
             self.column = deepcopy(READY)
-        elif sql.startswith("CREATE TABLE IF NOT EXISTS app.ontology_object_favorites"):
+        elif sql.startswith("CREATE TABLE IF NOT EXISTS app.helio_object_favorites"):
             self.favorites = True
         elif not sql.startswith(("SELECT pg_advisory_xact_lock", "SET ")):
             raise AssertionError("Unexpected visibility migration SQL: " + sql)
@@ -77,10 +77,10 @@ class VisibilityPg(MetadataPg):
             return Result(scalar=1 if any(key[0] == params["schema"] for key in self.catalog) else None)
         if sql.startswith("SELECT to_regclass"):
             return Result(scalar=True)
-        if sql.startswith("SELECT id FROM app.ontology_objects"):
+        if sql.startswith("SELECT id FROM app.helio_objects"):
             row = self.objects.get((params["schema"], params["table"]))
             return Result([row] if row and row["is_active"] else [])
-        if sql.startswith("UPDATE app.ontology_objects SET visibility"):
+        if sql.startswith("UPDATE app.helio_objects SET visibility"):
             self.calls.append((sql, deepcopy(params)))
             for value in self.objects.values():
                 if value["id"] == params["id"]:
@@ -88,13 +88,13 @@ class VisibilityPg(MetadataPg):
                     if "is_active = TRUE" in sql:
                         value["is_active"] = True
             return Result()
-        if sql.startswith("UPDATE app.ontology_objects SET is_active = TRUE"):
+        if sql.startswith("UPDATE app.helio_objects SET is_active = TRUE"):
             for value in self.objects.values():
                 if value["id"] == params["id"]:
                     value["is_active"] = True
             return Result()
         result = await super().execute(statement, params)
-        if sql.startswith("INSERT INTO ontology_objects"):
+        if sql.startswith("INSERT INTO helio_objects"):
             for value in self.objects.values():
                 value.setdefault("visibility", "normal")
         return result
@@ -166,7 +166,7 @@ class VisibilityWorkspaceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pg.objects[("ts_custom", "custom_items")]["visibility"], "hidden")
         self.assertEqual(pg.catalog, original_catalog)
         self.assertFalse(any(sql.startswith(("CREATE", "ALTER", "DROP")) for sql, _ in pg.calls))
-        update = next(sql for sql, _ in pg.calls if sql.startswith("UPDATE app.ontology_objects SET visibility"))
+        update = next(sql for sql, _ in pg.calls if sql.startswith("UPDATE app.helio_objects SET visibility"))
         self.assertIn("updated_at = now()", update)
 
     async def test_reject_invalid_internal_missing_and_partition_objects(self):

@@ -7,7 +7,7 @@ from sqlmodel import Field, SQLModel
 
 
 class OntologyDelivery(SQLModel, table=True):
-    __tablename__ = "ontology_deliveries"
+    __tablename__ = "helio_deliveries"
     __table_args__ = (
         UniqueConstraint("transaction_id", "receiver", name="uq_ontology_delivery_destination"),
         CheckConstraint(
@@ -16,7 +16,7 @@ class OntologyDelivery(SQLModel, table=True):
         ),
     )
     id: UUID = Field(primary_key=True)
-    transaction_id: UUID = Field(foreign_key="ontology_transactions.id")
+    transaction_id: UUID = Field(foreign_key="helio_transactions.id")
     receiver: str = Field(max_length=64)
     endpoint_hash: str = Field(max_length=64)
     payload_hash: str = Field(max_length=64)

@@ -17,7 +17,7 @@ from app.web.core.config import settings
 from app.web.services.push_inbox import _state, configured, inbox_opted_in
 from app.web.services.transfer_runs import _require_index_range_plan
 
-_SOURCE_NAME = "ontology_push_inbox_receipts"
+_SOURCE_NAME = "helio_push_inbox_receipts"
 _SOURCE = f'"public"."{_SOURCE_NAME}"'
 _TARGET = f'"{PUSH_APPLY_SCHEMA}"."{PUSH_APPLY_TARGET}"'
 _SOURCE_SHAPE = {

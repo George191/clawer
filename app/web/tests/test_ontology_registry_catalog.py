@@ -43,16 +43,16 @@ async def test_catalog_state_migration_preserves_existing_types(db):
     migration = ScriptDirectory.from_config(config).get_revision("86d5a031f9b2")
     assert migration.down_revision == "81a1b2c3d4e5"
     async with db.begin() as connection:
-        await connection.execute(text("CREATE TEMP TABLE ontology_registry_definitions (id integer PRIMARY KEY)"))
-        await connection.execute(text("INSERT INTO ontology_registry_definitions VALUES (11)"))
+        await connection.execute(text("CREATE TEMP TABLE helio_registry_definitions (id integer PRIMARY KEY)"))
+        await connection.execute(text("INSERT INTO helio_registry_definitions VALUES (11)"))
         def exercise(conn):
             with Operations.context(MigrationContext.configure(conn)):
                 migration.module.upgrade()
-                assert conn.execute(text("SELECT * FROM ontology_registry_definitions")).one() == (11, False, False)
+                assert conn.execute(text("SELECT * FROM helio_registry_definitions")).one() == (11, False, False)
                 migration.module.downgrade()
-                assert conn.execute(text("SELECT * FROM ontology_registry_definitions")).one() == (11,)
+                assert conn.execute(text("SELECT * FROM helio_registry_definitions")).one() == (11,)
                 migration.module.upgrade()
-                assert conn.execute(text("SELECT * FROM ontology_registry_definitions")).one() == (11, False, False)
+                assert conn.execute(text("SELECT * FROM helio_registry_definitions")).one() == (11, False, False)
         await connection.run_sync(exercise)
 
 
@@ -109,14 +109,14 @@ async def test_published_catalog_pages_visible_matches_and_projects_fields(db):
             'CREATE TEMP TABLE "user" (id uuid PRIMARY KEY, status statustypes)',
             "CREATE TYPE pg_temp.roletypes AS ENUM ('MEMBER','MODERATOR','ADMIN','OWNER')",
             "CREATE TEMP TABLE team_user_join (team_id uuid, user_id uuid, status statustypes, role roletypes DEFAULT 'MEMBER')",
-            "CREATE TEMP TABLE ontology_markings (id uuid PRIMARY KEY, project_id uuid, readers jsonb)",
-            "CREATE TEMP TABLE ontology_publications (id uuid PRIMARY KEY, definition_id uuid, revision integer)",
-            "CREATE TEMP TABLE ontology_registry_definitions (id uuid PRIMARY KEY, project_id uuid,"
+            "CREATE TEMP TABLE helio_markings (id uuid PRIMARY KEY, project_id uuid, readers jsonb)",
+            "CREATE TEMP TABLE helio_publications (id uuid PRIMARY KEY, definition_id uuid, revision integer)",
+            "CREATE TEMP TABLE helio_registry_definitions (id uuid PRIMARY KEY, project_id uuid,"
             " revision integer, published_at timestamptz, published_definition jsonb, hidden boolean DEFAULT false,"
             " deleted boolean DEFAULT false, updated_at timestamptz)",
-            "CREATE TEMP TABLE ontology_runtime_records (id uuid PRIMARY KEY, definition_id uuid,"
+            "CREATE TEMP TABLE helio_runtime_records (id uuid PRIMARY KEY, definition_id uuid,"
             " deleted boolean DEFAULT false, revision integer DEFAULT 1)",
-            "CREATE TEMP TABLE ontology_revision_snapshots (definition_id uuid, revision integer, snapshot jsonb,"
+            "CREATE TEMP TABLE helio_revision_snapshots (definition_id uuid, revision integer, snapshot jsonb,"
             " actor_id uuid, proposal_id uuid, created_at timestamptz, PRIMARY KEY (definition_id, revision))",
         ):
             await session.execute(text(ddl))
@@ -144,7 +144,7 @@ async def test_published_catalog_pages_visible_matches_and_projects_fields(db):
                              "recordRules": [{"kind": "property", "field": "secret", "match": "equals",
                                               "value": "private filter", "readers": [{"kind": kind, "id": str(reader)}]}]},
             }
-            await session.execute(text("INSERT INTO ontology_registry_definitions VALUES "
+            await session.execute(text("INSERT INTO helio_registry_definitions VALUES "
                 "(:id,:p,1,now() - CAST(:position AS int) * interval '1 minute',CAST(:data AS jsonb))"),
                 {"id": row_ids[key], "p": project, "position": position, "data": json.dumps(definition)})
         page = await published_types(session, actor, 2, 0, "miXed%_")
@@ -177,12 +177,12 @@ async def test_published_catalog_pages_visible_matches_and_projects_fields(db):
         with pytest.raises(HTTPException) as conflict:
             await change("delete", 1)
         assert conflict.value.status_code == 409
-        await session.execute(text("INSERT INTO ontology_runtime_records VALUES "
+        await session.execute(text("INSERT INTO helio_runtime_records VALUES "
             "(:active,:definition,false,1),(:deleted,:definition,true,2),(:other,:other_definition,false,1)"),
             {"active": uuid4(), "deleted": uuid4(), "other": uuid4(),
              "definition": row_ids["one"], "other_definition": row_ids["two"]})
         assert (await change("delete", 2))["deleted"]
-        records = text("SELECT deleted, revision FROM ontology_runtime_records WHERE definition_id=:id ORDER BY revision")
+        records = text("SELECT deleted, revision FROM helio_runtime_records WHERE definition_id=:id ORDER BY revision")
         assert (await session.execute(records, {"id": row_ids["one"]})).all() == [(True, 2), (True, 2)]
         assert (await session.execute(records, {"id": row_ids["two"]})).all() == [(False, 1)]
         with pytest.raises(HTTPException) as removed:
@@ -215,7 +215,7 @@ async def test_published_catalog_pages_visible_matches_and_projects_fields(db):
                            "upstreamConnectionId": str(upstream) if upstream else None},
                 "security": {"mode": "explicit" if readers else "inherit", "objectReaders": readers},
             }
-            await session.execute(text("INSERT INTO ontology_registry_definitions VALUES "
+            await session.execute(text("INSERT INTO helio_registry_definitions VALUES "
                 "(:id,:p,1,now(),CAST(:data AS jsonb))"),
                 {"id": uuid4(), "p": project, "data": json.dumps(definition)})
         assert (await published_types(session, actor, 2, 0, "", source=connection_id))["total"] == 0

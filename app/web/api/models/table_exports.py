@@ -181,7 +181,7 @@ class TableExportLineage(BaseModel):
 
 
 class TableExportPlanRow(SQLModel, table=True):
-    __tablename__ = "ontology_table_export_plan"
+    __tablename__ = "helio_table_export_plan"
     __table_args__ = (
         CheckConstraint("write_mode IN ('upsert', 'append')", name="ck_table_export_plan_write_mode"),
         CheckConstraint("singleton = true", name="ck_ontology_table_export_singleton"),
@@ -205,7 +205,7 @@ class TableExportPlanRow(SQLModel, table=True):
 class TableExportGrantRow(SQLModel, table=True):
     """Immutable approval or revocation event for the singleton export scope."""
 
-    __tablename__ = "ontology_table_export_grants"
+    __tablename__ = "helio_table_export_grants"
     __table_args__ = (
         CheckConstraint("write_mode IN ('upsert', 'append')", name="ck_table_export_grants_write_mode"),
         CheckConstraint("destination IN ('primary', 'secondary')", name="ck_ontology_table_export_grants_destination"),
@@ -228,12 +228,12 @@ class TableExportGrantRow(SQLModel, table=True):
 
 
 class TableExportRequestRow(SQLModel, table=True):
-    __tablename__ = "ontology_table_export_requests"
+    __tablename__ = "helio_table_export_requests"
     __table_args__ = (
         CheckConstraint("write_mode IN ('upsert', 'append')", name="ck_table_export_requests_write_mode"),
         CheckConstraint("destination IN ('primary', 'secondary')", name="ck_ontology_table_export_requests_destination"),
         ForeignKeyConstraint(["destination", "grant_generation"],
-                             ["ontology_table_export_grants.destination", "ontology_table_export_grants.generation"],
+                             ["helio_table_export_grants.destination", "helio_table_export_grants.generation"],
                              name="fk_table_export_request_grant"),
         Index("ix_ontology_table_export_requests_grant_generation", "destination", "grant_generation"),
     )
@@ -248,17 +248,17 @@ class TableExportRequestRow(SQLModel, table=True):
 
 
 class TableExportReceiptRow(SQLModel, table=True):
-    __tablename__ = "ontology_table_export_receipts"
+    __tablename__ = "helio_table_export_receipts"
     __table_args__ = (CheckConstraint("rows_affected BETWEEN 0 AND 100", name="ck_ontology_table_export_rows"),)
 
     id: UUID = DbField(default_factory=uuid4, primary_key=True)
-    request_id: UUID = DbField(foreign_key="ontology_table_export_requests.request_id", unique=True)
+    request_id: UUID = DbField(foreign_key="helio_table_export_requests.request_id", unique=True)
     rows_affected: int
     recorded_at: datetime = DbField(sa_column=Column(DateTime(timezone=True), nullable=False))
 
 
 class TableExportAttemptRow(SQLModel, table=True):
-    __tablename__ = "ontology_table_export_attempts"
+    __tablename__ = "helio_table_export_attempts"
     __table_args__ = (
         CheckConstraint(
             "(status = 'started' AND finished_at IS NULL AND receipt_id IS NULL AND code IS NULL AND message IS NULL)"
@@ -272,11 +272,11 @@ class TableExportAttemptRow(SQLModel, table=True):
     )
 
     id: UUID = DbField(default_factory=uuid4, primary_key=True)
-    request_id: UUID = DbField(foreign_key="ontology_table_export_requests.request_id")
+    request_id: UUID = DbField(foreign_key="helio_table_export_requests.request_id")
     initiated_by: UUID
     status: str = DbField(default="started", max_length=16)
     started_at: datetime = DbField(sa_column=Column(DateTime(timezone=True), nullable=False))
     finished_at: datetime | None = DbField(default=None, sa_column=Column(DateTime(timezone=True)))
-    receipt_id: UUID | None = DbField(default=None, foreign_key="ontology_table_export_receipts.id")
+    receipt_id: UUID | None = DbField(default=None, foreign_key="helio_table_export_receipts.id")
     code: str | None = DbField(default=None, max_length=40)
     message: str | None = DbField(default=None, max_length=240)

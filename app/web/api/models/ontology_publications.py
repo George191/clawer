@@ -39,10 +39,10 @@ class PublicationInput(Payload):
 
 
 class OntologyPublication(SQLModel, table=True):
-    __tablename__ = "ontology_publications"
+    __tablename__ = "helio_publications"
 
     id: UUID = DBField(default_factory=uuid4, primary_key=True)
-    definition_id: UUID = DBField(foreign_key="ontology_registry_definitions.id", ondelete="CASCADE", index=True)
+    definition_id: UUID = DBField(foreign_key="helio_registry_definitions.id", ondelete="CASCADE", index=True)
     owner_id: UUID = DBField(foreign_key="user.id", ondelete="CASCADE")
     name: str = DBField(max_length=120)
     revision: int

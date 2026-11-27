@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy import text
 from app.etl.schema.catalog_metadata import OBJECT_RELATION, RELATION_RECORDS, catalog_parameters
 
-RELATION_TABLE = "app.ontology_object_relations"
+RELATION_TABLE = "app.helio_object_relations"
 CARDINALITIES = {"one_to_one", "one_to_many", "many_to_one", "many_to_many"}
 _FIELDS = ("name", "source_schema", "source_table", "source_fields", "target_schema",
            "target_table", "target_fields", "relationship_kind", "cardinality", "description",
@@ -28,7 +28,7 @@ RELATION_SCHEMA_CHECKS = {
 }
 OBJECT_RELATIONS_DDL_STATEMENTS = (
     "CREATE SCHEMA IF NOT EXISTS app",
-    f"""CREATE TABLE IF NOT EXISTS app.ontology_object_relations (
+    f"""CREATE TABLE IF NOT EXISTS app.helio_object_relations (
         id BIGSERIAL PRIMARY KEY,
         name TEXT NOT NULL UNIQUE,
         source_schema TEXT NOT NULL,
@@ -53,9 +53,9 @@ OBJECT_RELATIONS_DDL_STATEMENTS = (
         CHECK (length(provenance) > 0)
     )""",
     """CREATE INDEX IF NOT EXISTS idx_ontology_object_relations_target
-        ON app.ontology_object_relations (target_schema, target_table) WHERE enabled""",
+        ON app.helio_object_relations (target_schema, target_table) WHERE enabled""",
     """CREATE INDEX IF NOT EXISTS idx_ontology_object_relations_source
-        ON app.ontology_object_relations (source_schema, source_table) WHERE enabled""",
+        ON app.helio_object_relations (source_schema, source_table) WHERE enabled""",
 )
 OBJECT_RELATIONS_DDL = ";\n\n".join(OBJECT_RELATIONS_DDL_STATEMENTS) + ";\n"
 
@@ -187,7 +187,7 @@ async def manage_object_relations(pg, definitions: list[dict[str, Any]], *, cata
     async with pg.session() as session, catalog_pg.session() as catalog_session:
         await catalog_session.execute(text("SET TRANSACTION READ ONLY"))
         if apply:
-            await session.execute(text("SELECT pg_advisory_xact_lock(hashtext('app.ontology_object_relations'))"))
+            await session.execute(text("SELECT pg_advisory_xact_lock(hashtext('app.helio_object_relations'))"))
         else:
             await session.execute(text("SET TRANSACTION READ ONLY"))
         installed = await _installed(session)
@@ -207,7 +207,7 @@ async def manage_object_relations(pg, definitions: list[dict[str, Any]], *, cata
                     raise ValueError(f'Relationship {row["name"]} has a missing table or {side} field')
         existing = {}
         if installed:
-            result = await session.execute(text("SELECT " + ", ".join(_FIELDS) + " FROM app.ontology_object_relations ORDER BY name"))
+            result = await session.execute(text("SELECT " + ", ".join(_FIELDS) + " FROM app.helio_object_relations ORDER BY name"))
             existing = {item["name"]: dict(item) for item in result.mappings()}
         existing_mappings = {relation_mapping({**row, "columns": row["source_fields"],
             "referenced_columns": row["target_fields"]}): name for name, row in existing.items()}
@@ -225,7 +225,7 @@ async def manage_object_relations(pg, definitions: list[dict[str, Any]], *, cata
                 if row["name"] in changes["unchanged"]:
                     continue
                 await session.execute(text("""
-                    INSERT INTO app.ontology_object_relations (name, source_schema, source_table, source_fields,
+                    INSERT INTO app.helio_object_relations (name, source_schema, source_table, source_fields,
                         target_schema, target_table, target_fields, relationship_kind, cardinality,
                         description, provenance, enabled)
                     VALUES (:name, :source_schema, :source_table, CAST(:source_fields AS text[]),

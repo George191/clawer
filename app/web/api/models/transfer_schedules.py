@@ -59,10 +59,10 @@ class TransferScheduleJob(BaseModel):
 
 
 class TransferScheduleRow(SQLModel, table=True):
-    __tablename__ = "ontology_transfer_schedules"
+    __tablename__ = "helio_transfer_schedules"
     __table_args__ = (CheckConstraint("generation > 0", name="ck_ontology_transfer_schedules_generation"),)
 
-    plan_id: UUID = Field(primary_key=True, foreign_key="ontology_transfer_plans.id")
+    plan_id: UUID = Field(primary_key=True, foreign_key="helio_transfer_plans.id")
     enabled: bool
     generation: int
     armed_by: UUID
@@ -71,7 +71,7 @@ class TransferScheduleRow(SQLModel, table=True):
 
 
 class TransferScheduleJobRow(SQLModel, table=True):
-    __tablename__ = "ontology_transfer_schedule_jobs"
+    __tablename__ = "helio_transfer_schedule_jobs"
     __table_args__ = (
         UniqueConstraint("plan_id", "generation", "slot", name="uq_ontology_transfer_schedule_jobs_slot"),
         CheckConstraint("state IN ('pending','dispatched','committed','rejected','outcome_unknown','expired','canceled')",
@@ -93,7 +93,7 @@ class TransferScheduleJobRow(SQLModel, table=True):
     )
 
     id: UUID = Field(primary_key=True)
-    plan_id: UUID = Field(foreign_key="ontology_transfer_schedules.plan_id")
+    plan_id: UUID = Field(foreign_key="helio_transfer_schedules.plan_id")
     schedule_weekday_utc: int | None = None
     schedule_day_of_month_utc: int | None = None
     generation: int
@@ -107,5 +107,5 @@ class TransferScheduleJobRow(SQLModel, table=True):
     finished_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
     canceled_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
     canceled_by: UUID | None = None
-    receipt_id: UUID | None = Field(default=None, foreign_key="ontology_transfer_runs.id")
+    receipt_id: UUID | None = Field(default=None, foreign_key="helio_transfer_runs.id")
     message: str | None = Field(default=None, max_length=240)

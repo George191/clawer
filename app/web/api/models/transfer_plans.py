@@ -159,7 +159,7 @@ MONTHLY_PLAN_CHECK = (
 
 
 class TransferPlanRow(SQLModel, table=True):
-    __tablename__ = "ontology_transfer_plans"
+    __tablename__ = "helio_transfer_plans"
     __table_args__ = (
         CheckConstraint("write_mode IN ('append', 'upsert')", name="ck_ontology_transfer_plans_mode"),
         CheckConstraint(MONTHLY_PLAN_CHECK, name="ck_ontology_transfer_plans_schedule"),
@@ -195,7 +195,7 @@ class TransferPlanRow(SQLModel, table=True):
 
 
 class TransferRunRow(SQLModel, table=True):
-    __tablename__ = "ontology_transfer_runs"
+    __tablename__ = "helio_transfer_runs"
     __table_args__ = (
         UniqueConstraint("plan_id", "request_id", name="uq_ontology_transfer_runs_request"),
         CheckConstraint("rows_affected BETWEEN 0 AND 100", name="ck_ontology_transfer_runs_size"),
@@ -227,7 +227,7 @@ class TransferRunRow(SQLModel, table=True):
     )
 
     id: UUID = DbField(default_factory=uuid4, primary_key=True)
-    plan_id: UUID = DbField(foreign_key="ontology_transfer_plans.id")
+    plan_id: UUID = DbField(foreign_key="helio_transfer_plans.id")
     request_id: UUID
     initiated_by: UUID
     plan_updated_at: datetime = DbField(sa_column=Column(DateTime(timezone=True), nullable=False))
@@ -247,12 +247,12 @@ class TransferRunRow(SQLModel, table=True):
 
 
 class TransferCheckpointRow(SQLModel, table=True):
-    __tablename__ = "ontology_transfer_checkpoints"
+    __tablename__ = "helio_transfer_checkpoints"
     __table_args__ = (
         UniqueConstraint("source_table", "target_table", name="uq_ontology_transfer_checkpoints_route"),
     )
 
-    plan_id: UUID = DbField(primary_key=True, foreign_key="ontology_transfer_plans.id")
+    plan_id: UUID = DbField(primary_key=True, foreign_key="helio_transfer_plans.id")
     source_table: str = DbField(max_length=63)
     target_table: str = DbField(max_length=63)
     cursor_column: str = DbField(max_length=63)
@@ -264,7 +264,7 @@ class TransferCheckpointRow(SQLModel, table=True):
 
 
 class TransferAttemptRow(SQLModel, table=True):
-    __tablename__ = "ontology_transfer_attempts"
+    __tablename__ = "helio_transfer_attempts"
     __table_args__ = (
         CheckConstraint("status IN ('started', 'committed', 'replayed', 'rejected', 'outcome_unknown')",
                         name="ck_ontology_transfer_attempts_status"),
@@ -288,18 +288,18 @@ class TransferAttemptRow(SQLModel, table=True):
     )
 
     id: UUID = DbField(default_factory=uuid4, primary_key=True)
-    upstream_job_id: UUID | None = DbField(default=None, foreign_key="ontology_transfer_upstream_jobs.id")
-    schedule_job_id: UUID | None = DbField(default=None, foreign_key="ontology_transfer_schedule_jobs.id")
+    upstream_job_id: UUID | None = DbField(default=None, foreign_key="helio_transfer_upstream_jobs.id")
+    schedule_job_id: UUID | None = DbField(default=None, foreign_key="helio_transfer_schedule_jobs.id")
     plan_updated_at: datetime | None = DbField(default=None, sa_column=Column(DateTime(timezone=True)))
     source_table: str | None = DbField(default=None, max_length=63)
     target_table: str | None = DbField(default=None, max_length=63)
     target_oid: int | None = DbField(default=None, sa_column=Column(BigInteger))
     target_filenode: int | None = DbField(default=None, sa_column=Column(BigInteger))
     scope_trigger: str | None = DbField(default=None, max_length=9)
-    plan_id: UUID = DbField(foreign_key="ontology_transfer_plans.id")
+    plan_id: UUID = DbField(foreign_key="helio_transfer_plans.id")
     request_id: UUID
     status: str = DbField(default="started", max_length=16)
     started_at: datetime = DbField(sa_column=Column(DateTime(timezone=True), nullable=False))
     finished_at: datetime | None = DbField(default=None, sa_column=Column(DateTime(timezone=True)))
-    receipt_id: UUID | None = DbField(default=None, foreign_key="ontology_transfer_runs.id")
+    receipt_id: UUID | None = DbField(default=None, foreign_key="helio_transfer_runs.id")
     message: str | None = DbField(default=None, max_length=240)

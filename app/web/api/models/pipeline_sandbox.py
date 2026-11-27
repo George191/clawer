@@ -126,7 +126,7 @@ class PipelineSandboxRevision(SyntheticMarked):
 
 
 class PipelineSandboxRevisionRow(SQLModel, table=True):
-    __tablename__ = "ontology_pipeline_sandbox_revisions"
+    __tablename__ = "helio_pipeline_sandbox_revisions"
     __table_args__ = (
         CheckConstraint("generation > 0 AND config_hash ~ '^[0-9a-f]{64}$' "
                         "AND jsonb_typeof(config) = 'object' AND config ? 'versionId' "
@@ -144,8 +144,8 @@ class PipelineSandboxRevisionRow(SQLModel, table=True):
         UniqueConstraint("generation", "stream_marker", "physical_digest", name="uq_pipeline_revision_generation_scope"),
         ForeignKeyConstraint(
             ["restored_from_generation", "stream_marker", "physical_digest"],
-            ["ontology_pipeline_sandbox_revisions.generation", "ontology_pipeline_sandbox_revisions.stream_marker",
-             "ontology_pipeline_sandbox_revisions.physical_digest"],
+            ["helio_pipeline_sandbox_revisions.generation", "helio_pipeline_sandbox_revisions.stream_marker",
+             "helio_pipeline_sandbox_revisions.physical_digest"],
             name="fk_pipeline_revision_restore_scope",
         ),
         CheckConstraint("restored_from_generation IS NULL OR (restored_from_generation > 0 "
@@ -158,8 +158,8 @@ class PipelineSandboxRevisionRow(SQLModel, table=True):
     restored_from_generation: int | None = None
     stream_marker: UUID
     physical_digest: str = Field(max_length=64)
-    input_version_id: UUID = Field(foreign_key="ontology_cdc_sandbox_versions.receipt_id")
-    match_version_id: UUID | None = Field(default=None, foreign_key="ontology_cdc_sandbox_versions.receipt_id")
+    input_version_id: UUID = Field(foreign_key="helio_cdc_sandbox_versions.receipt_id")
+    match_version_id: UUID | None = Field(default=None, foreign_key="helio_cdc_sandbox_versions.receipt_id")
     config_hash: str = Field(max_length=64)
     marking_level: int | None = Field(default=None, sa_column=Column(SmallInteger))
     config: dict = Field(sa_column=Column(JSONB, nullable=False))

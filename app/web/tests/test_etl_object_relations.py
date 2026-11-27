@@ -85,9 +85,9 @@ class MetadataPg:
             return Result([{"name": name} for name in self.catalog.get((params["schema"], params["table"]), ())])
         if sql.startswith("SELECT name, source_schema"):
             return Result(list(deepcopy(self.records).values()))
-        if sql.startswith("CREATE TABLE IF NOT EXISTS app.ontology_object_relations"):
+        if sql.startswith("CREATE TABLE IF NOT EXISTS app.helio_object_relations"):
             self.installed = True
-        elif sql.startswith("INSERT INTO app.ontology_object_relations"):
+        elif sql.startswith("INSERT INTO app.helio_object_relations"):
             if params["name"] == self.fail_on_name:
                 raise RuntimeError("Fixture rejects a metadata write")
             self.records[params["name"]] = deepcopy(params)
@@ -309,7 +309,7 @@ class ObjectRelationTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(pg.records[SEEDS[0]["name"]]["enabled"])
         for sql, _ in pg.calls:
             if sql.startswith("INSERT"):
-                self.assertTrue(sql.startswith("INSERT INTO app.ontology_object_relations"))
+                self.assertTrue(sql.startswith("INSERT INTO app.helio_object_relations"))
             self.assertNotIn("ALTER TABLE", sql)
             self.assertNotIn("REFERENCES ts_ods", sql)
 
@@ -443,7 +443,7 @@ class ObjectRelationTests(unittest.IsolatedAsyncioTestCase):
 
     def test_storage_ddl_is_only_one_metadata_table_and_has_no_business_foreign_keys(self):
         self.assertEqual(OBJECT_RELATIONS_DDL.count("CREATE TABLE"), 1)
-        self.assertIn("CREATE TABLE IF NOT EXISTS app.ontology_object_relations", OBJECT_RELATIONS_DDL)
+        self.assertIn("CREATE TABLE IF NOT EXISTS app.helio_object_relations", OBJECT_RELATIONS_DDL)
         self.assertNotIn("REFERENCES", OBJECT_RELATIONS_DDL)
         self.assertIn("source_fields TEXT[]", OBJECT_RELATIONS_DDL)
         self.assertIn("target_fields TEXT[]", OBJECT_RELATIONS_DDL)

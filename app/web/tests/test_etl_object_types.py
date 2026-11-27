@@ -52,7 +52,7 @@ class CatalogSession:
             raise AssertionError("Business catalog queries must receive system metadata as parameters")
         if not sql.lstrip().startswith(self.allowed_prefixes):
             raise AssertionError("The object metadata endpoints must only issue SELECT")
-        if "to_regclass" in sql and "app.ontology_objects" in sql:
+        if "to_regclass" in sql and "app.helio_objects" in sql:
             return Result(scalar=self.ontology_installed)
         if not self.results:
             raise AssertionError("Unexpected catalog query: " + sql)
@@ -74,8 +74,8 @@ def service(*results, ontology_installed=True, relations_installed=True, registe
         async def execute(self, query, params=None):
             sql = str(query)
             if "to_regclass" in sql:
-                return Result(scalar=ontology_installed if "ontology_objects" in sql else relations_installed)
-            if "FROM app.ontology_objects o WHERE o.is_active" in sql:
+                return Result(scalar=ontology_installed if "helio_objects" in sql else relations_installed)
+            if "FROM app.helio_objects o WHERE o.is_active" in sql:
                 return Result(sorted((row for row in registered if params["include_hidden"] or row["visibility"] != "hidden"),
                                      key=lambda row: (row["visibility"] != "prominent", row["schema_name"], row["table_name"])))
             return Result([])
@@ -533,7 +533,7 @@ class ObjectRouteTests(unittest.TestCase):
         self.assertIn('a.attnum AS "ordinalPosition"', sql)
         self.assertIn("FROM pg_attribute", sql)
         self.assertIn("ORDER BY a.attnum", sql)
-        self.assertNotIn("ontology_objects", sql)
+        self.assertNotIn("helio_objects", sql)
 
     def test_columns_route_rejects_invalid_identifier_and_reports_missing_table(self):
         instance, session = service(Result([]))

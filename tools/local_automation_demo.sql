@@ -9,7 +9,7 @@ DO $$ BEGIN
   END IF;
 END $$;
 
-CREATE TABLE IF NOT EXISTS app.automation_tasks (
+CREATE TABLE IF NOT EXISTS app.scout_tasks (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   name text NOT NULL, product_domain text NOT NULL DEFAULT 'platform',
   task_type text NOT NULL DEFAULT 'template', task_path text,
@@ -22,27 +22,27 @@ CREATE TABLE IF NOT EXISTS app.automation_tasks (
   created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
   started_at timestamptz, deleted_at timestamptz
 );
-CREATE TABLE IF NOT EXISTS app.automation_task_runs (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), task_id uuid NOT NULL REFERENCES app.automation_tasks(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS app.scout_task_runs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), task_id uuid NOT NULL REFERENCES app.scout_tasks(id) ON DELETE CASCADE,
   status text NOT NULL DEFAULT 'running', started_at timestamptz NOT NULL DEFAULT now(), ended_at timestamptz,
   log_count bigint NOT NULL DEFAULT 0, inserted_records bigint, updated_records bigint, deleted_records bigint,
   downloaded_records bigint, synced_records bigint
 );
-CREATE TABLE IF NOT EXISTS app.automation_task_logs (
-  id bigserial PRIMARY KEY, task_id uuid NOT NULL REFERENCES app.automation_tasks(id) ON DELETE CASCADE,
-  run_id uuid NOT NULL REFERENCES app.automation_task_runs(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS app.scout_task_logs (
+  id bigserial PRIMARY KEY, task_id uuid NOT NULL REFERENCES app.scout_tasks(id) ON DELETE CASCADE,
+  run_id uuid NOT NULL REFERENCES app.scout_task_runs(id) ON DELETE CASCADE,
   level text NOT NULL, message text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS automation_task_logs_run_order ON app.automation_task_logs(task_id,run_id,created_at,id);
+CREATE INDEX IF NOT EXISTS automation_task_logs_run_order ON app.scout_task_logs(task_id,run_id,created_at,id);
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='app.automation_tasks'::regclass AND conname='automation_tasks_current_run_fk') THEN
-    ALTER TABLE app.automation_tasks ADD CONSTRAINT automation_tasks_current_run_fk FOREIGN KEY(current_run_id)
-      REFERENCES app.automation_task_runs(id) ON DELETE SET NULL;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='app.scout_tasks'::regclass AND conname='automation_tasks_current_run_fk') THEN
+    ALTER TABLE app.scout_tasks ADD CONSTRAINT automation_tasks_current_run_fk FOREIGN KEY(current_run_id)
+      REFERENCES app.scout_task_runs(id) ON DELETE SET NULL;
   END IF;
 END $$;
 
 -- Use the scheduler's existing table definition, installed separately before this fixture.
-INSERT INTO app.automation_workflows(name,product_domain,description,nodes,enabled,updated_at)
+INSERT INTO app.scout_workflows(name,product_domain,description,nodes,enabled,updated_at)
 VALUES
  ('Demo · Patent enrichment','ai-collect','Synthetic preview: collect patent records, normalize fields, validate and publish.',
   '[{"name":"Collect patents","type":"collect","template":"Patent source"},{"name":"Normalize fields","type":"transform"},{"name":"Validate identifiers","type":"validate"},{"name":"Publish to warehouse","type":"publish"}]',true,now()-interval '12 minutes'),
@@ -64,7 +64,7 @@ VALUES
  ('Demo · Monthly log retention','app.scheduler.tasks.automation.cleanup_task_logs','data-lake','Synthetic local schedule for inspecting a monthly trigger.','crontab','0','3','*','1','*',NULL,false,'local-demo')
 ON CONFLICT(task_name) DO UPDATE SET description=excluded.description;
 
-INSERT INTO app.automation_tasks(id,name,product_domain,task_type,task_path,status,progress,records,throughput,
+INSERT INTO app.scout_tasks(id,name,product_domain,task_type,task_path,status,progress,records,throughput,
   schedule,parameters,policies,owner,started_at,updated_at)
 SELECT ('a0000000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,
   (ARRAY['Demo · Patent enrichment','Demo · Company reconciliation','Demo · Media validation','Demo · Industry aggregation','Demo · Expert graph refresh','Demo · Waiting for review'])[n],
@@ -79,7 +79,7 @@ ON CONFLICT(id) DO UPDATE SET status=excluded.status,progress=excluded.progress,
   started_at=excluded.started_at,updated_at=excluded.updated_at;
 
 -- Two historical executions per started task; timestamps and outcomes are synthetic.
-INSERT INTO app.automation_task_runs(id,task_id,status,started_at,ended_at,log_count,inserted_records)
+INSERT INTO app.scout_task_runs(id,task_id,status,started_at,ended_at,log_count,inserted_records)
 SELECT ('b0000000-0000-4000-8000-'||lpad((n*10+batch)::text,12,'0'))::uuid,
   ('a0000000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,
   CASE WHEN batch=1 THEN 'completed' ELSE (ARRAY['completed','failed','running','completed','paused'])[n] END,
@@ -89,13 +89,13 @@ SELECT ('b0000000-0000-4000-8000-'||lpad((n*10+batch)::text,12,'0'))::uuid,
   4,CASE WHEN n=1 THEN 1240 WHEN n=4 THEN 820 ELSE NULL END
 FROM generate_series(1,5) AS n CROSS JOIN generate_series(1,2) AS batch
 ON CONFLICT(id) DO UPDATE SET started_at=excluded.started_at,ended_at=excluded.ended_at;
-UPDATE app.automation_tasks task SET current_run_id=run.id,celery_task_id=run.id::text
-FROM app.automation_task_runs run
+UPDATE app.scout_tasks task SET current_run_id=run.id,celery_task_id=run.id::text
+FROM app.scout_task_runs run
 WHERE task.owner='Local demo' AND task.id=run.task_id AND right(run.id::text,1)='2';
-DELETE FROM app.automation_task_logs WHERE task_id IN (
- SELECT id FROM app.automation_tasks WHERE owner='Local demo' AND parameters->>'synthetic'='true'
+DELETE FROM app.scout_task_logs WHERE task_id IN (
+ SELECT id FROM app.scout_tasks WHERE owner='Local demo' AND parameters->>'synthetic'='true'
 );
-INSERT INTO app.automation_task_logs(task_id,run_id,level,message,created_at)
+INSERT INTO app.scout_task_logs(task_id,run_id,level,message,created_at)
 SELECT run.task_id,run.id,CASE WHEN run.status='failed' AND line=4 THEN 'warn' WHEN line=4 THEN 'ok' ELSE 'info' END,
   CASE line WHEN 1 THEN '[DEMO] Synthetic local preview; no worker job was executed.'
     WHEN 2 THEN '[DEMO] Loaded 1,240 synthetic records for visual inspection.'
@@ -105,25 +105,25 @@ SELECT run.task_id,run.id,CASE WHEN run.status='failed' AND line=4 THEN 'warn' W
       WHEN run.status='running' THEN '[DEMO] Preview progress: 64%.'
       ELSE '[DEMO] Sample batch completed. Records are synthetic.' END END,
   run.started_at+line*interval '20 seconds'
-FROM app.automation_task_runs run CROSS JOIN generate_series(1,4) AS line
-WHERE run.task_id IN (SELECT id FROM app.automation_tasks WHERE owner='Local demo' AND parameters->>'synthetic'='true');
+FROM app.scout_task_runs run CROSS JOIN generate_series(1,4) AS line
+WHERE run.task_id IN (SELECT id FROM app.scout_tasks WHERE owner='Local demo' AND parameters->>'synthetic'='true');
 -- Synthetic worker notifications exercise the separate notifications API payload.
-INSERT INTO app.automation_task_logs(task_id,run_id,level,message,created_at)
+INSERT INTO app.scout_task_logs(task_id,run_id,level,message,created_at)
 SELECT run.task_id,run.id,'info',
   format('[%s: INFO/%s] %s', to_char((run.started_at+interval '2 minutes') AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI:SS,MS'),
     CASE kind WHEN 1 THEN 'Syncer' ELSE 'Downloader' END,
     CASE kind WHEN 1 THEN 'RecordPublisher: sent → demo.synthetic.records record_id=demo-record-001'
       ELSE 'DownloadWorker: record completed record_id=demo-record-001 downloaded=2 reused=1 not_found=1 failed=0' END),
   run.started_at+interval '2 minutes'
-FROM app.automation_task_runs run CROSS JOIN generate_series(1,2) kind
-WHERE run.task_id IN (SELECT id FROM app.automation_tasks WHERE owner='Local demo' AND parameters->>'synthetic'='true')
- AND NOT EXISTS (SELECT 1 FROM app.automation_task_logs old WHERE old.run_id=run.id AND old.message LIKE CASE kind WHEN 1 THEN '%RecordPublisher:%' ELSE '%DownloadWorker:%' END);
-UPDATE app.automation_task_runs run SET log_count=(SELECT count(*) FROM app.automation_task_logs log WHERE log.run_id=run.id),
+FROM app.scout_task_runs run CROSS JOIN generate_series(1,2) kind
+WHERE run.task_id IN (SELECT id FROM app.scout_tasks WHERE owner='Local demo' AND parameters->>'synthetic'='true')
+ AND NOT EXISTS (SELECT 1 FROM app.scout_task_logs old WHERE old.run_id=run.id AND old.message LIKE CASE kind WHEN 1 THEN '%RecordPublisher:%' ELSE '%DownloadWorker:%' END);
+UPDATE app.scout_task_runs run SET log_count=(SELECT count(*) FROM app.scout_task_logs log WHERE log.run_id=run.id),
   inserted_records=coalesce(inserted_records,120),updated_records=7,deleted_records=2,downloaded_records=3,synced_records=100
-WHERE run.task_id IN (SELECT id FROM app.automation_tasks WHERE owner='Local demo' AND parameters->>'synthetic'='true');
-UPDATE app.automation_task_logs log SET message = format('[%s: %s/LocalDemo] %s',
+WHERE run.task_id IN (SELECT id FROM app.scout_tasks WHERE owner='Local demo' AND parameters->>'synthetic'='true');
+UPDATE app.scout_task_logs log SET message = format('[%s: %s/LocalDemo] %s',
   to_char(log.created_at AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI:SS,MS'),
   CASE log.level WHEN 'warn' THEN 'WARNING' WHEN 'ok' THEN 'OK' ELSE 'INFO' END, log.message)
-WHERE log.task_id IN (SELECT id FROM app.automation_tasks WHERE owner='Local demo' AND parameters->>'synthetic'='true')
+WHERE log.task_id IN (SELECT id FROM app.scout_tasks WHERE owner='Local demo' AND parameters->>'synthetic'='true')
   AND log.message LIKE '[DEMO]%';
 COMMIT;

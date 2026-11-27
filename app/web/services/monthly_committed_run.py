@@ -21,8 +21,8 @@ _PROOF = text("""
     SELECT j.id AS job_id,j.plan_id,j.generation,j.slot,j.schedule_day_of_month_utc AS day,
            r.id AS receipt_id,r.source_table,r.target_table,r.recorded_at,r.rows_affected,
            r.target_oid,r.target_filenode
-    FROM ONLY app.ontology_transfer_schedule_jobs j
-    JOIN ONLY app.ontology_transfer_runs r ON r.id=j.receipt_id
+    FROM ONLY app.helio_transfer_schedule_jobs j
+    JOIN ONLY app.helio_transfer_runs r ON r.id=j.receipt_id
        AND r.request_id=j.id AND r.plan_id=j.plan_id AND r.plan_updated_at=j.plan_updated_at
     WHERE j.id=:job AND j.plan_id=:plan AND j.state='committed'
       AND j.generation>0 AND j.canceled_at IS NULL AND j.canceled_by IS NULL
@@ -40,7 +40,7 @@ _PROOF = text("""
       AND pg_catalog.isfinite(r.recorded_at) AND r.recorded_at>=j.slot AND r.recorded_at<=j.finished_at
       AND (j.dispatched_at IS NULL OR (j.dispatched_at>=j.slot AND j.dispatched_at<=r.recorded_at))
       AND NOT EXISTS (
-          SELECT 1 FROM ONLY app.ontology_transfer_upstream_jobs u WHERE u.id=j.id AND u.plan_id=j.plan_id
+          SELECT 1 FROM ONLY app.helio_transfer_upstream_jobs u WHERE u.id=j.id AND u.plan_id=j.plan_id
       )
       AND (
           SELECT count(*)=1 AND bool_and(valid)
@@ -52,7 +52,7 @@ _PROOF = text("""
                 AND pg_catalog.isfinite(a.started_at) AND pg_catalog.isfinite(a.finished_at)
                 AND a.started_at>=j.slot AND a.started_at<j.expires_at AND a.started_at<=r.recorded_at
                 AND a.finished_at>=r.recorded_at AND a.finished_at<=j.finished_at AS valid
-              FROM ONLY app.ontology_transfer_attempts a
+              FROM ONLY app.helio_transfer_attempts a
               WHERE a.plan_id=j.plan_id AND a.request_id=j.id AND a.status='committed'
               LIMIT 2
           ) candidates

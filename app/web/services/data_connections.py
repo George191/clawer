@@ -130,7 +130,7 @@ def paused_at_sql(alias: str) -> str:
 
 
 _PAUSE_INSTALLED = text("""SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_attribute
-    WHERE attrelid = pg_catalog.to_regclass('ontology_data_connections')
+    WHERE attrelid = pg_catalog.to_regclass('helio_data_connections')
       AND attname = 'paused_at' AND attnum > 0 AND NOT attisdropped)""")
 
 
@@ -422,11 +422,11 @@ class DataConnections:
     async def layer_bindings(self):
         async with self._session() as session:
             rows = (await session.execute(text("""WITH layers AS (
-                SELECT layer FROM app.ontology_objects WHERE is_active AND layer <> ''
+                SELECT layer FROM app.helio_objects WHERE is_active AND layer <> ''
                 UNION SELECT layer FROM app.etl_layer_connections
             ) SELECT l.layer, s.id::text AS "connectionId", s.name, s.engine
               FROM layers l LEFT JOIN app.etl_layer_connections b ON b.layer=l.layer
-              LEFT JOIN app.ontology_data_connections s ON s.id=b.connection_id ORDER BY l.layer"""))).mappings()
+              LEFT JOIN app.helio_data_connections s ON s.id=b.connection_id ORDER BY l.layer"""))).mappings()
             return [self.layer_binding(row) for row in rows]
 
     async def bind_layer(self, layer, payload):
@@ -478,7 +478,7 @@ class DataConnections:
             if code == "55P03":
                 raise HTTPException(409, {"code": "source_busy", "message": "This saved source is busy; try again"}) from None
             if code == "42P01":
-                raise HTTPException(503, "External source registry is not initialized; run tools/ontology_data_connections.py --apply") from error
+                raise HTTPException(503, "External source registry is not initialized; run tools/helio_data_connections.py --apply") from error
             raise HTTPException(503, "External source registry operation failed") from error
         except (ConnectionError, OSError, TimeoutError) as error:
             raise HTTPException(503, "External source registry is unavailable") from error
@@ -486,7 +486,7 @@ class DataConnections:
     async def exists(self, connection_id: uuid.UUID) -> bool:
         async with self._session() as session:
             return bool(await session.scalar(text(
-                "SELECT EXISTS (SELECT 1 FROM ontology_data_connections WHERE id = :id)"
+                "SELECT EXISTS (SELECT 1 FROM helio_data_connections WHERE id = :id)"
             ), {"id": connection_id}))
 
     async def list(self):
@@ -501,9 +501,9 @@ class DataConnections:
         async with self._session() as session:
             can_pause = source_pause_enabled() and await session.scalar(_PAUSE_INSTALLED)
             identity_registry = bool(batch_enabled and await session.scalar(text("""
-                SELECT pg_catalog.to_regclass('ontology_batch_source_identities') IS NOT NULL
+                SELECT pg_catalog.to_regclass('helio_batch_source_identities') IS NOT NULL
             """)))
-            join = "LEFT JOIN ontology_batch_source_identities proof ON proof.connection_id=registry.id" if identity_registry else ""
+            join = "LEFT JOIN helio_batch_source_identities proof ON proof.connection_id=registry.id" if identity_registry else ""
             proof_columns = (
                 """proof.connection_id IS NOT NULL AS has_proof, COALESCE(
                     proof.is_current AND proof.source_updated_at=registry.updated_at
@@ -514,7 +514,7 @@ class DataConnections:
             rows = (await session.execute(text(f"""
                 SELECT {columns}, {paused_at_sql('registry')} AS paused_at,
                     registry.config->>'host' AS source_host, {proof_columns}
-                FROM ontology_data_connections registry {join}
+                FROM helio_data_connections registry {join}
                 ORDER BY lower(registry.name), registry.id
             """), {"fingerprint": fingerprint} if identity_registry else {})).mappings()
 
@@ -545,7 +545,7 @@ class DataConnections:
         row = (await session.execute(text(f"""
             SELECT {_PUBLIC_COLUMNS}, {state} AS paused_at,
                 CASE WHEN {state} IS NULL THEN credentials_ciphertext END AS credentials_ciphertext
-            FROM ontology_data_connections registry WHERE id=:id
+            FROM helio_data_connections registry WHERE id=:id
             """ + lock), {"id": uuid.UUID(connection_id)})).mappings().first()
         if row is None:
             raise HTTPException(404, "Data source not found")
@@ -561,7 +561,7 @@ class DataConnections:
                 raise HTTPException(503, "Install the external source registry lifecycle migration first")
             params = {"id": uuid.UUID(connection_id)}
             row = (await session.execute(text(f"""
-                SELECT {_PUBLIC_COLUMNS}, paused_at FROM ontology_data_connections
+                SELECT {_PUBLIC_COLUMNS}, paused_at FROM helio_data_connections
                 WHERE id=:id FOR UPDATE
             """), params)).mappings().first()
             if row is None:
@@ -576,7 +576,7 @@ class DataConnections:
                 return _public(row, pause_available=True)
             await require_unconfigured(connection_id, row["engine"], registry=self, row=row, session=session)
             updated = (await session.execute(text(f"""
-                UPDATE ontology_data_connections
+                UPDATE helio_data_connections
                 SET paused_at=CASE WHEN :paused THEN clock_timestamp() ELSE NULL END, tested_at=NULL,
                     updated_at=greatest(clock_timestamp(), updated_at + interval '1 microsecond')
                 WHERE id=:id AND updated_at=:revision RETURNING {_PUBLIC_COLUMNS}, paused_at
@@ -642,7 +642,7 @@ class DataConnections:
             credentials = await self._credentials(payload, row)
             result = await self._probe_result(payload, credentials)
             if result["ok"]:
-                await session.execute(text("UPDATE ontology_data_connections SET tested_at=:tested WHERE id=:id"),
+                await session.execute(text("UPDATE helio_data_connections SET tested_at=:tested WHERE id=:id"),
                                       {"id": uuid.UUID(connection_id), "tested": datetime.fromisoformat(result["testedAt"])})
             return result
 
@@ -835,12 +835,12 @@ class DataConnections:
 
     async def _save_verified(self, session, params):
         if "version" in params:
-            sql = f"""UPDATE ontology_data_connections SET name=:name, engine=:engine,
+            sql = f"""UPDATE helio_data_connections SET name=:name, engine=:engine,
                 config=CAST(:config AS jsonb), credentials_ciphertext=:credentials,
                 updated_at=greatest(clock_timestamp(), updated_at + interval '1 microsecond'),
                 tested_at=:tested WHERE id=:id AND updated_at=:version RETURNING {_PUBLIC_COLUMNS}"""
         else:
-            sql = f"""INSERT INTO ontology_data_connections
+            sql = f"""INSERT INTO helio_data_connections
                 (id,name,engine,config,credentials_ciphertext,created_by,tested_at)
                 VALUES (:id,:name,:engine,CAST(:config AS jsonb),:credentials,:user,:tested)
                 RETURNING {_PUBLIC_COLUMNS}"""
@@ -853,7 +853,7 @@ class DataConnections:
     async def delete(self, connection_id):
         async with self._session() as session:
             stored = (await session.execute(text("""SELECT id,name,engine,config,credentials_ciphertext
-                FROM ontology_data_connections WHERE id=:id FOR UPDATE"""),
+                FROM helio_data_connections WHERE id=:id FOR UPDATE"""),
                 {"id": uuid.UUID(connection_id)})).mappings().first()
             if stored is None:
                 raise HTTPException(404, "Data source not found")
@@ -863,7 +863,7 @@ class DataConnections:
                     "message": "Resolve the configured flows before disconnecting this connection.",
                     "dependencies": dependencies})
             await self._require_not_business_connection(session, connection_id)
-            row = (await session.execute(text("DELETE FROM ontology_data_connections WHERE id=:id RETURNING id"), {"id": uuid.UUID(connection_id)})).first()
+            row = (await session.execute(text("DELETE FROM helio_data_connections WHERE id=:id RETURNING id"), {"id": uuid.UUID(connection_id)})).first()
             if row is None:
                 raise HTTPException(404, "Data source not found")
         return {"deleted": True}
@@ -871,7 +871,7 @@ class DataConnections:
     async def dependencies(self, connection_id):
         async with self._session() as session:
             stored = (await session.execute(text("""SELECT id,name,engine,config,credentials_ciphertext
-                FROM ontology_data_connections WHERE id=:id FOR SHARE"""),
+                FROM helio_data_connections WHERE id=:id FOR SHARE"""),
                 {"id": uuid.UUID(connection_id)})).mappings().first()
             if stored is None:
                 raise HTTPException(404, "Data source not found")
@@ -882,9 +882,9 @@ class DataConnections:
         params = {"id": uuid.UUID(connection_id), "source": connection_id}
         installed = (await session.execute(text("""SELECT
             to_regclass('app.etl_business_connection') IS NOT NULL AS business,
-            to_regclass('app.ontology_batch_sync_plans') IS NOT NULL AS batch,
-            to_regclass('app.ontology_transfer_plans') IS NOT NULL AS transfer,
-            to_regclass('app.ontology_registry_definitions') IS NOT NULL AS ontology
+            to_regclass('app.helio_batch_sync_plans') IS NOT NULL AS batch,
+            to_regclass('app.helio_transfer_plans') IS NOT NULL AS transfer,
+            to_regclass('app.helio_registry_definitions') IS NOT NULL AS ontology
         """))).mappings().one()
         dependencies = []
         if installed["business"] and await session.scalar(text("""SELECT EXISTS (
@@ -895,14 +895,14 @@ class DataConnections:
                 "message": "This connection is used by the running warehouse and Workers. Reassign that runtime before disconnecting."})
         if installed["batch"]:
             rows = (await session.execute(text("""SELECT id,name,source_schema,source_table
-                FROM app.ontology_batch_sync_plans WHERE connection_id=:id ORDER BY name,id
+                FROM app.helio_batch_sync_plans WHERE connection_id=:id ORDER BY name,id
             """), params)).mappings()
             dependencies.extend({"type": "batch_sync", "id": str(row["id"]), "name": row["name"],
                 "message": f"Batch sync reads {row['source_schema']}.{row['source_table']}. Remove or reassign it before disconnecting."}
                 for row in rows)
         if installed["transfer"]:
             rows = (await session.execute(text("""SELECT id,name,source_schema,source_table
-                FROM app.ontology_transfer_plans WHERE source_node->>'connectionId'=:source ORDER BY name,id
+                FROM app.helio_transfer_plans WHERE source_node->>'connectionId'=:source ORDER BY name,id
             """), params)).mappings()
             dependencies.extend({"type": "transfer_plan", "id": str(row["id"]), "name": row["name"],
                 "message": f"Transfer draft reads {row['source_schema']}.{row['source_table']}. Reassign or remove it before disconnecting."}
@@ -912,7 +912,7 @@ class DataConnections:
                 coalesce(published_definition->>'name',draft_definition->>'name',semantic_id) AS name,
                 draft_definition #>> '{source,upstreamConnectionId}'=:source AS draft,
                 published_definition #>> '{source,upstreamConnectionId}'=:source AS published
-                FROM app.ontology_registry_definitions
+                FROM app.helio_registry_definitions
                 WHERE draft_definition #>> '{source,upstreamConnectionId}'=:source
                    OR published_definition #>> '{source,upstreamConnectionId}'=:source
                 ORDER BY semantic_id,id

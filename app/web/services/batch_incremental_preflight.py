@@ -97,7 +97,7 @@ async def _proof_snapshot(
         registry = (await session.execute(text(f"""
             SELECT engine,config->>'host' AS host,config::text AS reviewed_config,updated_at,
                    {paused_at_sql('registry')} AS paused_at
-            FROM ONLY app.ontology_data_connections registry WHERE id=:id
+            FROM ONLY app.helio_data_connections registry WHERE id=:id
         """), {"id": row.connection_id})).mappings().first()
         _validate_source_revision(registry, request.expectedSourceUpdatedAt)
         fingerprint = expected_fingerprint()

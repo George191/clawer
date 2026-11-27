@@ -63,10 +63,10 @@ class ShareExplorerItem(Payload):
 
 
 class OntologyExplorerSavedItem(SQLModel, table=True):
-    __tablename__ = "ontology_explorer_saved_items"
+    __tablename__ = "helio_explorer_saved_items"
 
     id: UUID = DBField(default_factory=uuid4, primary_key=True)
-    definition_id: UUID = DBField(foreign_key="ontology_registry_definitions.id", ondelete="CASCADE")
+    definition_id: UUID = DBField(foreign_key="helio_registry_definitions.id", ondelete="CASCADE")
     owner_id: UUID = DBField(foreign_key="user.id", ondelete="CASCADE")
     kind: str = DBField(max_length=12)
     name: str = DBField(max_length=100)
@@ -76,12 +76,12 @@ class OntologyExplorerSavedItem(SQLModel, table=True):
 
 
 class OntologyExplorerResultLayout(SQLModel, table=True):
-    __tablename__ = "ontology_explorer_result_layouts"
+    __tablename__ = "helio_explorer_result_layouts"
     __table_args__ = (
         UniqueConstraint("definition_id", "owner_id", name="uq_ontology_explorer_layout_owner", postgresql_nulls_not_distinct=True),
     )
     id: UUID = DBField(default_factory=uuid4, primary_key=True)
-    definition_id: UUID = DBField(foreign_key="ontology_registry_definitions.id", ondelete="CASCADE")
+    definition_id: UUID = DBField(foreign_key="helio_registry_definitions.id", ondelete="CASCADE")
     owner_id: UUID | None = DBField(default=None, foreign_key="user.id", ondelete="CASCADE")
     layout: dict | None = DBField(sa_column=Column(JSONB(none_as_null=True), nullable=True))
     version: UUID = DBField(default_factory=uuid4)

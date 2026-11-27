@@ -21,7 +21,7 @@ class BatchSourceIdentityStatus(BaseModel):
 
 
 class BatchSourceIdentityRow(SQLModel, table=True):
-    __tablename__ = "ontology_batch_source_identities"
+    __tablename__ = "helio_batch_source_identities"
     __table_args__ = (CheckConstraint("fingerprint ~ '^[0-9a-f]{64}$'", name="ck_batch_source_identity_fingerprint"),)
 
     connection_id: UUID = Field(primary_key=True)

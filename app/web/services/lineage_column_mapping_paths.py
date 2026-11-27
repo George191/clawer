@@ -31,7 +31,7 @@ _READABLE_REGISTRY = text("""
     SELECT c.oid::bigint FROM pg_catalog.pg_class c
     JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
     JOIN pg_catalog.pg_am heap ON heap.oid=c.relam AND heap.amname='heap' AND heap.amtype='t'
-    WHERE n.nspname='app' AND c.relname='ontology_object_relations'
+    WHERE n.nspname='app' AND c.relname='helio_object_relations'
       AND c.relkind='r' AND c.relpersistence='p'
       AND NOT (c.relrowsecurity OR c.relforcerowsecurity OR c.relhasrules)
       AND NOT EXISTS (
@@ -149,7 +149,7 @@ async def read_column_mapping_paths(
                 await _read_parameters(metadata_session)
                 # Lock before acquiring the RR snapshot. A same-OID RLS/rule
                 # change or replacement after preflight cannot be overlooked.
-                await metadata_session.execute(text("LOCK TABLE ONLY app.ontology_object_relations IN ACCESS SHARE MODE NOWAIT"))
+                await metadata_session.execute(text("LOCK TABLE ONLY app.helio_object_relations IN ACCESS SHARE MODE NOWAIT"))
                 metadata = await catalog_parameters(scope, session=metadata_session, relations=True)
                 root = (await session.execute(_ROOT, metadata)).one_or_none()
                 if root != original_root:

@@ -16,9 +16,9 @@ from app.web.core.config import settings
 from app.web.services import push_inbox
 from app.web.services.push_inbox_apply import _SOURCE, _TARGET, _binding, _limits, _pin, _same_binding
 
-_STATE = '"public"."ontology_push_inbox_state"'
-_BINDING = '"public"."ontology_push_inbox_apply_binding"'
-_RESULTS = '"public"."ontology_push_inbox_apply_receipts"'
+_STATE = '"public"."helio_push_inbox_state"'
+_BINDING = '"public"."helio_push_inbox_apply_binding"'
+_RESULTS = '"public"."helio_push_inbox_apply_receipts"'
 _DATABASE = text("""
     SELECT pg_catalog.host(pg_catalog.inet_server_addr()) = :host
        AND pg_catalog.inet_server_port() = :port
@@ -30,8 +30,8 @@ _PRIVATE_PINS = text("""
     FROM pg_catalog.pg_class c
     JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
     JOIN pg_catalog.pg_am am ON am.oid = c.relam AND am.amname = 'heap'
-    WHERE c.relname IN ('ontology_push_inbox_state', 'ontology_push_inbox_apply_binding',
-                       'ontology_push_inbox_apply_receipts')
+    WHERE c.relname IN ('helio_push_inbox_state', 'helio_push_inbox_apply_binding',
+                       'helio_push_inbox_apply_receipts')
       AND c.relkind = 'r' AND c.relpersistence = 'p' AND NOT c.relispartition
       AND NOT c.relrowsecurity AND NOT c.relforcerowsecurity AND NOT c.relhasrules
       AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i WHERE c.oid IN (i.inhrelid,i.inhparent))
@@ -159,7 +159,7 @@ async def _resolve(session: AsyncSession, receipt: UUID) -> PushInboxEventPath:
         await session.execute(text("SET LOCAL enable_seqscan=off"))
         await session.execute(text("SET LOCAL enable_bitmapscan=off"))
         acceptance_index = await session.scalar(_ACCEPTANCE_INDEX, {"oid": source.oid})
-        result_oid = next(pin[1] for pin in private if pin[0] == "ontology_push_inbox_apply_receipts")
+        result_oid = next(pin[1] for pin in private if pin[0] == "helio_push_inbox_apply_receipts")
         if not acceptance_index or not await session.scalar(_APPLY_INDEX, {"oid": result_oid}):
             raise PushInboxEventPathUnavailable
         now = await session.scalar(text("SELECT pg_catalog.statement_timestamp()"))

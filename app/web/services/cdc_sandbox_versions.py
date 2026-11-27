@@ -127,7 +127,7 @@ async def _read_records(session: AsyncSession, version: CdcSandboxVersionRow) ->
     rows = (await session.execute(text("""
         WITH bounded AS (
             SELECT entity_id, value, pg_catalog.octet_length(value)::bigint + 8 AS bytes
-            FROM app.ontology_cdc_sandbox_version_rows WHERE version_id = :version
+            FROM app.helio_cdc_sandbox_version_rows WHERE version_id = :version
             ORDER BY entity_id LIMIT :cap
         ), measured AS (
             SELECT *, sum(bytes) OVER () AS snapshot_bytes FROM bounded

@@ -5,6 +5,10 @@ from sqlalchemy import text
 
 from app.etl.schema.dameng_cdc import DAMENG_CDC_DDL, DAMENG_CDC_INSTALLED
 
+# Preserve the SQL contract of this historical revision.
+DAMENG_CDC_DDL = DAMENG_CDC_DDL.replace("helio_", "ontology_")
+DAMENG_CDC_INSTALLED = DAMENG_CDC_INSTALLED.replace("helio_", "ontology_")
+
 revision = "cd0137ef6a24"
 down_revision = "ab69e2f48a0d"
 branch_labels = None

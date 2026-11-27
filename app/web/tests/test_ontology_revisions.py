@@ -71,8 +71,8 @@ class RevisionIntegration(unittest.IsolatedAsyncioTestCase):
                 tables = Team.metadata.tables
                 Team.metadata.create_all(sync, tables=[tables[name] for name in (
                     "dictionaries", "tenant", "user", "team", "invite_codes", "team_user_join",
-                    "ontology_registry_definitions", "ontology_runtime_records", "ontology_saved_sets",
-                    "ontology_link_types", "ontology_links", "ontology_markings", "ontology_publications",
+                    "helio_registry_definitions", "helio_runtime_records", "helio_saved_sets",
+                    "helio_link_types", "helio_links", "helio_markings", "helio_publications",
                 )])
                 with Operations.context(MigrationContext.configure(sync)):
                     migration.upgrade()

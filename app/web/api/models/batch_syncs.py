@@ -198,7 +198,7 @@ class BatchSyncCapabilities(BaseModel):
 
 
 class BatchSyncPlanRow(SQLModel, table=True):
-    __tablename__ = "ontology_batch_sync_plans"
+    __tablename__ = "helio_batch_sync_plans"
     __table_args__ = (
         CheckConstraint("jsonb_typeof(mapping) = 'array' AND jsonb_array_length(mapping) BETWEEN 1 AND 32",
                         name="ck_ontology_batch_sync_mapping"),
@@ -248,7 +248,7 @@ class BatchSyncPlanRow(SQLModel, table=True):
 
 
 class BatchSyncReceiptRow(SQLModel, table=True):
-    __tablename__ = "ontology_batch_sync_receipts"
+    __tablename__ = "helio_batch_sync_receipts"
     __table_args__ = (
         UniqueConstraint("plan_id", "request_id", name="uq_ontology_batch_sync_request"),
         CheckConstraint("rows_affected BETWEEN 0 AND 100", name="ck_ontology_batch_sync_rows"),
@@ -286,7 +286,7 @@ class BatchSyncReceiptRow(SQLModel, table=True):
     )
 
     id: UUID = DbField(default_factory=uuid4, primary_key=True)
-    plan_id: UUID = DbField(foreign_key="ontology_batch_sync_plans.id")
+    plan_id: UUID = DbField(foreign_key="helio_batch_sync_plans.id")
     request_id: UUID
     initiated_by: UUID
     connection_id: UUID
@@ -309,7 +309,7 @@ class BatchSyncReceiptRow(SQLModel, table=True):
 
 
 class BatchSyncWatermarkRow(SQLModel, table=True):
-    __tablename__ = "ontology_batch_sync_incremental_watermark"
+    __tablename__ = "helio_batch_sync_incremental_watermark"
     __table_args__ = (
         CheckConstraint("singleton IS TRUE AND applied_through >= 0 AND target_oid > 0 AND target_file_node > 0 "
                         "AND source_identity_fingerprint ~ '^[0-9a-f]{64}$' AND source_stream_digest ~ '^[0-9a-f]{64}$'",
@@ -328,18 +328,18 @@ class BatchSyncWatermarkRow(SQLModel, table=True):
 class BatchSyncRequestRow(SQLModel, table=True):
     """Bind an idempotency key to the reviewed plan version, even without a receipt."""
 
-    __tablename__ = "ontology_batch_sync_requests"
+    __tablename__ = "helio_batch_sync_requests"
 
-    plan_id: UUID = DbField(primary_key=True, foreign_key="ontology_batch_sync_plans.id")
+    plan_id: UUID = DbField(primary_key=True, foreign_key="helio_batch_sync_plans.id")
     request_id: UUID = DbField(primary_key=True)
     plan_updated_at: datetime = DbField(sa_column=Column(DateTime(timezone=True), nullable=False))
 
 
 class BatchSyncAttemptRow(SQLModel, table=True):
-    __tablename__ = "ontology_batch_sync_attempts"
+    __tablename__ = "helio_batch_sync_attempts"
     __table_args__ = (
         ForeignKeyConstraint(["plan_id", "request_id"], [
-            "ontology_batch_sync_requests.plan_id", "ontology_batch_sync_requests.request_id",
+            "helio_batch_sync_requests.plan_id", "helio_batch_sync_requests.request_id",
         ]),
         CheckConstraint(
             "(status = 'started' AND finished_at IS NULL AND receipt_id IS NULL AND code IS NULL AND message IS NULL)"
@@ -365,7 +365,7 @@ class BatchSyncAttemptRow(SQLModel, table=True):
     incremental_scope: str | None = DbField(default=None, max_length=64)
     started_at: datetime = DbField(sa_column=Column(DateTime(timezone=True), nullable=False))
     finished_at: datetime | None = DbField(default=None, sa_column=Column(DateTime(timezone=True)))
-    receipt_id: UUID | None = DbField(default=None, foreign_key="ontology_batch_sync_receipts.id")
+    receipt_id: UUID | None = DbField(default=None, foreign_key="helio_batch_sync_receipts.id")
     code: str | None = DbField(default=None, max_length=40)
     message: str | None = DbField(default=None, max_length=240)
-    scheduled_job_id: UUID | None = DbField(default=None, foreign_key="ontology_batch_sync_schedule_jobs.id")
+    scheduled_job_id: UUID | None = DbField(default=None, foreign_key="helio_batch_sync_schedule_jobs.id")

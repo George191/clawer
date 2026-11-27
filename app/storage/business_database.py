@@ -35,7 +35,7 @@ async def layer_binding_lease(layers, *, expected=None, pg=None):
         await session.execute(text("""SELECT pg_advisory_xact_lock_shared(hashtextextended('etl-layer:' || layer,0))
             FROM unnest(CAST(:layers AS text[])) AS selected(layer) ORDER BY layer"""), {"layers": layers})
         rows = (await session.execute(text("""SELECT b.layer, s.id::text AS id, s.updated_at
-            FROM app.etl_layer_connections b JOIN app.ontology_data_connections s ON s.id=b.connection_id
+            FROM app.etl_layer_connections b JOIN app.helio_data_connections s ON s.id=b.connection_id
             WHERE b.layer=ANY(CAST(:layers AS text[])) AND s.paused_at IS NULL"""),
             {"layers": layers})).mappings()
         current = {row["layer"]: (row["id"], row["updated_at"]) for row in rows}
@@ -56,7 +56,7 @@ async def layer_connection_info(*, pg: PostgresClient | None = None) -> dict[str
         rows = await pg.fetch_all("""
             SELECT b.layer, s.id::text AS id, s.name, s.engine, s.updated_at, s.config->>'database' AS database
             FROM app.etl_layer_connections b
-            JOIN app.ontology_data_connections s ON s.id=b.connection_id
+            JOIN app.helio_data_connections s ON s.id=b.connection_id
             WHERE s.paused_at IS NULL ORDER BY b.layer
         """)
     return {row["layer"]: dict(row) for row in rows}
@@ -73,7 +73,7 @@ async def selected_layer_connection(layer: str, *, engine: str | None = "postgre
         row = await pg.fetch_one("""
             SELECT s.id, s.name, s.engine, s.config, s.credentials_ciphertext, s.paused_at, s.updated_at
             FROM app.etl_layer_connections b
-            JOIN app.ontology_data_connections s ON s.id=b.connection_id
+            JOIN app.helio_data_connections s ON s.id=b.connection_id
             WHERE b.layer=:layer AND s.paused_at IS NULL
         """, {"layer": layer})
     if row is None:
@@ -91,7 +91,7 @@ async def selected_business_connection() -> dict:
             SELECT source.id, source.name, source.engine, source.config,
                    source.credentials_ciphertext, source.paused_at
             FROM app.etl_business_connection binding
-            JOIN app.ontology_data_connections source ON source.id = binding.connection_id
+            JOIN app.helio_data_connections source ON source.id = binding.connection_id
             WHERE binding.singleton
         """)
     if row is None:

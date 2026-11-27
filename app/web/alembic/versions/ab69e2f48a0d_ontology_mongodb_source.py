@@ -6,6 +6,10 @@ from app.etl.schema.data_connections import (
     DATA_CONNECTIONS_MONGODB_DDL, DATA_CONNECTIONS_MONGODB_ENABLED, ENGINE_CHECK,
 )
 
+# Preserve the SQL contract of this historical revision.
+DATA_CONNECTIONS_MONGODB_DDL = DATA_CONNECTIONS_MONGODB_DDL.replace("helio_", "ontology_")
+DATA_CONNECTIONS_MONGODB_ENABLED = DATA_CONNECTIONS_MONGODB_ENABLED.replace("helio_", "ontology_")
+
 revision = "ab69e2f48a0d"
 down_revision = "18f214f739c5"
 branch_labels = None

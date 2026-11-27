@@ -126,7 +126,7 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
             await session.execute(text("CREATE TABLE ts_batch_sync_sandbox.accounts (id integer PRIMARY KEY, caption text NOT NULL)"))
             await session.execute(text("INSERT INTO ts_batch_sync_sandbox.accounts VALUES(1,'old'),(77,'untouched')"))
             await session.execute(text("""
-                INSERT INTO app.ontology_data_connections
+                INSERT INTO app.helio_data_connections
                 (id,name,engine,config,credentials_ciphertext,created_by,tested_at,updated_at)
                 VALUES (:id,'fake local source','postgresql','{"host":"127.0.0.1"}','never read by this fixture','test',now(),:version)
             """), {"id": UUID(PAYLOAD["connectionId"]), "version": datetime.fromisoformat(PAYLOAD["expectedSourceUpdatedAt"])})
@@ -135,11 +135,11 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
     async def drop_fixture(self):
         async with self.pg.session() as session:
             for command in (
-                "DROP TABLE app.ontology_batch_sync_attempts, app.ontology_batch_sync_requests, "
-                "app.ontology_batch_sync_schedule_jobs, app.ontology_batch_sync_schedules",
-                "DROP TABLE app.ontology_batch_sync_receipts, app.ontology_batch_sync_plans",
-                "DROP TABLE app.ontology_data_connections, app.ontology_batch_source_identities, "
-                "app.ontology_batch_sync_incremental_watermark",
+                "DROP TABLE app.helio_batch_sync_attempts, app.helio_batch_sync_requests, "
+                "app.helio_batch_sync_schedule_jobs, app.helio_batch_sync_schedules",
+                "DROP TABLE app.helio_batch_sync_receipts, app.helio_batch_sync_plans",
+                "DROP TABLE app.helio_data_connections, app.helio_batch_source_identities, "
+                "app.helio_batch_sync_incremental_watermark",
                 "DROP SCHEMA ts_batch_sync_sandbox CASCADE",
             ):
                 await session.execute(text(command))
@@ -165,7 +165,7 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(available.json()["lineageAsset"], asset)
                 self.assertIs(available.json()["incrementalLineage"], True)
                 await self.pg.execute("""
-                    INSERT INTO app.ontology_batch_sync_incremental_watermark
+                    INSERT INTO app.helio_batch_sync_incremental_watermark
                     (singleton, connection_id, source_identity_fingerprint, source_stream_digest,
                      target_oid, target_file_node, applied_through)
                     SELECT true, :connection, repeat('a', 64), repeat('b', 64), oid, relfilenode, 0
@@ -242,7 +242,7 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
                 # A connection edit blocks new requests but not the replay of an
                 # already-committed request; neither case reopens the source.
                 async with self.pg.session() as session:
-                    await session.execute(text("UPDATE app.ontology_data_connections SET updated_at=clock_timestamp()"))
+                    await session.execute(text("UPDATE app.helio_data_connections SET updated_at=clock_timestamp()"))
                 stale_source = await submit(plan)
                 self.assertEqual(stale_source.status_code, 409, stale_source.text)
                 self.assertEqual(stale_source.json()["detail"]["code"], "source_revision_changed")
@@ -402,7 +402,7 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
                 await self.pg.execute('UPDATE public."user" SET is_superuser=true')
                 day4 = slot + timedelta(days=3)
                 fourth, = await due_jobs(day4)
-                await self.pg.execute("UPDATE app.ontology_data_connections SET updated_at=clock_timestamp()")
+                await self.pg.execute("UPDATE app.helio_data_connections SET updated_at=clock_timestamp()")
                 stale = (await client.get(path + "/schedule")).json()
                 self.assertFalse(stale["enabled"])
                 self.assertTrue(stale["configuredEnabled"])
@@ -769,7 +769,7 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
                        "mapping": [{"sourceColumn": name, "targetColumn": name} for name in ("id", "value")]}
         review_url = f"/etl/data-connections/{PAYLOAD['connectionId']}/batch-source-identity"
         timeline = "/etl/ts_batch_sync_sandbox/committed_batch_fixture/batch-lineage-timeline"
-        cursor_sql = "SELECT applied_through AS through FROM ontology_batch_sync_incremental_watermark"
+        cursor_sql = "SELECT applied_through AS through FROM helio_batch_sync_incremental_watermark"
         slot = datetime(2026, 11, 17, 4, 0, tzinfo=timezone.utc)
 
         async def request(client, plan, request_id=None):
@@ -837,14 +837,14 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
                     stale = await client.post(verify_next, json={**preflight_body, "expectedUpdatedAt": "2020-01-01T00:00:00Z"})
                     self.assertEqual(stale.status_code, 409, stale.text)
                     self.assertEqual(stale.json()["detail"]["code"], "plan_changed")
-                    await self.pg.execute("UPDATE ontology_data_connections SET paused_at=pg_catalog.clock_timestamp(),tested_at=NULL")
+                    await self.pg.execute("UPDATE helio_data_connections SET paused_at=pg_catalog.clock_timestamp(),tested_at=NULL")
                     try:
                         paused = await client.post(verify_next, json=preflight_body)
                         self.assertEqual(paused.status_code, 409, paused.text)
                         self.assertEqual(paused.json()["detail"]["code"], "source_paused")
                         connections._credentials.assert_not_awaited()
                     finally:
-                        await self.pg.execute("UPDATE ontology_data_connections SET paused_at=NULL,tested_at=pg_catalog.clock_timestamp()")
+                        await self.pg.execute("UPDATE helio_data_connections SET paused_at=NULL,tested_at=pg_catalog.clock_timestamp()")
 
                 self.assertEqual((await client.get(timeline)).json()["lineage"]["state"], "reviewed")
                 empty_id = uuid4()
@@ -868,7 +868,7 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
 
                     async def move_registry_after_source(*args, **kwargs):
                         observed = await read_committed_batch(*args, **kwargs)
-                        await self.pg.execute("UPDATE ontology_data_connections SET config=config || jsonb_build_object('tls', true)")
+                        await self.pg.execute("UPDATE helio_data_connections SET config=config || jsonb_build_object('tls', true)")
                         return observed
 
                     try:
@@ -878,7 +878,7 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
                             self.assertEqual(changed.status_code, 409, changed.text)
                             self.assertEqual(changed.json()["detail"]["code"], "incremental_preflight_unverified")
                     finally:
-                        await self.pg.execute("UPDATE ontology_data_connections SET config=config-'tls'")
+                        await self.pg.execute("UPDATE helio_data_connections SET config=config-'tls'")
                     self.assertEqual((await self.pg.fetch_one(cursor_sql))["through"], 0)
                     self.assertEqual(await self.pg.fetch_all("SELECT * FROM ts_batch_sync_sandbox.committed_batch_fixture"), [])
 
@@ -894,7 +894,7 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
                     BEGIN RAISE EXCEPTION 'synthetic fault' USING ERRCODE='23514'; END; $$
                 """)
                 await self.pg.execute("""
-                    CREATE TRIGGER reject_incremental_receipt BEFORE INSERT ON ontology_batch_sync_receipts
+                    CREATE TRIGGER reject_incremental_receipt BEFORE INSERT ON helio_batch_sync_receipts
                         FOR EACH ROW EXECUTE FUNCTION ts_batch_sync_sandbox.reject_incremental_receipt();
                 """)
                 rejected_id = uuid4()
@@ -904,7 +904,7 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await self.pg.fetch_one(
                     "SELECT value FROM ts_batch_sync_sandbox.committed_batch_fixture",
                 ))["value"], "first")
-                await self.pg.execute("DROP TRIGGER reject_incremental_receipt ON ontology_batch_sync_receipts")
+                await self.pg.execute("DROP TRIGGER reject_incremental_receipt ON helio_batch_sync_receipts")
                 applied = await request(client, first, rejected_id)
                 self.assertEqual(applied.status_code, 200, applied.text)
                 self.assertEqual((applied.json()["fromExclusive"], applied.json()["throughInclusive"]), ("1", "2"))
@@ -951,8 +951,8 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
                 # Simulate legacy successful attempt and force a cross-table timestamp/UUID tie.
                 tie = UUID(applied.json()["id"])
                 await self.pg.execute("""
-                    UPDATE ontology_batch_sync_attempts SET id=:id, incremental_scope=NULL, started_at=(
-                        SELECT recorded_at FROM ontology_batch_sync_receipts WHERE id=:id
+                    UPDATE helio_batch_sync_attempts SET id=:id, incremental_scope=NULL, started_at=(
+                        SELECT recorded_at FROM helio_batch_sync_receipts WHERE id=:id
                     ) WHERE receipt_id=:id AND status='committed'
                 """, {"id": tie})
                 cursor = None

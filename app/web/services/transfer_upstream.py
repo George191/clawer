@@ -319,8 +319,8 @@ async def list_upstream_jobs(session: AsyncSession, plan_id: UUID) -> list[Upstr
 # and arm/pause; the membership ledger independently enforces non-reuse.
 _READY_BINDINGS = text("""
     SELECT t.plan_id
-    FROM ontology_transfer_upstream_triggers t
-    JOIN ontology_transfer_plans child ON child.id = t.plan_id
+    FROM helio_transfer_upstream_triggers t
+    JOIN helio_transfer_plans child ON child.id = t.plan_id
     CROSS JOIN LATERAL (
         SELECT count(*) AS members, count(e.id) AS ready, min(e.id) AS oldest, max(e.recorded_at) AS latest,
                bool_and(p.updated_at = m.parent_updated_at) AS unchanged,
@@ -333,14 +333,14 @@ _READY_BINDINGS = text("""
                min(f.id) FILTER (WHERE m.parent_plan_id = ANY(t.group_parent_ids)) AS alternate_fresh,
                min(e.id) FILTER (WHERE NOT (m.parent_plan_id = ANY(t.group_parent_ids))) AS single_first,
                min(f.id) FILTER (WHERE NOT (m.parent_plan_id = ANY(t.group_parent_ids))) AS single_fresh
-        FROM ontology_transfer_upstream_parents m
-        JOIN ontology_transfer_plans p ON p.id = m.parent_plan_id
+        FROM helio_transfer_upstream_parents m
+        JOIN helio_transfer_plans p ON p.id = m.parent_plan_id
         LEFT JOIN LATERAL (
-            SELECT e.id, e.recorded_at FROM ontology_transfer_commit_events e
+            SELECT e.id, e.recorded_at FROM helio_transfer_commit_events e
             WHERE e.parent_plan_id = m.parent_plan_id AND e.parent_updated_at = m.parent_updated_at
               AND e.id > m.cutoff_event_id AND e.recorded_at <= :now
               AND NOT EXISTS (
-                  SELECT 1 FROM ontology_transfer_upstream_job_events j
+                  SELECT 1 FROM helio_transfer_upstream_job_events j
                   WHERE j.plan_id = t.plan_id AND j.generation = t.generation AND j.event_id = e.id
               )
             ORDER BY CASE WHEN t.group_operator IS NULL AND t.operator = 'OR'
@@ -348,12 +348,12 @@ _READY_BINDINGS = text("""
             LIMIT 1
         ) e ON true
         LEFT JOIN LATERAL (
-            SELECT fresh.id FROM ontology_transfer_commit_events fresh
+            SELECT fresh.id FROM helio_transfer_commit_events fresh
             WHERE t.group_operator IS NOT NULL AND fresh.parent_plan_id = m.parent_plan_id
               AND fresh.parent_updated_at = m.parent_updated_at AND fresh.id > m.cutoff_event_id
               AND fresh.recorded_at > :window_start AND fresh.recorded_at <= :now
               AND NOT EXISTS (
-                  SELECT 1 FROM ontology_transfer_upstream_job_events j
+                  SELECT 1 FROM helio_transfer_upstream_job_events j
                   WHERE j.plan_id = t.plan_id AND j.generation = t.generation AND j.event_id = fresh.id
               )
             ORDER BY fresh.id LIMIT 1

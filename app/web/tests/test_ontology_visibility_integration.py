@@ -41,7 +41,7 @@ class OntologyVisibilityIntegration(unittest.IsolatedAsyncioTestCase):
         async with self.pg.session() as session:
             await session.execute(text(f"DROP SCHEMA IF EXISTS {SCHEMA} CASCADE"))
             await session.execute(text(f"CREATE SCHEMA {SCHEMA}"))
-            for table in ("ontology_object_favorites", "ontology_object_properties", "ontology_object_relations", "ontology_objects"):
+            for table in ("helio_object_favorites", "helio_object_properties", "helio_object_relations", "helio_objects"):
                 await session.execute(text(f"DROP TABLE IF EXISTS public.{table} CASCADE"))
             for statement in (*ontology.ONTOLOGY_DDL_STATEMENTS, *OBJECT_RELATIONS_DDL_STATEMENTS):
                 await session.execute(text(statement))
@@ -54,8 +54,8 @@ class OntologyVisibilityIntegration(unittest.IsolatedAsyncioTestCase):
                 )
             await session.execute(text(f"INSERT INTO {SCHEMA}.visibility_normal VALUES (42)"))
             # Reproduce the deployed public catalog before this migration, without revisiting ddlregistry.
-            await session.execute(text("ALTER TABLE app.ontology_objects DROP COLUMN visibility"))
-            await session.execute(text("DROP TABLE app.ontology_object_favorites"))
+            await session.execute(text("ALTER TABLE app.helio_objects DROP COLUMN visibility"))
+            await session.execute(text("DROP TABLE app.helio_object_favorites"))
         await manage_object_relations(self.pg, [RELATION], apply=True)
         self.layers = object.__new__(EtlLayers)
         self.layers._pg = self.pg
@@ -67,7 +67,7 @@ class OntologyVisibilityIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def snapshot(self):
         return {name: await self.pg.fetch_all(f"SELECT * FROM public.{name} ORDER BY 1,2")
-                for name in ("ontology_objects", "ontology_object_properties", "ontology_object_relations")}
+                for name in ("helio_objects", "helio_object_properties", "helio_object_relations")}
 
     async def test_migration_only_adds_normal_default_and_preserves_existing_metadata(self):
         before = await self.snapshot()
@@ -77,7 +77,7 @@ class OntologyVisibilityIntegration(unittest.IsolatedAsyncioTestCase):
         result = await self.migration.migrate(self.pg, apply=True)
         self.assertTrue(result["ready"])
         after = await self.snapshot()
-        for row in after["ontology_objects"]:
+        for row in after["helio_objects"]:
             self.assertEqual(row.pop("visibility"), "normal")
         self.assertEqual(after, before)
         repeat = await self.migration.migrate(self.pg, apply=True)
@@ -91,15 +91,15 @@ class OntologyVisibilityIntegration(unittest.IsolatedAsyncioTestCase):
         for visibility in ("prominent", "hidden", "normal", "hidden"):
             result = await self.workspace.set_object_visibility("visibility", "visibility_normal", visibility, "admin:42")
             self.assertEqual(result["visibility"], visibility)
-            row = await self.pg.fetch_one("""SELECT visibility, updated_by, updated_at FROM app.ontology_objects
+            row = await self.pg.fetch_one("""SELECT visibility, updated_by, updated_at FROM app.helio_objects
                 WHERE schema_name=:schema AND table_name='visibility_normal'""", {"schema": SCHEMA})
             self.assertEqual((row["visibility"], row["updated_by"]), (visibility, "admin:42"))
             self.assertIsNotNone(row["updated_at"])
         after = await self.snapshot()
-        self.assertEqual(after["ontology_object_properties"], before["ontology_object_properties"])
-        self.assertEqual(after["ontology_object_relations"], before["ontology_object_relations"])
+        self.assertEqual(after["helio_object_properties"], before["helio_object_properties"])
+        self.assertEqual(after["helio_object_relations"], before["helio_object_relations"])
         for snapshot in (before, after):
-            for row in snapshot["ontology_objects"]:
+            for row in snapshot["helio_objects"]:
                 for field in ("visibility", "updated_by", "updated_at"):
                     row.pop(field)
         self.assertEqual(after, before)
@@ -107,17 +107,17 @@ class OntologyVisibilityIntegration(unittest.IsolatedAsyncioTestCase):
             await ontology.sync_object_metadata(session, SCHEMA, "visibility_normal", catalog_session=session)
         await registry.save_registered_ddl(self.pg, layer="visibility", table="normal", catalog_pg=self.pg,
             ddl_sql=f"CREATE TABLE {SCHEMA}.visibility_normal (id BIGINT PRIMARY KEY)")
-        row = await self.pg.fetch_one("SELECT visibility FROM app.ontology_objects WHERE table_name='visibility_normal'")
+        row = await self.pg.fetch_one("SELECT visibility FROM app.helio_objects WHERE table_name='visibility_normal'")
         self.assertEqual(row["visibility"], "hidden")
         with self.assertRaises(DBAPIError):
             async with self.pg.session() as session:
-                await session.execute(text("UPDATE app.ontology_objects SET visibility='invalid'"))
+                await session.execute(text("UPDATE app.helio_objects SET visibility='invalid'"))
         self.assertEqual(await self.pg.fetch_all(f"SELECT * FROM {SCHEMA}.visibility_normal"), [{"id": 42}])
         async with self.pg.session() as session:
             await session.execute(text(f"CREATE TABLE {SCHEMA}.visibility_new (id BIGINT)"))
             await ontology.sync_object_metadata(session, SCHEMA, "visibility_new", catalog_session=session,
                                                  layer="visibility", table_role="current")
-        self.assertEqual((await self.pg.fetch_one("SELECT visibility FROM app.ontology_objects WHERE table_name='visibility_new'"))["visibility"], "normal")
+        self.assertEqual((await self.pg.fetch_one("SELECT visibility FROM app.helio_objects WHERE table_name='visibility_new'"))["visibility"], "normal")
 
     async def test_hidden_ids_facets_pagination_sort_and_logical_link_preview(self):
         await self.migration.migrate(self.pg, apply=True)
@@ -192,7 +192,7 @@ class OntologyVisibilityIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len((await self.workspace.object_favorites(USER_A))["ids"]), 2)
         self.assertEqual(await self.workspace.object_favorites(USER_B), {"ids": [SCHEMA + ".visibility_normal"]})
         async with self.pg.session() as session:
-            await session.execute(text("DELETE FROM app.ontology_objects WHERE table_name='visibility_prominent'"))
+            await session.execute(text("DELETE FROM app.helio_objects WHERE table_name='visibility_prominent'"))
         self.assertEqual(await self.workspace.object_favorites(USER_A), {"ids": [SCHEMA + ".visibility_normal"]})
         app = FastAPI()
         app.include_router(etl.router, prefix="/api/v1")
@@ -210,9 +210,9 @@ class OntologyVisibilityIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def test_conflicting_favorites_table_refuses_migration_without_modifying_existing_objects(self):
         async with self.pg.session() as session:
-            await session.execute(text("CREATE TABLE app.ontology_object_favorites (user_id TEXT, object_id BIGINT)"))
+            await session.execute(text("CREATE TABLE app.helio_object_favorites (user_id TEXT, object_id BIGINT)"))
         before = await self.snapshot()
         with self.assertRaisesRegex(RuntimeError, "favorites definition differs"):
             await self.migration.migrate(self.pg, apply=True)
         self.assertEqual(await self.snapshot(), before)
-        self.assertIsNone((await self.pg.fetch_one("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='ontology_objects' AND column_name='visibility'")))
+        self.assertIsNone((await self.pg.fetch_one("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='helio_objects' AND column_name='visibility'")))

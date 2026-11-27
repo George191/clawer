@@ -117,7 +117,7 @@ async def _intake_state(session: AsyncSession):
     return (await session.execute(text("""
         SELECT (pg_catalog.to_jsonb(s)->>'intake_generation')::integer AS generation,
                (pg_catalog.to_jsonb(s)->>'intake_paused_at')::timestamptz AS paused_at
-        FROM app.ontology_push_inbox_state s WHERE s.singleton IS TRUE
+        FROM app.helio_push_inbox_state s WHERE s.singleton IS TRUE
     """))).one()
 
 
@@ -174,7 +174,7 @@ async def change_push_intake(session: AsyncSession, change: PushInboxIntakeChang
             if generation == MAX_INTAKE_GENERATION:
                 raise HTTPException(409, "Synthetic inbox intake generation limit reached")
             await session.execute(text("""
-                UPDATE app.ontology_push_inbox_state SET intake_generation=intake_generation+1,
+                UPDATE app.helio_push_inbox_state SET intake_generation=intake_generation+1,
                     intake_paused_at=CASE WHEN :paused THEN pg_catalog.clock_timestamp() ELSE NULL END
                 WHERE singleton IS TRUE
             """), {"paused": change.paused})

@@ -155,11 +155,11 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
             yield session
 
     async def drop_fixture(self):
-        await self.pg.execute("DROP TABLE ontology_pipeline_sandbox_output_rows, ontology_pipeline_sandbox_outputs")
-        await self.pg.execute("DROP TABLE ontology_pipeline_sandbox_revisions")
+        await self.pg.execute("DROP TABLE helio_pipeline_sandbox_output_rows, helio_pipeline_sandbox_outputs")
+        await self.pg.execute("DROP TABLE helio_pipeline_sandbox_revisions")
         await self.pg.execute("DROP FUNCTION IF EXISTS app.ontology_pipeline_keep_restore_provenance()")
-        await self.pg.execute("DROP TABLE ontology_cdc_sandbox_version_rows, ontology_cdc_sandbox_versions")
-        await self.pg.execute("DROP TABLE ontology_cdc_sandbox_receipts, ontology_cdc_sandbox_binding")
+        await self.pg.execute("DROP TABLE helio_cdc_sandbox_version_rows, helio_cdc_sandbox_versions")
+        await self.pg.execute("DROP TABLE helio_cdc_sandbox_receipts, helio_cdc_sandbox_binding")
         await self.pg.execute("DROP SCHEMA ts_cdc_sandbox CASCADE")
 
     async def produce(self, session, entity: int, value: str) -> int:
@@ -269,7 +269,7 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
                         $$
                     """))
                     await session.execute(text("""
-                        CREATE TRIGGER fail_receipt BEFORE INSERT ON ontology_cdc_sandbox_receipts
+                        CREATE TRIGGER fail_receipt BEFORE INSERT ON helio_cdc_sandbox_receipts
                         FOR EACH ROW EXECUTE FUNCTION ts_cdc_sandbox.fail_receipt()
                     """))
                 request = payload(0)
@@ -278,7 +278,7 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await client.get(_ROUTE)).json()["appliedThrough"], "0")
                 self.assertEqual(await self.pg.fetch_all("SELECT * FROM ts_cdc_sandbox.target_rows"), [])
                 self.assertEqual((await client.get(_ROUTE + "/runs")).json(), [])
-                await self.pg.execute("DROP TRIGGER fail_receipt ON ontology_cdc_sandbox_receipts")
+                await self.pg.execute("DROP TRIGGER fail_receipt ON helio_cdc_sandbox_receipts")
 
                 commit = AsyncSession.commit
                 lost = False
@@ -397,7 +397,7 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
                         $$
                     """))
                     await session.execute(text("""
-                        CREATE TRIGGER fail_version BEFORE INSERT ON ontology_cdc_sandbox_version_rows
+                        CREATE TRIGGER fail_version BEFORE INSERT ON helio_cdc_sandbox_version_rows
                         FOR EACH ROW EXECUTE FUNCTION ts_cdc_sandbox.fail_version()
                     """))
                 refused = await client.post(_ROUTE + "/runs", json=request)
@@ -407,7 +407,7 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await client.get(_ROUTE + "/versions")).json()["versions"], [])
                 self.assertIsNone(await self.pg.fetch_one("SELECT id FROM ts_cdc_sandbox.target_rows WHERE id=101"))
 
-                await self.pg.execute("DROP TRIGGER fail_version ON ontology_cdc_sandbox_version_rows")
+                await self.pg.execute("DROP TRIGGER fail_version ON helio_cdc_sandbox_version_rows")
                 delivered = await client.post(_ROUTE + "/runs", json=request)
                 self.assertEqual(delivered.status_code, 200, delivered.text)
                 self.assertEqual((await client.get(_ROUTE + "/versions")).json()["versions"][0]["id"],
@@ -752,8 +752,8 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
         async def no_payload(session, query, params=None, **kwargs):
             sql = " ".join(str(query).lower().split())
             self.assertNotIn("from only handoff.copy_rows", sql)
-            self.assertNotIn("ontology_pipeline_sandbox_output_rows", sql)
-            self.assertNotIn("ontology_cdc_sandbox_version_rows", sql)
+            self.assertNotIn("helio_pipeline_sandbox_output_rows", sql)
+            self.assertNotIn("helio_cdc_sandbox_version_rows", sql)
             self.assertFalse(sql.startswith(("insert ", "update ", "delete ")))
             if "from only handoff.copies" in sql:
                 self.assertIn("and actor_id=:actor", sql)
@@ -833,8 +833,8 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
             if sql.startswith("select ") and "from only handoff.copies" in sql:
                 receipt_selects.append(sql)
             self.assertNotIn("from only handoff.copy_rows", sql)
-            self.assertNotIn("ontology_cdc_sandbox_version_rows", sql)
-            self.assertNotIn("ontology_pipeline_sandbox_output_rows", sql)
+            self.assertNotIn("helio_cdc_sandbox_version_rows", sql)
+            self.assertNotIn("helio_pipeline_sandbox_output_rows", sql)
             return await execute(session, query, params, **kwargs)
 
         with (patch.multiple(settings, **attrs),
@@ -972,7 +972,7 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result["changes"][2], {"id": "1", "kind": "updated",
                                                        "before": ["before", "1"], "after": ["after", "1"]})
                 await self.pg.execute("""
-                    UPDATE ontology_pipeline_sandbox_output_rows SET row_values=ARRAY['tampered',row_values[2]]
+                    UPDATE helio_pipeline_sandbox_output_rows SET row_values=ARRAY['tampered',row_values[2]]
                     WHERE output_id=:id AND position=1
                 """, {"id": UUID(left)})
                 self.assertEqual((await client.post(path, json=args)).status_code, 409)
@@ -1072,15 +1072,15 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual((await client.post(path, json=request)).status_code, 409)
 
                 await self.pg.execute("""
-                    UPDATE ontology_pipeline_sandbox_outputs SET recorded_at=(
-                        SELECT recorded_at FROM ontology_pipeline_sandbox_outputs WHERE id=:first
+                    UPDATE helio_pipeline_sandbox_outputs SET recorded_at=(
+                        SELECT recorded_at FROM helio_pipeline_sandbox_outputs WHERE id=:first
                     ) WHERE id=:second
                 """, {"first": UUID(saved[0]["id"]), "second": UUID(saved[1]["id"])})
                 tied = await client.post(path, json=request)
                 self.assertEqual(tied.status_code, 409, tied.text)
                 self.assertIn("ambiguous", tied.json()["detail"])
                 await self.pg.execute("""
-                    UPDATE ontology_pipeline_sandbox_output_rows SET row_values=ARRAY['tampered',row_values[2]]
+                    UPDATE helio_pipeline_sandbox_output_rows SET row_values=ARRAY['tampered',row_values[2]]
                     WHERE output_id=:id AND position=1
                 """, {"id": UUID(saved[3]["id"])})
                 bad_seal = await client.post(path, json={**request, "outputIds": reversed_ids[:2]})
@@ -1106,7 +1106,7 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
                         $$
                     """))
                     await session.execute(text("""
-                        CREATE TRIGGER fail_output BEFORE INSERT ON ontology_pipeline_sandbox_output_rows
+                        CREATE TRIGGER fail_output BEFORE INSERT ON helio_pipeline_sandbox_output_rows
                         FOR EACH ROW EXECUTE FUNCTION ts_cdc_sandbox.fail_output()
                     """))
                 source = await client.post(_ROUTE+"/runs", json=payload(0))
@@ -1120,9 +1120,9 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(failed.status_code, 503, failed.text)
                 self.assertEqual((await client.get(_OUTPUTS)).json()["outputs"], [])
                 self.assertEqual((await self.pg.fetch_one(
-                    "SELECT count(*) AS n FROM ontology_pipeline_sandbox_output_rows",
+                    "SELECT count(*) AS n FROM helio_pipeline_sandbox_output_rows",
                 ))["n"], 0)
-                await self.pg.execute("DROP TRIGGER fail_output ON ontology_pipeline_sandbox_output_rows")
+                await self.pg.execute("DROP TRIGGER fail_output ON helio_pipeline_sandbox_output_rows")
 
                 commit = AsyncSession.commit
                 lost = False
@@ -1152,8 +1152,8 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
 
         async def metadata_only(session, query, params=None, **kwargs):
             sql = " ".join(str(query).lower().split())
-            self.assertNotIn("ontology_cdc_sandbox_version_rows", sql)
-            self.assertNotIn("ontology_pipeline_sandbox_output_rows", sql)
+            self.assertNotIn("helio_cdc_sandbox_version_rows", sql)
+            self.assertNotIn("helio_pipeline_sandbox_output_rows", sql)
             self.assertNotIn("from only ts_cdc_sandbox.event_log", sql)
             self.assertNotIn("from only ts_cdc_sandbox.target_rows", sql)
             return await execute(session, query, params, **kwargs)
@@ -1212,10 +1212,10 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
                     with patch.object(settings, "ONTOLOGY_SYNTHETIC_GOVERNANCE_GRANTS", {TEST_ACTOR: (base,)}):
                         self.assertNotIn("restoreEnabled", (await client.get(_BUILDER)).json())
                         self.assertEqual((await client.post(url, json=body(donor, head))).status_code, 403)
-                    await self.pg.execute("UPDATE ontology_cdc_sandbox_versions SET recorded_at=recorded_at+interval '1 second' "
+                    await self.pg.execute("UPDATE helio_cdc_sandbox_versions SET recorded_at=recorded_at+interval '1 second' "
                                           "WHERE receipt_id=:id", {"id": UUID(second)})
                     self.assertEqual((await client.post(url, json=body(donor, head))).status_code, 409)
-                    await self.pg.execute("UPDATE ontology_cdc_sandbox_versions SET recorded_at=recorded_at-interval '1 second' "
+                    await self.pg.execute("UPDATE helio_cdc_sandbox_versions SET recorded_at=recorded_at-interval '1 second' "
                                           "WHERE receipt_id=:id", {"id": UUID(second)})
                     outcomes = await asyncio.gather(*(client.post(url, json=body(donor, head)) for _ in range(2)))
                     self.assertEqual(sorted(response.status_code for response in outcomes), [201, 409],
@@ -1342,7 +1342,7 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual((actual.status_code, actual.json()), (403, random.json()))
                     self.assertEqual(random.status_code, 403)
 
-                await self.pg.execute("UPDATE ontology_cdc_sandbox_versions SET marking_level=NULL "
+                await self.pg.execute("UPDATE helio_cdc_sandbox_versions SET marking_level=NULL "
                                       "WHERE receipt_id=CAST(:right AS uuid)", {"right": right})
                 with patch("app.web.services.pipeline_sandbox._read_records",
                            side_effect=AssertionError("read a row with an unmarked operand")) as read:
@@ -1350,11 +1350,11 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(bad.status_code, 404, bad.text)
                     read.assert_not_called()
                 self.assertEqual((await client.get(_OUTPUTS)).json()["outputs"], [])
-                await self.pg.execute("UPDATE ontology_cdc_sandbox_versions SET marking_level=1 "
+                await self.pg.execute("UPDATE helio_cdc_sandbox_versions SET marking_level=1 "
                                       "WHERE receipt_id=CAST(:right AS uuid)", {"right": right})
 
                 # A formerly valid right input rebinding to another ancestry cannot leak even a prior receipt.
-                await self.pg.execute("UPDATE ontology_cdc_sandbox_versions SET physical_digest=repeat('f',64) "
+                await self.pg.execute("UPDATE helio_cdc_sandbox_versions SET physical_digest=repeat('f',64) "
                                       "WHERE receipt_id=CAST(:right AS uuid)", {"right": right})
                 self.assertEqual((await client.get(_OUTPUTS)).json()["outputs"], [])
                 self.assertEqual((await client.get(f"{_OUTPUTS}/{receipt['id']}")).status_code, 404)
@@ -1453,7 +1453,7 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual((await client.post(_ROUTE + "/runs", json=request)).status_code, 403)
 
                     # Tamper only the isolated fixture: a downgraded output header cannot match its immutable review.
-                    await self.pg.execute("UPDATE ontology_pipeline_sandbox_outputs SET marking_level=1")
+                    await self.pg.execute("UPDATE helio_pipeline_sandbox_outputs SET marking_level=1")
                     self.assertEqual((await client.get(f"{_OUTPUTS}/{out['id']}")).status_code, 404)
                     self.assertEqual((await client.get(_OUTPUTS)).json()["outputs"], [])
 
@@ -1486,7 +1486,7 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
                 request = payload(0)
                 self.assertEqual((await client.post(_ROUTE + "/runs", json=request)).status_code, 200)
                 await self.pg.execute(
-                    "UPDATE ontology_cdc_sandbox_versions SET marking_level=1, physical_digest=repeat('a',64)",
+                    "UPDATE helio_cdc_sandbox_versions SET marking_level=1, physical_digest=repeat('a',64)",
                 )
                 self.assertEqual((await client.get(_ROUTE + "/runs")).json(), [])
                 self.assertEqual((await client.post(_ROUTE + "/runs", json=request)).status_code, 404)

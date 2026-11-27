@@ -60,13 +60,13 @@ class ExplorerRecordLinks(unittest.IsolatedAsyncioTestCase):
 
     async def declare(self, name, source, fields, pairs=()):
         async with self.pg.session() as session:
-            relation = await session.scalar(text("""INSERT INTO app.ontology_object_relations
+            relation = await session.scalar(text("""INSERT INTO app.helio_object_relations
                 (name,source_schema,source_table,source_fields,target_schema,target_table,target_fields,
                  relationship_kind,cardinality,provenance) VALUES (:name,'ts_creation',:source,:fields,
                 'ts_creation','parents',ARRAY['tenant','id'],'parent','many_to_one','stored-edge test') RETURNING id"""),
                 {"name":name,"source":source,"fields":fields})
             for i, (source_key, target_key) in enumerate(pairs, 1):
-                await session.execute(text("""INSERT INTO app.ontology_object_links
+                await session.execute(text("""INSERT INTO app.helio_object_links
                     (id,relation_id,source_key,target_key,source_hash,target_hash)
                     VALUES (CAST(:id AS uuid),:relation,CAST(:source AS jsonb),CAST(:target AS jsonb),:sh,:th)"""),
                     {"id":str(UUID(int=(relation << 32) + i)),"relation":relation,"source":canonical_object_key(source_key),
@@ -138,13 +138,13 @@ class ExplorerRecordLinks(unittest.IsolatedAsyncioTestCase):
         observed = (await self.post("standalone","row-links",{"id":"1"})).json()
         self.assertEqual(observed["identities"], [self.parent])
         self.assertEqual(observed["relations"][0]["kind"], "logical")
-        await self.pg.execute("UPDATE app.ontology_object_relations SET enabled=false WHERE name='declared_asset'")
+        await self.pg.execute("UPDATE app.helio_object_relations SET enabled=false WHERE name='declared_asset'")
         self.assertEqual((await self.post("standalone","row-links",{"id":"1"},relation=observed["selected"])).status_code,404)
-        await self.pg.execute("""INSERT INTO app.ontology_objects(layer,schema_name,table_name,visibility)
+        await self.pg.execute("""INSERT INTO app.helio_objects(layer,schema_name,table_name,visibility)
                               VALUES ('creation','ts_creation','parents','hidden')""")
         self.assertEqual((await self.post("children","row-links",{"id":"1"})).json()["relations"], [])
         self.assertEqual((await self.post("parents","row-by-key",self.parent)).status_code,404)
-        await self.pg.execute("UPDATE app.ontology_objects SET visibility='normal' WHERE schema_name='ts_creation' AND table_name='parents'")
+        await self.pg.execute("UPDATE app.helio_objects SET visibility='normal' WHERE schema_name='ts_creation' AND table_name='parents'")
         await self.pg.execute("INSERT INTO ts_creation.children SELECT i,'b',9007199254740993 FROM generate_series(100,35000) i")
         await self.pg.execute("ANALYZE ts_creation.children")
         statements = []
@@ -187,9 +187,9 @@ class ExplorerRecordLinks(unittest.IsolatedAsyncioTestCase):
         removed = await self.client.request("DELETE",endpoint+'/'+edge["linkId"],json=removal)
         self.assertEqual(removed.status_code,200,removed.text)
         async with self.pg.session() as session:
-            original = (await session.execute(text("SELECT * FROM app.ontology_object_links WHERE id=CAST(:id AS uuid)"),{"id":edge["linkId"]})).mappings().one()
+            original = (await session.execute(text("SELECT * FROM app.helio_object_links WHERE id=CAST(:id AS uuid)"),{"id":edge["linkId"]})).mappings().one()
             self.assertEqual(original["source_key"],{"id":"1"})
-            await session.execute(text("""INSERT INTO app.ontology_object_links
+            await session.execute(text("""INSERT INTO app.helio_object_links
                 (id,relation_id,source_key,target_key,source_hash,target_hash) VALUES
                 (CAST(:id AS uuid),:relation,CAST(:source AS jsonb),CAST(:target AS jsonb),:sh,:th)
                 ON CONFLICT DO NOTHING"""), {"id":str(uuid4()),"relation":int(relation),"source":json.dumps(original["source_key"]),

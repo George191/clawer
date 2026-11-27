@@ -3,6 +3,9 @@
 from alembic import op
 from app.etl.schema.data_connections import DATA_CONNECTIONS_DDL
 
+# Preserve the SQL contract of this historical revision.
+DATA_CONNECTIONS_DDL = DATA_CONNECTIONS_DDL.replace("helio_", "ontology_")
+
 revision = "a11e7b9d6204"
 down_revision = "cd0137ef6a24"
 branch_labels = None

@@ -34,11 +34,11 @@ def fixture(*, engine="postgresql", business=False, batch=(), transfer=(), ontol
         statements.append((sql, params))
         if "to_regclass" in sql:
             return result(one={"business": True, "batch": True, "transfer": True, "ontology": True})
-        if "FROM app.ontology_batch_sync_plans" in sql:
+        if "FROM app.helio_batch_sync_plans" in sql:
             return result(batch)
-        if "FROM app.ontology_transfer_plans" in sql:
+        if "FROM app.helio_transfer_plans" in sql:
             return result(transfer)
-        if "FROM app.ontology_registry_definitions" in sql:
+        if "FROM app.helio_registry_definitions" in sql:
             return result(ontology)
         return result([row])
 
@@ -71,7 +71,7 @@ class ConnectionDependencyTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("published definition", payload.dependencies[4].message)
         self.assertNotIn("never-return-this-secret", payload.model_dump_json())
         # Include hidden/soft-deleted definitions: restoring them must not create dangling sources.
-        query = next(statement for statement, _ in sql if "FROM app.ontology_registry_definitions" in statement)
+        query = next(statement for statement, _ in sql if "FROM app.helio_registry_definitions" in statement)
         self.assertIn("draft_definition #>>", query)
         self.assertIn("published_definition #>>", query)
         self.assertNotIn("deleted=false", query)
@@ -105,7 +105,7 @@ class ConnectionDependencyTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(sources, "require_unconfigured", new_callable=AsyncMock) as capture:
             self.assertEqual(await service.delete(identifier), {"deleted": True})
         capture.assert_awaited_once()
-        self.assertEqual(sum("DELETE FROM ontology_data_connections" in statement for statement, _ in sql), 1)
+        self.assertEqual(sum("DELETE FROM helio_data_connections" in statement for statement, _ in sql), 1)
         self.assertFalse(any("CASCADE" in statement or "DROP" in statement for statement, _ in sql))
 
     async def test_captures_are_reported_with_their_concrete_resolution_message(self):
@@ -173,7 +173,7 @@ class OntologyConnectionLockTests(unittest.IsolatedAsyncioTestCase):
         session = SimpleNamespace(scalar=AsyncMock(return_value=identifier))
         self.assertTrue(await registry.lock_upstream_connection(session, source))
         statement, params = session.scalar.await_args.args
-        self.assertIn("FROM app.ontology_data_connections", str(statement))
+        self.assertIn("FROM app.helio_data_connections", str(statement))
         self.assertIn("FOR SHARE", str(statement))
         self.assertEqual(params, {"id": identifier})
         session.scalar.return_value = None

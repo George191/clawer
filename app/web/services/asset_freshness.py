@@ -291,7 +291,7 @@ async def _evaluate_one(session: AsyncSession, row: AssetFreshnessPolicyRow, now
             TransferRunRow.target_schema == SANDBOX, TransferRunRow.target_table == row.target_table,
             TransferRunRow.target_oid == row.target_oid, TransferRunRow.target_filenode == row.target_filenode,
             TransferRunRow.target_oid.is_not(None), TransferRunRow.target_filenode.is_not(None),
-            text("ontology_transfer_runs.rows_affected > 0"), TransferRunRow.recorded_at <= now,
+            text("helio_transfer_runs.rows_affected > 0"), TransferRunRow.recorded_at <= now,
         ).order_by(TransferRunRow.recorded_at.desc(), TransferRunRow.id.desc()).limit(1))).one_or_none()
         if receipt is None:
             reason = "no_verified_write"

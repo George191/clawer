@@ -126,15 +126,15 @@ class UpstreamMixedSlot(BaseModel):
 
 
 class TransferCommitEventRow(SQLModel, table=True):
-    __tablename__ = "ontology_transfer_commit_events"
+    __tablename__ = "helio_transfer_commit_events"
     __table_args__ = (
         Index("ix_ontology_transfer_commit_event_parent", "parent_plan_id", "id"),
         Index("ix_ontology_transfer_commit_event_time", "parent_plan_id", "recorded_at", "id"),
     )
 
     id: int | None = Field(default=None, sa_column=Column(BigInteger, Identity(), primary_key=True))
-    parent_plan_id: UUID = Field(foreign_key="ontology_transfer_plans.id")
-    parent_receipt_id: UUID = Field(foreign_key="ontology_transfer_runs.id", unique=True)
+    parent_plan_id: UUID = Field(foreign_key="helio_transfer_plans.id")
+    parent_receipt_id: UUID = Field(foreign_key="helio_transfer_runs.id", unique=True)
     parent_updated_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
     source_oid: int = Field(sa_column=Column(BigInteger, nullable=False))
     source_node: int = Field(sa_column=Column(BigInteger, nullable=False))
@@ -144,7 +144,7 @@ class TransferCommitEventRow(SQLModel, table=True):
 
 
 class UpstreamTriggerRow(SQLModel, table=True):
-    __tablename__ = "ontology_transfer_upstream_triggers"
+    __tablename__ = "helio_transfer_upstream_triggers"
     __table_args__ = (
         CheckConstraint("generation > 0 AND operator IN ('AND','OR')",
                         name="ck_ontology_transfer_upstream_trigger"),
@@ -157,7 +157,7 @@ class UpstreamTriggerRow(SQLModel, table=True):
      AND cardinality(group_parent_ids)=2 AND group_parent_ids[1] < group_parent_ids[2])) IS TRUE""", name="ck_ontology_transfer_upstream_trigger_group"),
     )
 
-    plan_id: UUID = Field(primary_key=True, foreign_key="ontology_transfer_plans.id")
+    plan_id: UUID = Field(primary_key=True, foreign_key="helio_transfer_plans.id")
     generation: int
     enabled: bool
     operator: str = Field(max_length=3)
@@ -171,20 +171,20 @@ class UpstreamTriggerRow(SQLModel, table=True):
 
 
 class UpstreamTriggerParentRow(SQLModel, table=True):
-    __tablename__ = "ontology_transfer_upstream_parents"
+    __tablename__ = "helio_transfer_upstream_parents"
     __table_args__ = (
         CheckConstraint("plan_id <> parent_plan_id AND cutoff_event_id >= 0",
                         name="ck_ontology_transfer_upstream_parent"),
     )
 
-    plan_id: UUID = Field(primary_key=True, foreign_key="ontology_transfer_upstream_triggers.plan_id")
-    parent_plan_id: UUID = Field(primary_key=True, foreign_key="ontology_transfer_plans.id")
+    plan_id: UUID = Field(primary_key=True, foreign_key="helio_transfer_upstream_triggers.plan_id")
+    parent_plan_id: UUID = Field(primary_key=True, foreign_key="helio_transfer_plans.id")
     parent_updated_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
     cutoff_event_id: int = Field(sa_column=Column(BigInteger, nullable=False))
 
 
 class UpstreamTriggerJobRow(SQLModel, table=True):
-    __tablename__ = "ontology_transfer_upstream_jobs"
+    __tablename__ = "helio_transfer_upstream_jobs"
     __table_args__ = (
         UniqueConstraint("plan_id", "generation", "event_id", name="uq_ontology_transfer_upstream_jobs_event"),
         UniqueConstraint("id", "plan_id", "generation", name="uq_ontology_transfer_upstream_job_scope"),
@@ -210,8 +210,8 @@ class UpstreamTriggerJobRow(SQLModel, table=True):
     )
 
     id: UUID = Field(primary_key=True)
-    plan_id: UUID = Field(foreign_key="ontology_transfer_upstream_triggers.plan_id")
-    event_id: int = Field(sa_column=Column(BigInteger, ForeignKey("ontology_transfer_commit_events.id"), nullable=False))
+    plan_id: UUID = Field(foreign_key="helio_transfer_upstream_triggers.plan_id")
+    event_id: int = Field(sa_column=Column(BigInteger, ForeignKey("helio_transfer_commit_events.id"), nullable=False))
     generation: int
     operator: str = Field(max_length=3)
     group_operator: str | None = Field(default=None, max_length=3)
@@ -225,28 +225,28 @@ class UpstreamTriggerJobRow(SQLModel, table=True):
     state: str = Field(default="pending", max_length=16)
     dispatched_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
     finished_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
-    receipt_id: UUID | None = Field(default=None, foreign_key="ontology_transfer_runs.id")
+    receipt_id: UUID | None = Field(default=None, foreign_key="helio_transfer_runs.id")
     message: str | None = Field(default=None, max_length=240)
 
 
 class UpstreamTriggerJobEventRow(SQLModel, table=True):
-    __tablename__ = "ontology_transfer_upstream_job_events"
+    __tablename__ = "helio_transfer_upstream_job_events"
     __table_args__ = (
         ForeignKeyConstraint(("job_id", "plan_id", "generation"),
-                             ("ontology_transfer_upstream_jobs.id", "ontology_transfer_upstream_jobs.plan_id",
-                              "ontology_transfer_upstream_jobs.generation"),
+                             ("helio_transfer_upstream_jobs.id", "helio_transfer_upstream_jobs.plan_id",
+                              "helio_transfer_upstream_jobs.generation"),
                              name="fk_ontology_transfer_job_event_scope"),
         UniqueConstraint("job_id", "event_id", name="uq_ontology_transfer_upstream_job_event"),
     )
 
     plan_id: UUID = Field(primary_key=True)
     generation: int = Field(primary_key=True)
-    event_id: int = Field(sa_column=Column(BigInteger, ForeignKey("ontology_transfer_commit_events.id"), primary_key=True))
+    event_id: int = Field(sa_column=Column(BigInteger, ForeignKey("helio_transfer_commit_events.id"), primary_key=True))
     job_id: UUID
 
 
 class UpstreamMixedSlotRow(SQLModel, table=True):
-    __tablename__ = "ontology_transfer_upstream_mixed_slots"
+    __tablename__ = "helio_transfer_upstream_mixed_slots"
     __table_args__ = (
         CheckConstraint("generation > 0 AND slot = date_trunc('minute', slot)",
                         name="ck_transfer_upstream_mixed_slot"),
@@ -266,7 +266,7 @@ class UpstreamMixedSlotRow(SQLModel, table=True):
               postgresql_where=text("decided_at IS NOT NULL")),
     )
 
-    plan_id: UUID = Field(primary_key=True, foreign_key="ontology_transfer_upstream_triggers.plan_id")
+    plan_id: UUID = Field(primary_key=True, foreign_key="helio_transfer_upstream_triggers.plan_id")
     generation: int = Field(primary_key=True)
     slot: datetime = Field(sa_column=Column(DateTime(timezone=True), primary_key=True))
     observed_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
@@ -274,4 +274,4 @@ class UpstreamMixedSlotRow(SQLModel, table=True):
     event_ids: list[int] | None = Field(default=None, sa_column=Column(ARRAY(BigInteger)))
     rule_parent_ids: list[UUID] | None = Field(default=None, sa_column=Column(ARRAY(Uuid)))
     decided_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
-    job_id: UUID | None = Field(default=None, foreign_key="ontology_transfer_upstream_jobs.id", unique=True)
+    job_id: UUID | None = Field(default=None, foreign_key="helio_transfer_upstream_jobs.id", unique=True)

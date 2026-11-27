@@ -77,10 +77,10 @@ async def backfill(metadata, *, apply: bool = False) -> dict:
         async with metadata.session() as session:
             if apply:
                 await session.execute(text("SET LOCAL lock_timeout = '5s'"))
-                await session.execute(text("LOCK TABLE app.ontology_objects IN SHARE ROW EXCLUSIVE MODE"))
+                await session.execute(text("LOCK TABLE app.helio_objects IN SHARE ROW EXCLUSIVE MODE"))
             rows = [dict(row) for row in (await session.execute(text("""
                 SELECT id, layer, table_role, data_type, schema_name, table_name, ddl_sql, updated_by
-                FROM app.ontology_objects
+                FROM app.helio_objects
                 WHERE is_active AND table_role = 'current' AND layer IN ('rds', 'ods', 'task', 'dwd')
                 ORDER BY id
             """))).mappings()]
@@ -114,7 +114,7 @@ async def backfill(metadata, *, apply: bool = False) -> dict:
             if apply and not blocked:
                 for row in proposals:
                     result = await session.execute(text("""
-                        UPDATE app.ontology_objects SET data_type = :data_type, data_type_source = 'registration'
+                        UPDATE app.helio_objects SET data_type = :data_type, data_type_source = 'registration'
                         WHERE id = :id AND layer = :layer AND table_role = :table_role AND is_active
                           AND schema_name = :schema_name AND table_name = :table_name AND data_type = ''
                         RETURNING id

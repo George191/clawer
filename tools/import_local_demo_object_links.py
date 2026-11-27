@@ -95,7 +95,7 @@ async def definition(session, name, *, lock=False):
     row = (await session.execute(text("""
         SELECT id, name, source_schema, source_table, source_fields, target_schema, target_table,
                target_fields, cardinality, enabled, updated_at::text AS revision
-        FROM app.ontology_object_relations WHERE name=:name
+        FROM app.helio_object_relations WHERE name=:name
     """ + (" FOR UPDATE" if lock else "")), {"name": name})).mappings().one_or_none()
     if row is None:
         raise ValueError(f"Reviewed logical definition is missing: {name}; physical FKs are never imported")
@@ -181,18 +181,18 @@ async def import_batch(session, expected, pairs):
         if matched is None:
             raise ValueError("An approved source/target match changed after preflight")
         existing = (await session.execute(text("""SELECT source_key, target_key, removed_at
-            FROM app.ontology_object_links WHERE relation_id=:relation
+            FROM app.helio_object_links WHERE relation_id=:relation
               AND source_hash=:source_hash AND target_hash=:target_hash"""), params)).mappings().one_or_none()
         if existing is not None:
             if existing["source_key"] != pair["sourceKey"] or existing["target_key"] != pair["targetKey"]:
                 raise ValueError("Canonical key hash collision")
             skipped += 1
             continue
-        occupied = await session.scalar(text("""SELECT EXISTS (SELECT 1 FROM app.ontology_object_links
+        occupied = await session.scalar(text("""SELECT EXISTS (SELECT 1 FROM app.helio_object_links
             WHERE relation_id=:relation AND source_hash=:source_hash AND removed_at IS NULL)"""), params)
         if occupied:
             raise ValueError("An existing active link conflicts with the reviewed many-to-one cardinality")
-        result = await session.execute(text("""INSERT INTO app.ontology_object_links
+        result = await session.execute(text("""INSERT INTO app.helio_object_links
             (id, relation_id, source_key, target_key, source_hash, target_hash)
             VALUES (CAST(:id AS uuid), :relation, CAST(:source AS jsonb), CAST(:target AS jsonb), :source_hash, :target_hash)
             ON CONFLICT (relation_id, source_hash, target_hash) DO NOTHING RETURNING id"""), params)
@@ -262,7 +262,7 @@ async def verify_coverage(plan):
         async with pg.session() as session:
             await session.execute(text("SET TRANSACTION READ ONLY"))
             for pair in plan["pairs"]:
-                row = (await session.execute(text("""SELECT source_key, target_key, removed_at FROM app.ontology_object_links
+                row = (await session.execute(text("""SELECT source_key, target_key, removed_at FROM app.helio_object_links
                     WHERE relation_id=:relation AND source_hash=:source_hash AND target_hash=:target_hash"""), {
                         "relation": int(pair["relationId"]), "source_hash": object_key_hash(pair["sourceKey"]),
                         "target_hash": object_key_hash(pair["targetKey"]),

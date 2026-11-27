@@ -37,7 +37,7 @@ from app.syncer.mongo_cdc import SetupError, register_connector
 
 _REGISTERED_SQL = """
 SELECT schema_name, table_name, layer, data_type
-FROM app.ontology_objects
+FROM app.helio_objects
 WHERE is_active AND table_role='current' AND layer=ANY(CAST(:layers AS text[]))
   AND data_type ~ '^[a-z][a-z0-9_]{0,49}$'
   AND (ddl_sql <> '' OR data_type_source='registration')

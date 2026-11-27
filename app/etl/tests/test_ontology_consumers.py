@@ -97,7 +97,7 @@ class OntologyConsumerTests(unittest.IsolatedAsyncioTestCase):
         pg.execute.assert_not_awaited()
         pg.init_schema.assert_not_awaited()
         for args in pg.fetch_all.await_args_list:
-            self.assertIn("FROM app.ontology_objects", args.args[0])
+            self.assertIn("FROM app.helio_objects", args.args[0])
             self.assertNotIn("schema_name = :", args.args[0])
         self.assertEqual(pg.fetch_all.await_args.args[1], {
             "layer": "ods", "table_role": "history", "data_type": "fixture",

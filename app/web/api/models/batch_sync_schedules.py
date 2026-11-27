@@ -48,7 +48,7 @@ class BatchSyncScheduleJob(BaseModel):
 
 
 class BatchSyncScheduleRow(SQLModel, table=True):
-    __tablename__ = "ontology_batch_sync_schedules"
+    __tablename__ = "helio_batch_sync_schedules"
     __table_args__ = (
         CheckConstraint("generation > 0", name="ck_ontology_batch_sync_schedules_generation"),
         CheckConstraint("planned_time_utc ~ '^(0[0-9]|1[0-9]|2[0-3]):[0-5][0-9]$'",
@@ -56,7 +56,7 @@ class BatchSyncScheduleRow(SQLModel, table=True):
         Index("ix_ontology_batch_sync_schedules_time", "enabled", "planned_time_utc"),
     )
 
-    plan_id: UUID = Field(primary_key=True, foreign_key="ontology_batch_sync_plans.id")
+    plan_id: UUID = Field(primary_key=True, foreign_key="helio_batch_sync_plans.id")
     enabled: bool
     generation: int
     armed_by: UUID
@@ -68,7 +68,7 @@ class BatchSyncScheduleRow(SQLModel, table=True):
 
 
 class BatchSyncScheduleJobRow(SQLModel, table=True):
-    __tablename__ = "ontology_batch_sync_schedule_jobs"
+    __tablename__ = "helio_batch_sync_schedule_jobs"
     __table_args__ = (
         UniqueConstraint("plan_id", "generation", "slot", name="uq_ontology_batch_sync_schedule_jobs_slot"),
         CheckConstraint("state IN ('pending','dispatched','committed','no_new_data','rejected','outcome_unknown','expired')",
@@ -82,7 +82,7 @@ class BatchSyncScheduleJobRow(SQLModel, table=True):
     )
 
     id: UUID = Field(primary_key=True)
-    plan_id: UUID = Field(foreign_key="ontology_batch_sync_schedules.plan_id")
+    plan_id: UUID = Field(foreign_key="helio_batch_sync_schedules.plan_id")
     generation: int
     slot: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
     expires_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
@@ -93,5 +93,5 @@ class BatchSyncScheduleJobRow(SQLModel, table=True):
     state: str = Field(default="pending", max_length=16)
     dispatched_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
     finished_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
-    receipt_id: UUID | None = Field(default=None, foreign_key="ontology_batch_sync_receipts.id")
+    receipt_id: UUID | None = Field(default=None, foreign_key="helio_batch_sync_receipts.id")
     message: str | None = Field(default=None, max_length=240)

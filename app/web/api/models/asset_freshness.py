@@ -211,7 +211,7 @@ class AssetFreshnessResponse(BaseModel):
 
 
 class AssetFreshnessPolicyRow(SQLModel, table=True):
-    __tablename__ = "ontology_asset_freshness_policies"
+    __tablename__ = "helio_asset_freshness_policies"
     __table_args__ = (
         CheckConstraint("threshold_minutes BETWEEN 5 AND 10080 AND generation > 0",
                         name="ck_ontology_asset_freshness_policy_values"),
@@ -227,7 +227,7 @@ class AssetFreshnessPolicyRow(SQLModel, table=True):
     target_table: str = DbField(max_length=63, primary_key=True)
     target_oid: int = DbField(sa_column=Column(BigInteger, nullable=False))
     target_filenode: int = DbField(sa_column=Column(BigInteger, nullable=False))
-    plan_id: UUID = DbField(foreign_key="ontology_transfer_plans.id")
+    plan_id: UUID = DbField(foreign_key="helio_transfer_plans.id")
     plan_updated_at: datetime = DbField(sa_column=Column(DateTime(timezone=True), nullable=False))
     threshold_minutes: int
     enabled: bool
@@ -242,11 +242,11 @@ class AssetFreshnessPolicyRow(SQLModel, table=True):
     reason: str | None = DbField(default=None, max_length=40)
     checked_at: datetime | None = DbField(default=None, sa_column=Column(DateTime(timezone=True)))
     receipt_recorded_at: datetime | None = DbField(default=None, sa_column=Column(DateTime(timezone=True)))
-    receipt_id: UUID | None = DbField(default=None, foreign_key="ontology_transfer_runs.id")
+    receipt_id: UUID | None = DbField(default=None, foreign_key="helio_transfer_runs.id")
 
 
 class AssetFreshnessTransitionRow(SQLModel, table=True):
-    __tablename__ = "ontology_asset_freshness_transitions"
+    __tablename__ = "helio_asset_freshness_transitions"
     __table_args__ = (
         CheckConstraint("state IN ('healthy','overdue','unknown') AND generation > 0",
                         name="ck_ontology_asset_freshness_transition_state"),
@@ -254,17 +254,17 @@ class AssetFreshnessTransitionRow(SQLModel, table=True):
     )
 
     id: UUID = DbField(default_factory=uuid4, primary_key=True)
-    target_table: str = DbField(foreign_key="ontology_asset_freshness_policies.target_table")
+    target_table: str = DbField(foreign_key="helio_asset_freshness_policies.target_table")
     generation: int
     state: str = DbField(max_length=15)
     reason: str | None = DbField(default=None, max_length=40)
     checked_at: datetime = DbField(sa_column=Column(DateTime(timezone=True), nullable=False))
     receipt_recorded_at: datetime | None = DbField(default=None, sa_column=Column(DateTime(timezone=True)))
-    receipt_id: UUID | None = DbField(default=None, foreign_key="ontology_transfer_runs.id")
+    receipt_id: UUID | None = DbField(default=None, foreign_key="helio_transfer_runs.id")
 
 
 class AssetQualityObservationRow(SQLModel, table=True):
-    __tablename__ = "ontology_asset_quality_observations"
+    __tablename__ = "helio_asset_quality_observations"
     __table_args__ = (
         CheckConstraint("kind IN ('schema','heap_size') AND state IN ('healthy','unhealthy','unknown') "
                         "AND generation > 0 AND (heap_bytes IS NULL OR (kind = 'heap_size' AND heap_bytes >= 0))",
@@ -274,7 +274,7 @@ class AssetQualityObservationRow(SQLModel, table=True):
                         name="ck_ontology_asset_quality_schema_drift"),
     )
 
-    target_table: str = DbField(foreign_key="ontology_asset_freshness_policies.target_table", primary_key=True)
+    target_table: str = DbField(foreign_key="helio_asset_freshness_policies.target_table", primary_key=True)
     kind: str = DbField(max_length=12, primary_key=True)
     generation: int
     state: str = DbField(max_length=15)
@@ -285,7 +285,7 @@ class AssetQualityObservationRow(SQLModel, table=True):
 
 
 class AssetQualityTransitionRow(SQLModel, table=True):
-    __tablename__ = "ontology_asset_quality_transitions"
+    __tablename__ = "helio_asset_quality_transitions"
     __table_args__ = (
         CheckConstraint("kind IN ('schema','heap_size') AND state IN ('healthy','unhealthy','unknown') "
                         "AND generation > 0 AND (heap_bytes IS NULL OR (kind = 'heap_size' AND heap_bytes >= 0))",
@@ -294,7 +294,7 @@ class AssetQualityTransitionRow(SQLModel, table=True):
     )
 
     id: UUID = DbField(default_factory=uuid4, primary_key=True)
-    target_table: str = DbField(foreign_key="ontology_asset_freshness_policies.target_table")
+    target_table: str = DbField(foreign_key="helio_asset_freshness_policies.target_table")
     kind: str = DbField(max_length=12)
     generation: int
     state: str = DbField(max_length=15)
@@ -304,7 +304,7 @@ class AssetQualityTransitionRow(SQLModel, table=True):
 
 
 class AssetQualityIncidentRow(SQLModel, table=True):
-    __tablename__ = "ontology_asset_quality_incidents"
+    __tablename__ = "helio_asset_quality_incidents"
     __table_args__ = (
         CheckConstraint("generation > 0 AND ((kind = 'freshness' AND reason = 'write_overdue') OR "
                         "(kind = 'schema' AND reason = 'schema_drift') OR "
@@ -326,7 +326,7 @@ class AssetQualityIncidentRow(SQLModel, table=True):
     )
 
     id: UUID = DbField(default_factory=uuid4, primary_key=True)
-    target_table: str = DbField(foreign_key="ontology_asset_freshness_policies.target_table")
+    target_table: str = DbField(foreign_key="helio_asset_freshness_policies.target_table")
     generation: int
     kind: str = DbField(max_length=12)
     reason: str = DbField(max_length=16)

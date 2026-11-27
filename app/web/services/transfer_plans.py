@@ -89,7 +89,7 @@ async def _external_preflight(payload):
 async def _lock_saved_source(session, payload):
     row = (await session.execute(text("""SELECT updated_at,
         (to_jsonb(registry)->>'paused_at')::timestamptz AS paused_at
-        FROM app.ontology_data_connections registry WHERE id=:id FOR SHARE
+        FROM app.helio_data_connections registry WHERE id=:id FOR SHARE
     """), {"id": payload.sourceNode.connectionId})).mappings().first()
     if row is None:
         raise HTTPException(404, "The selected data connection no longer exists")

@@ -130,8 +130,8 @@ async def list_batch_syncs(
     candidates = {row.connection_id for row in rows if row.source_identity_fingerprint == expected}
     current = (await session.execute(text("""
         SELECT proof.connection_id, proof.source_updated_at
-        FROM app.ontology_batch_source_identities proof
-        JOIN app.ontology_data_connections conn
+        FROM app.helio_batch_source_identities proof
+        JOIN app.helio_data_connections conn
           ON conn.id=proof.connection_id AND conn.updated_at=proof.source_updated_at
         WHERE proof.connection_id=ANY(CAST(:ids AS uuid[])) AND proof.fingerprint=:fingerprint AND proof.is_current
     """), {"ids": list(candidates), "fingerprint": expected})).all() if candidates else []
@@ -248,7 +248,7 @@ async def _saved_source_state(session: AsyncSession, connection_id: UUID, *, loc
     lock_clause = " FOR SHARE" if lock else ""
     return (await session.execute(text(f"""
         SELECT engine, config->>'host' AS host, updated_at, {paused_at_sql('registry')} AS paused_at
-        FROM app.ontology_data_connections registry WHERE id=:id
+        FROM app.helio_data_connections registry WHERE id=:id
     """ + lock_clause), {"id": connection_id})).mappings().first()
 
 

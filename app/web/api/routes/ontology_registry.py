@@ -59,7 +59,7 @@ async def lock_upstream_connection(session, source):
         return True
     # Hold the connection until the definition commits so a concurrent disconnect
     # either sees this reference or completes first and rejects this new binding.
-    return await session.scalar(text("""SELECT id FROM app.ontology_data_connections
+    return await session.scalar(text("""SELECT id FROM app.helio_data_connections
         WHERE id=:id FOR SHARE"""), {"id": source.upstreamConnectionId}) is not None
 
 

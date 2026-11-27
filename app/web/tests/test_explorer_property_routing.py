@@ -25,8 +25,8 @@ async def test_property_mapping_uses_registered_connection_without_business_meta
         async def execute(self, statement, parameters):
             sql = str(statement)
             # The business database deliberately has no app metadata schema.
-            assert "app.ontology_objects" not in sql
-            assert "app.ontology_object_properties" not in sql
+            assert "app.helio_objects" not in sql
+            assert "app.helio_object_properties" not in sql
             assert "jsonb_to_recordset" in sql
             assert parameters["object_metadata"] == "[]"
             assert parameters["property_metadata"] == "[]"

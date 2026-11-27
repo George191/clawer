@@ -28,7 +28,7 @@ class AssetCollectedStats(BaseModel):
 
 
 class AssetCollectedStatRow(SQLModel, table=True):
-    __tablename__ = "ontology_asset_collected_stats"
+    __tablename__ = "helio_asset_collected_stats"
     __table_args__ = (
         CheckConstraint("slot IN ('latest','historical') AND policy_generation > 0 AND target_oid > 0 AND target_filenode > 0 "
                         "AND state IN ('captured','no_stats','stats_reset')",
@@ -39,7 +39,7 @@ class AssetCollectedStatRow(SQLModel, table=True):
                         name="ck_asset_collected_stats_measure"),
     )
 
-    target_table: str = Field(primary_key=True, max_length=63, foreign_key="ontology_asset_freshness_policies.target_table")
+    target_table: str = Field(primary_key=True, max_length=63, foreign_key="helio_asset_freshness_policies.target_table")
     slot: str = Field(primary_key=True, max_length=10)
     policy_generation: int
     plan_id: UUID

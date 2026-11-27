@@ -13,8 +13,8 @@ from app.web.services.explorer_rows import _asset, _limits, _source
 
 async def require_object_links(session):
     if not await session.scalar(text("""SELECT
-        to_regclass('app.ontology_object_links') IS NOT NULL AND
-        to_regclass('app.ontology_object_relations') IS NOT NULL""")):
+        to_regclass('app.helio_object_links') IS NOT NULL AND
+        to_regclass('app.helio_object_relations') IS NOT NULL""")):
         raise HTTPException(503, "Logical object links are not initialized")
 
 
@@ -46,7 +46,7 @@ async def read_row_links(layer, table, query, *, can_manage=False):
         await _prepare(session, catalog_session)
         source = await _asset(catalog_session, schema, table)
         key = await _key(catalog_session, source, query.key)
-        relations = (await session.execute(text("""SELECT * FROM app.ontology_object_relations
+        relations = (await session.execute(text("""SELECT * FROM app.helio_object_relations
             WHERE enabled AND ((source_schema=:schema AND source_table=:table)
                 OR (target_schema=:schema AND target_table=:table)) ORDER BY name, id"""),
             {"schema": schema, "table": table})).mappings().all()
@@ -77,7 +77,7 @@ async def read_row_links(layer, table, query, *, can_manage=False):
             raise HTTPException(409, "The related table has no primary key for a stable record address")
         side, other = ("source", "target") if selected["direction"] == "outgoing" else ("target", "source")
         edges = (await session.execute(text(f"""SELECT id, version, {other}_key AS identity
-            FROM app.ontology_object_links WHERE relation_id=:relation AND removed_at IS NULL
+            FROM app.helio_object_links WHERE relation_id=:relation AND removed_at IS NULL
               AND {side}_hash=:hash AND {side}_key=CAST(:key AS jsonb)
             ORDER BY id LIMIT :limit OFFSET :offset"""),
             {"relation": int(selected["relationId"]), "hash": object_key_hash(key),
@@ -102,7 +102,7 @@ async def mutate_row_link(layer, table, payload, user, *, link_id=None):
         business=True, schema=schema, table=table,
     ) as catalog_session:
         await _prepare(session, catalog_session)
-        relation = (await session.execute(text("""SELECT * FROM app.ontology_object_relations
+        relation = (await session.execute(text("""SELECT * FROM app.helio_object_relations
             WHERE id=:id AND enabled FOR UPDATE"""), {"id": int(payload.relationId)})).mappings().first()
         if not relation:
             raise HTTPException(404, "Relationship not available")
@@ -122,14 +122,14 @@ async def mutate_row_link(layer, table, payload, user, *, link_id=None):
         params = {"relation": relation["id"], "source_hash": object_key_hash(keys["source"]),
                   "target_hash": object_key_hash(keys["target"]), "source_key": canonical_object_key(keys["source"]),
                   "target_key": canonical_object_key(keys["target"]), "actor": str(user.id)}
-        existing = (await session.execute(text("""SELECT * FROM app.ontology_object_links
+        existing = (await session.execute(text("""SELECT * FROM app.helio_object_links
             WHERE relation_id=:relation AND source_hash=:source_hash AND target_hash=:target_hash FOR UPDATE"""), params)).mappings().first()
         if existing and (existing["source_key"] != keys["source"] or existing["target_key"] != keys["target"]):
             raise HTTPException(409, "Stored relationship identity conflicts with the selected objects")
         if link_id is not None:
             if not existing or existing["removed_at"] is not None or str(existing["id"]) != str(link_id) or existing["version"] != int(payload.expectedVersion):
                 raise HTTPException(409, "Relationship changed or was removed; reload before trying again")
-            await session.execute(text("""UPDATE app.ontology_object_links SET removed_at=now(),
+            await session.execute(text("""UPDATE app.helio_object_links SET removed_at=now(),
                 removed_by=CAST(:actor AS uuid), updated_at=now(), version=version+1 WHERE id=CAST(:id AS uuid)"""),
                 {**params, "id": str(link_id)})
             return {"linkId": str(link_id), "version": str(existing["version"] + 1), "removed": True}
@@ -140,18 +140,18 @@ async def mutate_row_link(layer, table, payload, user, *, link_id=None):
             occupied.append("(source_hash=:source_hash AND source_key=CAST(:source_key AS jsonb))")
         if relation["cardinality"] in ("one_to_one", "one_to_many"):
             occupied.append("(target_hash=:target_hash AND target_key=CAST(:target_key AS jsonb))")
-        if occupied and await session.scalar(text("""SELECT EXISTS(SELECT 1 FROM app.ontology_object_links
+        if occupied and await session.scalar(text("""SELECT EXISTS(SELECT 1 FROM app.helio_object_links
             WHERE relation_id=:relation AND removed_at IS NULL AND (""" + " OR ".join(occupied) + "))"), params):
             raise HTTPException(409, "Relationship would exceed its declared cardinality")
         params["id"] = str(uuid4())
         if existing:
-            await session.execute(text("""UPDATE app.ontology_object_links SET id=CAST(:id AS uuid),
+            await session.execute(text("""UPDATE app.helio_object_links SET id=CAST(:id AS uuid),
                 version=version+1, created_at=now(), updated_at=now(), created_by=CAST(:actor AS uuid),
                 removed_at=NULL, removed_by=NULL WHERE relation_id=:relation
                 AND source_hash=:source_hash AND target_hash=:target_hash"""), params)
             version = existing["version"] + 1
         else:
-            await session.execute(text("""INSERT INTO app.ontology_object_links
+            await session.execute(text("""INSERT INTO app.helio_object_links
                 (id, relation_id, source_key, target_key, source_hash, target_hash, created_by)
                 VALUES (CAST(:id AS uuid), :relation, CAST(:source_key AS jsonb), CAST(:target_key AS jsonb),
                     :source_hash, :target_hash, CAST(:actor AS uuid))"""), params)
@@ -171,7 +171,7 @@ async def protect_linked_row(session, schema, table, key, *, catalog_session):
         raise HTTPException(409, {"code": "row_version_conflict",
                                   "message": "Row changed or was deleted. Reload the preview before saving."}) from failure
     linked = await session.scalar(text("""SELECT EXISTS (
-        SELECT 1 FROM app.ontology_object_links l JOIN app.ontology_object_relations r ON r.id=l.relation_id
+        SELECT 1 FROM app.helio_object_links l JOIN app.helio_object_relations r ON r.id=l.relation_id
         WHERE l.removed_at IS NULL AND (
             (r.source_schema=:schema AND r.source_table=:table AND l.source_hash=:hash AND l.source_key=CAST(:key AS jsonb)) OR
             (r.target_schema=:schema AND r.target_table=:table AND l.target_hash=:hash AND l.target_key=CAST(:key AS jsonb))))"""),

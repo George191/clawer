@@ -87,7 +87,7 @@ async def _latest_receipt(session, row, plan):
         TransferRunRow.target_schema == SANDBOX, TransferRunRow.target_table == TABLE,
         TransferRunRow.target_oid == row.target_oid, TransferRunRow.target_filenode == row.target_filenode,
         TransferRunRow.target_oid.is_not(None), TransferRunRow.target_filenode.is_not(None),
-        text("ontology_transfer_runs.rows_affected > 0"), TransferRunRow.recorded_at > row.reviewed_at,
+        text("helio_transfer_runs.rows_affected > 0"), TransferRunRow.recorded_at > row.reviewed_at,
     ).order_by(TransferRunRow.recorded_at.desc(), TransferRunRow.id.desc()).limit(2))
     items = result.all()
     # Equal clocks cannot establish which distinct transfer was newer.

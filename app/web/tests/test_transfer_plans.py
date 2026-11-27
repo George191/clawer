@@ -178,9 +178,9 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 "CREATE TABLE ts_ods.ods_financial_fact (id int PRIMARY KEY)",
                 "CREATE TABLE ts_ods.no_pk (id int)", "CREATE TABLE ts_ods.hidden (id int PRIMARY KEY)",
                 "CREATE TABLE ts_meta.reserved (id int PRIMARY KEY)",
-                "CREATE TABLE app.ontology_objects (schema_name text, table_name text, is_active bool, visibility text)",
-                "CREATE TABLE app.ontology_object_properties (id int)",
-                "INSERT INTO app.ontology_objects VALUES ('ts_ods', 'hidden', true, 'hidden')",
+                "CREATE TABLE app.helio_objects (schema_name text, table_name text, is_active bool, visibility text)",
+                "CREATE TABLE app.helio_object_properties (id int)",
+                "INSERT INTO app.helio_objects VALUES ('ts_ods', 'hidden', true, 'hidden')",
                 "INSERT INTO ts_rds.rds_financial_fact VALUES (1), (2)",
                 "INSERT INTO ts_ods.ods_financial_fact VALUES (3)",
             ):
@@ -219,31 +219,31 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def drop_fixtures(self):
         async with self.pg.session() as session:
-            await session.execute(text("DROP TABLE IF EXISTS app.ontology_asset_daily_job_quality, "
-                                       "app.ontology_transfer_schedule_target_rejections"))
-            await session.execute(text("DROP TABLE IF EXISTS app.ontology_asset_min_rows"))
-            await session.execute(text("DROP TABLE IF EXISTS app.ontology_asset_field_freshness"))
-            await session.execute(text("DROP TABLE IF EXISTS app.ontology_asset_collected_stats"))
-            await session.execute(text("DROP TABLE IF EXISTS app.ontology_asset_quality_incidents"))
-            await session.execute(text("DROP TABLE IF EXISTS app.ontology_asset_quality_transitions, "
-                                       "app.ontology_asset_quality_observations"))
-            await session.execute(text("DROP TABLE IF EXISTS app.ontology_asset_freshness_transitions, "
-                                       "app.ontology_asset_freshness_policies"))
-            await session.execute(text("DROP TABLE IF EXISTS app.ontology_transfer_attempts"))
-            await session.execute(text("DROP TABLE IF EXISTS app.ontology_transfer_schedule_jobs"))
+            await session.execute(text("DROP TABLE IF EXISTS app.helio_asset_daily_job_quality, "
+                                       "app.helio_transfer_schedule_target_rejections"))
+            await session.execute(text("DROP TABLE IF EXISTS app.helio_asset_min_rows"))
+            await session.execute(text("DROP TABLE IF EXISTS app.helio_asset_field_freshness"))
+            await session.execute(text("DROP TABLE IF EXISTS app.helio_asset_collected_stats"))
+            await session.execute(text("DROP TABLE IF EXISTS app.helio_asset_quality_incidents"))
+            await session.execute(text("DROP TABLE IF EXISTS app.helio_asset_quality_transitions, "
+                                       "app.helio_asset_quality_observations"))
+            await session.execute(text("DROP TABLE IF EXISTS app.helio_asset_freshness_transitions, "
+                                       "app.helio_asset_freshness_policies"))
+            await session.execute(text("DROP TABLE IF EXISTS app.helio_transfer_attempts"))
+            await session.execute(text("DROP TABLE IF EXISTS app.helio_transfer_schedule_jobs"))
             await session.execute(text("DROP FUNCTION IF EXISTS app.ontology_transfer_keep_clock_kind()"))
             await session.execute(text("DROP FUNCTION IF EXISTS app.ontology_transfer_keep_month_day()"))
-            await session.execute(text("DROP TABLE IF EXISTS app.ontology_transfer_schedules"))
-            await session.execute(text("DROP TABLE IF EXISTS app.ontology_transfer_upstream_mixed_slots"))
-            await session.execute(text("DROP TABLE IF EXISTS app.ontology_transfer_upstream_job_events, "
-                                       "app.ontology_transfer_upstream_parents"))
-            await session.execute(text("DROP TABLE IF EXISTS app.ontology_transfer_upstream_jobs, "
-                                       "app.ontology_transfer_upstream_triggers, app.ontology_transfer_commit_events"))
-            await session.execute(text("DROP TABLE IF EXISTS app.ontology_transfer_checkpoints"))
-            await session.execute(text("DROP TABLE IF EXISTS app.ontology_transfer_runs"))
+            await session.execute(text("DROP TABLE IF EXISTS app.helio_transfer_schedules"))
+            await session.execute(text("DROP TABLE IF EXISTS app.helio_transfer_upstream_mixed_slots"))
+            await session.execute(text("DROP TABLE IF EXISTS app.helio_transfer_upstream_job_events, "
+                                       "app.helio_transfer_upstream_parents"))
+            await session.execute(text("DROP TABLE IF EXISTS app.helio_transfer_upstream_jobs, "
+                                       "app.helio_transfer_upstream_triggers, app.helio_transfer_commit_events"))
+            await session.execute(text("DROP TABLE IF EXISTS app.helio_transfer_checkpoints"))
+            await session.execute(text("DROP TABLE IF EXISTS app.helio_transfer_runs"))
             await session.execute(text("DROP FUNCTION IF EXISTS app.ontology_transfer_keep_scheduled_source()"))
-            await session.execute(text("DROP TABLE IF EXISTS app.ontology_transfer_plans"))
-            await session.execute(text("DROP TABLE app.ontology_objects, app.ontology_object_properties"))
+            await session.execute(text("DROP TABLE IF EXISTS app.helio_transfer_plans"))
+            await session.execute(text("DROP TABLE app.helio_objects, app.helio_object_properties"))
             for schema in ("ts_rds", "ts_ods", "ts_meta"):
                 await session.execute(text(f"DROP SCHEMA {schema} CASCADE"))
             await session.execute(text("DROP SCHEMA IF EXISTS ts_transfer_sandbox CASCADE"))
@@ -415,12 +415,12 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 fresh = (await client.get(field)).json()
                 self.assertEqual((fresh["state"], fresh["incident"]["status"]), ("fresh", "recovered"), fresh)
                 await self.pg.execute("""
-                    INSERT INTO ontology_transfer_runs
+                    INSERT INTO helio_transfer_runs
                     (id, plan_id, request_id, initiated_by, plan_updated_at, source_schema, source_table, target_schema,
                      target_table, target_oid, target_filenode, write_mode, rows_affected, recorded_at)
                     SELECT :copyid, plan_id, :request, initiated_by, plan_updated_at, source_schema, source_table,
                            target_schema, target_table, target_oid, target_filenode, write_mode, rows_affected, recorded_at
-                    FROM ontology_transfer_runs WHERE id=:id
+                    FROM helio_transfer_runs WHERE id=:id
                 """, {"copyid": uuid4(), "request": uuid4(), "id": UUID(second["id"])})
                 await check()
                 neutral = (await client.get(field)).json()
@@ -484,7 +484,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
 
                     async with self.pg.session() as session:
                         await session.execute(text("""
-                            INSERT INTO ontology_transfer_runs (
+                            INSERT INTO helio_transfer_runs (
                                 id, plan_id, request_id, initiated_by, plan_updated_at, source_schema, source_table,
                                 target_schema, target_table, write_mode, rows_affected, recorded_at
                             ) VALUES (
@@ -627,17 +627,17 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                     await self.pg.execute("ALTER TABLE ts_transfer_sandbox.quality_target ADD COLUMN unevaluated int")
                     self.assertEqual((await client.get(route)).json()["checks"]["schema"]["schemaDrift"], drift)
                     await self.pg.execute("""
-                        INSERT INTO app.ontology_objects VALUES ('ts_transfer_sandbox','quality_target',true,'hidden')
+                        INSERT INTO app.helio_objects VALUES ('ts_transfer_sandbox','quality_target',true,'hidden')
                     """)
                     self.assertNotIn("schemaDrift", (await client.get(route)).json()["checks"]["schema"])
-                    await self.pg.execute("DELETE FROM app.ontology_objects WHERE table_name='quality_target'")
-                    await self.pg.execute("ALTER TABLE app.ontology_objects RENAME TO ontology_objects_missing")
+                    await self.pg.execute("DELETE FROM app.helio_objects WHERE table_name='quality_target'")
+                    await self.pg.execute("ALTER TABLE app.helio_objects RENAME TO ontology_objects_missing")
                     try:
                         without_registry = (await client.get(route)).json()["checks"]["schema"]
                         self.assertEqual(without_registry["reason"], "schema_drift")
                         self.assertNotIn("schemaDrift", without_registry)
                     finally:
-                        await self.pg.execute("ALTER TABLE app.ontology_objects_missing RENAME TO ontology_objects")
+                        await self.pg.execute("ALTER TABLE app.ontology_objects_missing RENAME TO helio_objects")
                 next_tick = late + timedelta(minutes=1)
                 await self.pg.execute("""
                     ALTER TABLE ts_transfer_sandbox.quality_target DROP COLUMN unevaluated,
@@ -649,7 +649,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(healthy["state"], "healthy")
                     self.assertNotIn("schemaDrift", healthy)
                 persisted = await self.pg.fetch_one("""
-                    SELECT schema_drift FROM app.ontology_asset_quality_observations
+                    SELECT schema_drift FROM app.helio_asset_quality_observations
                     WHERE target_table='quality_target' AND kind='schema'
                 """)
                 self.assertIsNone(persisted["schema_drift"])
@@ -674,7 +674,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual((await client.get(route)).json()["checks"]["schema"]["schemaDrift"], detail)
                     self.assertTrue(all(item["kind"] == "added" and "before" not in item for item in detail["changes"]))
                     await self.pg.execute("""
-                        UPDATE app.ontology_asset_quality_observations
+                        UPDATE app.helio_asset_quality_observations
                         SET schema_drift = jsonb_set(schema_drift, '{diagnostics,truncated}', '"invalid"')
                         WHERE target_table='quality_target' AND kind='schema'
                     """)
@@ -692,7 +692,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(unknown["reason"], "schema_unavailable")
                     self.assertNotIn("schemaDrift", unknown)
                 persisted = await self.pg.fetch_one("""
-                    SELECT schema_drift FROM app.ontology_asset_quality_observations
+                    SELECT schema_drift FROM app.helio_asset_quality_observations
                     WHERE target_table='quality_target' AND kind='schema'
                 """)
                 self.assertIsNone(persisted["schema_drift"])
@@ -916,8 +916,8 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
             await self.migrate(session, self.run_migration.downgrade)
             await self.migrate(session, self.migration.downgrade)
         rows = await self.pg.fetch_one("""
-            SELECT to_regclass('app.ontology_transfer_plans') IS NULL AS removed,
-                   to_regclass('app.ontology_objects') IS NOT NULL AS ontology_preserved,
+            SELECT to_regclass('app.helio_transfer_plans') IS NULL AS removed,
+                   to_regclass('app.helio_objects') IS NOT NULL AS ontology_preserved,
                    (SELECT count(*) FROM ts_rds.rds_financial_fact) = 2 AS warehouse_preserved
         """)
         self.assertTrue(all(rows.values()))
@@ -1039,13 +1039,13 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(await collect(when + timedelta(seconds=46)), [])
                         self.assertEqual(await settle(identity, when), "disabled")
                         self.assertEqual(await self.pg.fetch_all("SELECT * FROM ts_transfer_sandbox.weekly_target"), [])
-                        self.assertEqual(await self.pg.fetch_all("SELECT id FROM ontology_transfer_attempts"), [])
+                        self.assertEqual(await self.pg.fetch_all("SELECT id FROM helio_transfer_attempts"), [])
                         self.assertEqual((await client.put(cfg, json=review)).status_code, 403)
 
                     self.assertEqual(await settle(identity, when), "committed")
                     self.assertEqual(await settle(identity, when), "committed")
                     self.assertEqual(len(await self.pg.fetch_all("SELECT id FROM ts_transfer_sandbox.weekly_target")), 1)
-                    proof = await self.pg.fetch_all("SELECT scope_trigger, schedule_job_id FROM ontology_transfer_attempts")
+                    proof = await self.pg.fetch_all("SELECT scope_trigger, schedule_job_id FROM helio_transfer_attempts")
                     self.assertEqual([(row["scope_trigger"], row["schedule_job_id"]) for row in proof], [("week_utc", identity)])
                     # A missed week is not backfilled, and pausing remains authorized when execution is disabled.
                     self.assertEqual(await collect(sunday + timedelta(days=7, minutes=5)), [])
@@ -1076,7 +1076,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
             async with self.pg.session() as session:
                 await self.migrate(session, self.weekly_migration.downgrade)
         self.assertEqual((await self.pg.fetch_one(
-            "SELECT schedule_weekday_utc FROM ontology_transfer_schedule_jobs WHERE id=:id", {"id": identity},
+            "SELECT schedule_weekday_utc FROM helio_transfer_schedule_jobs WHERE id=:id", {"id": identity},
         ))["schedule_weekday_utc"], 7)
 
     async def test_monthly_utc_cross_month_durable_origin_and_exact_replay(self):
@@ -1154,7 +1154,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(await settle(identity), "committed")
                     self.assertEqual(await settle(identity), "committed")
                     self.assertEqual(await collect(datetime(2031, 3, 29, 0, 4, tzinfo=timezone.utc)), [])
-                    attempts = await self.pg.fetch_all("SELECT scope_trigger,schedule_job_id FROM ontology_transfer_attempts")
+                    attempts = await self.pg.fetch_all("SELECT scope_trigger,schedule_job_id FROM helio_transfer_attempts")
                     self.assertEqual([(a["scope_trigger"], a["schedule_job_id"]) for a in attempts], [("month_utc", identity)])
                     timeline_path = "/etl/ts_transfer_sandbox/monthly_target/transfer-timeline"
                     timeline = await client.get(timeline_path)
@@ -1167,7 +1167,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(detail.json()["job"]["kind"], "monthly_utc")
                     self.assertEqual(detail.json()["job"]["scheduleDayOfMonthUtc"], 28)
                     with self.assertRaises(DBAPIError) as immutable:
-                        await self.pg.execute("UPDATE ontology_transfer_schedule_jobs SET schedule_day_of_month_utc=NULL")
+                        await self.pg.execute("UPDATE helio_transfer_schedule_jobs SET schedule_day_of_month_utc=NULL")
                     self.assertEqual(immutable.exception.orig.sqlstate, "55000")
 
                     edit = await client.put(f"{RUNS}/{plan['id']}", json={**body, "trigger": "manual",
@@ -1217,8 +1217,8 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 'CREATE TABLE public."user" (id uuid PRIMARY KEY, status public.statustypes, is_superuser bool)',
                 f"CREATE ROLE {role} LOGIN PASSWORD '{password}'",
                 f"GRANT USAGE ON SCHEMA {schema} TO {role}",
-                f"GRANT SELECT ON app.ontology_objects, app.ontology_transfer_schedule_jobs, "
-                f"app.ontology_transfer_runs, app.ontology_transfer_attempts, app.ontology_transfer_upstream_jobs TO {role}",
+                f"GRANT SELECT ON app.helio_objects, app.helio_transfer_schedule_jobs, "
+                f"app.helio_transfer_runs, app.helio_transfer_attempts, app.helio_transfer_upstream_jobs TO {role}",
                 f"GRANT SELECT ON {schema}.source, {schema}.target TO {role}",
             ):
                 await session.execute(text(sql))
@@ -1306,21 +1306,21 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
 
                 async with self.pg.session() as session:
                     conflicting = await session.scalar(text("""
-                        INSERT INTO ontology_transfer_attempts
+                        INSERT INTO helio_transfer_attempts
                         (id,upstream_job_id,schedule_job_id,plan_updated_at,source_table,target_table,target_oid,target_filenode,
                          scope_trigger,plan_id,request_id,status,started_at,finished_at,receipt_id)
                         SELECT gen_random_uuid(),upstream_job_id,schedule_job_id,plan_updated_at,source_table,target_table,
                                target_oid,target_filenode+1,scope_trigger,plan_id,request_id,status,started_at,finished_at,receipt_id
-                        FROM ontology_transfer_attempts WHERE schedule_job_id=:job RETURNING id
+                        FROM helio_transfer_attempts WHERE schedule_job_id=:job RETURNING id
                     """), {"job": jobs[first["id"]]})
                 self.assertEqual((await client.get(picked)).status_code, 404)
                 async with self.pg.session() as session:
                     await session.execute(text("""
-                        UPDATE ontology_transfer_attempts SET target_filenode=target_filenode-1 WHERE id=:id
+                        UPDATE helio_transfer_attempts SET target_filenode=target_filenode-1 WHERE id=:id
                     """), {"id": conflicting})
                 self.assertEqual((await client.get(picked)).status_code, 404)
                 async with self.pg.session() as session:
-                    await session.execute(text("UPDATE ontology_transfer_attempts SET status='replayed' WHERE id=:id"),
+                    await session.execute(text("UPDATE helio_transfer_attempts SET status='replayed' WHERE id=:id"),
                                           {"id": conflicting})
                 self.assertEqual((await client.get(picked)).json(), expected)
                 await self.pg.execute(f"TRUNCATE TABLE {schema}.zero_target")
@@ -1369,7 +1369,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 return await execute_transfer_schedule_job(session, identity, now=when)
 
         async def receipt_for(identity):
-            return await self.pg.fetch_one("SELECT * FROM ontology_transfer_runs WHERE request_id=:id", {"id": identity})
+            return await self.pg.fetch_one("SELECT * FROM helio_transfer_runs WHERE request_id=:id", {"id": identity})
 
         with (
             patch("app.web.services.transfer_plans.get_etl_layers", return_value=self.layers),
@@ -1419,13 +1419,13 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                     from_weekly = await receipt_for(weekly)
                     with self.assertRaisesRegex(DBAPIError, "A committed scheduled source cannot change"):
                         await self.pg.execute(
-                            "UPDATE ontology_transfer_runs SET scheduled_source_oid=:oid, "
+                            "UPDATE helio_transfer_runs SET scheduled_source_oid=:oid, "
                             "scheduled_source_filenode=:node WHERE request_id=:id",
                             {"oid": exact["oid"], "node": exact["node"], "id": prior},
                         )
                     with self.assertRaisesRegex(DBAPIError, "A committed scheduled source cannot change"):
                         await self.pg.execute(
-                            "UPDATE ontology_transfer_runs SET scheduled_source_oid=NULL, "
+                            "UPDATE helio_transfer_runs SET scheduled_source_oid=NULL, "
                             "scheduled_source_filenode=NULL WHERE request_id=:id", {"id": weekly},
                         )
                     self.assertEqual((from_weekly["scheduled_source_oid"], from_weekly["scheduled_source_filenode"]),
@@ -1475,10 +1475,10 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                     not_a_clock_id = uuid4()
                     clock_slot = when.replace(second=0)
                     await self.pg.execute("""
-                        INSERT INTO ontology_transfer_schedule_jobs
+                        INSERT INTO helio_transfer_schedule_jobs
                             (id, plan_id, generation, slot, expires_at, dispatch_after, plan_updated_at, armed_by, state)
                         SELECT :id, plan_id, generation, :slot, :expiry, :slot, plan_updated_at, armed_by, 'pending'
-                        FROM ontology_transfer_schedule_jobs WHERE id=:template
+                        FROM helio_transfer_schedule_jobs WHERE id=:template
                     """, {"id": not_a_clock_id, "slot": clock_slot, "expiry": clock_slot + timedelta(minutes=5),
                           "template": empty})
                     self.assertEqual(await run_job(not_a_clock_id), "committed")
@@ -1653,10 +1653,10 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await client.get(source_path.replace("ts_transfer_sandbox", "ts_ods"), params=params)).status_code, 404)
                 with patch.object(settings, "TRANSFER_SANDBOX_OBSERVED_LINEAGE_ENABLED", False):
                     self.assertFalse((await client.get(source_path, params=params)).json()["available"])
-                await self.pg.execute("INSERT INTO app.ontology_objects VALUES ('ts_transfer_sandbox','a',true,'hidden')")
+                await self.pg.execute("INSERT INTO app.helio_objects VALUES ('ts_transfer_sandbox','a',true,'hidden')")
                 self.assertEqual((await client.get(source_path, params=params)).status_code, 404)
                 self.assertEqual(await incoming(), [])
-                await self.pg.execute("DELETE FROM app.ontology_objects WHERE schema_name='ts_transfer_sandbox'")
+                await self.pg.execute("DELETE FROM app.helio_objects WHERE schema_name='ts_transfer_sandbox'")
                 await self.pg.execute("TRUNCATE ts_transfer_sandbox.a")
                 self.assertEqual(await incoming(), [])
                 self.assertEqual((await client.get(source_path, params=params)).json()["neighbors"], [])
@@ -1732,14 +1732,14 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                     due = await collect_due_transfer_jobs(session, now=datetime.now(timezone.utc))
                 self.assertEqual(len(due), 3)
                 jobs = {str(row["plan_id"]): row["id"] for row in await self.pg.fetch_all(
-                    "SELECT id, plan_id FROM ontology_transfer_schedule_jobs",
+                    "SELECT id, plan_id FROM helio_transfer_schedule_jobs",
                 )}
                 for plan in (daily, weekly, legacy):
                     with patch.object(settings, "TRANSFER_SANDBOX_SCHEDULED_OBSERVED_LINEAGE_ENABLED", plan != legacy):
                         async with self.pg.session() as session:
                             self.assertEqual(await execute_transfer_schedule_job(session, jobs[plan["id"]]), "committed")
 
-                rows = await self.pg.fetch_all("SELECT id, target_table FROM ontology_transfer_runs")
+                rows = await self.pg.fetch_all("SELECT id, target_table FROM helio_transfer_runs")
                 receipts = {row["target_table"]: row["id"] for row in rows}
                 evidence = await neighbors()
                 self.assertEqual({table: row["trigger"] for table, row in evidence.items()},
@@ -1749,7 +1749,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                                  ["clock_src"]["trigger"], "weekly_utc")
                 self.assertEqual((await link("legacy_dst", receipts["legacy_dst"])).status_code, 404)
                 self.assertEqual((await link("weekly_dst", receipts["daily_dst"])).status_code, 404)
-                self.assertEqual(await self.pg.fetch_all("SELECT id FROM ontology_transfer_commit_events"), [])
+                self.assertEqual(await self.pg.fetch_all("SELECT id FROM helio_transfer_commit_events"), [])
 
                 with patch.object(settings, "TRANSFER_SANDBOX_SCHEDULED_OBSERVED_LINEAGE_ENABLED", False):
                     self.assertEqual(await neighbors(), evidence)
@@ -1758,16 +1758,16 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual((direct.json()["trigger"], direct.json()["physicalScope"], direct.json()["job"]["kind"]),
                                      ("weekly_utc", "current", "weekly_utc"))
                 # The broker can lack an acknowledgement; an impossible finished time is different.
-                await self.pg.execute("UPDATE ontology_transfer_schedule_jobs SET dispatched_at=NULL WHERE id=:id",
+                await self.pg.execute("UPDATE helio_transfer_schedule_jobs SET dispatched_at=NULL WHERE id=:id",
                                       {"id": jobs[daily["id"]]})
                 self.assertIn("daily_dst", await neighbors())
-                now = (await self.pg.fetch_one("SELECT finished_at FROM ontology_transfer_schedule_jobs WHERE id=:id",
+                now = (await self.pg.fetch_one("SELECT finished_at FROM helio_transfer_schedule_jobs WHERE id=:id",
                                                {"id": jobs[daily["id"]]}))["finished_at"]
-                await self.pg.execute("UPDATE ontology_transfer_schedule_jobs SET finished_at=slot WHERE id=:id",
+                await self.pg.execute("UPDATE helio_transfer_schedule_jobs SET finished_at=slot WHERE id=:id",
                                       {"id": jobs[daily["id"]]})
                 self.assertNotIn("daily_dst", await neighbors())
                 self.assertEqual((await link("daily_dst", receipts["daily_dst"])).status_code, 404)
-                await self.pg.execute("UPDATE ontology_transfer_schedule_jobs SET finished_at=:now WHERE id=:id",
+                await self.pg.execute("UPDATE helio_transfer_schedule_jobs SET finished_at=:now WHERE id=:id",
                                       {"id": jobs[daily["id"]], "now": now})
 
                 pause = await client.put(daily_cfg, json={"enabled": False, "expectedUpdatedAt": daily["updatedAt"]})
@@ -1778,11 +1778,11 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn("weekly_dst", await neighbors())
                 self.assertEqual((await link("weekly_dst", receipts["weekly_dst"])).status_code, 200)
 
-                await self.pg.execute("INSERT INTO app.ontology_objects VALUES "
+                await self.pg.execute("INSERT INTO app.helio_objects VALUES "
                                       "('ts_transfer_sandbox','clock_src',true,'hidden')")
                 self.assertEqual((await link("weekly_dst", receipts["weekly_dst"])).status_code, 404)
                 self.assertEqual(await neighbors(root + "/daily_dst/lineage-observed", "incoming"), {})
-                await self.pg.execute("DELETE FROM app.ontology_objects WHERE table_name='clock_src'")
+                await self.pg.execute("DELETE FROM app.helio_objects WHERE table_name='clock_src'")
                 await self.pg.execute("TRUNCATE ts_transfer_sandbox.clock_src")
                 self.assertEqual(await neighbors(), {})
                 archived = await link("daily_dst", receipts["daily_dst"])
@@ -1862,7 +1862,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(jobs[0]["events"][0]["parentReceiptId"], after_arm.json()["id"])
                 self.assertNotEqual(jobs[0]["receiptId"], jobs[0]["events"][0]["parentReceiptId"])
                 self.assertEqual(len((await client.get(f"{RUNS}/{child['id']}/runs")).json()), 1)
-                self.assertEqual((await self.pg.fetch_one("SELECT count(*) AS count FROM ontology_transfer_commit_events"))["count"], 2)
+                self.assertEqual((await self.pg.fetch_one("SELECT count(*) AS count FROM helio_transfer_commit_events"))["count"], 2)
                 self.assertEqual((await self.pg.fetch_one("SELECT value FROM ts_transfer_sandbox.c"))["value"], "actual event")
                 await self.pg.execute("UPDATE ts_transfer_sandbox.a SET value='paused'")
                 self.assertEqual((await run(parent, uuid4())).status_code, 200)
@@ -1905,7 +1905,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(first.status_code, 200, first.text)
                 async with self.pg.session() as session:
                     await session.execute(text(
-                        "UPDATE ontology_transfer_commit_events SET recorded_at = recorded_at - interval '6 minutes' "
+                        "UPDATE helio_transfer_commit_events SET recorded_at = recorded_at - interval '6 minutes' "
                         "WHERE parent_receipt_id = :receipt"
                     ), {"receipt": first.json()["id"]})
                 self.assertEqual(await collect(), [])
@@ -1976,7 +1976,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 for query in ("?requireVisible=false", "?requireVisible=TRUE", "?requireVisible=true&requireVisible=true",
                               "?requireVisible=true&ignored=1"):
                     self.assertEqual((await client.get(link + query)).status_code, 422)
-                await self.pg.execute("""INSERT INTO app.ontology_objects
+                await self.pg.execute("""INSERT INTO app.helio_objects
                     VALUES ('ts_transfer_sandbox','timeline_target',true,'hidden')""")
                 hidden = await client.get(link, params={"requireVisible": "true"})
                 self.assertEqual(hidden.status_code, 404, hidden.text)
@@ -1986,16 +1986,16 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                     nope = await client.get(f"/etl/ts_transfer_sandbox/{asset}/transfer-timeline/receipt/{receipt_id}",
                                             params={"requireVisible": "true"})
                     self.assertEqual((nope.status_code, nope.json()), (404, hidden.json()))
-                await self.pg.execute("""UPDATE app.ontology_objects SET is_active=false,visibility='normal'
+                await self.pg.execute("""UPDATE app.helio_objects SET is_active=false,visibility='normal'
                     WHERE schema_name='ts_transfer_sandbox' AND table_name='timeline_target'""")
                 self.assertEqual((await client.get(link, params={"requireVisible": "true"})).json(), hidden.json())
-                await self.pg.execute("""DELETE FROM app.ontology_objects
+                await self.pg.execute("""DELETE FROM app.helio_objects
                     WHERE schema_name='ts_transfer_sandbox' AND table_name='timeline_target'""")
-                await self.pg.execute("""INSERT INTO app.ontology_objects
+                await self.pg.execute("""INSERT INTO app.helio_objects
                     VALUES ('ts_transfer_sandbox','timeline_source',true,'hidden')""")
                 self.assertEqual((await client.get(link, params={"requireVisible": "true"})).json(), hidden.json())
                 self.assertEqual((await client.get(link)).status_code, 200)
-                await self.pg.execute("""DELETE FROM app.ontology_objects
+                await self.pg.execute("""DELETE FROM app.helio_objects
                     WHERE schema_name='ts_transfer_sandbox' AND table_name='timeline_source'""")
                 with patch.object(settings, "TRANSFER_SANDBOX_OBSERVED_LINEAGE_ENABLED", False):
                     self.assertEqual((await client.get(link, params={"requireVisible": "true"})).json(), hidden.json())
@@ -2042,7 +2042,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 # gave an attempt and receipt identical identities/timestamps.
                 async with self.pg.session() as session:
                     await session.execute(text(
-                        "UPDATE ontology_transfer_attempts SET id = :receipt, started_at = :stamp WHERE id = :attempt",
+                        "UPDATE helio_transfer_attempts SET id = :receipt, started_at = :stamp WHERE id = :attempt",
                     ), {"receipt": receipt["id"], "stamp": datetime.fromisoformat(receipt["recordedAt"]),
                         "attempt": encountered[3]["id"]})
                 first_page = (await client.get(route, params={"limit": 3})).json()
@@ -2055,7 +2055,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 # provenance in the destination view without an actual receipt.
                 async with self.pg.session() as session:
                     await session.execute(text(
-                        "UPDATE ontology_transfer_attempts SET receipt_id = NULL WHERE id = :attempt",
+                        "UPDATE helio_transfer_attempts SET receipt_id = NULL WHERE id = :attempt",
                     ), {"attempt": receipt["id"]})
                 damaged = (await client.get(f"{route}/attempt/{receipt['id']}")).json()
                 self.assertEqual(damaged["status"], "outcome_unknown")
@@ -2074,13 +2074,13 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                         (started, str(uuid4()), "started", None, "timeline_source", 9),
                     ):
                         await session.execute(text("""
-                            INSERT INTO ontology_transfer_attempts (
+                            INSERT INTO helio_transfer_attempts (
                                 id, plan_id, request_id, status, started_at, receipt_id, plan_updated_at,
                                 target_table, source_table, scope_trigger, target_oid, target_filenode
                             )
                             SELECT :id, plan_id, CAST(:request AS uuid), :status, :stamp, CAST(:receipt AS uuid),
                                    plan_updated_at, target_table, :source, 'manual', target_oid, target_filenode
-                            FROM ontology_transfer_attempts WHERE id = CAST(:template AS uuid)
+                            FROM helio_transfer_attempts WHERE id = CAST(:template AS uuid)
                         """), {"id": identity, "request": request_id, "status": status, "receipt": receipt_id,
                                 "stamp": stamp + timedelta(seconds=seconds), "source": source, "template": receipt["id"]})
 
@@ -2126,7 +2126,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
 
                 # An archived focus is not a substitute for missing manual commit proof.
                 self.assertEqual((await client.get(link, params={"requireVisible": "true"})).status_code, 404)
-                await self.pg.execute("UPDATE ontology_transfer_attempts SET receipt_id=id WHERE id=CAST(:id AS uuid)",
+                await self.pg.execute("UPDATE helio_transfer_attempts SET receipt_id=id WHERE id=CAST(:id AS uuid)",
                                       {"id": receipt["id"]})
                 await self.pg.execute("TRUNCATE ts_transfer_sandbox.timeline_source")
                 source_replaced = await client.get(link, params={"requireVisible": "true"})
@@ -2150,19 +2150,19 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 # The focused exact link is not limited to the current edge's 7-day coverage.
                 async with self.pg.session() as session:
                     for update in (
-                        "UPDATE ontology_transfer_runs SET recorded_at=recorded_at-interval '8 days', "
+                        "UPDATE helio_transfer_runs SET recorded_at=recorded_at-interval '8 days', "
                         "plan_updated_at=plan_updated_at-interval '8 days' WHERE id=:id",
-                        "UPDATE ontology_transfer_attempts SET started_at=started_at-interval '8 days', "
+                        "UPDATE helio_transfer_attempts SET started_at=started_at-interval '8 days', "
                         "finished_at=finished_at-interval '8 days', plan_updated_at=plan_updated_at-interval '8 days' "
                         "WHERE id=:id",
-                        "UPDATE ontology_transfer_commit_events SET recorded_at=recorded_at-interval '8 days', "
+                        "UPDATE helio_transfer_commit_events SET recorded_at=recorded_at-interval '8 days', "
                         "parent_updated_at=parent_updated_at-interval '8 days' WHERE parent_receipt_id=:id",
                     ):
                         await session.execute(text(update), {"id": UUID(receipt["id"])})
                 aged_link = await client.get(link, params={"requireVisible": "true"})
                 self.assertEqual(aged_link.status_code, 200, aged_link.text)
                 self.assertEqual(aged_link.json()["physicalScope"], "historical")
-                await self.pg.execute("DELETE FROM ontology_transfer_commit_events WHERE parent_receipt_id=:id",
+                await self.pg.execute("DELETE FROM helio_transfer_commit_events WHERE parent_receipt_id=:id",
                                       {"id": UUID(receipt["id"])})
                 self.assertEqual((await client.get(link, params={"requireVisible": "true"})).json(), hidden.json())
                 self.assertEqual((await client.get(link)).status_code, 200)
@@ -2235,11 +2235,11 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await client.put(audit + f"/{uuid4()}/cancel", json=request)).status_code, 404)
                 self.assertTrue((await client.get(audit)).json()[0]["cancelable"])
                 await self.pg.execute("""
-                    UPDATE ontology_transfer_schedule_jobs SET state='dispatched', dispatched_at=:slot WHERE id=:id
+                    UPDATE helio_transfer_schedule_jobs SET state='dispatched', dispatched_at=:slot WHERE id=:id
                 """, {"slot": slot, "id": identity})
                 self.assertTrue((await client.get(audit)).json()[0]["cancelable"])
 
-                for table, locked_id in (("ontology_transfer_plans", plan_id), ("ontology_transfer_schedule_jobs", identity)):
+                for table, locked_id in (("helio_transfer_plans", plan_id), ("helio_transfer_schedule_jobs", identity)):
                     async with self.pg.session() as competing:
                         await competing.execute(text(f"SELECT id FROM {table} WHERE id=:id FOR UPDATE"), {"id": locked_id})
                         busy = await asyncio.wait_for(client.put(action, json=request), timeout=1.2)
@@ -2252,7 +2252,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(canceled["state"], "canceled")
                 self.assertEqual(canceled["canceledAt"], canceled["finishedAt"])
                 self.assertIsNone(canceled["receiptId"])
-                evidence = await self.pg.fetch_one("SELECT canceled_by, canceled_at FROM ontology_transfer_schedule_jobs "
+                evidence = await self.pg.fetch_one("SELECT canceled_by, canceled_at FROM helio_transfer_schedule_jobs "
                                                    "WHERE id=:id", {"id": identity})
                 self.assertEqual(evidence["canceled_by"], TEST_ACTOR)
                 self.assertEqual(evidence["canceled_at"], datetime.fromisoformat(canceled["canceledAt"]))
@@ -2300,7 +2300,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
 
                 # Even a malformed old job mirror cannot hide a genuine exact receipt from the guard.
                 await self.pg.execute("""
-                    UPDATE ontology_transfer_schedule_jobs SET state='pending',receipt_id=NULL,finished_at=NULL WHERE id=:id
+                    UPDATE helio_transfer_schedule_jobs SET state='pending',receipt_id=NULL,finished_at=NULL WHERE id=:id
                 """, {"id": next_id})
                 inconsistent = await client.put(next_action, json=next_request)
                 self.assertEqual(inconsistent.json()["detail"]["code"], "job_terminal")
@@ -2367,7 +2367,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 scheduled = f"{RUNS}/{passing['id']}/schedule"
                 passing_path = f"{RUNS}/{passing['id']}/upstream-trigger"
                 await self.pg.execute("""
-                    INSERT INTO app.ontology_transfer_schedules
+                    INSERT INTO app.helio_transfer_schedules
                         (plan_id, generation, enabled, armed_by, armed_for_updated_at, updated_at)
                     VALUES (CAST(:plan AS uuid),1,true,:actor,CAST(:version AS timestamptz),NOW())
                 """, {"plan": UUID(passing["id"]), "actor": TEST_ACTOR,
@@ -2407,10 +2407,10 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 await commit(first)
                 wall = slot - timedelta(seconds=35)
                 self.assertEqual(await collect(), [])
-                self.assertEqual(await self.pg.fetch_all("SELECT event_ids FROM ontology_transfer_upstream_mixed_slots"), [])
+                self.assertEqual(await self.pg.fetch_all("SELECT event_ids FROM helio_transfer_upstream_mixed_slots"), [])
                 await commit(second)
                 self.assertEqual(await collect(), [])
-                pre = await self.pg.fetch_all("SELECT observed_at, event_ids FROM ontology_transfer_upstream_mixed_slots")
+                pre = await self.pg.fetch_all("SELECT observed_at, event_ids FROM helio_transfer_upstream_mixed_slots")
                 self.assertEqual(len(pre), 2)
                 self.assertTrue(all(row["observed_at"] == wall and len(row["event_ids"]) == 2 for row in pre))
                 self.assertEqual((await client.get(passing_path + "/slots")).json(), [])
@@ -2433,13 +2433,13 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 admitted = UUID(captured[0]["jobId"])
                 expired = next(identity for identity in job_ids if identity != admitted)
                 await self.pg.execute("""
-                    UPDATE ontology_transfer_upstream_mixed_slots SET decided_at=decided_at + INTERVAL '1 second'
+                    UPDATE helio_transfer_upstream_mixed_slots SET decided_at=decided_at + INTERVAL '1 second'
                     WHERE job_id=:job
                 """, {"job": admitted})
                 self.assertEqual((await client.get(passing_path + "/jobs")).json(), [])
                 self.assertEqual((await client.get(passing_path + "/slots")).json(), [])
                 await self.pg.execute("""
-                    UPDATE ontology_transfer_upstream_mixed_slots SET decided_at=:decision WHERE job_id=:job
+                    UPDATE helio_transfer_upstream_mixed_slots SET decided_at=:decision WHERE job_id=:job
                 """, {"job": admitted, "decision": datetime.fromisoformat(captured[0]["decidedAt"])})
                 with patch.object(settings, "TRANSFER_SANDBOX_MIXED_UPSTREAM_ENABLED", False):
                     self.assertEqual(await execute(admitted), "disabled")
@@ -2523,9 +2523,9 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                     if stale:
                         params = {"receipt": UUID(receipt)}
                         async with self.pg.session() as session:
-                            await session.execute(text("UPDATE ontology_transfer_runs SET recorded_at=recorded_at - "
+                            await session.execute(text("UPDATE helio_transfer_runs SET recorded_at=recorded_at - "
                                                        "interval '6 minutes' WHERE id=:receipt"), params)
-                            await session.execute(text("UPDATE ontology_transfer_commit_events SET recorded_at=recorded_at - "
+                            await session.execute(text("UPDATE helio_transfer_commit_events SET recorded_at=recorded_at - "
                                                        "interval '6 minutes' WHERE parent_receipt_id=:receipt"), params)
                     return receipt
 
@@ -2594,8 +2594,8 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 adversarial, = await collect()
                 async with self.pg.session() as session:
                     await session.execute(text("""
-                        UPDATE ontology_transfer_upstream_job_events AS link SET event_id=e.id
-                        FROM ontology_transfer_commit_events AS e, ontology_transfer_upstream_jobs AS job
+                        UPDATE helio_transfer_upstream_job_events AS link SET event_id=e.id
+                        FROM helio_transfer_commit_events AS e, helio_transfer_upstream_jobs AS job
                         WHERE link.job_id=:job AND job.id=link.job_id AND link.event_id<>job.event_id
                           AND e.parent_receipt_id=:replacement
                     """), {"job": adversarial, "replacement": UUID(replacement)})
@@ -2684,14 +2684,14 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(fresh["state"], "current", fresh)
                 self.assertEqual(fresh["current"]["estimatedRows"], "3")
                 await self.pg.execute(
-                    "INSERT INTO app.ontology_objects VALUES ('ts_transfer_sandbox','stats_target',true,'hidden')",
+                    "INSERT INTO app.helio_objects VALUES ('ts_transfer_sandbox','stats_target',true,'hidden')",
                 )
                 self.assertEqual((await tick(7))["checked"], 1)
                 hidden = (await client.get(route)).json()
                 self.assertFalse(hidden["available"])
                 self.assertIsNone(hidden["current"])
                 self.assertIsNone(hidden["historical"])
-                await self.pg.execute("DELETE FROM app.ontology_objects WHERE table_name='stats_target'")
+                await self.pg.execute("DELETE FROM app.helio_objects WHERE table_name='stats_target'")
 
                 await self.pg.execute("TRUNCATE ts_transfer_sandbox.stats_target")
                 rewritten = (await client.get(route)).json()
@@ -2761,7 +2761,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
             ):
                 await session.execute(text(sql))
             await session.execute(text("""INSERT INTO public."user" VALUES (:id, 'ENABLE', true)"""), {"id": TEST_ACTOR})
-        self.addAsyncCleanup(self.pg.execute, "DROP TABLE app.ontology_asset_weekly_job_quality")
+        self.addAsyncCleanup(self.pg.execute, "DROP TABLE app.helio_asset_weekly_job_quality")
         self.addAsyncCleanup(self.pg.execute, "DROP TYPE public.statustypes")
         self.addAsyncCleanup(self.pg.execute, 'DROP TABLE public."user"')
         slot = datetime.now(timezone.utc).replace(second=0, microsecond=0) - timedelta(minutes=1)
@@ -2826,7 +2826,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 async with self.pg.session() as session:
                     self.assertEqual(len(await collect_due_transfer_jobs(session, now=now)), 3)
                 jobs = {str(row["plan_id"]): row["id"] for row in await self.pg.fetch_all(
-                    "SELECT plan_id,id FROM ontology_transfer_schedule_jobs",
+                    "SELECT plan_id,id FROM helio_transfer_schedule_jobs",
                 )}
                 for table, plan in plans.items():
                     with patch.object(settings, "TRANSFER_SANDBOX_SCHEDULED_OBSERVED_LINEAGE_ENABLED", table != "evid_legacy"):
@@ -2868,11 +2868,11 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 now += timedelta(minutes=3)
                 self.assertEqual((await evidence("evid_good")).json(), missing.json())
                 now = snapshot
-                await self.pg.execute("INSERT INTO app.ontology_objects VALUES "
+                await self.pg.execute("INSERT INTO app.helio_objects VALUES "
                                       "('ts_transfer_sandbox','evid_source',true,'hidden')")
                 self.assertEqual((await evidence("evid_good")).json(), missing.json())
                 self.assertEqual((await evidence("evid_bad")).json(), missing.json())
-                await self.pg.execute("DELETE FROM app.ontology_objects WHERE table_name='evid_source'")
+                await self.pg.execute("DELETE FROM app.helio_objects WHERE table_name='evid_source'")
                 await self.pg.execute("TRUNCATE ts_transfer_sandbox.evid_good")
                 self.assertEqual((await evidence("evid_good")).json(), missing.json())
                 await self.pg.execute("TRUNCATE ts_transfer_sandbox.evid_bad")
@@ -2900,7 +2900,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
             await session.execute(text("""
                 CREATE FUNCTION ts_transfer_sandbox.reject_week_proof() RETURNS trigger LANGUAGE plpgsql AS $$
                 BEGIN
-                    IF EXISTS (SELECT 1 FROM app.ontology_transfer_attempts
+                    IF EXISTS (SELECT 1 FROM app.helio_transfer_attempts
                                WHERE id=NEW.attempt_id AND target_table='week_audit_fail') THEN
                         RAISE EXCEPTION 'isolated proof ledger fault';
                     END IF;
@@ -2908,7 +2908,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 END $$
             """))
             await session.execute(text("""
-                CREATE TRIGGER reject_week_proof BEFORE INSERT ON app.ontology_transfer_schedule_target_rejections
+                CREATE TRIGGER reject_week_proof BEFORE INSERT ON app.helio_transfer_schedule_target_rejections
                 FOR EACH ROW EXECUTE FUNCTION ts_transfer_sandbox.reject_week_proof()
             """))
         self.addAsyncCleanup(self.pg.execute, "DROP TYPE public.statustypes")
@@ -2957,7 +2957,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                     due = await collect_due_transfer_jobs(session, now=utc)
                 self.assertEqual(len(due), 5)
                 jobs = {str(row["plan_id"]): row["id"] for row in await self.pg.fetch_all(
-                    "SELECT id, plan_id FROM ontology_transfer_schedule_jobs",
+                    "SELECT id, plan_id FROM helio_transfer_schedule_jobs",
                 )}
 
                 async def execute(target):
@@ -2977,9 +2977,9 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                         a.plan_updated_at, a.request_id, a.schedule_job_id, a.target_table,
                         j.id AS job_id, j.state, a.finished_at AS attempted, j.finished_at AS finished,
                         pg_catalog.pg_relation_filenode(proof.target_oid::oid)::bigint AS actual_target
-                    FROM ontology_transfer_schedule_target_rejections proof
-                    JOIN ontology_transfer_attempts a ON a.id=proof.attempt_id
-                    JOIN ontology_transfer_schedule_jobs j ON j.id=proof.job_id
+                    FROM helio_transfer_schedule_target_rejections proof
+                    JOIN helio_transfer_attempts a ON a.id=proof.attempt_id
+                    JOIN helio_transfer_schedule_jobs j ON j.id=proof.job_id
                 """)
                 self.assertEqual((proof["code"], proof["scope_trigger"], proof["target_table"]),
                                  ("target_constraint", "week_utc", "week_proven"))
@@ -2990,7 +2990,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((proof["status"], proof["state"]), ("rejected", "rejected"))
                 self.assertEqual(proof["attempted"], proof["finished"])
                 self.assertTrue(slot <= proof["finished"] < slot + timedelta(minutes=5))
-                self.assertEqual(await self.pg.fetch_all("SELECT id FROM ontology_transfer_runs"), [])
+                self.assertEqual(await self.pg.fetch_all("SELECT id FROM helio_transfer_runs"), [])
                 for table in plans:
                     rows = await self.pg.fetch_all(f"SELECT id FROM ts_transfer_sandbox.{table}")
                     self.assertEqual([row["id"] for row in rows], [3])
@@ -3078,7 +3078,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 broken, = await collect(next_slot)
                 self.assertEqual(await worker(broken, next_slot), "rejected")
                 evidence = await self.pg.fetch_one("""
-                    SELECT code FROM ontology_transfer_schedule_target_rejections WHERE job_id=:id
+                    SELECT code FROM helio_transfer_schedule_target_rejections WHERE job_id=:id
                 """, {"id": broken})
                 self.assertEqual(evidence["code"], "target_constraint")
                 self.assertEqual((await tick(clock))["checked"], 1)

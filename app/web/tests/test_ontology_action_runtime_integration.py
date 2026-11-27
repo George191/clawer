@@ -64,18 +64,18 @@ async def runtime():
                         "team",
                         "invite_codes",
                         "team_user_join",
-                        "ontology_registry_definitions",
-                        "ontology_runtime_records",
-                        "ontology_transactions",
-                        "ontology_action_events",
-                        "ontology_link_types",
+                        "helio_registry_definitions",
+                        "helio_runtime_records",
+                        "helio_transactions",
+                        "helio_action_events",
+                        "helio_link_types",
                         OntologyRevisionGrant.__tablename__,
                         OntologyRevisionProposal.__tablename__,
                         OntologyRevisionSnapshot.__tablename__,
-                        "ontology_markings",
-                        "ontology_marking_changes",
-                        "ontology_links",
-                        "ontology_removed_links",
+                        "helio_markings",
+                        "helio_marking_changes",
+                        "helio_links",
+                        "helio_removed_links",
                     )
                 ],
             )
@@ -197,7 +197,7 @@ async def test_create_classifies_business_duplicates_and_rolls_back_an_audit_fai
             await create("first")
         assert duplicate.value.status_code == 409
         await session.execute(
-            text("CREATE UNIQUE INDEX inject_audit_failure ON ontology_action_events (actor_id)")
+            text("CREATE UNIQUE INDEX inject_audit_failure ON helio_action_events (actor_id)")
         )
         await session.commit()
         with pytest.raises(IntegrityError):

@@ -38,7 +38,7 @@ async def register(source: str, data_type: str, *, apply: bool = False) -> dict:
         params = {"schema_name": mongo.database, "table_name": collection, "data_type": data_type}
         async with metadata.locked_transaction(f"ontology:rds:current:{mongo.database}:{collection}") as session:
             existing = (await session.execute(text("""
-                SELECT id, data_type, is_active, ddl_sql FROM app.ontology_objects
+                SELECT id, data_type, is_active, ddl_sql FROM app.helio_objects
                 WHERE layer='rds' AND table_role='current' AND schema_name=:schema_name AND table_name=:table_name
                 FOR UPDATE
             """), params)).mappings().first()
@@ -47,7 +47,7 @@ async def register(source: str, data_type: str, *, apply: bool = False) -> dict:
             object_id = existing["id"] if existing else None
             if apply:
                 result = await session.execute(text("""
-                    INSERT INTO app.ontology_objects
+                    INSERT INTO app.helio_objects
                         (layer, table_role, schema_name, table_name, data_type, data_type_source,
                          provenance, resource_group)
                     VALUES ('rds', 'current', :schema_name, :table_name, :data_type, 'registration',

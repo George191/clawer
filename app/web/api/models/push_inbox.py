@@ -67,7 +67,7 @@ class PushInboxIntakeChange(BaseModel):
 
 
 class PushInboxStateRow(SQLModel, table=True):
-    __tablename__ = "ontology_push_inbox_state"
+    __tablename__ = "helio_push_inbox_state"
     __table_args__ = (
         CheckConstraint("singleton IS TRUE AND accepted_count BETWEEN 0 AND 1000 AND window_accepted BETWEEN 0 AND 20 "
                         "AND (window_epoch IS NOT NULL OR window_accepted = 0)",
@@ -82,7 +82,7 @@ class PushInboxStateRow(SQLModel, table=True):
 
 
 class PushInboxReceiptRow(SQLModel, table=True):
-    __tablename__ = "ontology_push_inbox_receipts"
+    __tablename__ = "helio_push_inbox_receipts"
     __table_args__ = (
         CheckConstraint("ordinal BETWEEN 1 AND 1000 AND schema_version = 1 AND entity_id > 0 "
                         "AND body_digest ~ '^[0-9a-f]{64}$' AND fixture_value ~ '^fixture-[a-z0-9-]{1,48}$'",

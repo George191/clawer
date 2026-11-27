@@ -73,7 +73,7 @@ class MetadataPg:
 
     async def fetch_one(self, sql, params):
         if sql.startswith("SELECT to_regclass"):
-            return {"table_name": "app.ontology_objects"}
+            return {"table_name": "app.helio_objects"}
         result = await self.execute(sql, params)
         return result.first()
 
@@ -100,7 +100,7 @@ class MetadataPg:
             return Result([row] if row else [])
         if sql.startswith("SELECT a.attname"):
             return Result(self.columns.get(params["oid"], []))
-        if sql.startswith("SELECT") and "FROM ontology_objects" in sql:
+        if sql.startswith("SELECT") and "FROM helio_objects" in sql:
             rows = list(self.objects.values())
             schema, table = params.get("schema", params.get("schema_name")), params.get("table", params.get("table_name"))
             if schema is not None:
@@ -117,7 +117,7 @@ class MetadataPg:
             if params.get("data_type"):
                 rows = [row for row in rows if row["data_type"] == params["data_type"]]
             return Result(rows)
-        if sql.startswith("INSERT INTO ontology_objects"):
+        if sql.startswith("INSERT INTO helio_objects"):
             schema, table = params.get("schema", params.get("schema_name")), params.get("table", params.get("table_name"))
             identity = (schema, table)
             previous = self.objects.get(identity, {})
@@ -129,14 +129,14 @@ class MetadataPg:
                 record["description_source"] = previous.get("description_source", "not_configured")
             self.objects[identity] = record
             return Result(scalar=record["id"])
-        if sql.startswith("DELETE FROM ontology_object_properties"):
+        if sql.startswith("DELETE FROM helio_object_properties"):
             self.properties[params["object_id"]] = []
-        elif sql.startswith("INSERT INTO ontology_object_properties"):
+        elif sql.startswith("INSERT INTO helio_object_properties"):
             for row in params:
                 self.properties.setdefault(row["object_id"], []).append(deepcopy(row))
                 if self.fail_properties:
                     raise RuntimeError("Fixture rejects property insertion")
-        elif sql.startswith("UPDATE ontology_objects"):
+        elif sql.startswith("UPDATE helio_objects"):
             for record in self.objects.values():
                 if record["id"] == params["id"]:
                     record.update(ddl_sql=params["ddl_sql"], version=params["version"],
@@ -429,7 +429,7 @@ class OntologyMetadataTests(unittest.IsolatedAsyncioTestCase):
                 sql = str(query)
                 if "SELECT id, layer" in sql:
                     return Result(rows)
-                if "UPDATE app.ontology_objects" in sql:
+                if "UPDATE app.helio_objects" in sql:
                     updates.append(params)
                     return Result(scalar=params["id"])
                 return Result()
@@ -454,7 +454,7 @@ class OntologyMetadataTests(unittest.IsolatedAsyncioTestCase):
 
     def test_new_ddl_has_unique_physical_identity_and_valid_group_constraint(self):
         self.assertIn("(layer, table_role, schema_name, table_name)", "\n".join(ontology.ONTOLOGY_INDEX_DDL_STATEMENTS))
-        self.assertIn("REFERENCES app.ontology_objects(id) ON DELETE CASCADE", ontology.ONTOLOGY_PROPERTIES_DDL)
+        self.assertIn("REFERENCES app.helio_objects(id) ON DELETE CASCADE", ontology.ONTOLOGY_PROPERTIES_DDL)
         self.assertIn("ontology_objects_resource_group_check", ontology.ONTOLOGY_OBJECTS_DDL)
         self.assertIn("CHECK (resource_group IN", "\n".join(ontology.ONTOLOGY_OBJECT_COLUMNS_ADD_STATEMENTS))
         self.assertEqual({ontology.resource_group(layer) for layer in ["ods", "task", "ads", "unknown"]}, {"ingestion", "processing", "serving", "other"})

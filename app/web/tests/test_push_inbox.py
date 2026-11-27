@@ -164,7 +164,7 @@ class PushInboxPostgres(IsolatedAsyncioTestCase):
         async with self.engine.begin() as conn:
             self.assertEqual(await conn.scalar(text("SELECT current_database()")), _DB)
             await conn.run_sync(provision)
-            await conn.execute(text("UPDATE ontology_push_inbox_state SET database_marker=:marker"), {"marker": self.marker})
+            await conn.execute(text("UPDATE helio_push_inbox_state SET database_marker=:marker"), {"marker": self.marker})
         self.addAsyncCleanup(self._cleanup)
         self.key = Ed25519PrivateKey.generate()
         for setting, value in (
@@ -180,7 +180,7 @@ class PushInboxPostgres(IsolatedAsyncioTestCase):
 
     async def _cleanup(self):
         async with self.engine.begin() as conn:
-            await conn.execute(text("DROP TABLE ontology_push_inbox_receipts, ontology_push_inbox_state"))
+            await conn.execute(text("DROP TABLE helio_push_inbox_receipts, helio_push_inbox_state"))
 
     async def _admin_session(self):
         async with self.session() as session:
@@ -220,7 +220,7 @@ class PushInboxPostgres(IsolatedAsyncioTestCase):
             self.assertNotIn(str(identity), str(status))
             async with self.engine.connect() as conn:
                 stored = (await conn.execute(text("""
-                    SELECT entity_id, fixture_value, body_digest, schema_version FROM ontology_push_inbox_receipts
+                    SELECT entity_id, fixture_value, body_digest, schema_version FROM helio_push_inbox_receipts
                 """))).one()
                 self.assertEqual(tuple(stored), (2**63-1, "fixture-a", sha256(_BODY).hexdigest(), 1))
 
@@ -271,7 +271,7 @@ class PushInboxPostgres(IsolatedAsyncioTestCase):
             self.assertEqual((await admin.get(_ADMIN)).json()["acceptedCount"], 2)
             async with self.engine.connect() as conn:
                 values = (await conn.execute(text(
-                    "SELECT body_digest FROM app.ontology_push_inbox_receipts ORDER BY ordinal"
+                    "SELECT body_digest FROM app.helio_push_inbox_receipts ORDER BY ordinal"
                 ))).scalars().all()
                 self.assertEqual(values, [sha256(_BODY).hexdigest(),
                                           sha256(b"synthetic-push-secondary-receipt-v1\0" + sha256(_BODY).digest()).hexdigest()])
@@ -284,7 +284,7 @@ class PushInboxPostgres(IsolatedAsyncioTestCase):
                 BEGIN RAISE EXCEPTION 'fixture-only test fault'; END; $$
             """))
             await conn.execute(text("""
-                CREATE TRIGGER fail_synthetic_inbox BEFORE INSERT ON ontology_push_inbox_receipts
+                CREATE TRIGGER fail_synthetic_inbox BEFORE INSERT ON helio_push_inbox_receipts
                 FOR EACH ROW EXECUTE FUNCTION public.fail_synthetic_inbox()
             """))
         self.addAsyncCleanup(self._remove_fault_fn)
@@ -294,8 +294,8 @@ class PushInboxPostgres(IsolatedAsyncioTestCase):
             self.assertEqual(failed.status_code, 503)
             self.assertEqual((await admin.get(_ADMIN)).json()["acceptedCount"], 0)
             async with self.engine.begin() as conn:
-                self.assertEqual(await conn.scalar(text("SELECT window_accepted FROM ontology_push_inbox_state")), 0)
-                await conn.execute(text("DROP TRIGGER fail_synthetic_inbox ON ontology_push_inbox_receipts"))
+                self.assertEqual(await conn.scalar(text("SELECT window_accepted FROM helio_push_inbox_state")), 0)
+                await conn.execute(text("DROP TRIGGER fail_synthetic_inbox ON helio_push_inbox_receipts"))
 
             @asynccontextmanager
             async def lost_ack():
@@ -327,7 +327,7 @@ class PushInboxPostgres(IsolatedAsyncioTestCase):
             moment = datetime.now(timezone.utc)
             async with self.engine.begin() as conn:
                 await conn.execute(text("""
-                    UPDATE ontology_push_inbox_state SET window_epoch=:epoch,window_accepted=20
+                    UPDATE helio_push_inbox_state SET window_epoch=:epoch,window_accepted=20
                 """), {"epoch": int(moment.timestamp()) // 60})
             async with self._producer(fixed_database_clock) as fixed:
                 result = await fixed.post(PATH, headers=headers(self.key, _BODY), content=_BODY)
@@ -343,12 +343,12 @@ class PushInboxPostgres(IsolatedAsyncioTestCase):
             self.assertEqual(first.status_code, 201, first.text)
             async with self.engine.begin() as conn:
                 await conn.execute(text("""
-                    INSERT INTO ontology_push_inbox_receipts
+                    INSERT INTO helio_push_inbox_receipts
                         (id,request_id,ordinal,body_digest,schema_version,entity_id,fixture_value,accepted_at)
                     SELECT gen_random_uuid(),gen_random_uuid(),n,repeat('a',64),1,n,'fixture-seeded',clock_timestamp()
                     FROM generate_series(2,1000) AS n
                 """))
-                await conn.execute(text("UPDATE ontology_push_inbox_state SET accepted_count=1000"))
+                await conn.execute(text("UPDATE helio_push_inbox_state SET accepted_count=1000"))
             ready = (await admin.get(_ADMIN)).json()
             self.assertEqual((ready["state"], ready["acceptedCount"], len(ready["recent"])), ("full", 1000, 10))
             self.assertEqual([item["ordinal"] for item in ready["recent"]], [str(n) for n in range(1000, 990, -1)])
@@ -399,7 +399,7 @@ class PushInboxPostgres(IsolatedAsyncioTestCase):
                 # Hold the same durable singleton lock as acceptance. A control change
                 # cannot report success until an in-flight lock holder has settled.
                 async with self.engine.begin() as owner:
-                    await owner.execute(text("SELECT singleton FROM ontology_push_inbox_state FOR UPDATE"))
+                    await owner.execute(text("SELECT singleton FROM helio_push_inbox_state FOR UPDATE"))
                     self.assertEqual((await admin.put(_INTAKE, json=desired)).status_code, 503)
                     self.assertEqual((await admin.get(_ADMIN)).json()["intakeGeneration"], 0)
 
@@ -415,7 +415,7 @@ class PushInboxPostgres(IsolatedAsyncioTestCase):
 
                 async with self.engine.connect() as conn:
                     clock = (await conn.execute(text(
-                        "SELECT accepted_count, window_epoch, window_accepted FROM ontology_push_inbox_state"))).one()
+                        "SELECT accepted_count, window_epoch, window_accepted FROM helio_push_inbox_state"))).one()
                 with patch.object(settings, "PUSH_INBOX_SANDBOX_INTAKE_CONTROL_ENABLED", False):
                     status = (await admin.get(_ADMIN)).json()
                     self.assertEqual(status["state"], "paused")
@@ -432,17 +432,17 @@ class PushInboxPostgres(IsolatedAsyncioTestCase):
                 # new fields still rolls that whole transaction back while paused.
                 with self.assertRaises(DBAPIError):
                     async with self.engine.begin() as conn:
-                        await conn.execute(text("SELECT singleton FROM ontology_push_inbox_state FOR UPDATE"))
+                        await conn.execute(text("SELECT singleton FROM helio_push_inbox_state FOR UPDATE"))
                         await conn.execute(text("""
-                            INSERT INTO ontology_push_inbox_receipts
+                            INSERT INTO helio_push_inbox_receipts
                             (id,request_id,ordinal,body_digest,schema_version,entity_id,fixture_value,accepted_at)
                             VALUES (gen_random_uuid(),gen_random_uuid(),2,repeat('a',64),1,1,'fixture-legacy',clock_timestamp())
                         """))
-                        await conn.execute(text("UPDATE ontology_push_inbox_state SET accepted_count=2"))
+                        await conn.execute(text("UPDATE helio_push_inbox_state SET accepted_count=2"))
                 async with self.engine.connect() as conn:
-                    self.assertEqual(await conn.scalar(text("SELECT count(*) FROM ontology_push_inbox_receipts")), 1)
+                    self.assertEqual(await conn.scalar(text("SELECT count(*) FROM helio_push_inbox_receipts")), 1)
                     self.assertEqual((await conn.execute(text(
-                        "SELECT accepted_count, window_epoch, window_accepted FROM ontology_push_inbox_state"))).one(), clock)
+                        "SELECT accepted_count, window_epoch, window_accepted FROM helio_push_inbox_state"))).one(), clock)
 
                 applied = await admin.post(_APPLY + "/runs", json={
                     "requestId": str(uuid4()), "expectedGeneration": 1,
@@ -460,7 +460,7 @@ class PushInboxPostgres(IsolatedAsyncioTestCase):
             async with self.engine.begin() as conn:
                 await conn.run_sync(ddl, migration.downgrade)
         async with self.engine.connect() as conn:
-            self.assertEqual(await conn.scalar(text("SELECT intake_generation FROM ontology_push_inbox_state")), 2)
+            self.assertEqual(await conn.scalar(text("SELECT intake_generation FROM helio_push_inbox_state")), 2)
 
     async def _prepare_apply_fixture(self):
         migration = importlib.import_module("app.web.alembic.versions.af02d96bc517_ontology_push_inbox_apply")
@@ -481,7 +481,7 @@ class PushInboxPostgres(IsolatedAsyncioTestCase):
 
         async def cleanup():
             async with self.engine.begin() as conn:
-                await conn.execute(text("DROP TABLE ontology_push_inbox_apply_receipts, ontology_push_inbox_apply_binding"))
+                await conn.execute(text("DROP TABLE helio_push_inbox_apply_receipts, helio_push_inbox_apply_binding"))
                 await conn.execute(text("DROP SCHEMA ts_push_inbox_sandbox CASCADE"))
 
         self.addAsyncCleanup(cleanup)
@@ -532,7 +532,7 @@ class PushInboxPostgres(IsolatedAsyncioTestCase):
                         BEGIN RAISE EXCEPTION 'test-only apply receipt fault'; END; $$
                     """))
                     await conn.execute(text("""
-                        CREATE TRIGGER reject_apply_result BEFORE INSERT ON ontology_push_inbox_apply_receipts
+                        CREATE TRIGGER reject_apply_result BEFORE INSERT ON helio_push_inbox_apply_receipts
                         FOR EACH ROW EXECUTE FUNCTION ts_push_inbox_sandbox.reject_apply_result()
                     """))
                 original = request(0, 2)
@@ -541,7 +541,7 @@ class PushInboxPostgres(IsolatedAsyncioTestCase):
                 self.assertEqual((await admin.get(_APPLY)).json()["appliedThrough"], "0")
                 async with self.engine.begin() as conn:
                     self.assertEqual(await conn.scalar(text("SELECT count(*) FROM ts_push_inbox_sandbox.applied_fixture")), 0)
-                    await conn.execute(text("DROP TRIGGER reject_apply_result ON ontology_push_inbox_apply_receipts"))
+                    await conn.execute(text("DROP TRIGGER reject_apply_result ON helio_push_inbox_apply_receipts"))
                 applied = await admin.post(_APPLY + "/runs", json=original)
                 self.assertEqual(applied.status_code, 200, applied.text)
                 self.assertEqual((applied.json()["status"], applied.json()["eventsApplied"]), ("applied", 2))
@@ -590,14 +590,14 @@ class PushInboxPostgres(IsolatedAsyncioTestCase):
                 contradictory_id = uuid4()
                 async with self.engine.begin() as conn:
                     await conn.execute(text("""
-                        INSERT INTO ontology_push_inbox_apply_receipts
+                        INSERT INTO helio_push_inbox_apply_receipts
                         (id,request_id,database_marker,generation,outcome,from_exclusive,through_inclusive,
                          reviewed_accepted_through,events_applied,recorded_by,recorded_at)
                         VALUES (:id,:request,:marker,1,'applied',0,1,1,1,:actor,clock_timestamp())
                     """), {"id": contradictory_id, "request": uuid4(), "marker": uuid4(), "actor": uuid4()})
                 self.assertEqual((await admin.post(route, json=body)).json(), absent.json())
                 async with self.engine.begin() as conn:
-                    await conn.execute(text("DELETE FROM ontology_push_inbox_apply_receipts WHERE id=:id"),
+                    await conn.execute(text("DELETE FROM helio_push_inbox_apply_receipts WHERE id=:id"),
                                        {"id": contradictory_id})
                 self.assertEqual(
                     (await admin.post(route, json={"receiptId": str(uuid4())})).json(), absent.json(),
@@ -635,11 +635,11 @@ class PushInboxPostgres(IsolatedAsyncioTestCase):
                 async with self.engine.begin() as conn:
                     await conn.execute(text("UPDATE ts_push_inbox_sandbox.applied_fixture SET acceptance_id=:right"),
                                        {"right": receipt["id"]})
-                    await conn.execute(text("UPDATE ontology_push_inbox_apply_receipts SET database_marker=:wrong"),
+                    await conn.execute(text("UPDATE helio_push_inbox_apply_receipts SET database_marker=:wrong"),
                                        {"wrong": uuid4()})
                 self.assertEqual((await admin.post(route, json=body)).json(), absent.json())
                 async with self.engine.begin() as conn:
-                    await conn.execute(text("UPDATE ontology_push_inbox_apply_receipts SET database_marker=:right"),
+                    await conn.execute(text("UPDATE helio_push_inbox_apply_receipts SET database_marker=:right"),
                                        {"right": self.marker})
                     await conn.execute(text("TRUNCATE ts_push_inbox_sandbox.applied_fixture"))
                 self.assertEqual((await admin.post(route, json=body)).json(), absent.json())
@@ -650,12 +650,12 @@ class PushInboxPostgres(IsolatedAsyncioTestCase):
         await self._prepare_apply_fixture()
         async with self.engine.begin() as conn:
             await conn.execute(text("""
-                INSERT INTO ontology_push_inbox_receipts
+                INSERT INTO helio_push_inbox_receipts
                     (id,request_id,ordinal,body_digest,schema_version,entity_id,fixture_value,accepted_at)
                 SELECT gen_random_uuid(),gen_random_uuid(),n,repeat('a',64),1,n,'fixture-reviewed',clock_timestamp()
                 FROM generate_series(1,53) AS n
             """))
-            await conn.execute(text("UPDATE ontology_push_inbox_state SET accepted_count=53"))
+            await conn.execute(text("UPDATE helio_push_inbox_state SET accepted_count=53"))
 
         async def lose_ack(session, request, actor):
             await apply_push_range(session, request, actor)
@@ -676,14 +676,14 @@ class PushInboxPostgres(IsolatedAsyncioTestCase):
                                  (50, "50", True))
                 self.assertEqual((await admin.post(_APPLY + "/runs", json=body)).json(), first)
                 async with self.engine.begin() as conn:
-                    await conn.execute(text("DELETE FROM ontology_push_inbox_receipts WHERE ordinal=52"))
+                    await conn.execute(text("DELETE FROM helio_push_inbox_receipts WHERE ordinal=52"))
                 gap = await admin.post(_APPLY + "/runs", json={**body, "requestId": str(uuid4()),
                                                                "expectedAppliedThrough": "50"})
                 self.assertEqual(gap.status_code, 409, gap.text)
                 self.assertEqual((await admin.get(_APPLY)).json()["appliedThrough"], "50")
                 async with self.engine.begin() as conn:
                     self.assertEqual(await conn.scalar(text("SELECT count(*) FROM ts_push_inbox_sandbox.applied_fixture")), 50)
-                    await conn.execute(text("TRUNCATE ontology_push_inbox_receipts"))
+                    await conn.execute(text("TRUNCATE helio_push_inbox_receipts"))
                 archived = (await admin.get(_APPLY)).json()
                 self.assertEqual((archived["state"], archived["canReplay"]), ("blocked", True))
                 self.assertEqual((await admin.post(_APPLY + "/runs", json=body)).json(), first)

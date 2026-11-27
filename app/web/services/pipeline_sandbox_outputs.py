@@ -105,7 +105,7 @@ async def _stored_rows(session: AsyncSession, output: PipelineSandboxOutputRow) 
         WITH bounded AS (
             SELECT position, row_values, pg_catalog.octet_length(pg_catalog.convert_to(row_values[1], 'UTF8'))
                 + coalesce(pg_catalog.octet_length(pg_catalog.convert_to(row_values[2], 'UTF8')), 0) AS bytes
-            FROM app.ontology_pipeline_sandbox_output_rows WHERE output_id = :identity
+            FROM app.helio_pipeline_sandbox_output_rows WHERE output_id = :identity
             ORDER BY position LIMIT :row_cap
         ), measured AS (
             SELECT *, sum(bytes) OVER () AS total_bytes FROM bounded

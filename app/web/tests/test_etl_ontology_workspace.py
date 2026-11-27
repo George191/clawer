@@ -64,14 +64,14 @@ class TransactionPg:
             return Result()
         if sql.startswith("SELECT 1 FROM pg_namespace"):
             return Result(scalar=1 if params["schema"] in self.state["schemas"] else None)
-        if sql.startswith("SELECT 1 FROM app.ontology_objects"):
+        if sql.startswith("SELECT 1 FROM app.helio_objects"):
             return Result(scalar=1 if any(schema == params["schema"] and row.get("ddl_sql")
                 for (schema, _table), row in self.state["objects"].items()) else None)
         if sql.startswith("SELECT to_regclass"):
-            return Result(scalar="ontology_" in str(params))
+            return Result(scalar="helio_" in str(params))
         if sql.startswith("SELECT pg_advisory_xact_lock"):
             return Result()
-        if sql.startswith("SELECT p.name FROM app.ontology_objects"):
+        if sql.startswith("SELECT p.name FROM app.helio_objects"):
             identity = (params["schema"], params["table"])
             metadata = self.state["objects"].get(identity)
             fields = self.state["properties"].get(identity, []) if metadata and metadata.get("is_active") else []
@@ -90,7 +90,7 @@ class TransactionPg:
             self.state["tables"].add(identity)
         elif sql.startswith(("CREATE INDEX", "CREATE UNIQUE INDEX")):
             self.state["indexes"].add(re.search(r'INDEX "([a-z_]+)"', sql).group(1))
-        elif sql.startswith("INSERT INTO app.ontology_object_relations"):
+        elif sql.startswith("INSERT INTO app.helio_object_relations"):
             self.state["relations"].append(deepcopy(params))
         elif sql.startswith("COMMENT ON"):
             pass
@@ -102,20 +102,20 @@ class TransactionPg:
                                     for schema, table in self.state["tables"]}
         elif sql.startswith("DROP SCHEMA"):
             self.state["schemas"].remove(re.findall(r'"([a-z_]+)"', sql)[0])
-        elif sql.startswith("UPDATE app.ontology_objects"):
+        elif sql.startswith("UPDATE app.helio_objects"):
             self.state["objects"] = {(params["target"] if schema == params["schema"] else schema, table):
                 {**value, **{field: params[field] for field in ("layer", "table_role", "resource_group")}}
                 if schema == params["schema"] else value
                                      for (schema, table), value in self.state["objects"].items()}
-        elif sql.startswith("UPDATE app.ontology_object_relations"):
+        elif sql.startswith("UPDATE app.helio_object_relations"):
             side = "source_schema" if "SET source_schema" in sql else "target_schema"
             for row in self.state["relations"]:
                 if row[side] == params["schema"]:
                     row[side] = params["target"]
-        elif sql.startswith("DELETE FROM app.ontology_object_relations"):
+        elif sql.startswith("DELETE FROM app.helio_object_relations"):
             self.state["relations"] = [row for row in self.state["relations"]
                                        if params["schema"] not in (row["source_schema"], row["target_schema"])]
-        elif sql.startswith("DELETE FROM app.ontology_objects"):
+        elif sql.startswith("DELETE FROM app.helio_objects"):
             self.state["objects"] = {key: value for key, value in self.state["objects"].items()
                                      if key[0] != params["schema"]}
         else:
@@ -209,7 +209,7 @@ class OntologyWorkspaceTests(unittest.IsolatedAsyncioTestCase):
 
         async def fail_second_relation(statement, params=None):
             nonlocal inserts
-            if str(statement).startswith("INSERT INTO app.ontology_object_relations"):
+            if str(statement).startswith("INSERT INTO app.helio_object_relations"):
                 inserts += 1
                 if inserts == 2:
                     raise RuntimeError("Second relation rejected")
@@ -295,7 +295,7 @@ class OntologyWorkspaceTests(unittest.IsolatedAsyncioTestCase):
         result = await instance.rename_schema("custom", {"name": "renamed", "alias": "Business domain"})
         self.assertEqual(result["name"], "ts_renamed")
         self.assertNotIn("ts_custom", instance._pg.state["schemas"])
-        parameters = next(params for sql, params in instance._pg.calls if sql.startswith("UPDATE app.ontology_objects"))
+        parameters = next(params for sql, params in instance._pg.calls if sql.startswith("UPDATE app.helio_objects"))
         self.assertEqual(parameters, {"schema": "ts_custom", "target": "ts_renamed", "layer": "renamed",
             "table_role": "current", "resource_group": "other"})
         self.assertEqual(instance._pg.state["objects"], {("ts_renamed", "old"): {"id": 1,
@@ -338,7 +338,7 @@ class OntologyWorkspaceTests(unittest.IsolatedAsyncioTestCase):
     async def test_schema_rename_metadata_failure_restores_original_schema_and_rows(self):
         instance = workspace()
         before = deepcopy(instance._pg.state)
-        instance._pg.fail_on = "UPDATE app.ontology_object_relations"
+        instance._pg.fail_on = "UPDATE app.helio_object_relations"
         with self.assertRaisesRegex(RuntimeError, "transaction step"):
             await instance.rename_schema("custom", {"name": "renamed"})
         self.assertEqual(instance._pg.state, before)
@@ -356,7 +356,7 @@ class OntologyWorkspaceTests(unittest.IsolatedAsyncioTestCase):
     async def test_drop_metadata_failure_restores_schema_and_all_its_metadata(self):
         instance = workspace()
         before = deepcopy(instance._pg.state)
-        instance._pg.fail_on = "DELETE FROM app.ontology_object_relations"
+        instance._pg.fail_on = "DELETE FROM app.helio_object_relations"
         with self.assertRaisesRegex(RuntimeError, "transaction step"):
             await instance.delete_schema("custom")
         self.assertEqual(instance._pg.state, before)
@@ -379,7 +379,7 @@ class OntologyWorkspaceTests(unittest.IsolatedAsyncioTestCase):
     async def test_create_missing_ontology_returns_503_and_rolls_back_physical_table(self):
         instance = workspace()
         before = deepcopy(instance._pg.state)
-        failure = DBAPIError("SELECT * FROM app.ontology_objects", {}, MissingMetadata(), False)
+        failure = DBAPIError("SELECT * FROM app.helio_objects", {}, MissingMetadata(), False)
         with patch("app.web.services.etl_workspace.sync_object_metadata", new=AsyncMock(side_effect=failure)):
             with self.assertRaises(HTTPException) as error:
                 await instance.create_table("custom", PAYLOAD)

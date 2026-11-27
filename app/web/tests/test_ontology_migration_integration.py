@@ -39,7 +39,7 @@ class OntologyMigrationIntegration(unittest.IsolatedAsyncioTestCase):
             for schema in ("ts_meta", "ts_ods", "ts_custom"):
                 await session.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
                 await session.execute(text(f"CREATE SCHEMA {schema}"))
-            for table in ("ontology_object_properties", "ontology_object_relations", "ontology_objects"):
+            for table in ("helio_object_properties", "helio_object_relations", "helio_objects"):
                 await session.execute(text(f"DROP TABLE IF EXISTS public.{table} CASCADE"))
             await session.execute(text("""CREATE TABLE ts_meta.ddlregistry (
                 id BIGSERIAL PRIMARY KEY, layer TEXT NOT NULL, table_role TEXT NOT NULL DEFAULT 'current',
@@ -90,20 +90,20 @@ class OntologyMigrationIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(plan["applied"])
         self.assertEqual(plan["registered_objects"], 2)
         self.assertEqual(plan["physical_objects"], 6)
-        self.assertFalse(plan["installed"]["app.ontology_objects"])
+        self.assertFalse(plan["installed"]["app.helio_objects"])
         applied = await self.migration.migrate(self.pg, apply=True, catalog_pg=self.pg)
         self.assertTrue(applied["existing_registration_preserved"])
         self.assertTrue(applied["physical_property_counts_verified"])
-        actual = await self.pg.fetch_one("""SELECT 'app.ontology_objects'::regclass::oid AS oid,
+        actual = await self.pg.fetch_one("""SELECT 'app.helio_objects'::regclass::oid AS oid,
             to_regclass('ts_meta.ddlregistry') IS NULL AS old_removed,
             to_regclass('public.ddlregistry_id_seq') IS NULL AS old_sequence_removed""")
         self.assertEqual(actual["oid"], old["oid"])
         self.assertTrue(actual["old_removed"] and actual["old_sequence_removed"])
-        registered = await self.pg.fetch_all("SELECT version,checksum FROM app.ontology_objects WHERE version > 0 ORDER BY table_name")
+        registered = await self.pg.fetch_all("SELECT version,checksum FROM app.helio_objects WHERE version > 0 ORDER BY table_name")
         self.assertEqual(len(registered), 2)
         self.assertTrue(all(row["version"] == 7 and row["checksum"].startswith("preserved-") for row in registered))
-        properties = await self.pg.fetch_all("""SELECT p.* FROM app.ontology_object_properties p
-            JOIN app.ontology_objects o ON o.id=p.object_id
+        properties = await self.pg.fetch_all("""SELECT p.* FROM app.helio_object_properties p
+            JOIN app.helio_objects o ON o.id=p.object_id
             WHERE o.schema_name='ts_custom' AND o.table_name='people' ORDER BY ordinal_position""")
         self.assertEqual([row["name"] for row in properties], ["id", "name", "amount", "doubled", "created_at"])
         fields = {row["name"]: row for row in properties}
@@ -133,19 +133,19 @@ class OntologyMigrationIntegration(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(RuntimeError, "Deliberate"):
                 await self.migration.migrate(self.pg, apply=True, catalog_pg=self.pg)
         state = await self.pg.fetch_one("""SELECT to_regclass('ts_meta.ddlregistry') IS NOT NULL AS old_exists,
-            to_regclass('app.ontology_objects') IS NULL AS new_absent,
-            to_regclass('app.ontology_object_properties') IS NULL AS properties_absent""")
+            to_regclass('app.helio_objects') IS NULL AS new_absent,
+            to_regclass('app.helio_object_properties') IS NULL AS properties_absent""")
         self.assertTrue(all(state.values()))
         self.assertEqual((await self.pg.fetch_one("SELECT count(*) AS count FROM ts_meta.ddlregistry"))["count"], 2)
 
     async def test_restore_reapply_preserves_ids_versions_and_handles_old_bootstrap_duplicate_indexes(self):
         original_oid = (await self.pg.fetch_one("SELECT 'ts_meta.ddlregistry'::regclass::oid AS oid"))["oid"]
         await self.migration.migrate(self.pg, apply=True, catalog_pg=self.pg)
-        original = await self.pg.fetch_all(f"SELECT {self.migration.IDENTITY_COLUMNS} FROM app.ontology_objects ORDER BY id")
+        original = await self.pg.fetch_all(f"SELECT {self.migration.IDENTITY_COLUMNS} FROM app.helio_objects ORDER BY id")
         await self.migration.restore_registration(self.pg)
         restored_indexes = await self.pg.fetch_all("""SELECT c.relname AS name FROM pg_index i
             JOIN pg_class c ON c.oid=i.indexrelid WHERE i.indrelid='ts_meta.ddlregistry'::regclass""")
-        self.assertTrue(all("ontology_objects" not in row["name"] for row in restored_indexes))
+        self.assertTrue(all("helio_objects" not in row["name"] for row in restored_indexes))
         async with self.pg.session() as session:
             # Reproduce the former restore's new index name plus the old worker bootstrap's duplicate.
             await session.execute(text("ALTER INDEX ts_meta.uq_ddlregistry_table RENAME TO uq_ontology_objects_table"))
@@ -155,23 +155,23 @@ class OntologyMigrationIntegration(unittest.IsolatedAsyncioTestCase):
                 (layer,table_role,schema_name,table_name,version)"""))
             # Quoted identifiers can contain both a quote and the text USING; neither is SQL syntax here.
             unusual = 'idx_ddlregistry_" USING marker'
-            for name in (unusual, unusual.replace("ddlregistry", "ontology_objects")):
+            for name in (unusual, unusual.replace("ddlregistry", "helio_objects")):
                 await session.execute(text(f"CREATE INDEX {self.migration.identifier(name)} ON ts_meta.ddlregistry (updated_at DESC) WHERE is_active"))
         keep_oid = (await self.pg.fetch_one("SELECT 'ts_meta.uq_ontology_objects_table'::regclass::oid AS oid"))["oid"]
         result = await self.migration.migrate(self.pg, apply=True, catalog_pg=self.pg)
         self.assertTrue(result["existing_registration_preserved"])
-        actual = await self.pg.fetch_all(f"SELECT {self.migration.IDENTITY_COLUMNS} FROM app.ontology_objects ORDER BY id")
+        actual = await self.pg.fetch_all(f"SELECT {self.migration.IDENTITY_COLUMNS} FROM app.helio_objects ORDER BY id")
         self.assertEqual(actual, original)
-        self.assertEqual((await self.pg.fetch_one("SELECT 'app.ontology_objects'::regclass::oid AS oid"))["oid"], original_oid)
+        self.assertEqual((await self.pg.fetch_one("SELECT 'app.helio_objects'::regclass::oid AS oid"))["oid"], original_oid)
         self.assertEqual((await self.pg.fetch_one("SELECT 'public.uq_ontology_objects_table'::regclass::oid AS oid"))["oid"], keep_oid)
         indexes = await self.pg.fetch_all("""SELECT c.relname AS name FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid
-            WHERE i.indrelid='app.ontology_objects'::regclass""")
+            WHERE i.indrelid='app.helio_objects'::regclass""")
         self.assertNotIn(unusual, {row["name"] for row in indexes})
-        self.assertIn(unusual.replace("ddlregistry", "ontology_objects"), {row["name"] for row in indexes})
+        self.assertIn(unusual.replace("ddlregistry", "helio_objects"), {row["name"] for row in indexes})
         self.assertFalse(any("ddlregistry" in row["name"] for row in indexes))
         await self.migration.restore_registration(self.pg)
         await self.migration.migrate(self.pg, apply=True, catalog_pg=self.pg)
-        self.assertEqual(await self.pg.fetch_all(f"SELECT {self.migration.IDENTITY_COLUMNS} FROM app.ontology_objects ORDER BY id"), original)
+        self.assertEqual(await self.pg.fetch_all(f"SELECT {self.migration.IDENTITY_COLUMNS} FROM app.helio_objects ORDER BY id"), original)
 
     async def test_migration_aborts_on_non_equivalent_or_business_index_name_collision(self):
         async with self.pg.session() as session:
@@ -190,7 +190,7 @@ class OntologyMigrationIntegration(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(RuntimeError, "different metadata index"):
                 await self.migration.migrate(self.pg, apply=True, catalog_pg=self.pg)
             state = await self.pg.fetch_one("""SELECT to_regclass('ts_meta.ddlregistry') IS NOT NULL AS old_exists,
-                to_regclass('app.ontology_objects') IS NULL AS new_absent,
+                to_regclass('app.helio_objects') IS NULL AS new_absent,
                 'public.idx_ontology_objects_collision'::regclass::oid AS business_oid""")
             self.assertTrue(state["old_exists"] and state["new_absent"])
             self.assertEqual(state["business_oid"], business_oid)
@@ -200,11 +200,11 @@ class OntologyMigrationIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def test_release_recovery_preserves_object_identity_and_can_be_reapplied(self):
         await self.migration.migrate(self.pg, apply=True, catalog_pg=self.pg)
-        before = await self.pg.fetch_all("SELECT id,table_name,version,checksum FROM app.ontology_objects ORDER BY id")
+        before = await self.pg.fetch_all("SELECT id,table_name,version,checksum FROM app.helio_objects ORDER BY id")
         await self.migration.restore_registration(self.pg)
         self.assertEqual(await self.pg.fetch_all("SELECT id,table_name,version,checksum FROM ts_meta.ddlregistry ORDER BY id"), before)
         await self.migration.migrate(self.pg, apply=True, catalog_pg=self.pg)
-        self.assertEqual(await self.pg.fetch_all("SELECT id,table_name,version,checksum FROM app.ontology_objects ORDER BY id"), before)
+        self.assertEqual(await self.pg.fetch_all("SELECT id,table_name,version,checksum FROM app.helio_objects ORDER BY id"), before)
 
     async def test_create_table_and_metadata_commit_or_rollback_together(self):
         await self.migration.migrate(self.pg, apply=True, catalog_pg=self.pg)
@@ -218,7 +218,7 @@ class OntologyMigrationIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([row["name"] for row in preview["properties"]], ["id", "title"])
         self.assertEqual(preview["description"], "People's : catalog")
         self.assertEqual(preview["primaryKey"], ["id"])
-        registered = await self.pg.fetch_one("SELECT ddl_sql,version,checksum,data_type FROM app.ontology_objects WHERE table_name='created_people'")
+        registered = await self.pg.fetch_one("SELECT ddl_sql,version,checksum,data_type FROM app.helio_objects WHERE table_name='created_people'")
         self.assertIn('CREATE TABLE "ts_custom"."created_people"', registered["ddl_sql"])
         self.assertEqual(registered["data_type"], "people")
         self.assertEqual(registered["version"], 1)

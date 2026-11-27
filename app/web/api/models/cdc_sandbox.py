@@ -52,7 +52,7 @@ class CdcSandboxReceipt(SyntheticMarked):
 
 
 class CdcSandboxBindingRow(SQLModel, table=True):
-    __tablename__ = "ontology_cdc_sandbox_binding"
+    __tablename__ = "helio_cdc_sandbox_binding"
     __table_args__ = (
         CheckConstraint("singleton AND generation = 1 AND applied_through >= 0",
                         name="ck_ontology_cdc_sandbox_binding"),
@@ -68,7 +68,7 @@ class CdcSandboxBindingRow(SQLModel, table=True):
 
 
 class CdcSandboxReceiptRow(SQLModel, table=True):
-    __tablename__ = "ontology_cdc_sandbox_receipts"
+    __tablename__ = "helio_cdc_sandbox_receipts"
     __table_args__ = (
         CheckConstraint("binding_key AND generation = 1 AND from_exclusive >= 0 "
                         "AND applied_through > from_exclusive AND applied_through - from_exclusive <= 50 "
@@ -79,7 +79,7 @@ class CdcSandboxReceiptRow(SQLModel, table=True):
 
     id: UUID = DbField(default_factory=uuid4, primary_key=True)
     request_id: UUID = DbField(unique=True)
-    binding_key: bool = DbField(default=True, foreign_key="ontology_cdc_sandbox_binding.singleton")
+    binding_key: bool = DbField(default=True, foreign_key="helio_cdc_sandbox_binding.singleton")
     generation: int = 1
     from_exclusive: int = DbField(sa_column=Column(BigInteger, nullable=False))
     applied_through: int = DbField(sa_column=Column(BigInteger, nullable=False))

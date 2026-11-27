@@ -41,11 +41,11 @@ def _local_host(host: str | None) -> bool:
 
 async def _saved_source(session: AsyncSession, identity: UUID, *, lock: bool = False, optional: bool = False):
     """Read only exact registry metadata; do not return credentials on identity routes."""
-    if optional and not await session.scalar(text("SELECT pg_catalog.to_regclass('app.ontology_data_connections')")):
+    if optional and not await session.scalar(text("SELECT pg_catalog.to_regclass('app.helio_data_connections')")):
         return None
     row = (await session.execute(text(f"""
         SELECT engine, config->>'host' AS host, updated_at, {paused_at_sql('registry')} AS paused_at
-        FROM app.ontology_data_connections registry WHERE id = :id
+        FROM app.helio_data_connections registry WHERE id = :id
     """ + (" FOR UPDATE" if lock else "")), {"id": identity})).mappings().first()
     if row is None and not optional:
         raise HTTPException(404, "Saved PostgreSQL source does not exist")
@@ -96,7 +96,7 @@ async def verify_source_identity(
     except SourceIdentityMismatch:
         # Do not erase the ever-verified sentinel: flag-off must not reopen this connection.
         await session.execute(text("""
-            UPDATE app.ontology_batch_source_identities SET is_current=false
+            UPDATE app.helio_batch_source_identities SET is_current=false
             WHERE connection_id=:id AND source_updated_at=:revision AND fingerprint=:expected
         """), {"id": identity, "revision": revision, "expected": expected})
         await session.commit()

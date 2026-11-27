@@ -32,7 +32,7 @@ class ChangeMarking(MarkingReaders):
 
 
 class OntologyMarking(SQLModel, table=True):
-    __tablename__ = "ontology_markings"
+    __tablename__ = "helio_markings"
     __table_args__ = (UniqueConstraint("project_id", "name", name="uq_ontology_marking_name"),)
     id: UUID = DBField(primary_key=True, default_factory=uuid4)
     project_id: UUID = DBField(foreign_key="team.id")
@@ -42,8 +42,8 @@ class OntologyMarking(SQLModel, table=True):
 
 
 class OntologyMarkingChange(SQLModel, table=True):
-    __tablename__ = "ontology_marking_changes"
-    marking_id: UUID = DBField(foreign_key="ontology_markings.id", primary_key=True)
+    __tablename__ = "helio_marking_changes"
+    marking_id: UUID = DBField(foreign_key="helio_markings.id", primary_key=True)
     revision: int = DBField(primary_key=True)
     actor_id: UUID = DBField(foreign_key="user.id")
     readers: list[dict] = DBField(sa_column=Column(JSONB, nullable=False))

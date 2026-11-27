@@ -32,24 +32,24 @@ async def catalog_parameters(params=None, *, session=None, relations=False, obje
     layers = catalog_logical_layers.get()
     rows = (await session.execute(text("""SELECT id, layer, table_role, schema_name, table_name, is_active,
         data_type, data_type_source, description, description_source, visibility, resource_group
-        FROM app.ontology_objects
+        FROM app.helio_objects
         WHERE CAST(:layers AS text[]) IS NULL OR layer = ANY(CAST(:layers AS text[]))
     """), {"layers": list(layers) if layers is not None else None})).mappings()
     result = {**(params or {}), "object_metadata": json.dumps([dict(row) for row in rows])}
     if relations:
         rows = (await session.execute(text("""SELECT r.name, r.source_schema, r.source_table, r.source_fields,
             r.target_schema, r.target_table, r.target_fields, r.enabled, r.relationship_kind, r.cardinality,
-            r.description, r.provenance FROM app.ontology_object_relations r WHERE r.enabled
-              AND (SELECT count(*) FROM app.ontology_objects o WHERE o.is_active
+            r.description, r.provenance FROM app.helio_object_relations r WHERE r.enabled
+              AND (SELECT count(*) FROM app.helio_objects o WHERE o.is_active
                    AND o.schema_name = r.source_schema AND o.table_name = r.source_table) = 1
-              AND (SELECT count(*) FROM app.ontology_objects o WHERE o.is_active
+              AND (SELECT count(*) FROM app.helio_objects o WHERE o.is_active
                    AND o.schema_name = r.target_schema AND o.table_name = r.target_table) = 1
         """))).mappings()
         result["relation_metadata"] = json.dumps([dict(row) for row in rows])
     if object_id is not None:
         rows = (await session.execute(text("""SELECT object_id, name, sql_type, ordinal_position,
             is_nullable, is_primary_key, primary_key_position, identity_kind, generated_kind, comment,
-            default_expression, generation_expression FROM app.ontology_object_properties WHERE object_id=:id
+            default_expression, generation_expression FROM app.helio_object_properties WHERE object_id=:id
         """), {"id": object_id})).mappings()
         result["property_metadata"] = json.dumps([dict(row) for row in rows])
     return result

@@ -62,7 +62,7 @@ class PushApplyStatus(BaseModel):
 
 
 class PushApplyBindingRow(SQLModel, table=True):
-    __tablename__ = "ontology_push_inbox_apply_binding"
+    __tablename__ = "helio_push_inbox_apply_binding"
     __table_args__ = (
         CheckConstraint("""singleton IS TRUE AND generation=1 AND source_oid>0 AND source_filenode>0
                         AND target_oid>0 AND target_filenode>0 AND applied_through BETWEEN 0 AND 1000
@@ -83,7 +83,7 @@ class PushApplyBindingRow(SQLModel, table=True):
 
 
 class PushApplyResultRow(SQLModel, table=True):
-    __tablename__ = "ontology_push_inbox_apply_receipts"
+    __tablename__ = "helio_push_inbox_apply_receipts"
     __table_args__ = (
         CheckConstraint("""generation=1 AND from_exclusive BETWEEN 0 AND 1000
                         AND reviewed_accepted_through BETWEEN from_exclusive AND 1000

@@ -36,7 +36,7 @@ async def get_registered_object(
     role = normalize_table_role(table_role)
     if not data_type:
         raise ValueError("Ontology binding lookup requires a semantic data type")
-    rows = await pg.fetch_all(f"""SELECT {_OBJECT_FIELDS} FROM app.ontology_objects
+    rows = await pg.fetch_all(f"""SELECT {_OBJECT_FIELDS} FROM app.helio_objects
         WHERE layer = :layer AND table_role = :table_role AND data_type = :data_type AND is_active
         LIMIT 2""", {"layer": layer, "table_role": role, "data_type": data_type})
     if len(rows) > 1:
@@ -55,7 +55,7 @@ async def require_registered_object(
 
 
 async def list_registered_data_types(pg: PostgresClient, layer: str, table_role: str) -> list[str]:
-    rows = await pg.fetch_all("""SELECT DISTINCT data_type FROM app.ontology_objects
+    rows = await pg.fetch_all("""SELECT DISTINCT data_type FROM app.helio_objects
         WHERE is_active AND layer = :layer AND table_role = :table_role AND data_type <> ''
         ORDER BY data_type""", {"layer": layer, "table_role": normalize_table_role(table_role)})
     return [row["data_type"] for row in rows]
@@ -78,7 +78,7 @@ async def list_registered_ddl_records(pg: PostgresClient, layer: str | None = No
     sql = """SELECT id, layer, table_role, data_type, schema_name, table_name, version, checksum,
         description, partition_type, partition_column, partition_granularity,
         partition_count, updated_by, created_at, updated_at
-        FROM app.ontology_objects WHERE is_active AND ddl_sql <> ''"""
+        FROM app.helio_objects WHERE is_active AND ddl_sql <> ''"""
     params: dict[str, Any] = {}
     if layer:
         sql += " AND layer = :layer"
@@ -105,7 +105,7 @@ async def save_registered_ddl(
               "schema_name": schema_name, "table_name": table_name}
     async with pg.locked_transaction(f"ontology:{layer}:{role}:{schema_name}:{table_name}") as session:
         current = (await session.execute(text("""SELECT version, checksum, partition_type,
-            partition_column, partition_granularity, partition_count FROM app.ontology_objects
+            partition_column, partition_granularity, partition_count FROM app.helio_objects
             WHERE id = :id AND is_active AND layer = :layer AND table_role = :table_role
               AND data_type = :data_type AND schema_name = :schema_name AND table_name = :table_name
             FOR UPDATE"""), params)).mappings().first()
@@ -121,7 +121,7 @@ async def save_registered_ddl(
         if current["checksum"] and not allow_update and changed:
             raise ValueError(f"Schema change requires explicit review: {layer}/{table}")
         version = int(current["version"]) + int(changed)
-        await session.execute(text("""UPDATE app.ontology_objects SET
+        await session.execute(text("""UPDATE app.helio_objects SET
             ddl_sql = :ddl_sql, version = :version, checksum = :checksum, partition_type = :kind,
             partition_column = :column, partition_granularity = :granularity, partition_count = :count,
             description = COALESCE(:description, description),

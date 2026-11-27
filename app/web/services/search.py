@@ -38,7 +38,7 @@ async def ensure_search_icon(template: dict[str, Any], engine: str) -> None:
         raise RuntimeError(f"Unable to upload search icon: {engine}")
     await get_pg_client().execute(
         """
-        UPDATE app.ai_collect_templates SET icon = :icon
+        UPDATE app.scout_templates SET icon = :icon
         WHERE name = :name AND version = :version AND COALESCE(icon, '') = ''
         """,
         {"name": template["name"], "version": template["version"], "icon": key},
@@ -101,7 +101,7 @@ async def create_search_task(payload: SearchRequest) -> dict[str, Any]:
     routes = await pg.fetch_all(
         """
         SELECT template_name, collection_name, data_type, enabled
-        FROM app.ai_collect_template_alias
+        FROM app.scout_template_alias
         WHERE collection_name = :collection_name OR template_name = :template_name
         """,
         route_params,
@@ -109,7 +109,7 @@ async def create_search_task(payload: SearchRequest) -> dict[str, Any]:
     if not routes:
         await pg.execute(
             """
-            INSERT INTO app.ai_collect_template_alias
+            INSERT INTO app.scout_template_alias
                 (template_name, collection_name, data_type, enabled)
             VALUES (:template_name, :collection_name, :data_type, true)
             ON CONFLICT DO NOTHING
@@ -119,7 +119,7 @@ async def create_search_task(payload: SearchRequest) -> dict[str, Any]:
         routes = await pg.fetch_all(
             """
             SELECT template_name, collection_name, data_type, enabled
-            FROM app.ai_collect_template_alias
+            FROM app.scout_template_alias
             WHERE collection_name = :collection_name OR template_name = :template_name
             """,
             route_params,

@@ -32,9 +32,9 @@ class AssetMinRowsStatus(BaseModel):
 
 
 class AssetMinRowsRow(SQLModel, table=True):
-    __tablename__ = "ontology_asset_min_rows"
+    __tablename__ = "helio_asset_min_rows"
 
-    target_table: str = DbField(primary_key=True, foreign_key="ontology_asset_freshness_policies.target_table")
+    target_table: str = DbField(primary_key=True, foreign_key="helio_asset_freshness_policies.target_table")
     generation: int
     policy_generation: int
     minimum_rows: int

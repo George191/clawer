@@ -4,6 +4,9 @@ from sqlalchemy import text
 
 from app.etl.schema.data_connections import DATA_CONNECTIONS_PAUSE_DDL
 
+# Preserve the SQL contract of this historical revision.
+DATA_CONNECTIONS_PAUSE_DDL = DATA_CONNECTIONS_PAUSE_DDL.replace("helio_", "ontology_")
+
 revision = "b66fbad735c2"
 down_revision = "ad6207fa991b"
 branch_labels = None

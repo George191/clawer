@@ -9,7 +9,7 @@ from typing import Any
 
 from app.storage.postgres_client import PostgresClient, get_pg_client
 
-TABLE_NAME = "app.automation_workflows"
+TABLE_NAME = "app.scout_workflows"
 _DDL_PATH = Path(__file__).resolve().parent / "sql" / "init_automation_workflows.sql"
 
 

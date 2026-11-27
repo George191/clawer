@@ -17,7 +17,7 @@ _LIMIT = 12
 _CANONICAL_COLUMN = r"^[a-z_][a-z0-9_]{0,62}$"
 _READABLE_REGISTRY = text("""
     SELECT coalesce(pg_catalog.has_table_privilege(
-        pg_catalog.to_regclass('app.ontology_object_relations'), 'SELECT'
+        pg_catalog.to_regclass('app.helio_object_relations'), 'SELECT'
     ), false) AND pg_catalog.has_schema_privilege('app','USAGE')
 """)
 _ROOT = text(f"""

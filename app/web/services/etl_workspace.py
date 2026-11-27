@@ -327,7 +327,7 @@ class EtlWorkspace:
         except DBAPIError as error:
             code = getattr(error.orig, "sqlstate", None) or getattr(error.orig, "pgcode", None)
             metadata_statement = re.search(
-                r"\b(?:FROM|JOIN|INTO|UPDATE|TABLE)\s+(?:ONLY\s+)?(?:app\.)?(?:ontology_|flow_)",
+                r"\b(?:FROM|JOIN|INTO|UPDATE|TABLE)\s+(?:ONLY\s+)?(?:app\.)?(?:helio_|flow_)",
                 str(error.statement), re.IGNORECASE,
             )
             if code == "42P01" and (not business or metadata_statement):
@@ -355,7 +355,7 @@ class EtlWorkspace:
         if layers is None:
             return
         conflict = await session.scalar(text("""SELECT EXISTS (
-            SELECT 1 FROM app.ontology_objects WHERE schema_name = :schema
+            SELECT 1 FROM app.helio_objects WHERE schema_name = :schema
               AND NOT (layer = ANY(CAST(:layers AS text[])))
         )"""), {"schema": schema, "layers": list(layers)})
         if conflict:
@@ -444,19 +444,19 @@ class EtlWorkspace:
                 if schema == RESERVED_BATCH_TARGET[0] and await reserved_batch_target_exists(catalog_session):
                     raise HTTPException(409, "The schema contains a reserved synthetic batch target")
                 managed = await session.execute(text("""
-                    SELECT 1 FROM app.ontology_objects
+                    SELECT 1 FROM app.helio_objects
                     WHERE schema_name = :schema AND ddl_sql <> '' LIMIT 1
                 """), {"schema": schema})
                 if managed.scalar_one_or_none() is not None:
                     raise HTTPException(409, "Schemas with managed object DDL cannot be renamed; set an alias instead")
                 await catalog_session.execute(text(f"ALTER SCHEMA {quote_schema_identifier(schema)} RENAME TO {quote_schema_identifier(target)}"))
                 await session.execute(text("""
-                    UPDATE app.ontology_objects SET schema_name = :target,
+                    UPDATE app.helio_objects SET schema_name = :target,
                         updated_at = now() WHERE schema_name = :schema
                 """), {"schema": schema, "target": target})
                 for side in ("source", "target"):
                     await session.execute(text(f"""
-                        UPDATE app.ontology_object_relations SET {side}_schema = :target,
+                        UPDATE app.helio_object_relations SET {side}_schema = :target,
                             updated_at = now() WHERE {side}_schema = :schema
                     """), {"schema": schema, "target": target})
                 if await self._exists(session, "flow_publications"):
@@ -484,8 +484,8 @@ class EtlWorkspace:
             if schema == RESERVED_BATCH_TARGET[0] and await reserved_batch_target_exists(catalog_session):
                 raise HTTPException(409, "The schema contains a reserved synthetic batch target")
             await catalog_session.execute(text(f"DROP SCHEMA {quote_schema_identifier(schema)} RESTRICT"))
-            await session.execute(text("DELETE FROM app.ontology_object_relations WHERE source_schema = :schema OR target_schema = :schema"), {"schema": schema})
-            await session.execute(text("DELETE FROM app.ontology_objects WHERE schema_name = :schema"), {"schema": schema})
+            await session.execute(text("DELETE FROM app.helio_object_relations WHERE source_schema = :schema OR target_schema = :schema"), {"schema": schema})
+            await session.execute(text("DELETE FROM app.helio_objects WHERE schema_name = :schema"), {"schema": schema})
             if await self._exists(session, "flow_publications"):
                 await session.execute(text("DELETE FROM app.flow_publications WHERE schema_name = :schema"), {"schema": schema})
             if await self._exists(session, "flow_handler_drafts"):
@@ -497,7 +497,7 @@ class EtlWorkspace:
     @staticmethod
     async def _pipeline_schema(session, schema: str) -> bool:
         result = await session.execute(text("""SELECT EXISTS (
-            SELECT 1 FROM app.ontology_objects
+            SELECT 1 FROM app.helio_objects
             WHERE schema_name = :schema AND is_active AND layer = ANY(CAST(:layers AS text[]))
         )"""), {"schema": schema, "layers": _PIPELINE_LAYERS})
         return bool(result.scalar_one())
@@ -545,12 +545,12 @@ class EtlWorkspace:
         return await self._layers.get_table(schema, payload["name"], connection_id=connection_id)
 
     async def _create_relations(self, session, rows: list[dict[str, Any]], *, catalog_session) -> None:
-        await session.execute(text("SELECT pg_advisory_xact_lock(hashtext('app.ontology_object_relations'))"))
+        await session.execute(text("SELECT pg_advisory_xact_lock(hashtext('app.helio_object_relations'))"))
         targets: dict[tuple[str, str], set[str]] = {}
         endpoints = {(row[f"{side}_schema"], row[f"{side}_table"])
                      for row in rows for side in ("source", "target")}
         for schema, table in endpoints:
-            count = await session.scalar(text("""SELECT count(*) FROM app.ontology_objects
+            count = await session.scalar(text("""SELECT count(*) FROM app.helio_objects
                 WHERE schema_name = :schema AND table_name = :table AND is_active
             """), {"schema": schema, "table": table})
             if count > 1:
@@ -560,8 +560,8 @@ class EtlWorkspace:
             require_ordinary_table(*target)
             if target not in targets:
                 result = await session.execute(text("""SELECT p.name
-                    FROM app.ontology_objects o
-                    JOIN app.ontology_object_properties p ON p.object_id = o.id
+                    FROM app.helio_objects o
+                    JOIN app.helio_object_properties p ON p.object_id = o.id
                     WHERE o.is_active AND o.schema_name = :schema AND o.table_name = :table
                       AND (CAST(:layers AS text[]) IS NULL OR o.layer = ANY(CAST(:layers AS text[])))
                 """), {"schema": target[0], "table": target[1], "layers": catalog_logical_layers.get()})
@@ -577,7 +577,7 @@ class EtlWorkspace:
         source = rows[0]
         result = await session.execute(text("""SELECT name, source_schema, source_table, source_fields AS columns,
                 target_schema, target_table, target_fields AS referenced_columns
-            FROM app.ontology_object_relations
+            FROM app.helio_object_relations
             WHERE name = ANY(CAST(:names AS text[]))
                 OR (source_schema = :schema AND source_table = :table)
                 OR (target_schema = :schema AND target_table = :table)
@@ -589,7 +589,7 @@ class EtlWorkspace:
             mapping = relation_mapping({**row, "columns": row["source_fields"], "referenced_columns": row["target_fields"]})
             if row["name"] in names or mapping in mappings:
                 raise HTTPException(409, "Relation name or property mapping already exists")
-            await session.execute(text("""INSERT INTO app.ontology_object_relations
+            await session.execute(text("""INSERT INTO app.helio_object_relations
                 (name, source_schema, source_table, source_fields, target_schema, target_table, target_fields,
                  relationship_kind, cardinality, description, provenance, enabled)
                 VALUES (:name, :source_schema, :source_table, CAST(:source_fields AS text[]),
@@ -605,14 +605,14 @@ class EtlWorkspace:
         async with self._session() as session:
             await EtlLayers._require_ontology(session)
             metadata = await self._ontology_object(session, schema, table)
-            await session.execute(text("""UPDATE app.ontology_objects
+            await session.execute(text("""UPDATE app.helio_objects
                 SET visibility = :visibility, updated_by = :actor, updated_at = now()
                 WHERE id = :id"""), {"visibility": visibility, "actor": actor, "id": metadata["id"]})
         return {"schema": schema, "table": table, "visibility": visibility}
 
     async def _ontology_object(self, session, schema: str, table: str, *, allow_missing=False):
         require_ordinary_table(schema, table)
-        records = (await session.execute(text("""SELECT id FROM app.ontology_objects
+        records = (await session.execute(text("""SELECT id FROM app.helio_objects
             WHERE schema_name = :schema AND table_name = :table AND is_active FOR UPDATE
         """), {"schema": schema, "table": table})).mappings().all()
         if not records:
@@ -633,7 +633,7 @@ class EtlWorkspace:
     @staticmethod
     async def _favorite_ids(session, user_id: str) -> list[str]:
         rows = await session.execute(text("""SELECT o.schema_name || '.' || o.table_name AS id
-            FROM app.ontology_object_favorites f JOIN app.ontology_objects o ON o.id = f.object_id
+            FROM app.helio_object_favorites f JOIN app.helio_objects o ON o.id = f.object_id
             WHERE f.user_id = CAST(:user_id AS uuid) AND o.is_active
               AND o.schema_name NOT IN (:push_schema, :handoff_schema, :intent_schema)
               AND NOT (o.schema_name = :batch_schema AND o.table_name IN (:batch_target, :batch_range_target))
@@ -654,11 +654,11 @@ class EtlWorkspace:
             await EtlLayers._require_ontology(session)
             metadata = await self._ontology_object(session, schema, table, allow_missing=not favorite)
             if favorite:
-                await session.execute(text("""INSERT INTO app.ontology_object_favorites (user_id, object_id)
+                await session.execute(text("""INSERT INTO app.helio_object_favorites (user_id, object_id)
                     VALUES (CAST(:user_id AS uuid), :object_id) ON CONFLICT (user_id, object_id) DO NOTHING"""),
                     {"user_id": user_id, "object_id": metadata["id"]})
             elif metadata:
-                await session.execute(text("""DELETE FROM app.ontology_object_favorites
+                await session.execute(text("""DELETE FROM app.helio_object_favorites
                     WHERE user_id = CAST(:user_id AS uuid) AND object_id = :object_id"""),
                     {"user_id": user_id, "object_id": metadata["id"]})
         return {"id": f"{schema}.{table}", "favorite": favorite}
@@ -688,7 +688,7 @@ class EtlWorkspace:
                     skipped += 1
             imported = 0
             if object_ids:
-                rows = await session.execute(text("""INSERT INTO app.ontology_object_favorites (user_id, object_id)
+                rows = await session.execute(text("""INSERT INTO app.helio_object_favorites (user_id, object_id)
                     SELECT CAST(:user_id AS uuid), value FROM unnest(CAST(:object_ids AS bigint[])) AS wanted(value)
                     WHERE TRUE
                     ON CONFLICT (user_id, object_id) DO NOTHING RETURNING object_id"""),
@@ -702,9 +702,9 @@ class EtlWorkspace:
         async with self._session() as session:
             await session.execute(text("SET LOCAL lock_timeout='2s'"))
             matches = (await session.execute(text("""
-                SELECT s.updated_at FROM app.ontology_objects o
+                SELECT s.updated_at FROM app.helio_objects o
                 JOIN app.etl_layer_connections b ON b.layer = o.layer
-                JOIN app.ontology_data_connections s ON s.id = b.connection_id
+                JOIN app.helio_data_connections s ON s.id = b.connection_id
                 WHERE s.paused_at IS NULL AND o.is_active AND o.schema_name = :schema AND o.table_name = :table
                   AND b.connection_id = CAST(:connection_id AS uuid)
                 FOR SHARE OF o, b, s

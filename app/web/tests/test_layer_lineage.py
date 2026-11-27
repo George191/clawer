@@ -25,7 +25,7 @@ def layer_service(monkeypatch, bindings, rows):
     async def execute(statement):
         if "to_regclass" in str(statement):
             return SimpleNamespace(scalar_one=lambda: True)
-        assert "FROM app.ontology_objects WHERE is_active" in str(statement)
+        assert "FROM app.helio_objects WHERE is_active" in str(statement)
         assert "FROM active LEFT JOIN mongo_rds" in str(statement)
         assert "WHERE visibility <> 'hidden'" in str(statement)
         active = [row for row in rows if row["is_active"]]

@@ -36,7 +36,7 @@ class PlannerStatisticPGTests(unittest.IsolatedAsyncioTestCase):
             await db.execute(text(f"INSERT INTO {_SCHEMA}.records VALUES (1,NULL,1),(2,NULL,2),(3,'fixture',3),(4,'fixture',4)"))
             await db.execute(text(f"ANALYZE {_SCHEMA}.records (value)"))
             await db.execute(text(f"CREATE ROLE {role} LOGIN PASSWORD '{role_password}'"))
-            await db.execute(text(f"GRANT SELECT ON app.ontology_objects TO {role}"))
+            await db.execute(text(f"GRANT SELECT ON app.helio_objects TO {role}"))
             await db.execute(text(f"GRANT USAGE ON SCHEMA {_SCHEMA} TO {role}"))
             await db.execute(text(f"GRANT SELECT(value) ON {_SCHEMA}.records TO {role}"))
 

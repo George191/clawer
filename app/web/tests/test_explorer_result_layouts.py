@@ -120,7 +120,7 @@ async def test_layouts_validate_fields_visibility_scope_and_concurrency(layouts)
     async with engine.begin() as conn:
         await conn.execute(
             text(
-                """INSERT INTO app.ontology_objects(layer,schema_name,table_name,visibility)
+                """INSERT INTO app.helio_objects(layer,schema_name,table_name,visibility)
                                    VALUES ('ods',:s,'items','hidden')"""
             ),
             {"s": schema},
@@ -134,7 +134,7 @@ async def test_layouts_validate_fields_visibility_scope_and_concurrency(layouts)
     finally:
         async with engine.begin() as conn:
             await conn.execute(
-                text("DELETE FROM app.ontology_objects WHERE schema_name=:s"), {"s": schema}
+                text("DELETE FROM app.helio_objects WHERE schema_name=:s"), {"s": schema}
             )
 
 

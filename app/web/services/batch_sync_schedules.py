@@ -32,7 +32,7 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-_REGISTRY = table("ontology_data_connections", column("id", Uuid()), column("updated_at", DateTime(timezone=True)),
+_REGISTRY = table("helio_data_connections", column("id", Uuid()), column("updated_at", DateTime(timezone=True)),
                   schema="app").alias("saved_batch_source")
 
 

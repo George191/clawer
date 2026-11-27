@@ -7,9 +7,9 @@ from sqlalchemy import text
 
 
 OBJECT_LINKS_DDL_STATEMENTS = (
-    """CREATE TABLE IF NOT EXISTS app.ontology_object_links (
+    """CREATE TABLE IF NOT EXISTS app.helio_object_links (
         id UUID PRIMARY KEY,
-        relation_id BIGINT NOT NULL REFERENCES app.ontology_object_relations(id),
+        relation_id BIGINT NOT NULL REFERENCES app.helio_object_relations(id),
         source_key JSONB NOT NULL CHECK (jsonb_typeof(source_key) = 'object' AND source_key <> '{}'::jsonb),
         target_key JSONB NOT NULL CHECK (jsonb_typeof(target_key) = 'object' AND target_key <> '{}'::jsonb),
         source_hash TEXT NOT NULL CHECK (source_hash ~ '^[0-9a-f]{64}$'),
@@ -23,9 +23,9 @@ OBJECT_LINKS_DDL_STATEMENTS = (
         UNIQUE (relation_id, source_hash, target_hash)
     )""",
     """CREATE INDEX IF NOT EXISTS idx_ontology_object_links_source
-        ON app.ontology_object_links (relation_id, source_hash, id) WHERE removed_at IS NULL""",
+        ON app.helio_object_links (relation_id, source_hash, id) WHERE removed_at IS NULL""",
     """CREATE INDEX IF NOT EXISTS idx_ontology_object_links_target
-        ON app.ontology_object_links (relation_id, target_hash, id) WHERE removed_at IS NULL""",
+        ON app.helio_object_links (relation_id, target_hash, id) WHERE removed_at IS NULL""",
 )
 
 

@@ -49,7 +49,7 @@ class CdcSandboxComparison(SyntheticMarked):
 
 
 class CdcSandboxVersionRow(SQLModel, table=True):
-    __tablename__ = "ontology_cdc_sandbox_versions"
+    __tablename__ = "helio_cdc_sandbox_versions"
     __table_args__ = (
         CheckConstraint("generation = 1 AND applied_through > 0 AND rows_captured BETWEEN 1 AND 100 "
                         "AND bytes_captured BETWEEN rows_captured * 8 AND 65536",
@@ -58,7 +58,7 @@ class CdcSandboxVersionRow(SQLModel, table=True):
         Index("ix_ontology_cdc_sandbox_versions_scope", "stream_marker", "physical_digest", "recorded_at", "receipt_id"),
     )
 
-    receipt_id: UUID = Field(primary_key=True, foreign_key="ontology_cdc_sandbox_receipts.id")
+    receipt_id: UUID = Field(primary_key=True, foreign_key="helio_cdc_sandbox_receipts.id")
     stream_marker: UUID
     physical_digest: str = Field(max_length=64)
     generation: int
@@ -70,11 +70,11 @@ class CdcSandboxVersionRow(SQLModel, table=True):
 
 
 class CdcSandboxVersionRecordRow(SQLModel, table=True):
-    __tablename__ = "ontology_cdc_sandbox_version_rows"
+    __tablename__ = "helio_cdc_sandbox_version_rows"
     __table_args__ = (
         CheckConstraint("pg_catalog.octet_length(value) <= 65528", name="ck_ontology_cdc_version_row_bytes"),
     )
 
-    version_id: UUID = Field(primary_key=True, foreign_key="ontology_cdc_sandbox_versions.receipt_id")
+    version_id: UUID = Field(primary_key=True, foreign_key="helio_cdc_sandbox_versions.receipt_id")
     entity_id: int = Field(sa_column=Column(BigInteger, primary_key=True))
     value: str = Field(sa_column=Column(Text, nullable=False))

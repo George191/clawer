@@ -290,7 +290,7 @@ async def read_match_ids(session: AsyncSession, right: CdcSandboxVersionRow | No
         return None
     records = (await session.execute(text("""
         SELECT entity_id, pg_catalog.octet_length(value)::bigint + 8 AS bytes
-        FROM app.ontology_cdc_sandbox_version_rows WHERE version_id = :version
+        FROM app.helio_cdc_sandbox_version_rows WHERE version_id = :version
         ORDER BY entity_id LIMIT :cap
     """), {"version": right.receipt_id, "cap": MAX_VERSION_ROWS + 1})).all()
     size = sum(item.bytes for item in records)

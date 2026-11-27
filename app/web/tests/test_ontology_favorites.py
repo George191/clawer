@@ -44,7 +44,7 @@ class FavoritePg(VisibilityPg):
             selected = {object_id for (user_id, object_id) in self.favorites if user_id == params["user_id"]}
             return Result([{"id": f"{schema}.{table}"} for (schema, table), value in sorted(self.objects.items())
                            if value["id"] in selected])
-        if sql.startswith("INSERT INTO app.ontology_object_favorites"):
+        if sql.startswith("INSERT INTO app.helio_object_favorites"):
             ids = params.get("object_ids", [params.get("object_id")])
             inserted = []
             for object_id in ids:
@@ -53,7 +53,7 @@ class FavoritePg(VisibilityPg):
                     self.favorites[key] = "original-created-at"
                     inserted.append({"object_id": object_id})
             return Result(inserted)
-        if sql.startswith("DELETE FROM app.ontology_object_favorites"):
+        if sql.startswith("DELETE FROM app.helio_object_favorites"):
             row = self.objects.get((params["schema"], params["table"]))
             if row:
                 self.favorites.pop((params["user_id"], row["id"]), None)
@@ -108,7 +108,7 @@ class FavoriteServiceTests(unittest.IsolatedAsyncioTestCase):
             await instance.set_object_favorite("custom", "missing", True, USER_A)
         self.assertEqual(raised.exception.status_code, 404)
         self.assertIn("PRIMARY KEY (user_id, object_id)", ONTOLOGY_FAVORITES_DDL)
-        self.assertIn("REFERENCES app.ontology_objects(id) ON DELETE CASCADE", ONTOLOGY_FAVORITES_DDL)
+        self.assertIn("REFERENCES app.helio_objects(id) ON DELETE CASCADE", ONTOLOGY_FAVORITES_DDL)
         self.assertNotIn("REFERENCES public.user", ONTOLOGY_FAVORITES_DDL)
 
 

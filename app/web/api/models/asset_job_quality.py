@@ -63,7 +63,7 @@ class AssetJobQualityStatus(BaseModel):
 
 
 class AssetJobQualityRow(SQLModel, table=True):
-    __tablename__ = "ontology_asset_daily_job_quality"
+    __tablename__ = "helio_asset_daily_job_quality"
     __table_args__ = (CheckConstraint(
         "generation>0 AND freshness_generation>0 AND schedule_generation>0 AND target_oid>0 AND target_filenode>0 "
         "AND planned_time_utc ~ '^(0[0-9]|1[0-9]|2[0-3]):[0-5][0-9]$' "
@@ -71,7 +71,7 @@ class AssetJobQualityRow(SQLModel, table=True):
         name="ck_asset_daily_job_review",
     ),)
 
-    target_table: str = Field(primary_key=True, foreign_key="ontology_asset_freshness_policies.target_table", max_length=63)
+    target_table: str = Field(primary_key=True, foreign_key="helio_asset_freshness_policies.target_table", max_length=63)
     generation: int
     freshness_generation: int
     schedule_generation: int
@@ -131,7 +131,7 @@ WeeklyJobEvidence = Annotated[WeeklyReceiptEvidence | WeeklyTargetConstraintEvid
 
 
 class WeeklyJobQualityRow(SQLModel, table=True):
-    __tablename__ = "ontology_asset_weekly_job_quality"
+    __tablename__ = "helio_asset_weekly_job_quality"
     __table_args__ = (CheckConstraint(
         "generation>0 AND freshness_generation>0 AND schedule_generation>0 AND target_oid>0 AND target_filenode>0 "
         "AND planned_time_utc ~ '^(0[0-9]|1[0-9]|2[0-3]):[0-5][0-9]$' "
@@ -139,7 +139,7 @@ class WeeklyJobQualityRow(SQLModel, table=True):
         name="ck_asset_weekly_job_review",
     ),)
 
-    target_table: str = Field(primary_key=True, foreign_key="ontology_asset_freshness_policies.target_table", max_length=63)
+    target_table: str = Field(primary_key=True, foreign_key="helio_asset_freshness_policies.target_table", max_length=63)
     generation: int
     freshness_generation: int
     schedule_generation: int
@@ -163,12 +163,12 @@ class WeeklyJobQualityRow(SQLModel, table=True):
 
 
 class TransferTargetRejectionRow(SQLModel, table=True):
-    __tablename__ = "ontology_transfer_schedule_target_rejections"
+    __tablename__ = "helio_transfer_schedule_target_rejections"
     __table_args__ = (CheckConstraint("code='target_constraint' AND target_oid>0 AND target_filenode>0",
                                       name="ck_transfer_target_rejection_scope"),)
 
-    job_id: UUID = Field(primary_key=True, foreign_key="ontology_transfer_schedule_jobs.id")
-    attempt_id: UUID = Field(unique=True, foreign_key="ontology_transfer_attempts.id")
+    job_id: UUID = Field(primary_key=True, foreign_key="helio_transfer_schedule_jobs.id")
+    attempt_id: UUID = Field(unique=True, foreign_key="helio_transfer_attempts.id")
     code: str = Field(default="target_constraint", max_length=20)
     target_oid: int = Field(sa_column=Column(BigInteger, nullable=False))
     target_filenode: int = Field(sa_column=Column(BigInteger, nullable=False))
