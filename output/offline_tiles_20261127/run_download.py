@@ -61,7 +61,9 @@ git rev-parse HEAD
 sha256sum tools/download_global_tiles.py
 mkdir -p /srv/terrain/imagery-global/output
 '''), flush=True)
-        run(f'''cd /srv/terrain/tile-downloader-code && nohup env HTTPS_PROXY=http://127.0.0.1:{port} HTTP_PROXY=http://127.0.0.1:{port} python3 -B tools/download_global_tiles.py --root /srv/terrain/imagery-global > /srv/terrain/imagery-global/output/download.log 2>&1 < /dev/null &
+        run(f'''cd /srv/terrain/tile-downloader-code
+nohup env HTTPS_PROXY=http://127.0.0.1:{port} HTTP_PROXY=http://127.0.0.1:{port} python3 -B tools/download_global_tiles.py --root /srv/terrain/imagery-global > /srv/terrain/imagery-global/output/download.log 2>&1 < /dev/null &
+echo $!
 ''')
         print('Google download started; workstation proxy tunnel must remain running.', flush=True)
         while transport.is_active():
