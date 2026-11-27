@@ -147,6 +147,11 @@ def test_both_sources_share_six_workers_and_finish_before_next_level(tmp_path):
         def submit(self, function, root, source, level, number):
             assert function is tiles.worker
             assert all(task in completed for task in submitted if task[1] < level)
+            checkpoint = Path(root) / 'output' / f'{source}-{level}-{number}.json'
+            if checkpoint.exists():
+                state = json.loads(checkpoint.read_text())
+                assert state['error'] is None
+                assert (state['next'], state['tiles'], state['bytes']) == (15, 2, 50)
             task = (source, level, number)
             submitted.append(task)
             return Future(task)
@@ -155,6 +160,11 @@ def test_both_sources_share_six_workers_and_finish_before_next_level(tmp_path):
                                 **({'apistyle': tiles.ROAD_STYLE} if source == 'overlay' else {})}
                         for source, layer in tiles.SOURCES.items()}}
     tiles.save(tmp_path / 'output' / 'plan.json', plan)
+    # This shard queues behind the first six tasks; it must not report an old stop while waiting.
+    tiles.save(tmp_path / 'output' / 'satellite-1-3.json', {
+        'source': 'satellite', 'level': 1, 'worker': 3,
+        'next': 15, 'tiles': 2, 'bytes': 50, 'done': False,
+        'error': 'RuntimeError: STOP requested', 'updated_at': '2026-11-27T00:00:00+00:00'})
     with patch.object(tiles, 'ProcessPoolExecutor', Pool), \
             patch.object(tiles, 'snapshot', return_value={}), \
             patch('sys.argv', ['download_global_tiles.py', '--root', str(tmp_path)]), \
@@ -167,3 +177,13 @@ def test_both_sources_share_six_workers_and_finish_before_next_level(tmp_path):
         for source in tiles.SOURCES:
             assert {task[2] for task in tasks if task[0] == source} == set(range(6))
     assert completed == submitted
+
+
+def test_snapshot_keeps_current_stop_failure_visible(tmp_path):
+    plan = {'sources': {source: {'max_level': 0} for source in tiles.SOURCES}}
+    (tmp_path / 'STOP').touch()
+    with pytest.raises(RuntimeError, match='STOP requested'):
+        tiles.worker(str(tmp_path), 'satellite', 0, 0)
+    status = tiles.snapshot(tmp_path, plan, 'failed', 0, 'STOP requested')
+    assert status['error'] == 'STOP requested'
+    assert status['levels']['satellite']['0']['errors'] == ['RuntimeError: STOP requested']

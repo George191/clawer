@@ -158,9 +158,21 @@ def main():
             with ProcessPoolExecutor(max_workers=WORKERS) as pool:
                 for level in range(max(s['max_level'] for s in plan['sources'].values()) + 1):
                     # Interleave sources so neither waits for the other's entire level.
-                    futures = [pool.submit(worker, str(root), source, level, n)
-                               for n in range(WORKERS) for source in SOURCES
-                               if level <= plan['sources'][source]['max_level']]
+                    futures = []
+                    for n in range(WORKERS):
+                        for source in SOURCES:
+                            if level > plan['sources'][source]['max_level']:
+                                continue
+                            checkpoint = root / 'output' / f'{source}-{level}-{n}.json'
+                            if checkpoint.exists():
+                                state = json.loads(checkpoint.read_text())
+                                if (state['source'], state['level'], state['worker']) != (source, level, n):
+                                    raise ValueError('Checkpoint binding differs')
+                                if not state['done'] and state['error']:
+                                    # A new queued attempt supersedes the previous attempt's error.
+                                    state.update(error=None, updated_at=stamp())
+                                    save(checkpoint, state)
+                            futures.append(pool.submit(worker, str(root), source, level, n))
                     while not all(f.done() for f in futures):
                         save(root / 'output' / 'status.json', snapshot(root, plan, 'running', level))
                         time.sleep(2)
