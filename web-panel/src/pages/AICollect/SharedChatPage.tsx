@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { PageLoading } from '@/components/ui';
 import { apiUrl } from '@/services/endpoints';
 import { getAccessToken, getSessionState } from '@/services/session';
 import { ChatTranscript } from './CodexChatDialogs';
@@ -19,5 +20,6 @@ export default function SharedChatPage() {
     }).catch(error => { if (!controller.signal.aborted) setError(error.message); });
     return () => controller.abort();
   }, []);
-  return <main className="codex-shared-page"><a href="/scout">Scout</a>{error ? <><p role="alert">{error}</p><a href={`/login?next=${encodeURIComponent(window.location.pathname)}`}>Sign in</a></> : snapshot ? <><h1>{snapshot.title}</h1><ChatTranscript snapshot={snapshot} /></> : <p role="status">Loading shared chat…</p>}</main>;
+  if (!snapshot && !error) return <PageLoading fullscreen tip="Loading shared chat…" />;
+  return <main className="codex-shared-page"><a href="/scout">Scout</a>{error ? <><p role="alert">{error}</p><a href={`/login?next=${encodeURIComponent(window.location.pathname)}`}>Sign in</a></> : snapshot ? <><h1>{snapshot.title}</h1><ChatTranscript snapshot={snapshot} /></> : null}</main>;
 }

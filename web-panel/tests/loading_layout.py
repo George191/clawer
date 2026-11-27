@@ -21,6 +21,8 @@ with sync_playwright() as p:
     page.route("**/src/main.tsx*", lambda route: route.abort())
     page.route("https://fonts.googleapis.com/**", lambda route: route.abort())
     page.route("**/api/**", lambda route: route.fulfill(json={}))
+    pending_shares = []
+    page.route("**/api/v1/scout/shares/**", lambda route: pending_shares.append(route))
     page.goto(args.base, wait_until="domcontentloaded")
     page.evaluate("""async () => {
       const React = (await import('/node_modules/.vite/deps/react.js')).default;
@@ -28,6 +30,7 @@ with sync_playwright() as p:
       const { ConfigProvider, theme, Table, PageLoading } = await import('/src/components/ui/index.tsx');
       const { default: ProjectRouter } = await import('/src/ProjectRouter.tsx');
       const { default: ManagementWorkspace } = await import('/src/components/ManagementWorkspace/index.tsx');
+      const { default: SharedChatPage } = await import('/src/pages/AICollect/SharedChatPage.tsx');
       const { default: Preview } = await import('/src/pages/Pipeline/ObjectTypePreview.tsx');
       const { default: Selection } = await import('/src/pages/Pipeline/ExplorerSelection.tsx');
       for (const path of ['styles/global.css', 'pages/ProductWorkspace/workspace.css',
@@ -42,6 +45,10 @@ with sync_playwright() as p:
         let content;
         const region = child => h('main', { style: { height: 420, display: 'flex', flexDirection: 'column', background: 'var(--ui-bg)' } }, child);
         if (mode === 'fullscreen') content = h(PageLoading, { fullscreen: true });
+        else if (mode === 'shared') {
+          history.replaceState(null, '', '/share/scout/loading-test');
+          content = h(SharedChatPage);
+        }
         else if (mode === 'page') content = region(h(PageLoading));
         else if (mode === 'dashboard') content = region(h('div', { className: 'dashboard-v2 dashboard-v2--root' }, h(PageLoading)));
         else if (mode === 'management') {
@@ -81,7 +88,7 @@ with sync_playwright() as p:
 
     for width, dark in [(1280, True), (1280, False), (375, True), (375, False)]:
         page.set_viewport_size({"width": width, "height": 900})
-        for mode in ["fullscreen", "page", "dashboard", "management"]:
+        for mode in ["fullscreen", "page", "dashboard", "management", "shared"]:
             page.evaluate("([mode, dark]) => renderLoading(mode, dark)", [mode, dark])
             try:
                 page.locator(".ui-page-loading .ui-loading-indicator").wait_for(timeout=5000)
@@ -101,11 +108,18 @@ with sync_playwright() as p:
             }""")
             assert placement["x"] < 1 and placement["y"] < 1, (mode, placement)
             assert placement["orb"] == 64 and placement["fits"], (mode, placement)
-            if mode == "fullscreen":
+            if mode in ["fullscreen", "shared"]:
                 expected = "rgb(23, 27, 33)" if dark else "rgb(243, 245, 247)"
                 assert placement["background"] == expected, (mode, placement)
             if dark and width == 1280 and mode == "fullscreen" and args.screenshot_prefix:
                 page.screenshot(path=args.screenshot_prefix + "-fullscreen.png")
+            if mode == "shared":
+                assert pending_shares
+                for route in pending_shares:
+                    route.fulfill(status=404, json={"detail": "Shared chat unavailable in layout test"})
+                pending_shares.clear()
+                page.locator(".codex-shared-page [role='alert']").wait_for()
+                assert page.locator(".ui-page-loading").count() == 0
         page.evaluate("dark => renderLoading('preview', dark)", dark)
         page.locator(".flow-ontology__muted .ui-loading-indicator").wait_for()
         centered(".flow-ontology__muted .ui-loading-indicator")
