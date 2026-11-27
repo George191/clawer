@@ -48,7 +48,7 @@ class CatalogSession:
     async def execute(self, query, params=None):
         sql = str(query)
         self.calls.append((sql, deepcopy(params)))
-        if "app.ontology_" in sql:
+        if "app.helio_" in sql:
             raise AssertionError("Business catalog queries must receive system metadata as parameters")
         if not sql.lstrip().startswith(self.allowed_prefixes):
             raise AssertionError("The object metadata endpoints must only issue SELECT")

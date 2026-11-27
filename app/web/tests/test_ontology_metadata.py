@@ -93,7 +93,7 @@ class MetadataPg:
     async def execute(self, statement, params=None):
         sql = " ".join(str(statement).split())
         self.calls.append((sql, deepcopy(params)))
-        sql = sql.replace("app.ontology_", "ontology_")
+        sql = sql.replace("app.helio_", "helio_")
         params = params or {}
         if sql.startswith("SELECT c.oid"):
             row = self.catalog.get((params["schema"], params["table"]))

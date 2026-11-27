@@ -54,11 +54,11 @@ class TransactionPg:
     async def execute(self, statement, params=None):
         sql = " ".join(str(statement).split())
         self.calls.append((sql, deepcopy(params)))
-        if self.business and "app.ontology_" in sql:
+        if self.business and "app.helio_" in sql:
             raise AssertionError("Business queries must not read or write system metadata")
         if self.fail_on and sql.startswith(self.fail_on):
             raise RuntimeError("Fixture rejects transaction step")
-        if self.missing_metadata and "app.ontology_" in sql:
+        if self.missing_metadata and "app.helio_" in sql:
             raise DBAPIError(sql, params, MissingMetadata("Ontology table does not exist"), False)
         if sql.startswith("SET LOCAL"):
             return Result()
