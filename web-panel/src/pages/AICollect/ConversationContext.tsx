@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { Modal } from '@/components/ui';
-import * as Popover from '@radix-ui/react-popover';
 import { useThemeStore } from '@/stores/settings';
 import { CodexSummarySection } from './CodexToolbar';
 import { ArtifactIcon, type StageArtifact } from './StageArtifacts';
@@ -14,7 +13,7 @@ export default function ConversationContext({ open, turn, onClose, onView, activ
   const zh = useThemeStore(state => state.language === 'zh-CN');
   const files = turn ? [{ name: 'template.yaml', content: turn.template, step: 2 }, { name: 'adapter.py', content: turn.adapter, step: 3 }].filter(file => file.content) : [];
   const urls = [...new Set(turn?.prompt.match(/https?:\/\/[^\s<>()]+/g) ?? [])];
-  const panel = <aside id="scout-conversation-context" className={`scout-context-panel ${open ? 'is-open' : ''}`} aria-label="Conversation context" onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
+  return open ? <aside id="scout-conversation-context" className={`scout-context-panel ${open ? 'is-open' : ''}`} aria-label="Conversation context" onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
     {files.length > 0 && <CodexSummarySection title={zh ? '更改' : 'Changes'}>
       {files.map(file => <button type="button" key={file.name} className="scout-context-row" aria-label={`Open ${file.name}`} aria-pressed={activePreview === `${turn!.id}-${file.step}`} aria-controls="scout-collection-results" onClick={() => onView({ key: `${turn!.id}-${file.step}`, turn: turn!.id, step: file.step })}><ArtifactIcon step={file.step} /><span>{file.name}</span><b className="scout-context-added">+{file.content.trimEnd().split('\n').length}</b></button>)}
     </CodexSummarySection>}
@@ -24,8 +23,7 @@ export default function ConversationContext({ open, turn, onClose, onView, activ
       {(showAll ? sources : sources.slice(0, 3)).map((file, index) => <button type="button" key={`${file.name}-${index}`} className="scout-context-row" title={file.name} aria-label={`Preview source ${file.name}`} onClick={() => onPreviewFile(file)}><SourceThumbnail file={file} /><span>{file.name}</span></button>)}
       {sources.length > 0 && <button type="button" className="scout-context-view-all" aria-label={showAll ? 'Show less' : 'View all'} aria-expanded={showAll} onClick={() => setShowAll(value => !value)}><ScoutToolbarIcon name="link" /><span>{showAll ? zh ? '收起' : 'Show less' : zh ? '查看全部' : 'View all'}</span></button>}
     </CodexSummarySection>
-  </aside>;
-  return <Popover.Portal container={document.querySelector('.scout-chat-preview')}><Popover.Content asChild align="end" side="bottom" sideOffset={8} collisionPadding={8} onOpenAutoFocus={event => event.preventDefault()}>{panel}</Popover.Content></Popover.Portal>;
+  </aside> : null;
 }
 
 function SourceThumbnail({ file }: { file: File }) {

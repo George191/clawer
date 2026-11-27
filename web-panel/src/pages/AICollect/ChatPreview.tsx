@@ -1,6 +1,5 @@
 import { LoadingOrb } from '@/components/ui/loading';
 import { useEffect, useRef, useState } from 'react';
-import * as Popover from '@radix-ui/react-popover';
 import ScoutToolbarIcon from './ScoutToolbarIcon';
 import { Dropdown, Modal } from '@/components/ui';
 import useScoutChat from './useScoutChat';
@@ -247,7 +246,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
     catch { utteranceRef.current = null; setSpeaking(null); setSpeechError(true); setNotice('Read aloud could not start.'); }
   }
 
-  return <Popover.Root open={contextOpen} onOpenChange={setContextOpen}><section className={`scout-chat-preview ${entered ? 'is-entered' : ''} ${entered && resultsOpen ? 'has-results' : ''} ${entered && contextOpen ? 'has-context' : ''} ${chatStore.chat.archived ? 'is-archived' : ''}`} aria-label="Scout conversation" style={{ '--scout-composer-height': `${composerHeight}px` } as React.CSSProperties}>
+  return <section className={`scout-chat-preview ${entered ? 'is-entered' : ''} ${entered && resultsOpen ? 'has-results' : ''} ${entered && contextOpen ? 'has-context' : ''} ${chatStore.chat.archived ? 'is-archived' : ''}`} aria-label="Scout conversation" style={{ '--scout-composer-height': `${composerHeight}px` } as React.CSSProperties}>
     <div className={`ai-chat-dot ${!entered ? 'is-landing' : ''}`} data-activity={dotActivity} />
     {entered && <div className="scout-chat-dot-frost" aria-hidden="true" />}
     <h1 className="scout-chat-greeting ai-prompt-title" aria-hidden={entered}>Hi{userLoading || userName ? <>, <span className="scout-greeting-name">{userLoading ? <span className="native-dot-loading scout-profile-loading" role="status" aria-label="Loading your profile"><LoadingOrb /></span> : <span key={userName} className="ai-prompt-name scout-loaded-name">{userName}</span>}</span></> : null}, any new ideas?</h1>
@@ -266,7 +265,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
       ] },
       { key: 'archive', label: chatStore.chat.archived ? localized('Unarchive', '取消归档') : localized('Archive', '归档'), icon: <ScoutToolbarIcon name="archive" />, disabled: !turns.length || chatStore.loading },
       { key: 'delete', label: localized('Delete', '删除'), icon: <ScoutToolbarIcon name="trash" />, disabled: !turns.length || chatStore.loading },
-    ], onClick: ({ key }) => { if (key === 'archive' && chatStore.chat.archived) void chatAction(() => chatStore.save({ archived: false })); else void selectChatAction(key); } }} open={entered && resultsOpen} turn={resultTurn} step={previewStep} running={running && resultTurn?.id === latest?.id} onSelect={(artifact) => { setResultsOpen(true); setResultTurnId(artifact.turn); setResultStep(artifact.step); }} onClose={() => setResultsOpen(false)} summaryOpen={contextOpen} onTogglePreview={() => setResultsOpen(value => !value)} onNotice={setNotice} />
+    ], onClick: ({ key }) => { if (key === 'archive' && chatStore.chat.archived) void chatAction(() => chatStore.save({ archived: false })); else void selectChatAction(key); } }} open={entered && resultsOpen} turn={resultTurn} step={previewStep} running={running && resultTurn?.id === latest?.id} onSelect={(artifact) => { setResultsOpen(true); setResultTurnId(artifact.turn); setResultStep(artifact.step); }} onClose={() => setResultsOpen(false)} summaryOpen={contextOpen} onToggleSummary={() => setContextOpen(value => !value)} onTogglePreview={() => setResultsOpen(value => !value)} onNotice={setNotice} />
     {entered && <aside className="scout-history-rail" aria-label="Conversation history" onMouseLeave={() => setHoveredHistory(null)} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setHoveredHistory(null); }}>
       <div className="ai-session-stage-bars">{history.map((entry, index) => {
         const distance = hoveredHistory === null ? -1 : Math.abs(index - hoveredHistory);
@@ -306,7 +305,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
     <Modal open={renameOpen} title="Rename chat" onCancel={() => setRenameOpen(false)} footer={null} width={400} className="codex-chat-dialog"><form onSubmit={event => { event.preventDefault(); if (chatName.trim()) void chatAction(async () => { await chatStore.save({ title: chatName.trim() }); setRenameOpen(false); }); }}><label className="codex-share-access">Chat name<input aria-label="Chat name" autoFocus value={chatName} maxLength={200} onChange={event => setChatName(event.target.value)} /></label><button className="codex-chat-action" type="submit" disabled={!chatName.trim()}>Save</button></form></Modal>
     <Modal open={Boolean(confirmChat)} title={confirmChat === 'delete' ? 'Delete chat?' : running ? 'Stop and archive this chat?' : 'Archive chat?'} onCancel={() => setConfirmChat(undefined)} footer={null} width={440} className="codex-chat-dialog"><p>{confirmChat === 'delete' ? 'This permanently deletes the chat and its shared links.' : 'Archiving stops this chat and removes its scheduled task. You can restore the chat later.'}</p><div className="codex-library-controls"><button className="codex-chat-action" onClick={() => setConfirmChat(undefined)}>Cancel</button><button className="codex-chat-action" onClick={() => { setRunning(false); stopReading(); setQueued([]); void chatAction(async () => { if (confirmChat === 'delete') await chatStore.remove(); else await chatStore.save({ archived: true }); setConfirmChat(undefined); }); }}>{confirmChat === 'delete' ? 'Delete' : running ? 'Stop and archive' : 'Archive'}</button></div></Modal>
     <span className="scout-action-notice" role="status">{notice}</span>
-  </section></Popover.Root>;
+  </section>;
 }
 
 function FeedbackIcon({ down = false }: { down?: boolean }) {

@@ -26,6 +26,6 @@
 .codex-shared-page { min-height: 100dvh; background: #171717; color: #ededed; padding: 40px max(16px,calc((100% - 800px)/2)); box-sizing: border-box; }
 .codex-shared-page h1 { font-size: 22px; font-weight: 500; }
 .codex-shared-page a { color: inherit; }
-.codex-chat-title { position: absolute; top: 8px; left: calc(var(--scout-results-width) + 16px); max-width: calc(100% - var(--scout-results-width) - 208px); height: 32px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; background: transparent; color: #aaa; font: inherit; font-size: 12px; cursor: pointer; }
-.codex-chat-archived { position: absolute; z-index: 24; bottom: 32px; left: calc(var(--scout-results-width) + 16px); right: calc(var(--scout-context-width) + 16px); padding: 16px; background: #282828; border-radius: 16px; text-align: center; }
+.codex-chat-title { position: absolute; top: 8px; left: 16px; max-width: calc(100% - var(--scout-results-width) - 208px); height: 32px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; background: transparent; color: #aaa; font: inherit; font-size: 12px; cursor: pointer; }
+.codex-chat-archived { position: absolute; z-index: 24; bottom: 32px; left: 16px; right: calc(var(--scout-results-width) + var(--scout-context-width) + 16px); padding: 16px; background: #282828; border-radius: 16px; text-align: center; }
 .is-archived > .scout-persistent-composer, .is-archived .scout-interruption, .is-archived .scout-response-actions { display: none; }

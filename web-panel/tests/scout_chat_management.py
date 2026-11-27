@@ -3,6 +3,7 @@
 import argparse
 import copy
 import json
+import re
 from ipaddress import ip_address
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
@@ -87,7 +88,16 @@ with sync_playwright() as playwright:
     expect(summary).to_be_visible()
     page.wait_for_timeout(700)
     chat_bounds = page.locator(".scout-chat-messages").bounding_box()
-    assert abs(chat_bounds["width"] - initial_chat_bounds["width"]) < 1
+    assert chat_bounds["width"] < initial_chat_bounds["width"] - 100
+    result_bounds = results.bounding_box()
+    summary_bounds = summary.bounding_box()
+    assert chat_bounds["x"] + chat_bounds["width"] <= summary_bounds["x"]
+    assert summary_bounds["x"] + summary_bounds["width"] <= result_bounds["x"]
+    composer_bounds = page.locator(".scout-persistent-composer").bounding_box()
+    assert abs(composer_bounds["x"] + composer_bounds["width"] / 2 - chat_bounds["x"] - chat_bounds["width"] / 2) < 2
+    assert composer_bounds["x"] + composer_bounds["width"] <= summary_bounds["x"]
+    page.locator(".scout-user-message").click()
+    expect(summary).to_be_visible()
     expect(summary).to_have_css("border-radius", "20px")
     assert abs(summary.bounding_box()["width"] - 300) < 1
     assert toolbar.locator("svg").evaluate_all("es=>es.every(e=>e.getBoundingClientRect().width===16 && e.getAttribute('viewBox')==='0 0 16 16')")
@@ -99,9 +109,11 @@ with sync_playwright() as playwright:
     expect(summary.get_by_role("button", name="Background processes", exact=True)).to_have_count(0)
     toolbar.get_by_role("button", name="Hide file preview", exact=True).click()
     expect(results).to_be_hidden()
-    expect(summary).to_be_hidden()
+    expect(summary).to_be_visible()
     expect(toolbar.locator('[data-codex-icon="sidebar-hidden-light-16"]')).to_have_count(1)
     toolbar.get_by_role("button", name="Show file preview", exact=True).click()
+    toolbar.get_by_role("button", name="Conversation context", exact=True).click()
+    expect(summary).to_be_hidden()
 
     def more(name, child=None):
         expect(toolbar).to_have_count(1)
@@ -194,6 +206,13 @@ with sync_playwright() as playwright:
         page.wait_for_timeout(700)
         assert summary.bounding_box()["x"] >= 0
         assert summary.bounding_box()["x"] + summary.bounding_box()["width"] <= width
+        bounds = page.locator(".scout-chat-messages").bounding_box()
+        assert bounds["width"] > 0 and bounds["height"] > 0
+        if width < 768:
+            if args.screenshot:
+                page.screenshot(path=args.screenshot.replace(".png", "-mobile.png"))
+            assert summary.bounding_box()["y"] + summary.bounding_box()["height"] <= bounds["y"] + 1, (summary.bounding_box(), bounds, summary.evaluate("e=>({maxHeight:getComputedStyle(e).maxHeight,top:getComputedStyle(e).top})"))
+            assert bounds["y"] < page.locator(".scout-persistent-composer").bounding_box()["y"]
         toolbar.get_by_role("button", name="Conversation context").click()
         expect(summary).to_be_hidden()
     if args.screenshot:
@@ -208,7 +227,7 @@ with sync_playwright() as playwright:
     assert not errors, errors
     zh_context = browser.new_context(viewport={"width": 1100, "height": 800})
     auth = page.evaluate("localStorage.getItem('auth_session')")
-    zh_context.add_init_script("localStorage.setItem('auth_session'," + json.dumps(auth) + ");localStorage.setItem('etl-panel-settings',JSON.stringify({state:{mode:'dark',language:'zh-CN'},version:0}));")
+    zh_context.add_init_script("Object.defineProperty(navigator,'clipboard',{value:{writeText:async t=>{window.__clipboard=t}}});localStorage.setItem('auth_session'," + json.dumps(auth) + ");localStorage.setItem('etl-panel-settings',JSON.stringify({state:{mode:'dark',language:'zh-CN'},version:0}));")
     zh_context.route("**/api/**", api)
     zh_context.route_web_socket("**/ws**", lambda ws: ws.on_message(lambda _: None))
     chats[original]["pinned"] = False
@@ -218,6 +237,20 @@ with sync_playwright() as playwright:
     zh.get_by_role("button", name="Conversation context", exact=True).click()
     expect(zh.get_by_role("button", name="更改", exact=True)).to_be_visible()
     expect(zh.get_by_role("button", name="来源", exact=True)).to_be_visible()
+    zh.get_by_role("button", name="Open template.yaml", exact=True).click()
+    expect(zh.get_by_role("tab", name="template.yaml", exact=True)).to_have_attribute("aria-selected", "true")
+    expect(zh.locator("#scout-file-panel")).to_contain_text("name: articles")
+    expect(zh.locator("#scout-conversation-context")).to_be_visible()
+    zh.get_by_role("button", name="File actions", exact=True).click()
+    zh.get_by_role("menuitem", name="Copy file contents", exact=True).click()
+    zh.wait_for_function("text => window.__clipboard === text", arg=chats[original]["turns"][0]["template"])
+    zh.get_by_role("button", name="File actions", exact=True).click()
+    with zh.expect_download() as download_info:
+        zh.get_by_role("menuitem", name="Download file", exact=True).click()
+    assert download_info.value.suggested_filename == "template.yaml"
+    zh.get_by_role("button", name="File actions", exact=True).click()
+    zh.get_by_role("menuitem", name="Wrap lines", exact=True).click()
+    expect(zh.locator(".scout-result-code")).to_have_class(re.compile("is-wrapped"))
     if args.screenshot:
         zh.wait_for_timeout(350)
         zh.screenshot(path=args.screenshot.replace(".png", "-zh-summary.png"))
