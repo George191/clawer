@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import ScoutToolbarIcon from './ScoutToolbarIcon';
 import { Dropdown, Modal } from '@/components/ui';
 import useScoutChat from './useScoutChat';
-import { CodexChatLibrary, CodexChatSchedule } from './CodexChatDialogs';
+import { CodexChatLibrary, CodexChatSchedule, CodexShareDialog } from './CodexChatDialogs';
 import { chatUrl, markdown, restoreFiles, type SavedChat, type SavedTurn } from './chatStore';
 import { DOT_ACTIVITIES, type DotActivity } from '@/components/NativeDot';
 import { useThemeStore } from '@/stores/settings';
@@ -70,6 +70,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
   const [reveal, setReveal] = useState({ turn: 0, sequence: 0 });
   const language = useThemeStore((state) => state.language);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [chatName, setChatName] = useState('');
@@ -309,7 +310,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
               <button type="button" title={turn.vote === 'up' ? goodLabel : turn.vote === 'down' ? badLabel : 'Rate response'} aria-label="Rate response" aria-pressed={Boolean(turn.vote)}><CodexReplyIcon name={turn.vote === 'up' ? 'upSelected' : turn.vote === 'down' ? 'downSelected' : 'feedback'} /></button>
             </Dropdown>
             <button type="button" title={'speechSynthesis' in window ? 'Read aloud' : 'Read aloud is unavailable in this browser'} aria-label={speaking === turn.id ? 'Stop reading' : 'Read aloud'} aria-pressed={speaking === turn.id} disabled={!('speechSynthesis' in window)} onClick={() => read(turn)}><CodexReplyIcon name="speaker" /></button>
-            <Dropdown trigger={['click']} placement="bottomLeft" overlayClassName="scout-response-more-menu" menu={{ items: [{ key: 'steps', label: 'Show steps' }, { key: 'replay', label: 'Replay response' }], onClick: ({ key }) => { if (key === 'steps') jumpHistory(history.find((entry) => entry.key === `step-${turn.id}-0`)!); else startTurn(turn.prompt, turn.files, false); } }}><button type="button" aria-label="More response actions" title="More"><CodexReplyIcon name="more" /></button></Dropdown>
+            <Dropdown trigger={['click']} placement="bottomLeft" overlayClassName="scout-response-more-menu" menu={{ items: [{ key: 'share', label: localized('Share', '分享'), icon: <ScoutToolbarIcon name="share" /> }], onClick: () => setShareOpen(true) }}><button type="button" aria-label="More response actions" title="More"><CodexReplyIcon name="more" /></button></Dropdown>
           </div></>}
         </div>
       </article>)}
@@ -325,6 +326,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
     {chatStore.chat.archived && <div className="codex-chat-archived">This chat is archived. <button className="codex-chat-action" onClick={() => void chatAction(() => chatStore.save({ archived: false }))}>Unarchive and open</button></div>}
     {libraryOpen && <CodexChatLibrary onClose={() => setLibraryOpen(false)} onNew={() => { setLibraryOpen(false); void chatAction(() => chatStore.startNew()); }} onSchedule={turns.length && !chatStore.chat.archived ? () => { setLibraryOpen(false); setScheduleOpen(true); } : undefined} onOpen={chat => { setLibraryOpen(false); void chatAction(() => chatStore.open(chat.id)); }} />}
     {scheduleOpen && <CodexChatSchedule onSave={() => chatStore.save()} snapshot={chatSnapshot} onClose={() => setScheduleOpen(false)} />}
+    {shareOpen && <CodexShareDialog onSave={() => chatStore.save()} snapshot={chatSnapshot} onClose={() => setShareOpen(false)} />}
     <Modal open={renameOpen} title="Rename chat" onCancel={() => setRenameOpen(false)} footer={null} width={400} className="codex-chat-dialog"><form onSubmit={event => { event.preventDefault(); if (chatName.trim()) void chatAction(async () => { await chatStore.save({ title: chatName.trim() }); setRenameOpen(false); }); }}><label className="codex-share-access">Chat name<input aria-label="Chat name" autoFocus value={chatName} maxLength={200} onChange={event => setChatName(event.target.value)} /></label><button className="codex-chat-action" type="submit" disabled={!chatName.trim()}>Save</button></form></Modal>
     <Modal open={Boolean(confirmChat)} title={confirmChat === 'delete' ? 'Delete chat?' : running ? 'Stop and archive this chat?' : 'Archive chat?'} onCancel={() => setConfirmChat(undefined)} footer={null} width={440} className="codex-chat-dialog"><p>{confirmChat === 'delete' ? 'This permanently deletes the chat and its shared links.' : 'Archiving stops this chat and removes its scheduled task. You can restore the chat later.'}</p><div className="codex-library-controls"><button className="codex-chat-action" onClick={() => setConfirmChat(undefined)}>Cancel</button><button className="codex-chat-action" onClick={() => { setRunning(false); stopReading(); setQueued([]); void chatAction(async () => { if (confirmChat === 'delete') await chatStore.remove(); else await chatStore.save({ archived: true }); setConfirmChat(undefined); }); }}>{confirmChat === 'delete' ? 'Delete' : running ? 'Stop and archive' : 'Archive'}</button></div></Modal>
     <span className="scout-action-notice" role="status">{notice}</span>

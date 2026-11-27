@@ -140,7 +140,12 @@ with sync_playwright() as playwright:
     assert chats[original]["pinned"]
     assert chats[original]["turns"][0]["attachments"][0]["content"] == "UHVibGljIHNvdXJjZSBub3Rlcw=="
 
-    toolbar.get_by_role("button", name="Share chat", exact=True).click()
+    page.get_by_role("button", name="More response actions", exact=True).click()
+    response_menu = page.locator(".scout-response-more-menu")
+    expect(response_menu.get_by_role("menuitem")).to_have_count(1)
+    share_action = response_menu.get_by_role("menuitem", name="Share", exact=True)
+    expect(share_action.locator("svg")).to_have_count(1)
+    share_action.click()
     share = page.get_by_role("dialog", name="Share Saved collection", exact=True)
     if args.screenshot:
         page.screenshot(path=args.screenshot.replace(".png", "-share.png"))
