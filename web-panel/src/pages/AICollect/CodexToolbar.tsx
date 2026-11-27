@@ -12,7 +12,7 @@ export const CodexToolbarButton = forwardRef<HTMLButtonElement, ButtonHTMLAttrib
 });
 
 // Codex uses Radix menu primitives for focus, dismissal, submenus and selection.
-export function CodexToolbarMenu({ children, menu, shortcuts = {} }: { children: ReactNode; menu: MenuProps; shortcuts?: Record<string, string> }) {
+export function CodexToolbarMenu({ children, menu, shortcuts = {}, contextMenu = false }: { children: ReactNode; menu: MenuProps; shortcuts?: Record<string, string>; contextMenu?: boolean }) {
   const [open, setOpen] = useState(false);
   function items(entries: MenuProps['items']): ReactNode {
     return entries?.map((item, index) => {
@@ -22,7 +22,7 @@ export function CodexToolbarMenu({ children, menu, shortcuts = {} }: { children:
       return <Menu.Item key={item.key} disabled={item.disabled} className="codex-menu-item" data-danger={item.key === 'delete' || undefined} onSelect={() => menu.onClick?.({ key: item.key })}>{item.icon}{item.label}{shortcuts[String(item.key)] ? <kbd aria-hidden="true" className="codex-menu-trailing">{shortcuts[String(item.key)]}</kbd> : menu.selectedKeys?.includes(item.key!) && <span className="codex-menu-trailing"><CodexReplyIcon name="copied" /></span>}</Menu.Item>;
     });
   }
-  return <Menu.Root open={open} onOpenChange={setOpen}><Menu.Trigger asChild>{children}</Menu.Trigger><Menu.Portal><Menu.Content className="codex-menu" align="end" sideOffset={4} collisionPadding={8} onKeyDown={event => {
+  return <Menu.Root open={open} onOpenChange={setOpen}><Menu.Trigger asChild onPointerDown={event => { if (contextMenu) event.preventDefault(); }} onContextMenu={event => { if (contextMenu) { event.preventDefault(); setOpen(true); } }} onKeyDown={event => { if (contextMenu && (event.key === 'ContextMenu' || event.shiftKey && event.key === 'F10')) { event.preventDefault(); setOpen(true); } }}>{children}</Menu.Trigger><Menu.Portal><Menu.Content className="codex-menu" align="end" sideOffset={4} collisionPadding={8} onKeyDown={event => {
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     const key = Object.keys(shortcuts).find(key => shortcuts[key].toLowerCase() === event.key.toLowerCase());
     if (key && menu.items?.some(item => item && String(item.key) === key && !item.disabled)) { event.preventDefault(); menu.onClick?.({ key }); setOpen(false); }

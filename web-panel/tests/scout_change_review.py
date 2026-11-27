@@ -19,7 +19,7 @@ args = parser.parse_args()
 assert ip_address(urlsplit(args.base).hostname).is_loopback
 
 with sync_playwright() as playwright:
-    browser = playwright.chromium.launch(channel=args.channel, args=["--no-proxy-server"])
+    browser = playwright.chromium.launch(channel=args.channel, args=["--no-proxy-server", "--disable-gpu"])
     context = browser.new_context(viewport={"width": 1440, "height": 900})
     context.add_init_script("""const n=Math.floor(Date.now()/1000);if(!localStorage.getItem('auth_session'))localStorage.setItem('auth_session',JSON.stringify({access_token:'test.'+btoa(JSON.stringify({sub:'fixture',type:'access',iat:n,exp:n+3600,session_exp:n+3600})).replace(/=+$/,'')+'.test',last_activity:Date.now(),locked:false}));Object.defineProperty(navigator,'clipboard',{value:{writeText:async t=>{window.__clipboard=t},readText:async()=>window.__clipboard}});""")
     chats, shares, schedules = {}, {}, {}
@@ -110,6 +110,47 @@ with sync_playwright() as playwright:
         template_file = panel.locator("#codex-change-template")
     renderer = template_file.locator("diffs-container")
     expect(renderer.locator("[data-line]").first).to_be_visible(timeout=30000)
+    tabs = panel.get_by_role("tablist", name="Preview tabs", exact=True)
+    expect(tabs.get_by_role("tab", name="Changes", exact=True)).to_have_attribute("aria-selected", "true")
+    expect(template_file.locator('.codex-change-file-header [data-codex-icon="eye-light-16"]')).to_have_count(1)
+    expect(template_file.locator('.codex-change-file-header [data-codex-icon="tab-badge-plus-light-16"]')).to_have_count(1)
+    expect(template_file.locator('.codex-change-file-header button[aria-label^="File actions"]')).to_have_count(0)
+    panel.get_by_role("button", name="Open template.yaml in tab", exact=True).click()
+    expect(tabs.get_by_role("tab", name="template.yaml", exact=True)).to_have_attribute("aria-selected", "true")
+    expect(panel.locator('#codex-file-panel diffs-container [data-line]').first).to_be_visible()
+    tabs.get_by_role("tab", name="Changes", exact=True).click()
+    panel.get_by_role("button", name="Open template.yaml in tab", exact=True).click()
+    expect(tabs.get_by_role("tab", name="template.yaml", exact=True)).to_have_count(1)
+    tabs.get_by_role("tab", name="Changes", exact=True).click()
+    panel.get_by_role("button", name="Open adapter.py in tab", exact=True).click()
+    expect(tabs.get_by_role("tab")).to_have_count(3)
+    tabs.get_by_role("button", name="Close adapter.py tab", exact=True).click()
+    expect(tabs.get_by_role("tab", name="template.yaml", exact=True)).to_have_attribute("aria-selected", "true")
+    tabs.get_by_role("button", name="Close template.yaml tab", exact=True).click()
+    expect(tabs.get_by_role("tab")).to_have_count(1)
+    expect(template_file.get_by_role("button", name="Comment on template.yaml", exact=True)).to_have_count(0)
+    panel.get_by_role("button", name="Preview template.yaml", exact=True).click()
+    expect(tabs.locator('.codex-review-file-tab.is-preview')).to_have_count(1)
+    tabs.get_by_role("tab", name="Changes", exact=True).click()
+    panel.get_by_role("button", name="Preview adapter.py", exact=True).click()
+    expect(tabs.get_by_role("tab", name="template.yaml", exact=True)).to_have_count(0)
+    tabs.get_by_role("tab", name="adapter.py", exact=True).dblclick()
+    expect(tabs.locator('.codex-review-file-tab.is-preview')).to_have_count(0)
+    file_gutter = panel.locator('#codex-file-panel diffs-container [data-column-number]').first
+    file_line = int(file_gutter.get_attribute('data-column-number'))
+    file_gutter.click()
+    file_comment_dialog = page.get_by_role('dialog', name='Leave a comment', exact=True)
+    file_comment_dialog.get_by_role('textbox', name='Comment', exact=True).fill('Full-file line comment')
+    file_comment_dialog.get_by_role('button', name='Add comment', exact=True).click()
+    expect(file_comment_dialog).to_be_hidden()
+    assert chats[ident]['turns'][-1]['review']['comments'][-1]['start'] == file_line > 0
+    file_comment = panel.locator('#codex-file-panel .codex-inline-comment').filter(has_text='Full-file line comment')
+    expect(file_comment).to_be_visible()
+    file_comment.get_by_role('button', name='Delete', exact=True).click()
+    tabs.get_by_role('tab', name='adapter.py', exact=True).focus()
+    page.keyboard.press('ArrowLeft')
+    expect(tabs.get_by_role('tab', name='Changes', exact=True)).to_have_attribute('aria-selected', 'true')
+    tabs.get_by_role('button', name='Close adapter.py tab', exact=True).click()
     if args.screenshot:
         page.screenshot(path=args.screenshot)
     def options(label):
@@ -117,7 +158,7 @@ with sync_playwright() as playwright:
         page.get_by_role("menuitem", name=label, exact=True).click()
 
     def file_action(label, key="template"):
-        panel.get_by_role("button", name=f"File actions for {'template.yaml' if key == 'template' else 'adapter.py'}", exact=True).click()
+        panel.locator(f"#codex-change-{key} .codex-change-file-toggle").click(button="right")
         page.get_by_role("menuitem", name=label, exact=True).click()
 
     def source(label):
@@ -278,7 +319,7 @@ with sync_playwright() as playwright:
     options("Correction history")
 
     # Comments persist, resolve/reopen and can prefill a new correction request.
-    panel.get_by_role("button", name="Comment on template.yaml", exact=True).click()
+    renderer.locator("[data-column-number]").first.click()
     comment_dialog = page.get_by_role("dialog", name="Leave a comment", exact=True)
     comment_dialog.get_by_role("textbox", name="Comment", exact=True).fill("Please verify the article name")
     comment_dialog.get_by_role("button", name="Add comment", exact=True).click()

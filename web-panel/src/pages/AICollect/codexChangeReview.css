@@ -65,3 +65,19 @@
 .codex-rich-preview dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 @container (max-width: 600px) { .codex-changes-header { flex-wrap: wrap; gap: 4px; min-height: 0; padding-block: 6px; } .codex-changes-sources { flex: 1; } .codex-changes-controls { order: 2; margin-left: 0; } .codex-tree-toggle { margin-left: auto; } }
 @container (max-width: 380px) { .codex-review-source { padding-inline: 6px; font-size: 12px; } .codex-change-file-header { padding-left: 8px; } .codex-change-file-toggle { font-size: 12px; gap: 6px; } .codex-review-tree { width: 120px; } }
+
+.codex-changes-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.codex-changes-panel[hidden] { display: none; }
+.codex-review-tabs { display: flex; flex-shrink: 0; gap: 4px; min-height: 40px; padding: 4px 8px; overflow-x: auto; border-bottom: .5px solid #ffffff1f; }
+.codex-review-tabs button { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: #999; font: inherit; font-size: 12px; white-space: nowrap; cursor: default; }
+.codex-review-tabs button[aria-selected=true], .codex-review-file-tab.is-active { background: #ffffff0a; color: #ededed; }
+.codex-review-file-tab { display: flex; align-items: center; border-radius: 8px; }
+.codex-review-tabs .codex-review-file-tab button[aria-selected=true] { background: transparent; }
+.codex-review-tabs :is(img,svg) { width: 16px; height: 16px; flex-shrink: 0; }
+.codex-review-tabs .codex-review-file-tab > button:last-child { padding: 4px; width: 24px; height: 24px; margin-right: 4px; }
+.codex-review-file-panel { flex: 1; min-height: 0; overflow: auto; }
+.codex-review-file-tools { display: flex; align-items: center; gap: 12px; padding: 8px 16px; color: #999; font-size: 12px; }
+.codex-review-file-tools span { flex: 1; }
+.codex-review-file-tools button { border: 0; background: transparent; color: inherit; font: inherit; }
+
+.codex-review-file-tab.is-preview [role=tab] { font-style: italic; }
