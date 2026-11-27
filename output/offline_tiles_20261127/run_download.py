@@ -52,6 +52,8 @@ def main():
 
         # Only update a verified clean Git checkout; no application code is copied to the host.
         print(run(f'''set -eu
+export HTTPS_PROXY=http://127.0.0.1:{port}
+export HTTP_PROXY=http://127.0.0.1:{port}
 cd /srv/terrain/tile-downloader-code
 test -z "$(git status --porcelain)"
 git -c http.proxy=http://127.0.0.1:{port} -c http.version=HTTP/1.1 pull --ff-only origin master

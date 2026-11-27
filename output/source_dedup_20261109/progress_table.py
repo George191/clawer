@@ -597,7 +597,11 @@ def save(path, value):
 async def main(as_json=False, as_markdown=False):
     last = HERE / 'progress-table-last.json'
     previous = json.loads(last.read_text(encoding='utf8')) if last.exists() else None
-    snapshot, tiles = await asyncio.gather(collect(), collect_tiles())
+    snapshot, tiles = await asyncio.gather(collect(), collect_tiles(), return_exceptions=True)
+    if isinstance(snapshot, Exception):
+        print('财报 / 专利进度查询失败：' + str(snapshot)[-500:])
+        print(tile_markdown(tiles))
+        raise SystemExit(1)
     value = summarize(snapshot, previous)
     value['tiles'] = tiles
     stamp = parse_time(value['observed_at']).strftime('%Y%m%dT%H%M%SZ')
