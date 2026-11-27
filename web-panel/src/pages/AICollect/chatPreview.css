@@ -9,7 +9,6 @@
 .scout-persistent-composer button { display: grid; place-items: center; width: 34px; height: 34px; flex-shrink: 0; border: 0; border-radius: 50%; cursor: pointer; }
 .scout-send { background: #f4f4f4; color: #111; transition: background .15s, color .15s, opacity .15s; }
 .scout-send:hover { background: white; }
-.scout-voice-status { padding: 10px 16px 0; color: #aab1bd; font-size: 12px; }
 .scout-chat-messages { position: absolute; inset: 12px 0 126px; overflow-y: auto; padding: 16px max(24px, calc((100% - 744px)/2)); scrollbar-width: thin; opacity: 0; pointer-events: none; transition: opacity .3s .2s; scroll-padding-bottom: 24px; }
 .is-entered > .scout-chat-messages { opacity: 1; pointer-events: auto; }
 .scout-chat-turn { margin: 26px 0 36px; }
@@ -140,7 +139,7 @@
 .scout-context-section-head { display: flex; align-items: center; justify-content: space-between; min-height: 24px; margin: 0 12px 6px; }
 .scout-context-section-head > button:first-child { padding: 0; border: 0; background: transparent; color: #b4b4b4; font-family: inherit; font-size: 12px; line-height: 1.6; text-align: left; cursor: pointer; }
 .scout-context-section-content { display: grid; grid-template-rows: 0fr; opacity: 0; visibility: hidden; transition: grid-template-rows 220ms, opacity 180ms, visibility 220ms; }
-.scout-context-section-content.is-expanded { grid-template-rows: 1fr; opacity: 1; visibility: visible; }
+.scout-context-section-content.is-expanded { grid-template-rows: 1fr; opacity: 1; visibility: inherit; }
 .scout-context-section-content > div { min-height: 0; overflow: hidden; }
 .scout-context-row { display: flex; align-items: center; gap: 9px; width: 100%; min-width: 0; min-height: 36px; padding: 7px 10px; border: 0; border-radius: 9px; background: transparent; color: #ddd; font-family: inherit; font-size: 12px; line-height: 1.5; text-align: left; cursor: pointer; }
 .scout-context-row:hover { background: #ffffff09; }
@@ -345,3 +344,18 @@
 .scout-landing-placeholder { position: absolute; inset: 0; display: flex; align-items: center; white-space: pre; overflow: hidden; pointer-events: none; color: #808897; font-size: 14px; line-height: 22px; }
 .scout-landing-placeholder .ai-prompt-name { flex-shrink: 0; }
 .scout-placeholder-caret { display: inline-block; flex-shrink: 0; width: 1px; height: 1em; margin-left: 2px; background: currentColor; }
+
+/* Codex dictation V: cancel, live waveform, finish and transcribe/send. */
+.codex-dictation-controls { position: absolute; z-index: 2; top: 12px; left: 16px; right: 16px; display: flex; align-items: center; gap: 8px; min-height: 36px; background: #242832; }
+.scout-persistent-composer:not(.is-chat) .codex-dictation-controls { top: 18px; background: #1d2129; }
+.codex-dictation-waveform { display: flex; align-items: center; justify-content: center; flex: 1; min-width: 0; height: 32px; color: #999; font-size: 14px; }
+.codex-dictation-waveform canvas { width: 100%; height: 32px; }
+.codex-dictation-controls .conversation-header-control { width: 32px; height: 32px; background: #ffffff0d; }
+.codex-dictation-controls .scout-toolbar-icon { width: 20px; height: 20px; }
+.codex-dictation-error { position: absolute; bottom: calc(100% + 8px); left: 12px; right: 12px; padding: 8px 12px; border-radius: 12px; background: #282828; color: #e7b0aa; font-size: 12px; }
+.is-dictating .scout-message-textarea, .is-dictating .scout-landing-field, .is-dictating .scout-voice { visibility: hidden; }
+.codex-dictation-controls .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+
+.scout-voice .codex-change-icon { width: 20px; height: 20px; }
+
+.is-dictating .scout-composer-body > .scout-send, .is-dictating .scout-composer-footer > .scout-send:not(.is-stop) { visibility: hidden; }

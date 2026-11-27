@@ -80,10 +80,6 @@
 .codex-comment-editor .codex-comment-submit:hover:enabled { background: #fff; color: #181818; }
 .codex-comment-editor .codex-comment-submit:disabled { background: #666; color: #202020; opacity: 1; }
 .codex-comment-editor > p { margin: 0; padding: 0 12px; font-size: 12px; color: #ff8c8c; }
-.codex-rich-preview { margin: 0; padding: 12px 20px; font-size: 12px; }
-.codex-rich-preview > div { display: grid; grid-template-columns: minmax(100px,1fr) 2fr; gap: 12px; padding: 8px; border-bottom: .5px solid #ffffff1f; }
-.codex-rich-preview dt { color: #999; }
-.codex-rich-preview dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 @container (max-width: 600px) { .codex-changes-header { flex-wrap: wrap; gap: 4px; min-height: 0; padding-block: 6px; } .codex-changes-sources { flex: 1; } .codex-changes-controls { order: 2; margin-left: 0; } .codex-tree-toggle { margin-left: auto; } }
 @container (max-width: 380px) { .codex-review-source { padding-inline: 6px; font-size: 12px; } .codex-change-file-header { padding-left: 8px; } .codex-change-file-toggle { font-size: 12px; gap: 6px; } .codex-review-tree { width: 120px; } }
 
@@ -102,3 +98,23 @@
 .codex-review-file-tools button { border: 0; background: transparent; color: inherit; font: inherit; }
 
 .codex-review-file-tab.is-preview [role=tab] { font-style: italic; }
+
+/* Codex side-panel tab strip: flexible tabs, trailing close and launcher. */
+.codex-review-tabs { min-height: 56px; align-items: center; padding: 8px; gap: 4px; box-sizing: border-box; }
+.codex-review-file-tab { flex: 1 1 160px; min-width: 100px; max-width: 300px; height: 40px; padding: 0 4px; }
+.codex-review-file-tab > [role=tab] { flex: 1; min-width: 0; width: auto; height: 40px; overflow: hidden; text-overflow: ellipsis; font-size: 14px; }
+.codex-review-file-tab > .ui-tooltip-trigger button { padding: 4px; width: 24px; height: 24px; margin-right: 4px; }
+.codex-review-tabs .codex-new-tab { width: 32px; height: 32px; padding: 8px; }
+.codex-review-tabs button:hover { background: #ffffff0d; }
+.codex-new-tab-page { display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 24px; }
+.codex-new-tab-page button { display: flex; align-items: center; gap: 12px; padding: 12px; border: 0; border-radius: 12px; background: #ffffff0a; color: inherit; text-align: left; font: inherit; }
+.codex-new-tab-page :is(img,svg) { width: 16px; height: 16px; }
+.codex-review-file-tools { position: sticky; top: 0; z-index: 6; min-height: 48px; box-sizing: border-box; background: #181818; }
+.codex-show-changes { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; border: 0; border-radius: 999px; background: #ffffff14; color: #ededed; font: 500 14px/20px system-ui,sans-serif; cursor: default; }
+.codex-show-changes:hover { background: #ffffff1f; }
+.codex-show-changes:disabled { opacity: .4; }
+.codex-file-comparison-controls, .codex-hunk-navigation { display: flex; align-items: center; gap: 4px; }
+.codex-hunk-navigation { gap: 0; border-radius: 999px; background: #ffffff0d; }
+.codex-hunk-navigation .conversation-header-control { width: 24px; height: 28px; padding: 4px; }
+.codex-hunk-navigation > .ui-tooltip-trigger:first-child svg { transform: rotate(180deg); }
+.codex-hunk-navigation > span:not(.ui-tooltip-trigger) { min-width: 28px; text-align: center; color: #aaa; font-size: 12px; }

@@ -40,3 +40,7 @@
 @keyframes codex-summary-enter { from { opacity: 0; transform: translateX(100%); } to { opacity: 1; transform: translateX(0); } }
 @keyframes codex-summary-exit { to { opacity: 0; transform: translateX(100%); } }
 @media (prefers-reduced-motion: reduce) { .scout-context-panel[data-state] { animation: none; } }
+
+.codex-tooltip .ui-tooltip-inner { padding: 6px 10px; border: 1px solid #ffffff0a; border-radius: 999px; background: #282828; color: #ededed; box-shadow: 0 4px 12px #0002; font-size: 14px; line-height: 20px; }
+.codex-tooltip-content { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+.codex-tooltip-content kbd { padding: 0 6px; border-radius: 999px; background: #ffffff29; color: inherit; font: inherit; font-size: 12px; line-height: 22px; }

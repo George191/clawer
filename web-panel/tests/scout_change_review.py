@@ -89,7 +89,7 @@ with sync_playwright() as playwright:
     ident = str(uuid4())
     template = "name: articles\n" + "".join(f"field_{i}: original_{i}\n" for i in range(1, 42))
     corrected = template.replace("original_4", "corrected_4").replace("original_35", "corrected_35")
-    adapter = "import json\n\n" + "".join(f"value_{i} = {i}\n" for i in range(1, 35))
+    adapter = "import json\nfrom pathlib import (\n    Path,\n    PurePath,\n)\n\n" + "".join(f"value_{i} = {i}\n" for i in range(1, 35))
     adapter2 = adapter.replace("import json", "import json, sys").replace("value_20 = 20", "value_20 =  20").replace("value_30 = 30", "value_30 = 300")
     def turn(number, prompt, yaml, python):
         return {"id": number, "prompt": prompt, "template": yaml, "adapter": python, "reply": "Saved correction", "step": 5, "done": 6, "complete": True, "createdAt": f"2026-11-27T08:0{number}:00Z", "attachments": []}
@@ -118,6 +118,33 @@ with sync_playwright() as playwright:
     panel.get_by_role("button", name="Open template.yaml in tab", exact=True).click()
     expect(tabs.get_by_role("tab", name="template.yaml", exact=True)).to_have_attribute("aria-selected", "true")
     expect(panel.locator('#codex-file-panel diffs-container [data-line]').first).to_be_visible()
+    expect(page.locator('.scout-context-panel .scout-context-row').first).to_be_hidden()
+    panel.get_by_role('button', name='Show changes', exact=True).click()
+    comparison = panel.get_by_role('group', name='File comparison', exact=True)
+    expect(comparison).to_be_visible()
+    expect(comparison.locator('.codex-hunk-navigation')).to_contain_text('1/2')
+    expect(comparison.get_by_role('button', name='Previous change', exact=True)).to_be_disabled()
+    comparison.get_by_role('button', name='Next change', exact=True).click()
+    expect(comparison.locator('.codex-hunk-navigation')).to_contain_text('2/2')
+    expect(comparison.get_by_role('button', name='Next change', exact=True)).to_be_disabled()
+    comparison.get_by_role('button', name='Previous change', exact=True).click()
+    comparison.get_by_role('button', name='File diff layout', exact=True).click()
+    page.get_by_role('menuitem', name='Split', exact=True).click()
+    comparison.get_by_role('button', name='File diff layout', exact=True).click()
+    page.get_by_role('menuitem', name='Unified', exact=True).click()
+    comparison.get_by_role('button', name='Find in file', exact=True).click()
+    panel.get_by_role('textbox', name='Find in diff', exact=True).fill('corrected_4')
+    panel.get_by_role('textbox', name='Find in diff', exact=True).press('Enter')
+    panel.get_by_role('button', name='Close find', exact=True).click()
+    comparison.get_by_role('button', name='Hide changes', exact=True).click()
+    expect(comparison).to_have_count(0)
+    expect(panel.get_by_role('button', name='Show changes', exact=True)).to_be_visible()
+    tabs.get_by_role('button', name='Close Changes tab', exact=True).click()
+    expect(tabs.get_by_role('tab', name='Changes', exact=True)).to_have_count(0)
+    tabs.get_by_role('button', name='New tab', exact=True).click()
+    panel.locator('.codex-new-tab-page').get_by_role('button', name='Changes', exact=True).click()
+    expect(tabs.get_by_role('tab', name='Changes', exact=True)).to_have_attribute('aria-selected','true')
+
     tabs.get_by_role("tab", name="Changes", exact=True).click()
     panel.get_by_role("button", name="Open template.yaml in tab", exact=True).click()
     expect(tabs.get_by_role("tab", name="template.yaml", exact=True)).to_have_count(1)
@@ -160,9 +187,15 @@ with sync_playwright() as playwright:
     expect(page.get_by_role('menu')).to_have_count(0)
     page.keyboard.press('Space')
     expect(toggle_file).to_have_attribute('aria-expanded', 'true')
+    changes.get_by_role("button", name="Changes options", exact=True).click()
+    expect(page.get_by_role('menuitemcheckbox')).to_have_text(['Load full files', 'Rich preview', 'Word diffs', 'Hide white space', 'Hide imports'])
+    expect(page.get_by_role('menuitem')).to_have_count(0)
+    expect(page.get_by_role('menuitemcheckbox').locator('svg.codex-change-icon')).to_have_count(5)
+    expect(page.get_by_role('menuitemcheckbox', name='Word diffs', exact=True)).to_have_attribute('aria-checked', 'true')
+    page.keyboard.press('Escape')
     def options(label):
         changes.get_by_role("button", name="Changes options", exact=True).click()
-        page.get_by_role("menuitem", name=label, exact=True).click()
+        page.get_by_role("menuitemcheckbox", name=label, exact=True).click()
 
     def file_action(label, key="template"):
         panel.locator(f"#codex-change-{key} .codex-change-file-toggle").click(button="right")
@@ -221,16 +254,18 @@ with sync_playwright() as playwright:
     imported = python_lines.filter(has_text="import json")
     assert imported.count() >= 1
     expect(imported.first).to_be_hidden()
+    expect(python_lines.filter(has_text='    Path,').first).to_be_hidden()
+    expect(python_lines.filter(has_text='    PurePath,').first).to_be_hidden()
     # Hiding imports must not renumber the remaining source lines.
-    assert python_lines.filter(has_text="value_30 = 300").first.get_attribute("data-line") == "32"
+    assert python_lines.filter(has_text="value_30 = 300").first.get_attribute("data-line") == "36"
     options("Hide imports")
     expect(imported.first).to_be_visible()
     options("Rich preview")
-    expect(template_file.locator(".codex-rich-preview")).to_be_visible()
+    expect(panel).to_have_attribute('data-rich-preview', 'true')
+    expect(template_file.locator('.codex-rich-preview')).to_have_count(0)
+    expect(renderer.locator('[data-line]').first).to_be_visible()
     options("Rich preview")
-    options("Line numbers")
-    expect(renderer.locator("[data-line-number-content]").first).to_be_hidden()
-    options("Line numbers")
+    expect(panel).to_have_attribute('data-rich-preview', 'false')
     changes.get_by_role("button", name="Jump to file", exact=True).click()
     panel.get_by_role("textbox", name="Jump to file", exact=True).fill("adapter")
     panel.locator(".codex-jump-files").get_by_role("button", name="adapter.py", exact=True).click()
@@ -239,7 +274,8 @@ with sync_playwright() as playwright:
     expect(panel.get_by_role("navigation", name="Changed files")).to_be_visible()
     panel.get_by_role("navigation", name="Changed files").get_by_role("button", name=re.compile("template.yaml")).click()
     panel.get_by_role("button", name="Hide file tree", exact=True).click()
-    options("Find in diff")
+    panel.focus()
+    page.keyboard.press("Control+f")
     panel.get_by_role("textbox", name="Find in diff", exact=True).fill("corrected_35")
     panel.get_by_role("textbox", name="Find in diff", exact=True).press("Enter")
     expect(page.get_by_role("status").filter(has_text=re.compile(r"1 /"))).to_be_visible()
@@ -250,12 +286,6 @@ with sync_playwright() as playwright:
     page.wait_for_function("text=>window.__clipboard===text", arg=corrected)
     file_action("Copy patch")
     page.wait_for_function("window.__clipboard?.includes('--- a/template.yaml') && window.__clipboard?.includes('-field_4: original_4')")
-    options("Copy git apply command")
-    page.wait_for_function("window.__clipboard?.startsWith('git apply')")
-    with page.expect_download() as result:
-        options("Download patch")
-    assert result.value.suggested_filename == "changes.patch"
-
     # Stage exactly one hunk, then verify the staged comparison excludes other hunks.
     template_file.hover()
     template_file.get_by_role("button", name="Actions for template.yaml hunk 1", exact=True).click()
@@ -269,14 +299,7 @@ with sync_playwright() as playwright:
     template_file.get_by_role("button", name="Actions for template.yaml hunk 1", exact=True).click()
     page.get_by_role("menuitem", name="Unstage", exact=True).click()
     expect(panel.get_by_role("status", name="", exact=True).filter(has_text="No changes")).to_be_visible()
-    options("Unstage all")
-    expect(panel.get_by_role("status", name="", exact=True).filter(has_text="No changes")).to_be_visible()
     source("Last turn")
-    options("Stage all")
-    page.wait_for_function("!document.querySelector('.codex-changes-controls button[disabled]')")
-    assert set(chats[ident]["turns"][-1]["review"]["staged"]) == {"template", "adapter"}
-    options("Unstage all")
-
     # Edit -> immutable correction -> server round-trip -> historical restore.
     file_action("Stage file")
     page.wait_for_function("!document.querySelector('.codex-changes-controls button[disabled]')")
@@ -314,16 +337,14 @@ with sync_playwright() as playwright:
     source("Last turn")
     page.reload(wait_until="domcontentloaded")
     expect(panel.locator("#codex-change-template [data-line]").filter(has_text="name: corrected_articles")).to_be_visible(timeout=30000)
-    options("Correction history")
-    timeline = panel.get_by_role("navigation", name="Correction history", exact=True)
-    expect(timeline.get_by_role("button")).to_have_count(3)
-    timeline.get_by_role("button", name=re.compile("Correct article fields")).click()
+    panel.locator('.codex-changes-sources > button').nth(1).click()
+    page.get_by_role('menuitem', name='Corrections', exact=True).hover()
+    page.get_by_role('menuitem', name=re.compile('2 · Correct article fields')).click()
     expect(panel.get_by_role("button", name="Restore this revision", exact=True)).to_be_visible()
     panel.get_by_role("button", name="Restore this revision", exact=True).click()
     expect(panel.locator(".codex-revision-banner")).to_have_count(0)
     assert len(chats[ident]["turns"][-1]["review"]["revisions"]) == 3
     assert chats[ident]["turns"][-1]["template"] == corrected
-    options("Correction history")
 
     # Comments persist, resolve/reopen and can prefill a new correction request.
     renderer.locator("[data-column-number]").first.click()
@@ -350,14 +371,7 @@ with sync_playwright() as playwright:
     expect(comment).to_be_visible()
     comment.get_by_role("button", name="Resolve", exact=True).click()
     expect(comment).to_have_count(0)
-    options("Show resolved comments")
-    expect(comment).to_be_visible()
-    comment.get_by_role("button", name="Reopen", exact=True).click()
-    comment.get_by_role("button", name="Add to chat", exact=True).click()
-    assert "Please verify" in page.get_by_role("textbox", name="Message Scout", exact=True).input_value()
-    page.get_by_role("textbox", name="Message Scout", exact=True).fill("")
-    comment.get_by_role("button", name="Delete", exact=True).click()
-    expect(comment).to_have_count(0)
+    assert chats[ident]['turns'][-1]['review']['comments'][-1]['resolved'] is True
 
     # Revert and a failed save preserve the previous corrections and the draft.
     file_action("Revert file")

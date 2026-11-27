@@ -20,14 +20,14 @@ type Props = {
 };
 
 export default function PreviewWorkspace(props: Props) {
-  const { chatId, visible, conversationMenu, snapshot, onSave, onRefresh, open, turn, step, running, selectionRequest, onReviewChange, onRequestChanges, summaryOpen, onToggleSummary, onTogglePreview, onNotice } = props;
+  const { chatId, visible, conversationMenu, snapshot, onSave, onRefresh, open, turn, step, running, selectionRequest, onClose, onReviewChange, onRequestChanges, summaryOpen, onToggleSummary, onTogglePreview, onNotice } = props;
   const [sharing, setSharing] = useState<ShareSnapshot>();
   useEffect(() => { setSharing(undefined); }, [chatId]);
   const browsing = running && step === 1 && turn?.id === snapshot.turns[snapshot.turns.length - 1]?.id;
   return <>
     <aside id="scout-collection-results" className="scout-collection-results" aria-label="Collection results" aria-hidden={!open}>
       {browsing && <><header className="scout-file-header">https://example.org/articles</header><div className="scout-file-body"><PreviewResults turn={turn} step={step} running={running} /></div></>}
-      <div className="scout-review-surface" hidden={browsing}><CodexChangeReview userName={props.userName} chatId={chatId} turns={snapshot.turns} activeTurn={turn?.id} activeStep={step} selectionRequest={selectionRequest} running={running} onChange={onReviewChange} onRefresh={onRefresh} onNotice={onNotice} onRequestChanges={onRequestChanges} /></div>
+      <div className="scout-review-surface" hidden={browsing}><CodexChangeReview userName={props.userName} visible={open} onClose={onClose} chatId={chatId} turns={snapshot.turns} activeTurn={turn?.id} activeStep={step} selectionRequest={selectionRequest} running={running} onChange={onReviewChange} onRefresh={onRefresh} onNotice={onNotice} onRequestChanges={onRequestChanges} /></div>
     </aside>
     {visible && <div className="scout-conversation-toolbar" role="toolbar" aria-label="Conversation actions">
       <CodexToolbarMenu menu={conversationMenu} shortcuts={{ rename: 'R', pin: 'P', archive: 'A' }}><CodexToolbarButton aria-label="More conversation actions" title="More"><ScoutToolbarIcon name="more" /></CodexToolbarButton></CodexToolbarMenu>
