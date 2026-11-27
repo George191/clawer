@@ -1,0 +1,67 @@
+/* Codex SvF6 review toolbar, zdVt file rows and native Pierre diff renderer. */
+.scout-review-surface { flex: 1; min-height: 0; }
+.scout-context-removed { color: #fa423e; font: 11px ui-monospace,monospace; }
+.codex-change-review { --review-surface: #181818; display: flex; flex-direction: column; height: 100%; min-height: 0; color: #ededed; background: var(--review-surface); container-type: inline-size; }
+.codex-changes-header { display: flex; align-items: center; gap: 8px; min-height: 60px; padding: 0 8px; flex-shrink: 0; border-bottom: .5px solid #ffffff1f; }
+.codex-changes-sources, .codex-changes-controls { display: flex; align-items: center; flex-shrink: 0; gap: 0; padding: 4px; border-radius: 999px; background: #ffffff0d; }
+.codex-changes-controls { margin-left: auto; }
+.codex-review-source { display: inline-flex; align-items: center; gap: 4px; height: 28px; min-width: 0; padding: 0 8px; border: 0; border-radius: 999px; background: transparent; color: inherit; font: inherit; font-size: 14px; line-height: 20px; white-space: nowrap; cursor: default; }
+.codex-review-source:hover { background: #ffffff0d; }
+.codex-review-source .scout-toolbar-icon { width: 12px; height: 12px; }
+.codex-change-review .conversation-header-control { width: 28px; height: 28px; padding: 6px; color: #999; }
+.codex-change-review .conversation-header-control:is(:hover,[aria-pressed=true]) { color: #ededed; }
+.codex-change-review .scout-toolbar-icon, .codex-change-icon { display: block; width: 16px; height: 16px; flex-shrink: 0; }
+.codex-change-icon { fill: none; }
+.codex-tree-toggle { flex-shrink: 0; }
+.codex-change-stats { display: inline-flex; align-items: center; flex-shrink: 0; gap: 4px; padding: 0 4px; font: 13px/20px 'SFMono-Regular',Consolas,monospace; }
+.codex-change-stats b, .codex-change-stats i { font-weight: 400; font-style: normal; }
+.codex-change-stats b { color: #40c977; }
+.codex-change-stats i { color: #fa423e; }
+.codex-review-workspace { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+.codex-review-scroll { flex: 1; min-width: 0; overflow: auto; overscroll-behavior: contain; scroll-padding-top: 48px; scrollbar-width: thin; scrollbar-color: #5d5d5d transparent; }
+.scout-chat-preview .codex-review-scroll::-webkit-scrollbar { display: block; width: 8px; height: 8px; }
+.codex-review-scroll::-webkit-scrollbar-thumb { border-radius: 8px; background: #5d5d5d; }
+.codex-change-file { position: relative; border-bottom: .5px solid #ffffff1f; scroll-margin-top: 0; }
+.codex-change-file-header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 4px; height: 48px; padding: 0 8px 0 12px; border-bottom: .5px solid #ffffff1f; background: #181818; }
+.codex-change-file-toggle { display: flex; align-items: center; flex: 1; min-width: 0; gap: 10px; height: 100%; padding: 0; border: 0; background: transparent; color: #ededed; text-align: left; cursor: default; font: inherit; font-size: 14px; }
+.codex-change-file-toggle > :is(img,svg) { width: 18px; height: 18px; flex-shrink: 0; }
+.codex-change-file-toggle span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.codex-change-file diffs-container { display: block; --diffs-font-size: 13px; --diffs-line-height: 26px; --diffs-font-family: 'SFMono-Regular',Consolas,'Liberation Mono',monospace; }
+.codex-hunk-actions { position: absolute; top: 49px; right: 8px; z-index: 4; display: flex; flex-wrap: wrap; gap: 4px; max-width: calc(100% - 80px); opacity: 0; pointer-events: none; }
+.codex-change-file:is(:hover,:focus-within) .codex-hunk-actions { opacity: 1; pointer-events: auto; }
+.codex-hunk-actions > button { height: 24px; max-width: 200px; padding: 0 7px; border: .5px solid #ffffff1f; border-radius: 6px; color: #aaa; background: #252525; font: 11px/20px 'SFMono-Regular',Consolas,monospace; cursor: default; }
+.codex-review-empty { padding: 24px; color: #999; font-size: 13px; }
+.codex-review-tree { flex-shrink: 0; width: min(190px,35%); overflow: auto; border-right: .5px solid #ffffff1f; }
+.codex-review-tree-title { padding: 12px; color: #999; font-size: 12px; }
+.codex-review-tree > button { display: flex; align-items: center; gap: 7px; width: calc(100% - 8px); min-height: 32px; margin: 0 4px; padding: 6px 8px; border: 0; border-radius: 6px; background: transparent; color: #bbb; text-align: left; font: inherit; font-size: 12px; cursor: default; }
+.codex-review-tree > button:is(:hover,[aria-current=true]) { background: #ffffff0d; color: #ededed; }
+.codex-review-tree > button > :is(img,svg) { width: 16px; height: 16px; flex-shrink: 0; }
+.codex-review-tree > button span, .codex-review-tree > button strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; }
+.codex-review-tree > button:has(strong) { flex-direction: column; align-items: stretch; gap: 4px; }
+.codex-review-tree small { color: #777; font-size: 10px; }
+.codex-review-tree b { margin-left: auto; color: #40c977; font-weight: 400; }
+.codex-review-find { position: relative; display: flex; gap: 4px; align-items: center; flex-shrink: 0; padding: 8px; border-bottom: .5px solid #ffffff1f; }
+.codex-review-find input { flex: 1; min-width: 0; padding: 5px 8px; border: 1px solid #ffffff29; border-radius: 6px; outline: 0; background: #212121; color: inherit; font: inherit; font-size: 12px; }
+.codex-review-find > button { display: grid; place-items: center; width: 24px; height: 24px; border: 0; border-radius: 5px; background: transparent; color: #999; cursor: default; }
+.codex-jump-files { position: absolute; top: 100%; left: 8px; right: 8px; z-index: 20; padding: 6px; border: .5px solid #ffffff1f; border-radius: 12px; background: #2c2c2c; box-shadow: 0 8px 12px #0002; }
+.codex-jump-files > button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px; border: 0; border-radius: 6px; background: transparent; color: inherit; text-align: left; cursor: default; }
+.codex-jump-files > button:hover { background: #ffffff0d; }
+.codex-jump-files img { width: 16px; height: 16px; }
+.codex-review-error { display: flex; align-items: center; gap: 8px; padding: 8px 12px; color: #ff8c8c; font-size: 12px; background: #fa423e0d; }
+.codex-review-error button { margin-left: auto; border: 0; color: inherit; background: transparent; }
+.codex-revision-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: .5px solid #ffffff1f; color: #aaa; font-size: 12px; }
+.codex-revision-banner span { flex: 1; min-width: 80px; }
+.codex-revision-banner button, .codex-inline-comment button { padding: 4px 8px; border: .5px solid #ffffff29; border-radius: 999px; background: transparent; color: #ddd; font: inherit; cursor: default; }
+.codex-inline-comment { min-width: 200px; max-width: 600px; padding: 12px; margin: 8px 16px; border: .5px solid #ffffff29; border-radius: 12px; background: #252525; color: #ddd; font: 12px/1.6 system-ui,sans-serif; }
+.codex-inline-comment p { margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.codex-inline-comment small { margin-right: 8px; color: #999; }
+.codex-inline-comment button { margin: 2px; }
+.codex-file-editor { height: min(60vh,600px); overflow: auto; border: .5px solid #ffffff1f; border-radius: 8px; background: #181818; }
+.codex-file-editor > textarea { width: 100%; height: 100%; padding: 16px; box-sizing: border-box; resize: none; border: 0; outline: 0; background: #181818; color: #fcfcfc; white-space: pre; font: 13px/26px 'SFMono-Regular',Consolas,monospace; }
+.codex-comment-input { width: 100%; min-height: 120px; box-sizing: border-box; padding: 12px; border: .5px solid #ffffff29; border-radius: 12px; outline: 0; background: #181818; color: #ededed; font: inherit; resize: vertical; }
+.codex-rich-preview { margin: 0; padding: 12px 20px; font-size: 12px; }
+.codex-rich-preview > div { display: grid; grid-template-columns: minmax(100px,1fr) 2fr; gap: 12px; padding: 8px; border-bottom: .5px solid #ffffff1f; }
+.codex-rich-preview dt { color: #999; }
+.codex-rich-preview dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+@container (max-width: 600px) { .codex-changes-header { flex-wrap: wrap; gap: 4px; min-height: 0; padding-block: 6px; } .codex-changes-sources { flex: 1; } .codex-changes-controls { order: 2; margin-left: 0; } .codex-tree-toggle { margin-left: auto; } }
+@container (max-width: 380px) { .codex-review-source { padding-inline: 6px; font-size: 12px; } .codex-change-file-header { padding-left: 8px; } .codex-change-file-toggle { font-size: 12px; gap: 6px; } .codex-review-tree { width: 120px; } }

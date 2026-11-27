@@ -27,6 +27,23 @@ def result(row):
 
 
 class ChatAccessTest(unittest.IsolatedAsyncioTestCase):
+    def test_corrections_round_trip_and_bounds(self):
+        revision = dict(id="revision-1", createdAt="2026-11-27T08:00:00Z", message="Fix field", turnId=1,
+                        template="name: fixed\n", adapter="")
+        comment = dict(id="comment-1", revisionId="revision-1", path="template", side="additions", start=1,
+                       end=1, body="Check this field", resolved=False)
+        saved = api.SaveChat(title="Chat", turns=[{**turn(), "review": {
+            "revisions": [revision], "staged": {"template": "name: fixed\n"}, "comments": [comment]}}], revision=0)
+        loaded = api.SaveChat.model_validate_json(json.dumps(saved.model_dump(exclude_none=True), sort_keys=True))
+        self.assertEqual(loaded.turns[0].review.revisions[0].template, "name: fixed\n")
+        self.assertEqual(loaded.turns[0].review.comments[0].body, "Check this field")
+        with self.assertRaises(ValidationError):
+            api.ChatTurn(**{**turn(), "review": {"revisions": [{**revision, "turnId": 2}]}})
+        with self.assertRaises(ValidationError):
+            api.ReviewComment(**{**comment, "start": 4, "end": 1})
+        with self.assertRaises(ValidationError):
+            api.ReviewComment(**{**comment, "path": "../../outside"})
+
     def test_bounds_and_restricted_recipients(self):
         with self.assertRaises(ValidationError):
             api.SaveChat(title="Chat", turns=[{**turn(), "step": 8}], revision=0)
@@ -48,6 +65,15 @@ class ChatAccessTest(unittest.IsolatedAsyncioTestCase):
         shared = await api.read_share(uuid4(), session, response)
         self.assertEqual(set(shared), {"title", "turns", "created_at"})
         self.assertEqual(response.headers["Cache-Control"], "no-store")
+
+    async def test_share_excludes_private_review_history(self):
+        session = SimpleNamespace(execute=AsyncMock(return_value=result({"id": uuid4()})), commit=AsyncMock())
+        payload = api.ShareChat(snapshot=api.SaveChat(title="Chat", turns=[{**turn(), "review": {"comments": [{
+            "id": "private-comment", "revisionId": "response-1", "path": "template", "side": "additions",
+            "start": 0, "end": 0, "body": "Private review note", "resolved": False}]}}], revision=1))
+        await api.share_chat(uuid4(), payload, SimpleNamespace(id=uuid4()), session)
+        shared_turns = json.loads(session.execute.call_args_list[1].args[1]["turns"])
+        self.assertNotIn("review", shared_turns[0])
 
     async def test_restricted_share_requires_invited_identity(self):
         row = dict(title="Chat", turns=[turn()], created_at=None, audience="invited", emails=["invited@example.test"], owner_id=uuid4())
@@ -101,8 +127,14 @@ class DatabaseIntegration(unittest.IsolatedAsyncioTestCase):
             owner = (await session.execute(text('SELECT id FROM app."user" LIMIT 1'))).scalar_one()
             user = SimpleNamespace(id=owner)
             try:
-                saved = await api.save_chat(ident, api.SaveChat(title="Scout integration test", turns=[turn()], revision=0), user, session)
+                review_turn = {**turn(), "template": "name: corrected\n", "review": {"revisions": [{
+                    "id": "integration-revision", "createdAt": "2026-11-27T08:00:00Z", "message": "Correction",
+                    "turnId": 1, "template": "name: corrected\n", "adapter": ""}], "comments": [{
+                    "id": "integration-comment", "revisionId": "integration-revision", "path": "template",
+                    "side": "additions", "start": 1, "end": 1, "body": "Private note", "resolved": False}]}}
+                saved = await api.save_chat(ident, api.SaveChat(title="Scout integration test", turns=[review_turn], revision=0), user, session)
                 self.assertEqual(saved["revision"], 1)
+                self.assertEqual(saved["turns"][0]["review"]["revisions"][0]["template"], "name: corrected\n")
                 await session.execute(text("""INSERT INTO app.scout_chat_schedules(chat_id,request,interval_seconds,next_run_at)
                     VALUES (:id,'{}',86400,now()+interval '1 day')"""), {"id": ident})
                 await session.commit()
@@ -114,7 +146,9 @@ class DatabaseIntegration(unittest.IsolatedAsyncioTestCase):
                 await api.save_chat(ident, api.SaveChat(title="Renamed", turns=[{**turn(), "reply": "Changed"}], pinned=True, archived=True, revision=1), user, session)
                 self.assertIsNone(await api.read_schedule(ident, user, session))
                 self.assertEqual((await api.owned(session, branch_id, owner))["turns"][0]["reply"], "Test reply")
+                self.assertEqual((await api.owned(session, branch_id, owner))["turns"][0]["review"]["comments"][0]["body"], "Private note")
                 self.assertEqual((await api.read_share(shared["id"], session, Response()))["turns"][0]["reply"], "Test reply")
+                self.assertNotIn("review", (await api.read_share(shared["id"], session, Response()))["turns"][0])
                 with self.assertRaises(HTTPException):
                     await api.owned(session, ident, uuid4())
                 await api.delete_chat(ident, user, session)

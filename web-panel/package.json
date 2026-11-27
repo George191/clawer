@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@monaco-editor/react": "^4.6.0",
+    "@pierre/diffs": "1.7.2",
     "@radix-ui/react-dropdown-menu": "^2.1.16",
     "@radix-ui/react-popover": "^1.1.15",
     "@shikijs/engine-oniguruma": "4.6.0",
@@ -19,6 +20,7 @@
     "@shikijs/themes": "4.6.0",
     "axios": "^1.7.9",
     "dayjs": "^1.11.13",
+    "diff": "9.0.0",
     "echarts": "^5.5.1",
     "echarts-for-react": "^3.0.2",
     "react": "^18.3.1",

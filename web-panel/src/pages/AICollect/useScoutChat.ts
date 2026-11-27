@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { branchChat, deleteChat, newChat, persistTurns, readChat, saveChat, type SavedChat, type SavedTurn } from './chatStore';
+import { canonicalReview } from './changeReview';
 
 function turnState(turns: SavedTurn[]) {
-  return turns.map(({ id, prompt, reply, template, adapter, step, done, complete, waiting, vote, attachments }) => ({ id, prompt, reply, template, adapter, step, done, complete, waiting, vote,
+  return turns.map(({ id, prompt, reply, template, adapter, step, done, complete, waiting, vote, attachments, createdAt, review }) => ({ id, prompt, reply, template, adapter, step, done, complete, waiting, vote, createdAt, review: canonicalReview(review),
     attachments: (attachments ?? []).map(({ name, type, content }) => ({ name, type, content })) }));
 }
 
 export default function useScoutChat(turns: SavedTurn[], onLoad: (chat: SavedChat) => void, onError: (message: string) => void) {
   const [chat, setChat] = useState(newChat);
   const [loading, setLoading] = useState(Boolean(new URLSearchParams(window.location.search).get('chat')));
+  const [writeGeneration, setWriteGeneration] = useState(0);
+  const explicitWrites = useRef(0);
   const current = useRef(chat);
   const content = useRef(turns);
   const callbacks = useRef({ onLoad, onError });
@@ -18,8 +21,10 @@ export default function useScoutChat(turns: SavedTurn[], onLoad: (chat: SavedCha
   current.current = chat; content.current = turns; callbacks.current = { onLoad, onError };
   const serialized = JSON.stringify(turnState(turns));
 
-  function save(changes: Partial<Pick<SavedChat, 'title' | 'pinned' | 'archived'>> = {}) {
-    const snapshot = { ...current.current, ...changes, turns: content.current };
+  function save(changes: Partial<Pick<SavedChat, 'title' | 'pinned' | 'archived'>> = {}, nextTurns?: SavedTurn[]) {
+    const explicit = nextTurns !== undefined;
+    if (explicit) explicitWrites.current++;
+    const snapshot = { ...current.current, ...changes, turns: nextTurns ?? content.current };
     const operation = queue.current.then(async () => {
       const latest = current.current.id === snapshot.id ? current.current : snapshot;
       const target = { ...snapshot, turns: await persistTurns(snapshot.turns), title: latest.title, pinned: latest.pinned, archived: latest.archived, ...changes,
@@ -37,8 +42,9 @@ export default function useScoutChat(turns: SavedTurn[], onLoad: (chat: SavedCha
       }
       return result;
     });
-    queue.current = operation.catch(() => {});
-    return operation;
+    const result = explicit ? operation.finally(() => { explicitWrites.current--; setWriteGeneration(value => value + 1); }) : operation;
+    queue.current = result.catch(() => {});
+    return result;
   }
 
   function apply(next: SavedChat) {
@@ -63,18 +69,25 @@ export default function useScoutChat(turns: SavedTurn[], onLoad: (chat: SavedCha
     if (loading || !turns.length) return;
     const snapshot = JSON.stringify({ id: chat.id, title: chat.title, pinned: chat.pinned, archived: chat.archived, turns: JSON.parse(serialized) });
     if (snapshot === lastSaved.current) return;
-    const timer = window.setTimeout(() => { void save().catch(error => callbacks.current.onError(`Chat was not saved: ${error.message}`)); }, 1500);
+    const timer = window.setTimeout(() => { if (!explicitWrites.current) void save().catch(error => callbacks.current.onError(`Chat was not saved: ${error.message}`)); }, 1500);
     return () => window.clearTimeout(timer);
-  }, [serialized, chat.id, chat.title, chat.pinned, chat.archived, loading]);
+  }, [serialized, chat.id, chat.title, chat.pinned, chat.archived, loading, writeGeneration]);
 
   async function open(id: string) {
     if (content.current.length && !loading) await save();
     setLoading(true);
     try { apply(await readChat(id)); } finally { setLoading(false); }
   }
+  async function refresh() {
+    const latest = current.current;
+    const snapshot = JSON.stringify({ id: latest.id, title: latest.title, pinned: latest.pinned, archived: latest.archived, turns: turnState(content.current) });
+    if (!latest.revision || snapshot !== lastSaved.current) await save();
+    await queue.current;
+    apply(await readChat(current.current.id));
+  }
   async function startNew() { if (content.current.length) await save(); apply(newChat()); }
   async function branch() { const saved = await save(); apply(await branchChat(saved.id)); }
   async function remove() { await queue.current; if (current.current.revision) await deleteChat(current.current.id); apply(newChat()); }
   function title(value: string) { const next = { ...current.current, title: value }; current.current = next; setChat(next); }
-  return { chat, loading, save, open, startNew, branch, remove, title };
+  return { chat, loading, save, open, refresh, startNew, branch, remove, title };
 }

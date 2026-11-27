@@ -58,6 +58,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
   const [composerHeight, setComposerHeight] = useState(108);
   const [contextOpen, setContextOpen] = useState(false);
   const [resultsOpen, setResultsOpen] = useState(true);
+  const [selectionRequest, setSelectionRequest] = useState(0);
   const [resultTurnId, setResultTurnId] = useState<number | null>(null);
   const [resultStep, setResultStep] = useState<number | undefined>();
   const [copied, setCopied] = useState<number | null>(null);
@@ -184,7 +185,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
     stopReading();
     if (clearComposer) { setDraft(''); setPendingFiles([]); }
     const id = ++nextId.current;
-    setTurns((prev) => [...prev, { id, prompt, files, step: 0, reply: '', template: '', adapter: '', done: 0, complete: false }]);
+    setTurns((prev) => [...prev, { id, prompt, files, createdAt: new Date().toISOString(), step: 0, reply: '', template: '', adapter: '', done: 0, complete: false }]);
     setActivity('Thinking');
     setRunning(true);
     if (!entered) setContextOpen(false);
@@ -269,7 +270,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
     <div className={`ai-chat-dot ${!entered ? 'is-landing' : ''}`} data-activity={entered ? dotActivity : landingActivity} />
     {entered && <div className="scout-chat-dot-frost" aria-hidden="true" />}
     <button type="button" className="codex-chat-title" title="Open chats" onClick={() => setLibraryOpen(true)}>{entered ? `${chatStore.chat.pinned ? '● ' : ''}${chatStore.chat.title}` : 'Chats'}</button>
-    <PreviewWorkspace chatId={chatStore.chat.id} visible={entered} snapshot={chatSnapshot} onSave={() => chatStore.save()} conversationMenu={{ items: [
+    <PreviewWorkspace chatId={chatStore.chat.id} visible={entered} snapshot={chatSnapshot} onSave={() => chatStore.save()} onRefresh={chatStore.refresh} conversationMenu={{ items: [
       { key: 'rename', label: localized('Rename', '重命名'), icon: <ScoutToolbarIcon name="rename" />, disabled: chatStore.loading },
       { key: 'pin', label: chatStore.chat.pinned ? localized('Unpin chat', '取消置顶聊天') : localized('Pin chat', '置顶聊天'), icon: <ScoutToolbarIcon name="pin" />, disabled: !turns.length || chatStore.loading },
       { key: 'branch', label: localized('Branch chat', '创建聊天分支'), icon: <ScoutToolbarIcon name="branch" />, disabled: !turns.length || chatStore.loading },
@@ -283,7 +284,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
       ] },
       { key: 'archive', label: chatStore.chat.archived ? localized('Unarchive', '取消归档') : localized('Archive', '归档'), icon: <ScoutToolbarIcon name="archive" />, disabled: !turns.length || chatStore.loading },
       { key: 'delete', label: localized('Delete', '删除'), icon: <ScoutToolbarIcon name="trash" />, disabled: !turns.length || chatStore.loading },
-    ], onClick: ({ key }) => { if (key === 'archive' && chatStore.chat.archived) void chatAction(() => chatStore.save({ archived: false })); else void selectChatAction(key); } }} open={entered && resultsOpen} turn={resultTurn} step={previewStep} running={running && resultTurn?.id === latest?.id} onSelect={(artifact) => { setResultsOpen(true); setResultTurnId(artifact.turn); setResultStep(artifact.step); }} onClose={() => setResultsOpen(false)} summaryOpen={contextOpen} onToggleSummary={() => setContextOpen(value => !value)} onTogglePreview={() => setResultsOpen(value => !value)} onNotice={setNotice} />
+    ], onClick: ({ key }) => { if (key === 'archive' && chatStore.chat.archived) void chatAction(() => chatStore.save({ archived: false })); else void selectChatAction(key); } }} open={entered && resultsOpen} turn={resultTurn} step={previewStep} running={running} selectionRequest={selectionRequest} onReviewChange={async updated => { const next = turns.map(turn => turn.id === updated.id ? { ...turn, ...updated } : turn); await chatStore.save({}, next); setTurns(current => current.map(turn => turn.id === updated.id ? { ...turn, template: updated.template, adapter: updated.adapter, review: updated.review } : turn)); }} onRequestChanges={text => { setDraft(value => value ? `${value}\n\n${text}` : text); input.current?.focus(); }} onClose={() => setResultsOpen(false)} summaryOpen={contextOpen} onToggleSummary={() => setContextOpen(value => !value)} onTogglePreview={() => setResultsOpen(value => !value)} onNotice={setNotice} />
     {entered && <aside className="scout-history-rail" aria-label="Conversation history" onMouseLeave={() => setHoveredHistory(null)} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setHoveredHistory(null); }}>
       <div className="ai-session-stage-bars">{history.map((entry, index) => {
         const distance = hoveredHistory === null ? -1 : Math.abs(index - hoveredHistory);
@@ -313,7 +314,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
         <button type="button" className="scout-resume" onClick={resume}>{activity === 'Error' ? 'Retry' : latest.waiting === 'template' ? 'Confirm Template' : latest.waiting === 'adapter' ? 'Confirm Adapter' : 'Continue'}</button>
       </div>}
     </div>
-    {entered && <ConversationContext open={contextOpen} turn={resultTurn} onClose={() => { setContextOpen(false); document.querySelector<HTMLButtonElement>('.scout-context-toggle')?.focus(); }} activePreview={activePreview} onView={(artifact) => { setResultsOpen(true); setResultTurnId(artifact.turn); setResultStep(artifact.step); }} sources={sourceFiles} onAddFiles={addSourceFiles} onPreviewFile={setSelectedSource} />}
+    {entered && <ConversationContext open={contextOpen} turn={resultTurn} turns={turns} onClose={() => { setContextOpen(false); document.querySelector<HTMLButtonElement>('.scout-context-toggle')?.focus(); }} activePreview={activePreview} onView={(artifact) => { setSelectionRequest(value => value + 1); setResultsOpen(true); setResultTurnId(artifact.turn); setResultStep(artifact.step); }} sources={sourceFiles} onAddFiles={addSourceFiles} onPreviewFile={setSelectedSource} />}
     <ChatComposer ref={input} userName={userName} placeholderReady={!userLoading && landingActivity === 'Working'} entered={entered} value={draft} running={running} files={pendingFiles} queued={queued} onChange={setDraft} onSubmit={submit} onPause={pauseResponse} onAddFiles={addSourceFiles} onRemoveFile={removePendingFile} onPreviewFile={setSelectedSource} onViewSources={() => { if (!entered) onEnter(); setContextOpen(true); }} onHeightChange={setComposerHeight} onEditQueued={(item) => { setQueued((prev) => prev.filter((value) => value.id !== item.id)); setDraft(item.prompt); setPendingFiles(item.files); input.current?.focus(); }} onDeleteQueued={(id) => setQueued((prev) => prev.filter((item) => item.id !== id))} onSendQueued={(item) => { setQueued((prev) => prev.filter((value) => value.id !== item.id)); startTurn(item.prompt, item.files, false); }} />
     {selectedSource && <SourcePreview file={selectedSource} onClose={() => setSelectedSource(null)} />}
     {chatStore.loading && <div className="codex-chat-archived" role="status">Loading chat…</div>}

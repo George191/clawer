@@ -1,7 +1,8 @@
 import client, { unwrap } from '@/services/api';
+import type { ReviewState } from './changeReview';
 
 export type SavedAttachment = { name: string; type: string; content: string };
-export type SavedTurn = { id: number; prompt: string; reply: string; template: string; adapter: string; step: number; done: number; complete: boolean; waiting?: 'template' | 'adapter'; vote?: 'up' | 'down'; attachments?: SavedAttachment[] };
+export type SavedTurn = { id: number; prompt: string; reply: string; template: string; adapter: string; step: number; done: number; complete: boolean; waiting?: 'template' | 'adapter'; vote?: 'up' | 'down'; attachments?: SavedAttachment[]; createdAt?: string; review?: ReviewState };
 export type SavedChat = { id: string; title: string; turns: SavedTurn[]; pinned: boolean; archived: boolean; revision: number };
 export type ChatSummary = Omit<SavedChat, 'turns'>;
 export type ShareSnapshot = { title: string; turns: SavedTurn[]; created_at?: string };
@@ -35,7 +36,7 @@ export async function branchChat(id: string): Promise<SavedChat> { return unwrap
 export async function deleteChat(id: string) { await client.delete(`/scout/chats/${id}`); }
 export async function createShare(chat: SavedChat, snapshot: ShareSnapshot, audience: 'anyone' | 'invited', emails: string[]): Promise<string> {
   const { id, pinned, archived, revision } = chat;
-  const turns = snapshot.turns.map(turn => ({ ...turn, attachments: chat.turns.find(savedTurn => savedTurn.id === turn.id)?.attachments ?? [] }));
+  const turns = snapshot.turns.map(({ review: _review, ...turn }) => ({ ...turn, attachments: chat.turns.find(savedTurn => savedTurn.id === turn.id)?.attachments ?? [] }));
   const result = unwrap<{ id: string }>((await client.post(`/scout/chats/${id}/shares`, { audience, emails, snapshot: { title: snapshot.title, turns, pinned, archived, revision } })).data);
   return `${window.location.origin}/share/scout/${result.id}`;
 }

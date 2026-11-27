@@ -41,6 +41,47 @@ class ChatAttachment(BaseModel):
     content: str = Field(max_length=14 * 1024 * 1024, pattern=r"^[A-Za-z0-9+/]*={0,2}$")
 
 
+class ReviewRevision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(min_length=1, max_length=100)
+    createdAt: str = Field(max_length=40)
+    message: str = Field(max_length=100000)
+    turnId: int = Field(ge=1)
+    template: str = Field(max_length=500000)
+    adapter: str = Field(max_length=500000)
+
+
+class ReviewComment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(min_length=1, max_length=100)
+    revisionId: str = Field(min_length=1, max_length=100)
+    path: Literal["template", "adapter"]
+    side: Literal["additions", "deletions"]
+    start: int = Field(ge=0)
+    end: int = Field(ge=0)
+    body: str = Field(min_length=1, max_length=10000)
+    resolved: bool = False
+
+    @model_validator(mode="after")
+    def check_range(self):
+        if self.end < self.start:
+            raise ValueError("Comment end must not precede its start")
+        return self
+
+
+class ReviewStaged(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    template: str | None = Field(default=None, max_length=500000)
+    adapter: str | None = Field(default=None, max_length=500000)
+
+
+class ChatReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    revisions: list[ReviewRevision] = Field(default_factory=list, max_length=200)
+    staged: ReviewStaged = Field(default_factory=ReviewStaged)
+    comments: list[ReviewComment] = Field(default_factory=list, max_length=500)
+
+
 class ChatTurn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: int = Field(ge=1)
@@ -54,6 +95,14 @@ class ChatTurn(BaseModel):
     waiting: Literal["template", "adapter"] | None = None
     vote: Literal["up", "down"] | None = None
     attachments: list[ChatAttachment] = Field(default_factory=list, max_length=20)
+    createdAt: str | None = Field(default=None, max_length=40)
+    review: ChatReview | None = None
+
+    @model_validator(mode="after")
+    def check_revision_owner(self):
+        if self.review and any(revision.turnId != self.id for revision in self.review.revisions):
+            raise ValueError("A correction must belong to its response")
+        return self
 
 
 class SaveChat(BaseModel):
@@ -172,7 +221,7 @@ async def share_chat(chat_id: UUID, payload: ShareChat, user: CurrentUser, sessi
     await session.execute(text("""INSERT INTO app.scout_chat_shares (id,chat_id,title,turns,audience,emails)
         VALUES (:id,:chat,:title,CAST(:turns AS jsonb),:audience,CAST(:emails AS jsonb))"""),
         {"id": ident, "chat": chat_id, "title": payload.snapshot.title,
-         "turns": json.dumps([turn.model_dump(exclude_none=True) for turn in payload.snapshot.turns]),
+         "turns": json.dumps([turn.model_dump(exclude={"review"}, exclude_none=True) for turn in payload.snapshot.turns]),
          "audience": payload.audience, "emails": json.dumps(sorted({str(e).lower() for e in payload.emails}))})
     await session.commit()
     return {"id": ident}

@@ -1,21 +1,33 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Modal } from '@/components/ui';
 import { useThemeStore } from '@/stores/settings';
 import { CodexSummarySection } from './CodexToolbar';
 import { ArtifactIcon, type StageArtifact } from './StageArtifacts';
 import ScoutToolbarIcon from './ScoutToolbarIcon';
+import type { SavedTurn } from './chatStore';
+import { emptyFiles, reviewDiff, reviewFiles, reviewHistory } from './changeReview';
 
 type ContextTurn = { id: number; prompt: string; done: number; template: string; adapter: string };
 
-export default function ConversationContext({ open, turn, onClose, onView, activePreview, sources, onAddFiles, onPreviewFile }: { open: boolean; turn?: ContextTurn; onClose: () => void; onView: (artifact: StageArtifact) => void; activePreview?: string; sources: File[]; onAddFiles: (files: File[]) => void; onPreviewFile: (file: File) => void }) {
+export default function ConversationContext({ open, turn, turns, onClose, onView, activePreview, sources, onAddFiles, onPreviewFile }: { open: boolean; turn?: ContextTurn; turns: SavedTurn[]; onClose: () => void; onView: (artifact: StageArtifact) => void; activePreview?: string; sources: File[]; onAddFiles: (files: File[]) => void; onPreviewFile: (file: File) => void }) {
   const [showAll, setShowAll] = useState(false);
   const picker = useRef<HTMLInputElement>(null);
   const zh = useThemeStore(state => state.language === 'zh-CN');
-  const files = turn ? [{ name: 'template.yaml', content: turn.template, step: 2 }, { name: 'adapter.py', content: turn.adapter, step: 3 }].filter(file => file.content) : [];
+  const files = useMemo(() => {
+    if (!open) return [];
+    const history = reviewHistory(turns);
+    const index = history.map(revision => revision.turnId).lastIndexOf(turn?.id ?? -1);
+    const before = history[index - 1] ?? emptyFiles;
+    const after = history[index] ?? emptyFiles;
+    return index < 0 ? [] : reviewFiles.map(file => {
+      const diff = reviewDiff(file.path, before[file.key], after[file.key]);
+      return { ...file, added: diff.hunks.reduce((sum, hunk) => sum + hunk.additionLines, 0), removed: diff.hunks.reduce((sum, hunk) => sum + hunk.deletionLines, 0) };
+    }).filter(file => file.added || file.removed);
+  }, [open, turns, turn?.id]);
   const urls = [...new Set(turn?.prompt.match(/https?:\/\/[^\s<>()]+/g) ?? [])];
   return open ? <aside id="scout-conversation-context" className={`scout-context-panel ${open ? 'is-open' : ''}`} aria-label="Conversation context" onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
     {files.length > 0 && <CodexSummarySection title={zh ? '更改' : 'Changes'}>
-      {files.map(file => <button type="button" key={file.name} className="scout-context-row" aria-label={`Open ${file.name}`} aria-pressed={activePreview === `${turn!.id}-${file.step}`} aria-controls="scout-collection-results" onClick={() => onView({ key: `${turn!.id}-${file.step}`, turn: turn!.id, step: file.step })}><ArtifactIcon step={file.step} /><span>{file.name}</span><b className="scout-context-added">+{file.content.trimEnd().split('\n').length}</b></button>)}
+      {files.map(file => <button type="button" key={file.path} className="scout-context-row" aria-label={`Open ${file.path}`} aria-pressed={activePreview === `${turn!.id}-${file.step}`} aria-controls="scout-collection-results" onClick={() => onView({ key: `${turn!.id}-${file.step}`, turn: turn!.id, step: file.step })}><ArtifactIcon step={file.step} /><span>{file.path}</span><b className="scout-context-added">+{file.added}</b>{file.removed > 0 && <b className="scout-context-removed">-{file.removed}</b>}</button>)}
     </CodexSummarySection>}
     <CodexSummarySection title={zh ? '来源' : 'Sources'} action={<button type="button" className="scout-context-add" aria-label="Add source" title={zh ? '添加来源' : 'Add source'} onClick={() => picker.current?.click()}>+</button>}>
       <input ref={picker} type="file" aria-label="Source files" accept=".txt,.md,.yaml,.yml,.json,.py,image/*" multiple hidden onChange={event => { onAddFiles(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
