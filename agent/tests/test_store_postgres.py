@@ -21,6 +21,7 @@ from agent.runtime import AgentWorker
 from agent.store import AgentStore
 from agent.tests.test_harness import TEMPLATE
 from app.storage.connection_credentials import connection_cipher
+from app.web.api.models import User
 from app.web.services.browser_renderer import BrowserRenderResult
 
 TEST_URL = os.getenv("AGENT_TEST_DATABASE_URL")
@@ -31,7 +32,7 @@ class PostgresStoreTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         if make_url(TEST_URL).database != "agent_test":
             raise RuntimeError("Integration tests refuse any database other than agent_test")
-        self.database = create_async_engine(TEST_URL)
+        self.database = create_async_engine(TEST_URL, connect_args={"server_settings": {"search_path": "app,pg_catalog"}})
         self.store = AgentStore(self.database)
         self.owner, self.other = uuid4(), uuid4()
         self.request = AgentRunRequest(agent_id=SYSTEM_COLLECTION_AGENT_ID, product_domain="ai-collect", input={"url": "https://example.org/articles", "goal": "Collect titles"})
@@ -46,7 +47,8 @@ class PostgresStoreTests(unittest.IsolatedAsyncioTestCase):
             # The database name check above is mandatory before resetting this test-only schema.
             await conn.execute(text("DROP SCHEMA IF EXISTS app CASCADE"))
             await conn.execute(text("CREATE SCHEMA app"))
-            await conn.execute(text('CREATE TABLE app."user" (id uuid PRIMARY KEY, email text UNIQUE, status integer DEFAULT 0)'))
+            await conn.run_sync(lambda sync: User.__table__.c.status.type.create(sync))
+            await conn.execute(text("CREATE TABLE app.\"user\" (id uuid PRIMARY KEY, email text UNIQUE, status app.statustypes DEFAULT 'ENABLE')"))
             def upgrade(sync):
                 with Operations.context(MigrationContext.configure(sync)):
                     migration.upgrade()
@@ -171,7 +173,8 @@ class PostgresStoreTests(unittest.IsolatedAsyncioTestCase):
         async with self.database.begin() as conn:
             await conn.execute(text("DROP SCHEMA app CASCADE"))
             await conn.execute(text("CREATE SCHEMA app"))
-            await conn.execute(text('CREATE TABLE app."user" (id uuid PRIMARY KEY, email text UNIQUE, status integer DEFAULT 0)'))
+            await conn.run_sync(lambda sync: User.__table__.c.status.type.create(sync))
+            await conn.execute(text("CREATE TABLE app.\"user\" (id uuid PRIMARY KEY, email text UNIQUE, status app.statustypes DEFAULT 'ENABLE')"))
             await conn.execute(text('INSERT INTO app."user" (id) VALUES (:id)'), {"id": self.owner})
             def legacy(sync):
                 with Operations.context(MigrationContext.configure(sync)):

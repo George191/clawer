@@ -5,12 +5,13 @@ from uuid import UUID, uuid4
 from cryptography.fernet import InvalidToken
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, SecretStr, field_validator, model_validator
-from sqlalchemy import text
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 
 from agent.contracts import AgentSettings
 from agent.executors import EXECUTORS
 from agent.store import AgentStore, cipher, encoded
+from app.web.api.models import User
 from app.web.core.db import engine
 from app.web.api.utils.models import StatusTypes
 
@@ -127,7 +128,8 @@ class AgentRegistry:
             if payload.expected_revision != (row["revision"] if row else 0):
                 raise HTTPException(409, "Agent changed. Reload before saving.")
             recipients = sorted({str(email).lower() for email in payload.shared_with})
-            users = (await conn.execute(text('SELECT id,lower(email) AS email FROM app."user" WHERE lower(email)=ANY(CAST(:emails AS text[])) AND status=:active'), {"emails": recipients, "active": int(StatusTypes.ENABLE)})).mappings().all()
+            users = (await conn.execute(select(User.id, func.lower(User.email).label('email')).where(
+                func.lower(User.email).in_(recipients), User.status == StatusTypes.ENABLE))).mappings().all()
             if {user["email"] for user in users} != set(recipients):
                 raise HTTPException(422, "All recipients must be active registered users")
             config = payload.model_dump(exclude={"connection_id", "expected_revision", "visibility", "shared_with"})
