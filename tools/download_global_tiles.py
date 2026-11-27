@@ -10,10 +10,12 @@ from pathlib import Path
 import shutil
 import time
 import urllib.request
+from urllib.parse import quote
 
 SOURCES = {'satellite': 's', 'roadmap': 'm', 'overlay': 'h'}
 BASE = 'https://mt1.google.com/vt/'
 MAX_LEVEL = 22
+ROAD_STYLE = 's.t:0|s.e:l|p.v:off'
 WORKERS = 6
 BATCH = 3000
 
@@ -73,6 +75,8 @@ def worker(root_string, source, level, number):
                         raise ValueError(f'Invalid existing tile: {target}')
                 else:
                     url = BASE + f'?lyrs={SOURCES[source]}&x={x}&y={y}&z={level}'
+                    if source == 'overlay':
+                        url += '&apistyle=' + quote(ROAD_STYLE, safe='')
                     for attempt in range(4):
                         try:
                             data = fetch(url)
@@ -136,12 +140,16 @@ def main():
         else:
             sources = {source: {'service': 'Google Maps ' + {'satellite': 'satellite', 'roadmap': 'roadmap', 'overlay': 'road labels'}[source],
                                 'layer': layer, 'max_level': MAX_LEVEL, 'credit': 'Google Maps',
-                                'url': BASE + f'?lyrs={layer}&x={{x}}&y={{y}}&z={{z}}'}
+                                'url': BASE + f'?lyrs={layer}&x={{x}}&y={{y}}&z={{z}}' +
+                                       ('&apistyle=' + quote(ROAD_STYLE, safe='') if source == 'overlay' else ''),
+                                **({'apistyle': ROAD_STYLE} if source == 'overlay' else {})}
                        for source, layer in SOURCES.items()}
             plan = {'sources': sources, 'created_at': stamp(), 'workers': WORKERS, 'batch_limit': BATCH}
             save(plan_file, plan)
         if {source: item.get('layer') for source, item in plan['sources'].items()} != SOURCES:
             raise ValueError('Existing plan uses a different imagery source; refusing to mix tile archives')
+        if plan['sources']['overlay'].get('apistyle') != ROAD_STYLE:
+            raise ValueError('Road overlay must use the label-free style; refusing to mix styled tiles')
         level = 0
         try:
             with ProcessPoolExecutor(max_workers=WORKERS) as pool:

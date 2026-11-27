@@ -4,9 +4,10 @@ import fcntl
 import hashlib
 import json
 import sys
+from urllib.parse import quote
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from tools.download_global_tiles import save, stamp
+from tools.download_global_tiles import ROAD_STYLE, save, stamp
 
 
 def main():
@@ -27,7 +28,8 @@ def main():
         plan['sources']['overlay'] = {
             'service': 'Google Maps road labels', 'layer': 'h', 'max_level': 22,
             'credit': 'Google Maps',
-            'url': 'https://mt1.google.com/vt/?lyrs=h&x={x}&y={y}&z={z}'}
+            'apistyle': ROAD_STYLE,
+            'url': 'https://mt1.google.com/vt/?lyrs=h&x={x}&y={y}&z={z}&apistyle=' + quote(ROAD_STYLE, safe='')}
         save(path, plan)
         after = {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
                  for p in output.glob('*-*-*.json')}

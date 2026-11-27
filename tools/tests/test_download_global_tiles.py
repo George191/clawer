@@ -72,6 +72,9 @@ def test_adding_roads_preserves_existing_satellite_and_map_without_fetching_agai
                 tiles.worker(str(tmp_path), source, 2, worker)
     assert fetch.call_count == 16
     assert all('?lyrs=h&' in call.args[0] for call in fetch.call_args_list)
+    from urllib.parse import parse_qs, urlsplit
+    assert all(parse_qs(urlsplit(call.args[0]).query)['apistyle'] == [tiles.ROAD_STYLE]
+               for call in fetch.call_args_list)
     assert before == {p: (hashlib.sha256(Path(p).read_bytes()).hexdigest(), Path(p).stat().st_mtime_ns)
                       for p in before}
     assert len(list((tmp_path / 'overlay').rglob('*.png'))) == 16

@@ -50,7 +50,7 @@ def markdown(value):
              f"采样断点时间：{value['updated_at']}；任务状态：{value['phase']}；6 个进程；当前等级：{value['level']}。",
              '| 类型 | 当前级已落盘 / 总数 | 完成等级 | 累计瓦片 |',
              '| --- | ---: | --- | ---: |']
-    for source, title in [('satellite', '卫星影像'), ('roadmap', '电子地图'), ('overlay', '透明道路')]:
+    for source, title in [('satellite', '卫星影像'), ('roadmap', '电子地图'), ('overlay', '透明道路（无文字）')]:
         if source not in value['levels']:
             lines.append(f'| {title} | — | 尚未加入下载计划 | — |')
             continue
