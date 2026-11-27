@@ -56,6 +56,12 @@ class ProductTablePrefixTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await db.scalar(text("SELECT to_regclass(:name)::oid"), {"name": f"app.{final}"}), before[old])
             self.assertEqual(await db.scalar(text(f'SELECT count(*) FROM app."{final}"')), 1)
         await db.run_sync(run_migration, restore_automation.downgrade)
+        await db.run_sync(run_migration, restore_automation.upgrade)
+        for old, new in migration.TABLE_RENAMES:
+            final_name = old if old.startswith("automation_") else new
+            self.assertEqual(await db.scalar(text("SELECT to_regclass(:name)::oid"), {"name": f"app.{final_name}"}), before[old])
+            self.assertEqual(await db.scalar(text(f'SELECT count(*) FROM app."{final_name}"')), 1)
+        await db.run_sync(run_migration, restore_automation.downgrade)
         await db.run_sync(run_migration, migration.downgrade)
         await db.execute(text("UPDATE app.ontology_object_properties SET value=2 WHERE id=1"))
         self.assertEqual(await db.scalar(text("SELECT value FROM app.ontology_objects WHERE id=1")), 2)
