@@ -14,7 +14,6 @@ export default function ConversationContext({ open, turn, turns, onClose, onView
   const picker = useRef<HTMLInputElement>(null);
   const zh = useThemeStore(state => state.language === 'zh-CN');
   const files = useMemo(() => {
-    if (!open) return [];
     const history = reviewHistory(turns);
     const index = history.map(revision => revision.turnId).lastIndexOf(turn?.id ?? -1);
     const before = history[index - 1] ?? emptyFiles;
@@ -23,9 +22,9 @@ export default function ConversationContext({ open, turn, turns, onClose, onView
       const diff = reviewDiff(file.path, before[file.key], after[file.key]);
       return { ...file, added: diff.hunks.reduce((sum, hunk) => sum + hunk.additionLines, 0), removed: diff.hunks.reduce((sum, hunk) => sum + hunk.deletionLines, 0) };
     }).filter(file => file.added || file.removed);
-  }, [open, turns, turn?.id]);
+  }, [turns, turn?.id]);
   const urls = [...new Set(turn?.prompt.match(/https?:\/\/[^\s<>()]+/g) ?? [])];
-  return open ? <aside id="scout-conversation-context" className={`scout-context-panel ${open ? 'is-open' : ''}`} aria-label="Conversation context" onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
+  return <aside ref={node => { if (node) node.inert = !open; }} id="scout-conversation-context" className={`scout-context-panel ${open ? 'is-open' : ''}`} aria-label="Conversation context" aria-hidden={!open} onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
     {files.length > 0 && <CodexSummarySection title={zh ? '更改' : 'Changes'}>
       {files.map(file => <button type="button" key={file.path} className="scout-context-row" aria-label={`Open ${file.path}`} aria-pressed={activePreview === `${turn!.id}-${file.step}`} aria-controls="scout-collection-results" onClick={() => onView({ key: `${turn!.id}-${file.step}`, turn: turn!.id, step: file.step })}><ArtifactIcon step={file.step} /><span>{file.path}</span><b className="scout-context-added">+{file.added}</b>{file.removed > 0 && <b className="scout-context-removed">-{file.removed}</b>}</button>)}
     </CodexSummarySection>}
@@ -35,7 +34,7 @@ export default function ConversationContext({ open, turn, turns, onClose, onView
       {(showAll ? sources : sources.slice(0, 3)).map((file, index) => <button type="button" key={`${file.name}-${index}`} className="scout-context-row" title={file.name} aria-label={`Preview source ${file.name}`} onClick={() => onPreviewFile(file)}><SourceThumbnail file={file} /><span>{file.name}</span></button>)}
       {sources.length > 0 && <button type="button" className="scout-context-view-all" aria-label={showAll ? 'Show less' : 'View all'} aria-expanded={showAll} onClick={() => setShowAll(value => !value)}><ScoutToolbarIcon name="link" /><span>{showAll ? zh ? '收起' : 'Show less' : zh ? '查看全部' : 'View all'}</span></button>}
     </CodexSummarySection>
-  </aside> : null;
+  </aside>;
 }
 
 function SourceThumbnail({ file }: { file: File }) {

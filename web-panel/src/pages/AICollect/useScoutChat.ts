@@ -7,7 +7,7 @@ function turnState(turns: SavedTurn[]) {
     attachments: (attachments ?? []).map(({ name, type, content }) => ({ name, type, content })) }));
 }
 
-export default function useScoutChat(turns: SavedTurn[], onLoad: (chat: SavedChat) => void, onError: (message: string) => void) {
+export default function useScoutChat(turns: SavedTurn[], onLoad: (chat: SavedChat, refreshing: boolean) => void, onError: (message: string) => void) {
   const [chat, setChat] = useState(newChat);
   const [loading, setLoading] = useState(Boolean(new URLSearchParams(window.location.search).get('chat')));
   const [writeGeneration, setWriteGeneration] = useState(0);
@@ -47,11 +47,11 @@ export default function useScoutChat(turns: SavedTurn[], onLoad: (chat: SavedCha
     return result;
   }
 
-  function apply(next: SavedChat) {
+  function apply(next: SavedChat, refreshing = false) {
     revisions.current.set(next.id, next.revision);
     current.current = next; setChat(next); content.current = next.turns;
     lastSaved.current = JSON.stringify({ id: next.id, title: next.title, pinned: next.pinned, archived: next.archived, turns: turnState(next.turns) });
-    callbacks.current.onLoad(next);
+    callbacks.current.onLoad(next, refreshing);
     const url = new URL(window.location.href);
     if (next.revision) url.searchParams.set('chat', next.id); else url.searchParams.delete('chat');
     window.history.replaceState(window.history.state, '', url);
@@ -83,7 +83,7 @@ export default function useScoutChat(turns: SavedTurn[], onLoad: (chat: SavedCha
     const snapshot = JSON.stringify({ id: latest.id, title: latest.title, pinned: latest.pinned, archived: latest.archived, turns: turnState(content.current) });
     if (!latest.revision || snapshot !== lastSaved.current) await save();
     await queue.current;
-    apply(await readChat(current.current.id));
+    apply(await readChat(current.current.id), true);
   }
   async function startNew() { if (content.current.length) await save(); apply(newChat()); }
   async function branch() { const saved = await save(); apply(await branchChat(saved.id)); }

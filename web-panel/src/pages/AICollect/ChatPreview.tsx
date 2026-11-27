@@ -84,7 +84,11 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
   const nextQueuedId = useRef(0);
   const thread = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
-  function loadChat(saved: SavedChat) {
+  function loadChat(saved: SavedChat, refreshing: boolean) {
+    if (refreshing) {
+      setTurns(saved.turns.map(turn => ({ ...turn, files: restoreFiles(turn) })));
+      return;
+    }
     setRunning(false); stopReading(); setQueued([]); setDraft(''); setPendingFiles([]);
     const restored = saved.turns.map(turn => ({ ...turn, files: restoreFiles(turn) }));
     setTurns(restored); setSourceFiles(restored.flatMap(turn => turn.files));
