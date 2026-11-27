@@ -259,21 +259,19 @@
 .scout-result-overflow-hint.is-top { top: 0; background: linear-gradient(#141a29b3, transparent); mask-image: linear-gradient(#000, transparent); }
 .scout-result-overflow-hint.is-bottom { bottom: 0; background: linear-gradient(transparent, #141a29b3); mask-image: linear-gradient(transparent, #000); }
 .scout-result-overflow-hint.is-visible { opacity: 1; }
-/* Windows CompositionOverlay: four source-over fades, not an outlined frame.
-   Native stops/metrics: 0/.58, .18/.36, .58/.12, 1/0; min(96px, W/2, H/2).
-   500ms entry, 1.5s each breathing leg; extent .88+.12p, opacity .76+.24p. */
+/* Four edge fades, softened and feathered inside the preview only. */
 @property --scout-control-progress { syntax: '<number>'; inherits: true; initial-value: 0; }
-.scout-computer-control { position: absolute; z-index: 4; inset: 0; overflow: hidden; isolation: isolate; container-type: size; pointer-events: none; visibility: hidden; opacity: 0; --scout-control-color: 0 177 255; --scout-control-progress: 0; --scout-control-fade: min(96px, 50cqw, 50cqh); transition: opacity 240ms ease, visibility 0s 240ms; }
-.scout-computer-control[data-active] { visibility: visible; opacity: 1; transition-delay: 0s; animation: scout-control-enter 500ms ease-out both, scout-control-breathe 3s ease-in-out 500ms infinite; }
-.scout-computer-control > span { position: absolute; pointer-events: none; background: linear-gradient(var(--scout-control-direction), rgb(var(--scout-control-color) / .580392157) 0%, rgb(var(--scout-control-color) / .360784314) 18%, rgb(var(--scout-control-color) / .121568627) 58%, rgb(var(--scout-control-color) / 0) 100%); }
+.scout-computer-control { position: absolute; z-index: 4; inset: 0; overflow: hidden; border-radius: 24px; isolation: isolate; container-type: size; pointer-events: none; visibility: hidden; opacity: 0; --scout-control-color: 116 164 210; --scout-control-progress: 0; --scout-control-fade: min(96px, 50cqw, 50cqh); mask-image: linear-gradient(to right, transparent, #000 16px, #000 calc(100% - 16px), transparent), linear-gradient(to bottom, transparent, #000 16px, #000 calc(100% - 16px), transparent); mask-composite: intersect; transition: opacity 240ms ease, visibility 0s 240ms; }
+.scout-computer-control[data-active] { visibility: visible; opacity: .58; transition-delay: 0s; animation: scout-control-enter 500ms ease-out both, scout-control-breathe 3s ease-in-out 500ms infinite; }
+.scout-computer-control > span { position: absolute; pointer-events: none; filter: blur(16px); background: linear-gradient(var(--scout-control-direction), rgb(var(--scout-control-color) / .580392157) 0%, rgb(var(--scout-control-color) / .360784314) 18%, rgb(var(--scout-control-color) / .121568627) 58%, rgb(var(--scout-control-color) / 0) 100%); }
 .scout-computer-control > [data-edge=top], .scout-computer-control > [data-edge=bottom] { left: 0; right: 0; height: var(--scout-control-fade); transform: scaleY(calc(.88 + .12 * var(--scout-control-progress))); }
 .scout-computer-control > [data-edge=left], .scout-computer-control > [data-edge=right] { top: 0; bottom: 0; width: var(--scout-control-fade); transform: scaleX(calc(.88 + .12 * var(--scout-control-progress))); }
 .scout-computer-control > [data-edge=top] { top: 0; transform-origin: top; --scout-control-direction: to bottom; }
 .scout-computer-control > [data-edge=bottom] { bottom: 0; transform-origin: bottom; --scout-control-direction: to top; }
 .scout-computer-control > [data-edge=left] { left: 0; transform-origin: left; --scout-control-direction: to right; }
 .scout-computer-control > [data-edge=right] { right: 0; transform-origin: right; --scout-control-direction: to left; }
-@keyframes scout-control-enter { from { opacity: 0; } to { opacity: 1; } }
-@keyframes scout-control-breathe { 0%, 100% { opacity: .76; --scout-control-progress: 0; } 50% { opacity: 1; --scout-control-progress: 1; } }
+@keyframes scout-control-enter { from { opacity: 0; } to { opacity: .58; } }
+@keyframes scout-control-breathe { 0%, 100% { opacity: .46; --scout-control-progress: 0; } 50% { opacity: .58; --scout-control-progress: 1; } }
 :root[data-reduced-motion=true] .scout-computer-control { animation: none; transition: none; --scout-control-progress: 1; }
 @media (prefers-reduced-motion: reduce) { .scout-computer-control, .scout-computer-control[data-active] { animation: none; transition: none; --scout-control-progress: 1; } }
 @media (max-width: 767px) { .scout-chat-preview { --scout-chat-gutter: 40px; } .scout-chat-preview.has-results::after { background: repeating-linear-gradient(to right, #d2def214 0 3px, transparent 3px 8px); } }

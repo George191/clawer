@@ -112,6 +112,11 @@ with sync_playwright() as p:
             expect(effect).to_have_css("pointer-events", "none")
             expect(effect).to_have_css("border-width", "0px")
             expect(effect).to_have_css("box-shadow", "none")
+            expect(effect).to_have_css("border-radius", "24px")
+            expect(effect.locator("[data-edge=top]")).to_have_css("filter", "blur(16px)")
+            expect(viewport.locator(".scout-source-preview")).to_have_css("filter", "none")
+            assert effect.evaluate("e=>Number(getComputedStyle(e).opacity)") <= .58
+            assert effect.evaluate("e=>getComputedStyle(e).maskImage.includes('16px')")
             assert viewport.evaluate("e=>getComputedStyle(e,'::after').content") == "none"
             gradient = effect.locator("[data-edge=top]").evaluate("e=>getComputedStyle(e).backgroundImage")
             assert "linear-gradient" in gradient and "18%" in gradient and "58%" in gradient
@@ -132,7 +137,7 @@ with sync_playwright() as p:
         page.emulate_media(reduced_motion="reduce")
         search()
         expect(effect).to_have_css("animation-name", "none")
-        expect(effect).to_have_css("opacity", "1")
+        expect(effect).to_have_css("opacity", "0.58")
         assert not posts, posts
         assert not errors, errors
         print("Scoped four-edge takeover gradients, native stops/extent, breathing, pause cleanup, input pass-through and reduced motion passed", flush=True)
