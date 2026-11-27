@@ -326,7 +326,6 @@
 .scout-persistent-composer .scout-composer-footer .scout-send:hover { background: #fff; color: #111; }
 .scout-persistent-composer .scout-send:disabled, .scout-persistent-composer .scout-composer-footer .scout-send:disabled { background: #ffffff29; color: #ffffff66; cursor: default; }
 .scout-persistent-composer .scout-send .scout-toolbar-icon { width: 20px; height: 20px; }
-@media (max-width: 1279px) { .scout-summary-pin { display: none; } }
 @media (max-width: 767px) { .scout-file-header { gap: 4px; padding-inline: 6px; } .scout-chat-preview.has-results .scout-chat-messages { top: calc(42% + 48px); } .scout-conversation-toolbar { right: 8px; } }
 
 .scout-chat-preview.has-results > .ai-chat-dot { top: 44px; }

@@ -10,12 +10,12 @@ type Props = {
   visible: boolean; conversationMenu: MenuProps;
   open: boolean; turn?: PreviewResult; step: number; running: boolean;
   onSelect: (artifact: StageArtifact) => void; onClose: () => void;
-  summaryOpen: boolean; summaryPinned: boolean; canPin: boolean;
-  onTogglePinned: () => void; onNotice: (message: string) => void;
+  summaryOpen: boolean; onTogglePreview: () => void;
+  onNotice: (message: string) => void;
 };
 
 export default function PreviewWorkspace(props: Props) {
-  const { visible, conversationMenu, open, turn, step, running, onSelect, onClose, summaryOpen, summaryPinned, canPin, onTogglePinned, onNotice } = props;
+  const { visible, conversationMenu, open, turn, step, running, onSelect, onClose, summaryOpen, onTogglePreview, onNotice } = props;
   const [tabs, setTabs] = useState<StageArtifact[]>([]);
   const [structured, setStructured] = useState(false);
   const [wrap, setWrap] = useState(false);
@@ -81,7 +81,7 @@ export default function PreviewWorkspace(props: Props) {
       ], onClick: ({ key }) => { if (key === 'file:copy') void copy(); else if (key === 'file:download') download(); else if (key === 'file:structured') setStructured(value => !value); else if (key === 'file:wrap') setWrap(value => !value); else if (key === 'file:numbers') setLineNumbers(value => !value); else if (key === 'file:others') setTabs(current => current.filter(tab => tab.key === activeKey)); else if (key === 'file:close') onClose(); else conversationMenu.onClick?.({ key }); } }}><CodexToolbarButton aria-label="More conversation actions" title="More"><ScoutToolbarIcon name="more" /></CodexToolbarButton></CodexToolbarMenu>
       <CodexToolbarButton aria-label="Share file" title="Share file" disabled={!turn} onClick={() => { setCopied(false); setCanShare(Boolean(navigator.canShare?.({ files: [new File([file.content], file.name, { type: 'text/plain' })] }))); setSharing(true); }}><ScoutToolbarIcon name="share" /></CodexToolbarButton>
       <Popover.Trigger asChild><CodexToolbarButton className="scout-context-toggle" aria-label="Conversation context" title="Toggle summary" aria-pressed={summaryOpen} aria-controls="scout-conversation-context"><ScoutToolbarIcon name="summary" /></CodexToolbarButton></Popover.Trigger>
-      <CodexToolbarButton className="scout-summary-pin" aria-label={summaryPinned ? 'Unpin summary panel' : 'Pin summary panel'} title={canPin ? summaryPinned ? 'Unpin summary panel' : 'Pin summary panel' : 'Pin summary on a wider window'} aria-pressed={summaryPinned} disabled={!canPin} onClick={onTogglePinned}><ScoutToolbarIcon name="panel" /></CodexToolbarButton>
+      <CodexToolbarButton aria-label={open ? 'Hide file preview' : 'Show file preview'} title={open ? 'Hide file preview' : 'Show file preview'} aria-pressed={open} aria-controls="scout-collection-results" onClick={onTogglePreview}><ScoutToolbarIcon name="panel" /></CodexToolbarButton>
     </div></Popover.Anchor>}
     <Modal open={sharing} title={`Share ${file.name}`} onCancel={() => setSharing(false)} width={560} className="scout-share-dialog" footer={<><Button onClick={download}>Download file</Button><Button onClick={() => void copy()}>{copied ? 'Copied' : 'Copy contents'}</Button>{canShare && <Button type="primary" onClick={() => void systemShare()}>System share</Button>}</>}>
       <p>Share the contents of the current file.</p>
