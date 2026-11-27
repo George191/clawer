@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -7,8 +8,33 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.web.services.automation_store import automation_store
 from app.web.services.task_events import publish_automation_change
+from app.web.api.dependencies.common import CurrentActiveSuperuser
 
 router = APIRouter(prefix="/automation", tags=["automation"])
+
+
+@router.get("/workers")
+async def list_workers(_user: CurrentActiveSuperuser) -> dict[str, Any]:
+    from app.scheduler.celery_app import app
+
+    try:
+        stats, active, queues = await asyncio.gather(*(
+            asyncio.to_thread(getattr(app.control.inspect(timeout=2), command))
+            for command in ("stats", "active", "active_queues")
+        ))
+    except Exception as exc:
+        raise HTTPException(503, detail="Unable to inspect execution workers") from exc
+    if not stats:
+        raise HTTPException(503, detail="No workers responded to the inspection request")
+    return {"items": [{
+        "name": name, "pid": value.get("pid"), "uptime": value.get("uptime"),
+        "concurrency": value.get("pool", {}).get("max-concurrency"),
+        "processed": sum(value.get("total", {}).values()),
+        "active": None if active is None or name not in active else [
+            {"id": task.get("id"), "name": task.get("name"), "started_at": task.get("time_start")}
+            for task in active[name]],
+        "queues": None if queues is None or name not in queues else [queue["name"] for queue in queues[name]],
+    } for name, value in sorted(stats.items())]}
 
 
 class WorkflowRequest(BaseModel):

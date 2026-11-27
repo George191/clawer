@@ -24,6 +24,7 @@ import {
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { useThemeStore } from '@/stores/settings';
 import AutomationRuns from './AutomationRuns';
+import Workers from './Workers';
 import WorkflowNodes, { WorkflowPath } from './WorkflowNodes';
 import type {
   AutomationWorkflow, ProductDomain, SchedulerTaskConfig, WorkspaceTask,
@@ -31,9 +32,10 @@ import type {
 import '@/pages/Pipeline/ontology-frame.css';
 import '@/pages/Pipeline/foundry-workbench-tokens.css';
 import './style.css';
+import './windmill-console.css';
 import TransferSchedules from './TransferSchedules';
 
-type Section = 'workflows' | 'schedules' | 'runs';
+type Section = 'workflows' | 'schedules' | 'runs' | 'workers';
 type DomainFilter = ProductDomain | 'all';
 type ScheduleFilter = 'all' | 'enabled' | 'paused';
 type SelectedRecord = AutomationWorkflow | AutomationSchedule;
@@ -51,13 +53,15 @@ const domainMeta: Record<ProductDomain, { label: string }> = {
 const sectionMeta: Record<Section, { label: string; description: string }> = {
   workflows: { label: 'Workflows', description: 'Reusable execution paths across your workspace.' },
   schedules: { label: 'Schedules', description: 'Control when work starts and inspect its trigger rules.' },
-  runs: { label: 'Runs', description: 'Follow execution progress and inspect individual runs.' },
+  runs: { label: 'Runs', description: 'Inspect execution history, inputs, results and logs.' },
+  workers: { label: 'Workers', description: 'Inspect execution workers, queues and active jobs.' },
 };
 const objectLabel: Record<Section, string> = {
-  workflows: 'Workflow', schedules: 'Schedule', runs: 'Run',
+  workflows: 'Workflow', schedules: 'Schedule', runs: 'Run', workers: 'Worker',
 };
 
 const sectionByPath = (pathname: string): Section => {
+  if (pathname.includes('/workers')) return 'workers';
   if (pathname.includes('/schedules')) return 'schedules';
   if (pathname.includes('/runs')) return 'runs';
   if (pathname.includes('/workflows')) return 'workflows';
@@ -92,6 +96,7 @@ const AutomationCenter: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [form] = Form.useForm();
   const section = sectionByPath(location.pathname);
+  const editableSection = section === 'workflows' || section === 'schedules';
   const requestedDomain = searchParams.get('domain') as DomainFilter | null;
   const domain: DomainFilter = requestedDomain && (requestedDomain === 'all' || requestedDomain in domainMeta)
     ? requestedDomain
@@ -153,7 +158,7 @@ const AutomationCenter: React.FC = () => {
   });
 
   useEffect(() => {
-    const channels = section === 'runs' ? [] : section === 'workflows' ? ['workflows'] : ['schedules', 'tasks'];
+    const channels = (section === 'runs' || section === 'workers') ? [] : section === 'workflows' ? ['workflows'] : ['schedules', 'tasks'];
     pendingSnapshots.current = new Set(channels);
     setLoading(channels.length > 0);
     if (!connected) return;
@@ -163,11 +168,13 @@ const AutomationCenter: React.FC = () => {
     };
   }, [connected, section, send]);
 
-  const selectRun = useCallback((taskId: string | null) => {
+  const selectRun = useCallback((taskId: string | null, runId?: string) => {
     setSearchParams((current) => {
       const next = new URLSearchParams(current);
       if (taskId) next.set('task', taskId);
       else next.delete('task');
+      if (runId) next.set('run', runId);
+      else next.delete('run');
       return next;
     }, { replace: true });
   }, [setSearchParams]);
@@ -405,19 +412,19 @@ const AutomationCenter: React.FC = () => {
     <header className="automation-header">
       <div className="automation-breadcrumb"><BranchesOutlined /><strong>Automation</strong><span>/</span><span>{sectionMeta[section].label}</span></div>
       <div className="automation-header-actions">
-        <span className={`automation-connection${connected && streamAvailable ? ' is-live' : ''}`} role="status"><i />{connected && streamAvailable ? 'Live updates' : 'Connecting…'}</span>
-        {section !== 'runs' && <><Button icon={<ReloadOutlined />} disabled={!connected || loading} onClick={refresh}>Refresh</Button><Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>New {objectLabel[section].toLowerCase()}</Button></>}
+        {section !== 'workers' && <Select aria-label="Product domain" value={domain} onChange={changeDomain} options={[{ value: 'all', label: 'All domains' }, ...Object.entries(domainMeta).map(([value, meta]) => ({ value, label: meta.label }))]} />}
+        {section !== 'workers' && <span className={`automation-connection${connected && streamAvailable ? ' is-live' : ''}`} role="status"><i />{connected && streamAvailable ? 'Live updates' : 'Connecting…'}</span>}
+        {editableSection && <><Button icon={<ReloadOutlined />} disabled={!connected || loading} onClick={refresh}>Refresh</Button><Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>New {objectLabel[section].toLowerCase()}</Button></>}
       </div>
     </header>
     <div className="automation-workspace">
       <aside className="automation-sidebar" aria-label="Automation navigation">
         <div className="automation-sidebar-title">Workspace</div>
         <nav aria-label="Automation sections">
-          {(Object.keys(sectionMeta) as Section[]).map(value => <Link key={value} className={section === value ? 'is-active' : ''} aria-current={section === value ? 'page' : undefined} to={`/automation/${value}?${new URLSearchParams({ domain })}`}>
-            {value === 'workflows' ? <ApartmentOutlined /> : value === 'schedules' ? <FieldTimeOutlined /> : <BranchesOutlined />}<span>{sectionMeta[value].label}</span>
+          {(Object.keys(sectionMeta) as Section[]).map(value => <Link key={value} title={sectionMeta[value].label} className={section === value ? 'is-active' : ''} aria-current={section === value ? 'page' : undefined} to={`/automation/${value}?${new URLSearchParams({ domain })}`}>
+            {value === 'workflows' ? <ApartmentOutlined /> : value === 'schedules' ? <FieldTimeOutlined /> : value === 'workers' ? <RobotOutlined /> : <BranchesOutlined />}<span>{sectionMeta[value].label}</span>
           </Link>)}
-          <Link to="/agents?view=executors"><RobotOutlined /><span>Agent executors</span></Link>
-          <Link to="/agents"><RobotOutlined /><span>Agents</span></Link>
+          <Link title="Agents" to="/agents"><RobotOutlined /><span>Agents</span></Link>
         </nav>
         <div className="automation-sidebar-title">Product domains</div>
         <nav aria-label="Filter by product domain">
@@ -428,22 +435,22 @@ const AutomationCenter: React.FC = () => {
       </aside>
       <main className={`automation-main is-${section}`}>
         <div className="automation-page-heading"><div><span className="automation-eyebrow">{domain === 'all' ? 'All domains' : domainMeta[domain].label}</span><h1>{sectionMeta[section].label}</h1><p>{sectionMeta[section].description}</p></div>
-          {section !== 'runs' && <div className="automation-summary" aria-label={`${sectionMeta[section].label} summary`} aria-busy={loading}><div><strong>{loading ? '—' : sectionRecords.length}</strong><span>Total</span></div><div><strong>{loading ? '—' : enabledCount}</strong><span>Enabled</span></div><div><strong>{loading ? '—' : sectionRecords.length - enabledCount}</strong><span>Disabled</span></div></div>}
+          {editableSection && <div className="automation-summary" aria-label={`${sectionMeta[section].label} summary`} aria-busy={loading}><div><strong>{loading ? '—' : sectionRecords.length}</strong><span>Total</span></div><div><strong>{loading ? '—' : enabledCount}</strong><span>Enabled</span></div><div><strong>{loading ? '—' : sectionRecords.length - enabledCount}</strong><span>Disabled</span></div></div>}
         </div>
-        {section !== 'runs' && <div className="automation-toolbar">
+        {editableSection && <div className="automation-toolbar">
           <Input allowClear value={keyword} onChange={(event) => setKeyword(event.target.value)} prefix={<SearchOutlined />} aria-label={`Search ${sectionMeta[section].label.toLowerCase()}`} placeholder={`Search ${sectionMeta[section].label.toLowerCase()}…`} className="automation-search" />
           <div className="automation-status-filters" role="group" aria-label="Filter by status">{(['all', 'enabled', 'paused'] as const).map(value => <button type="button" key={value} aria-pressed={scheduleFilter === value} className={scheduleFilter === value ? 'is-active' : ''} onClick={() => setScheduleFilter(value)}>{value === 'all' ? 'All' : value === 'enabled' ? 'Enabled' : 'Disabled'}</button>)}</div>
         </div>}
-        {section !== 'runs' && (!connected || !streamAvailable) && <Alert className="automation-load-alert" type="warning" showIcon message="Live updates unavailable. Reconnecting automatically…" />}
+        {editableSection && (!connected || !streamAvailable) && <Alert className="automation-load-alert" type="warning" showIcon message="Live updates unavailable. Reconnecting automatically…" />}
         {section === 'schedules' && (domain === 'all' || domain === 'etl-pipeline') && <TransferSchedules keyword={keyword} filter={scheduleFilter} />}
-    {section === 'runs' ? <AutomationRuns domain={domain} keyword={keyword} onKeywordChange={setKeyword} taskId={searchParams.get('task')} onSelect={selectRun} /> : <Card ref={tableCardRef} className="automation-table-card" styles={{ body: { padding: 0 } }}>
+    {section === 'workers' ? <Workers /> : section === 'runs' ? <AutomationRuns domain={domain} keyword={keyword} onKeywordChange={setKeyword} taskId={searchParams.get('task')} executionId={searchParams.get('run')} onSelect={selectRun} /> : <Card ref={tableCardRef} className="automation-table-card" styles={{ body: { padding: 0 } }}>
       <Spin spinning={loading}><Table scroll={{ y: tableBodyHeight, x: 900 }} rowKey={(record) => String('id' in record && record.id ? record.id : 'task_name' in record ? record.task_name : record.name)} columns={currentColumns as never} dataSource={currentData as never} pagination={{ pageSize: section === 'schedules' ? 20 : 10, hideOnSinglePage: false, ...(section === 'schedules' ? { showSizeChanger: false } : {}) }} locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={`No ${sectionMeta[section].label.toLowerCase()} match the current filters`} /> }} onRow={(record) => ({ onClick: () => section === 'schedules' ? openScheduleDetail(record as AutomationSchedule) : setDetail(record as SelectedRecord), style: { cursor: 'pointer' } })} /></Spin>
     </Card>}
 
       </main>
     </div>
 
-    {section === 'workflows' && <Modal className="flow-surface-modal automation-workflow-modal" title={editorTitle} open={editorOpen} confirmLoading={mutating} onCancel={() => setEditorOpen(false)} onOk={() => void save()} okText={editing ? 'Save Changes' : 'Create'} width={940} forceRender>
+    {section === 'workflows' && <Modal rootClassName="windmill-workflow-root" className="flow-surface-modal automation-workflow-modal" title={editorTitle} open={editorOpen} confirmLoading={mutating} onCancel={() => setEditorOpen(false)} onOk={() => void save()} okText={editing ? 'Save Changes' : 'Create'} width={940} forceRender>
       <Form form={form} layout="vertical" className="automation-form">
         {section === 'workflows' && <><Form.Item name="name" label="Workflow Name" rules={[{ required: true }]}><Input disabled={Boolean(editing)} /></Form.Item><Form.Item name="product_domain" label="Domain" rules={[{ required: true }]}><Select options={Object.entries(domainMeta).map(([value, meta]) => ({ value, label: meta.label }))} /></Form.Item><Form.Item name="description" label="Description"><Input.TextArea rows={2} /></Form.Item><Form.Item name="nodes" label="Execution steps" rules={[{ validator: async (_, nodes) => { if (!Array.isArray(nodes) || !nodes.length || nodes.some(node => !node.name?.trim())) throw new Error('Give every step a name and include at least one step.'); } }]}><WorkflowNodes /></Form.Item><Form.Item name="enabled" label="Enabled" valuePropName="checked"><Switch /></Form.Item></>}
       </Form>
@@ -562,7 +569,7 @@ const AutomationCenter: React.FC = () => {
       {deleteTarget && <div className="automation-schedule-delete-target"><FieldTimeOutlined /><div><strong>{deleteTarget.display_name ?? deleteTarget.task_name}</strong><span>{(domainMeta[deleteTarget.product_domain] ?? domainMeta.platform).label} · {formatSchedule(deleteTarget)}</span></div></div>}
       <div className="automation-schedule-delete-footer"><Button autoFocus disabled={mutating} onClick={() => setDeleteTarget(null)}>Keep schedule</Button><Button type="primary" danger loading={mutating} onClick={() => void confirmScheduleDelete()}>Delete schedule</Button></div>
     </Modal>
-    </> : <Drawer className="flow-surface-modal automation-detail" title={detailName} open={Boolean(detail)} onClose={() => { setDetail(null); if (searchParams.has('task')) { const next = new URLSearchParams(searchParams); next.delete('task'); setSearchParams(next); } }} width={520} extra={detail && section !== 'runs' ? <Button onClick={() => openEdit(detail)}>{'workspace_task_id' in detail ? 'View Run' : 'Edit'}</Button> : null}>
+    </> : <Drawer className="flow-surface-modal automation-detail" title={detailName} open={Boolean(detail)} onClose={() => { setDetail(null); if (searchParams.has('task')) { const next = new URLSearchParams(searchParams); next.delete('task'); setSearchParams(next); } }} width={520} extra={detail && editableSection ? <Button onClick={() => openEdit(detail)}>{'workspace_task_id' in detail ? 'View Run' : 'Edit'}</Button> : null}>
       {detail && <>
         <Descriptions column={1} bordered size="small" items={[
           { key: 'name', label: 'Name', children: detailName },

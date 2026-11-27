@@ -258,6 +258,13 @@ export interface WorkspaceTaskLogRun {
   synced_records: number | null;
 }
 
+export interface WorkspaceExecution extends WorkspaceTaskLogRun {
+  name: string; owner: string; product_domain: ProductDomain; task_type: 'template' | 'celery';
+  task_path: string | null; template_name: string | null;
+}
+export const fetchWorkspaceExecutions = (productDomain: ProductDomain | 'all', limit = 1000): Promise<WorkspaceExecution[]> =>
+  client.get('/tasks/executions', { params: { product_domain: productDomain === 'all' ? undefined : productDomain, limit } }).then(r => r.data.items);
+
 export interface WorkspaceTask {
   id: string;
   name: string;

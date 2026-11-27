@@ -6,6 +6,8 @@ from urllib.parse import urlsplit
 
 from playwright.sync_api import expect, sync_playwright
 
+expect.set_options(timeout=15000)
+
 parser = argparse.ArgumentParser()
 parser.add_argument("base")
 args = parser.parse_args()
@@ -42,7 +44,11 @@ with sync_playwright() as p:
 
     def route(r):
         path = urlsplit(r.request.url).path
-        if path.endswith("/users/me/context"):
+        if path.endswith("/automation/workers"):
+            value = {"items": [{"name": "worker-1", "pid": 42, "uptime": 90, "concurrency": 4, "processed": 15, "active": [], "queues": ["collection"]}]}
+        elif path.endswith("/tasks/executions"):
+            value = {"items": [{**execution, "task_id": task["id"], "name": task["name"], "owner": task["owner"], "product_domain": "ai-collect", "task_path": "collect.articles"}]}
+        elif path.endswith("/users/me/context"):
             value = {"user": {"id": "fixture", "full_name": "Alex", "email": "alex@example.test", "is_superuser": False}, "tenants": [], "teams": []}
         elif path.endswith("/tasks/runs"):
             value = {"items": [task]}
@@ -85,11 +91,23 @@ with sync_playwright() as p:
     expect(page.get_by_text("Collected ten articles", exact=True)).to_have_count(0)
     expect(page.get_by_text("Example failure detail", exact=True)).to_be_visible()
     page.get_by_role("button", name="Close run details", exact=True).click()
-    page.get_by_role("group", name="Run status", exact=True).get_by_role("button", name="canceled", exact=True).click()
+    page.get_by_role("group", name="Run status", exact=True).get_by_role("button", name="Canceled", exact=True).click()
     expect(page.get_by_role("button", name="Collect articles", exact=False)).to_have_count(0)
-    nav.get_by_role("link", name="Agent executors", exact=True).click()
-    expect(page).to_have_url(args.base + "/agents?view=executors")
-    expect(page.get_by_text("Assistant", exact=True)).to_be_visible()
+    nav.get_by_role("link", name="Workers", exact=True).click()
+    page.get_by_role("button", name="worker-1", exact=True).click()
+    expect(page.get_by_text("No active jobs reported.", exact=True)).to_be_visible()
+    nav.get_by_role("link", name="Workflows", exact=True).click()
+    page.get_by_role("button", name="New workflow", exact=True).click()
+    expect(page.get_by_role("button", name="Create", exact=True)).to_be_in_viewport()
+    page.get_by_label("Step 1 name", exact=True).fill("First step")
+    page.get_by_role("button", name="Insert last step", exact=True).click()
+    page.get_by_label("Step 2 name", exact=True).fill("Second step")
+    page.get_by_role("button", name="Zoom flow in", exact=True).click()
+    expect(page.locator(".windmill-flow-graph")).to_have_attribute("style", "transform: scale(1.1); transform-origin: center top;")
+    page.get_by_role("button", name="Cancel", exact=True).click()
+    nav.get_by_role("link", name="Agents", exact=True).click()
+    expect(page).to_have_url(args.base + "/agents")
+    expect(page.get_by_role("heading", name="Agents", exact=True)).to_be_visible()
     assert subscriptions.count("workflows") >= 2
     assert not errors, errors
     browser.close()

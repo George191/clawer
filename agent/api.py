@@ -83,8 +83,8 @@ async def get_run(run_id: UUID, user: CurrentUser):
 
 @router.get("/runs")
 async def list_runs(user: CurrentUser, product_domain: str | None = Query(default=None, min_length=1, max_length=80),
-                    limit: int = Query(default=100, ge=1, le=100)):
-    return {"items": await store.list(user.id, product_domain, limit)}
+                    limit: int = Query(default=100, ge=1, le=100), agent_id: UUID | None = None):
+    return {"items": await store.list(user.id, product_domain, limit, agent_id)}
 
 
 @router.get("/runs/{run_id}/events")

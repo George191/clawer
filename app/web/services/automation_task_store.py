@@ -869,6 +869,19 @@ class AutomationTaskStore:
             {"task_id": task_id, "offset": offset, "limit": limit},
         )
 
+    async def list_executions(self, product_domain: str | None, limit: int) -> list[dict[str, Any]]:
+        await self.initialize()
+        return await self._pg.fetch_all(
+            """SELECT run.*, task.name, task.owner, task.product_domain, task.task_type,
+                      task.task_path, task.template_name
+               FROM app.automation_task_runs run
+               JOIN app.automation_tasks task ON task.id = run.task_id
+               WHERE task.deleted_at IS NULL
+                 AND (CAST(:domain AS text) IS NULL OR task.product_domain = :domain)
+               ORDER BY run.started_at DESC, run.id DESC LIMIT :limit""",
+            {"domain": product_domain, "limit": limit},
+        )
+
     async def get_task_run(self, task_id: str, run_id: str) -> dict[str, Any] | None:
         await self.initialize()
         return await self._pg.fetch_one(

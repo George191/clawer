@@ -130,11 +130,12 @@ class AgentStore:
     def view(row) -> dict:
         return {key: row[key] for key in ("id", "agent_id", "product_domain", "harness", "request", "model_config", "status", "stage", "stage_count", "result", "error_code", "attempts", "event_seq", "created_at", "updated_at")}
 
-    async def list(self, owner: UUID, product_domain: str | None, limit: int) -> list[dict]:
+    async def list(self, owner: UUID, product_domain: str | None, limit: int, agent_id: UUID | None = None) -> list[dict]:
         async with self.database.connect() as conn:
             rows = (await conn.execute(text("""SELECT * FROM app.agent_runs WHERE owner_id=:owner
                 AND (CAST(:domain AS text) IS NULL OR product_domain=:domain)
-                ORDER BY created_at DESC LIMIT :limit"""), {"owner": owner, "domain": product_domain, "limit": limit})).mappings().all()
+                AND (CAST(:agent AS uuid) IS NULL OR agent_id=:agent)
+                ORDER BY created_at DESC LIMIT :limit"""), {"owner": owner, "domain": product_domain, "limit": limit, "agent": agent_id})).mappings().all()
         return [self.view(row) for row in rows]
 
     async def get(self, owner: UUID, run_id: UUID) -> dict:

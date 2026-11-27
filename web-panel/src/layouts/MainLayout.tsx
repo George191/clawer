@@ -1157,7 +1157,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         >
           <Content style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             <div className={isDark ? '' : 'light-mode'} style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-              {routedProject && (isAtlasSurface || isGraphSurface || isRagSurface) ? null : <ManagementWorkspace>{children}</ManagementWorkspace>}
+              {routedProject && (isAtlasSurface || isGraphSurface || isRagSurface) ? null : location.pathname === '/agents' ? children : <ManagementWorkspace>{children}</ManagementWorkspace>}
             </div>
           </Content>
         </main>

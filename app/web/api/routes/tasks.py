@@ -27,6 +27,12 @@ async def list_runs() -> dict[str, Any]:
     return {"items": await automation_task_store.list_tasks()}
 
 
+@router.get("/executions")
+async def list_executions(product_domain: str | None = Query(default=None, min_length=1, max_length=80),
+                          limit: int = Query(default=1000, ge=1, le=1000)) -> dict[str, Any]:
+    return {"items": await automation_task_store.list_executions(product_domain, limit)}
+
+
 @router.get("/runs/{task_id}")
 async def get_run(task_id: UUID) -> dict[str, Any]:
     task = await automation_task_store.get_task(str(task_id))

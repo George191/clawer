@@ -8,6 +8,7 @@ const exported = {};
 const source = readFileSync(new URL('../src/pages/AutomationCenter/WorkflowNodes.tsx', import.meta.url), 'utf8');
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText;
 vm.runInNewContext(compiled, { exports: exported, require(name) {
+  if (name === 'react') return { useState: value => [value, () => {}], useEffect: () => {} };
   if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
   return new Proxy({}, { get: (_, key) => String(key) });
 } });

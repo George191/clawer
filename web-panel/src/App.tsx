@@ -142,6 +142,7 @@ const App: React.FC = () => {
             <Route path="/automation/workflows" element={<AutomationCenter />} />
             <Route path="/automation/schedules" element={<AutomationCenter />} />
             <Route path="/automation/runs" element={<AutomationCenter />} />
+            <Route path="/automation/workers" element={<AutomationCenter />} />
             <Route path="/scout" element={<AICollect />} />
             <Route path="/source-strategy" element={<AICollectGovernance />} />
             <Route path="/anti-crawl" element={<AICollectGovernance />} />
