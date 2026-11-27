@@ -35,7 +35,7 @@ export function reviewHistory(turns: SavedTurn[]): ReviewRevision[] {
       if (last.template !== turn.template || last.adapter !== turn.adapter) {
         result.push({ template: turn.template, adapter: turn.adapter, id: `response-${turn.id}-current`, turnId: turn.id, createdAt: turn.createdAt ?? '', message: turn.prompt });
       }
-    } else if (files.template !== previous.template || files.adapter !== previous.adapter) {
+    } else if (turn.template || turn.adapter) {
       result.push({ ...files, id: `response-${turn.id}`, turnId: turn.id, createdAt: turn.createdAt ?? '', message: turn.prompt });
     }
   }
