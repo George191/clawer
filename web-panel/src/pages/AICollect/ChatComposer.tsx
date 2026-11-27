@@ -9,6 +9,15 @@ import { CodexToolbarButton, CodexToolbarMenu } from './CodexToolbar';
 
 export type ComposerField = HTMLInputElement | HTMLTextAreaElement;
 export type QueuedMessage = { id: number; prompt: string; files: File[] };
+
+const landingPrompts = [
+  'any new ideas?',
+  'what shall we collect?',
+  'which site should we explore?',
+  'what data do you need?',
+  'have a link to explore?',
+  'what should we discover?',
+];
 type VoiceRecognition = {
   lang: string; continuous: boolean; interimResults: boolean;
   onresult: ((event: { results: ArrayLike<{ 0: { transcript: string } }> }) => void) | null;
@@ -31,8 +40,12 @@ export default forwardRef<ComposerField, Props>(function ChatComposer(props, ref
   const picker = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const [placeholderLength, setPlaceholderLength] = useState(0);
+  const [placeholderPrompt, setPlaceholderPrompt] = useState(landingPrompts[0]);
+  useEffect(() => {
+    if (!entered) setPlaceholderPrompt(landingPrompts[Math.floor(Math.random() * landingPrompts.length)]);
+  }, [entered]);
   const placeholderPrefix = userName ? 'Hi, ' : 'Hi';
-  const placeholderText = `${placeholderPrefix}${userName}, any new ideas?`;
+  const placeholderText = `${placeholderPrefix}${userName}, ${placeholderPrompt}`;
   useEffect(() => {
     setPlaceholderLength(0);
     if (entered || !placeholderReady) return;
