@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { Modal } from '@/components/ui';
-import * as Popover from '@radix-ui/react-popover';
 import { CodexSummarySection } from './CodexToolbar';
 import { ArtifactIcon, type StageArtifact } from './StageArtifacts';
 import ScoutToolbarIcon from './ScoutToolbarIcon';
@@ -35,9 +34,7 @@ export default function ConversationContext({ open, turn, steps, running, activi
         <button type="button" className="scout-context-view-all" aria-label={showAll ? 'Show less' : 'View all'} aria-expanded={showAll} onClick={() => setShowAll((prev) => !prev)}>{showAll ? 'Show less' : 'View all'}<small>{sources.length + 2}</small></button>
       </CodexSummarySection>
     </aside>;
-  // Codex pDUk/W4GL: end-aligned floating summary, 8px inset, outside dismissal,
-  // focus return and 300ms slide transition; only the collection data differs.
-  return <Popover.Portal container={document.querySelector('.scout-chat-preview')}><Popover.Content asChild align="end" side="bottom" sideOffset={8} collisionPadding={8} onOpenAutoFocus={event => event.preventDefault()}>{panel}</Popover.Content></Popover.Portal>;
+  return panel;
 }
 
 export function SourcePreview({ file, onClose }: { file: File; onClose: () => void }) {

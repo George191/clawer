@@ -18,7 +18,7 @@ export function CodexToolbarMenu({ children, menu }: { children: ReactNode; menu
       if (!item) return null;
       if (item.type === 'divider') return <Menu.Separator key={index} className="codex-menu-separator" />;
       if (item.children) return <Menu.Sub key={item.key}><Menu.SubTrigger disabled={item.disabled} className="codex-menu-item">{item.label}<span className="codex-menu-trailing codex-submenu-chevron"><ScoutToolbarIcon name="chevron" /></span></Menu.SubTrigger><Menu.Portal><Menu.SubContent className="codex-menu" sideOffset={4} collisionPadding={8}>{items(item.children)}</Menu.SubContent></Menu.Portal></Menu.Sub>;
-      return <Menu.Item key={item.key} disabled={item.disabled} className="codex-menu-item" onSelect={() => menu.onClick?.({ key: item.key })}>{item.icon}{item.label}{menu.selectedKeys?.includes(item.key!) && <span className="codex-menu-trailing"><CodexReplyIcon name="copied" /></span>}</Menu.Item>;
+      return <Menu.Item key={item.key} disabled={item.disabled} className="codex-menu-item" data-danger={item.key === 'delete' || undefined} onSelect={() => menu.onClick?.({ key: item.key })}>{item.icon}{item.label}{menu.selectedKeys?.includes(item.key!) && <span className="codex-menu-trailing"><CodexReplyIcon name="copied" /></span>}</Menu.Item>;
     });
   }
   return <Menu.Root><Menu.Trigger asChild>{children}</Menu.Trigger><Menu.Portal><Menu.Content className="codex-menu" align="end" sideOffset={8} collisionPadding={8}>{items(menu.items)}</Menu.Content></Menu.Portal></Menu.Root>;

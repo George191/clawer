@@ -1,8 +1,9 @@
 import { LoadingOrb } from '@/components/ui/loading';
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import * as Popover from '@radix-ui/react-popover';
-import { Dropdown } from '@/components/ui';
+import { Dropdown, Modal } from '@/components/ui';
+import useScoutChat from './useScoutChat';
+import { CodexChatLibrary, CodexChatSchedule } from './CodexChatDialogs';
+import { chatUrl, markdown, restoreFiles, type SavedChat, type SavedTurn } from './chatStore';
 import { DOT_ACTIVITIES, type DotActivity } from '@/components/NativeDot';
 import { useThemeStore } from '@/stores/settings';
 import { previewAdapter, previewTemplate } from './PreviewResults';
@@ -23,7 +24,7 @@ const steps: Array<{ activity: DotActivity; title: string; detail: string }> = [
 ];
 const labels: Record<DotActivity, string> = { None: 'Idle', Working: 'Working', Searching: 'Searching', Creating: 'Creating', Payment: 'Payment', Thinking: 'Thinking', NeedsInput: 'Needs input', Ready: 'Ready', Paused: 'Paused', Error: 'Error' };
 const outlineReply = 'The example template and adapter are ready in the results panel. Review template.yaml, adapter.py, and the sample data, or describe what you would like to change.';
-type Turn = { id: number; prompt: string; files: File[]; step: number; reply: string; template: string; adapter: string; done: number; waiting?: 'template' | 'adapter'; complete: boolean; vote?: 'up' | 'down' };
+type Turn = SavedTurn & { files: File[] };
 
 export default function ChatPreview({ entered, userName, userLoading, onEnter }: { entered: boolean; userName: string; userLoading: boolean; onEnter: () => void }) {
   const [draft, setDraft] = useState('');
@@ -47,7 +48,11 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
   const [selectedHistory, setSelectedHistory] = useState<string | null>(null);
   const [reveal, setReveal] = useState({ turn: 0, sequence: 0 });
   const language = useThemeStore((state) => state.language);
-  const navigate = useNavigate();
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [chatName, setChatName] = useState('');
+  const [confirmChat, setConfirmChat] = useState<'archive' | 'delete'>();
   const goodLabel = language === 'zh-CN' ? '回复优秀' : 'Good response';
   const badLabel = language === 'zh-CN' ? '回复不佳' : 'Bad response';
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
@@ -57,6 +62,36 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
   const nextQueuedId = useRef(0);
   const thread = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
+  function loadChat(saved: SavedChat) {
+    setRunning(false); stopReading(); setQueued([]); setDraft(''); setPendingFiles([]);
+    const restored = saved.turns.map(turn => ({ ...turn, files: restoreFiles(turn) }));
+    setTurns(restored); setSourceFiles(restored.flatMap(turn => turn.files));
+    setSelectedSource(null); setSelectedHistory(null); setHoveredHistory(null); follow.current = true;
+    nextId.current = Math.max(0, ...saved.turns.map(turn => turn.id));
+    setActivity(saved.turns[saved.turns.length - 1]?.complete ? 'Ready' : 'Paused');
+    setResultTurnId(null); setResultStep(undefined); setResultsOpen(true); setContextOpen(false);
+    if (saved.turns.length) onEnter();
+  }
+  const chatStore = useScoutChat(turns, loadChat, setNotice);
+  const chatSnapshot = { title: chatStore.chat.title, turns };
+  async function chatAction(action: () => Promise<unknown>) {
+    try { await action(); } catch (error) { setNotice(error instanceof Error ? error.message : 'Chat action failed'); }
+  }
+  async function selectChatAction(key: string) {
+    if (key === 'rename') { setChatName(chatStore.chat.title); setRenameOpen(true); }
+    else if (key === 'pin') await chatAction(() => chatStore.save({ pinned: !chatStore.chat.pinned }));
+    else if (key === 'copy') { try { await navigator.clipboard.writeText(markdown(chatSnapshot)); setNotice('Copied conversation as Markdown'); } catch { setNotice('Failed to copy conversation as Markdown'); } }
+    else if (key === 'window') {
+      const target = window.open('', '_blank');
+      if (!target) { setNotice('Allow pop-ups to open this chat in a new window.'); return; }
+      target.opener = null;
+      try { target.location.href = chatUrl((await chatStore.save()).id); } catch (error) { target.close(); setNotice(error instanceof Error ? error.message : 'Could not open chat'); }
+    }
+    else if (key === 'new') await chatAction(() => chatStore.startNew());
+    else if (key === 'branch') await chatAction(() => chatStore.branch());
+    else if (key === 'schedule') setScheduleOpen(true);
+    else if (key === 'archive' || key === 'delete') setConfirmChat(key);
+  }
   const latest = turns[turns.length - 1];
   const resultTurn = turns.find((turn) => turn.id === resultTurnId) ?? latest;
   const previewStep = resultStep ?? (resultTurn && resultTurn.step < 2 ? 1 : Math.min(resultTurn?.step ?? 0, 3));
@@ -69,12 +104,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
   const currentHistory = selectedHistory ?? history[history.length - 1]?.key;
 
   useEffect(() => { setResultStep(undefined); setResultTurnId(null); }, [latest?.id]);
-  useEffect(() => {
-    const wide = window.matchMedia('(min-width: 1280px)');
-    const onChange = () => { if (!wide.matches) setContextOpen(false); };
-    wide.addEventListener('change', onChange);
-    return () => wide.removeEventListener('change', onChange);
-  }, []);
+
 
   useEffect(() => {
     if (!running || !latest) return;
@@ -128,6 +158,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
     setSpeechError(false);
   }
   function startTurn(prompt: string, files: File[] = pendingFiles, clearComposer = true) {
+    if (chatStore.chat.title === 'New chat') chatStore.title(prompt.trim().slice(0, 60) || 'New chat');
     stopReading();
     if (clearComposer) { setDraft(''); setPendingFiles([]); }
     const id = ++nextId.current;
@@ -142,24 +173,6 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
     follow.current = true;
     onEnter();
     if (clearComposer) input.current?.focus();
-  }
-  function selectActivity(value: DotActivity) {
-    stopReading();
-    setResultStep(undefined);
-    setActivity(value);
-    const index = steps.findIndex((step) => step.activity === value);
-    const executing = ['Thinking', 'Searching', 'Working', 'Creating'].includes(value);
-    setRunning(executing && Boolean(latest));
-    if (!latest) return;
-    setTurns((prev) => prev.map((turn) => turn.id !== latest.id ? turn : {
-      ...turn, step: value === 'Ready' ? 5 : value === 'NeedsInput' ? 2 : index >= 0 ? index : turn.step,
-      done: value === 'Ready' ? 6 : value === 'NeedsInput' ? 3 : index >= 0 ? index : turn.done,
-      waiting: value === 'NeedsInput' ? 'template' : undefined,
-      reply: value === 'Ready' ? outlineReply : '',
-      template: value === 'NeedsInput' ? previewTemplate : index < 0 ? turn.template : index > 2 ? previewTemplate : '',
-      adapter: index < 0 ? turn.adapter : index > 3 ? previewAdapter : '',
-      complete: value === 'Ready', vote: undefined,
-    }));
   }
   function resume() {
     if (!latest) return;
@@ -194,6 +207,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
     if (!turns.some((turn) => turn.files.includes(file)) && !queued.some((item) => item.files.includes(file))) setSourceFiles((prev) => prev.filter((item) => item !== file));
   }
   function submit() {
+    if (chatStore.loading || chatStore.chat.archived) return;
     if (!draft.trim() && !pendingFiles.length) return;
     if (running) {
       const id = ++nextQueuedId.current;
@@ -206,10 +220,6 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
   async function copy(turn: Turn) {
     try { await navigator.clipboard.writeText(turn.reply); setCopied(turn.id); setNotice('Copied to clipboard'); }
     catch { setCopied(null); setNotice('Clipboard is unavailable. Select the response to copy it.'); }
-  }
-  async function copyConversation() {
-    try { await navigator.clipboard.writeText(turns.map(turn => `You\n${turn.prompt}\n\nScout\n${turn.reply}`).join('\n\n')); setNotice('Conversation copied'); }
-    catch { setNotice('Unable to copy this conversation.'); }
   }
   function vote(id: number, value: 'up' | 'down') {
     setTurns((prev) => prev.map((turn) => turn.id === id ? { ...turn, vote: turn.vote === value ? undefined : value } : turn));
@@ -233,11 +243,24 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
     catch { utteranceRef.current = null; setSpeaking(null); setSpeechError(true); setNotice('Read aloud could not start.'); }
   }
 
-  return <Popover.Root open={contextOpen} onOpenChange={setContextOpen}><section className={`scout-chat-preview ${entered ? 'is-entered' : ''} ${entered && resultsOpen ? 'has-results' : ''} ${entered && contextOpen ? 'has-context' : ''}`} aria-label="Scout conversation" style={{ '--scout-composer-height': `${composerHeight}px` } as React.CSSProperties}>
+  return <section className={`scout-chat-preview ${entered ? 'is-entered' : ''} ${entered && resultsOpen ? 'has-results' : ''} ${entered && contextOpen ? 'has-context' : ''} ${chatStore.chat.archived ? 'is-archived' : ''}`} aria-label="Scout conversation" style={{ '--scout-composer-height': `${composerHeight}px` } as React.CSSProperties}>
     <div className={`ai-chat-dot ${!entered ? 'is-landing' : ''}`} data-activity={dotActivity} />
     {entered && <div className="scout-chat-dot-frost" aria-hidden="true" />}
     <h1 className="scout-chat-greeting ai-prompt-title" aria-hidden={entered}>Hi{userLoading || userName ? <>, <span className="scout-greeting-name">{userLoading ? <span className="native-dot-loading scout-profile-loading" role="status" aria-label="Loading your profile"><LoadingOrb /></span> : <span key={userName} className="ai-prompt-name scout-loaded-name">{userName}</span>}</span></> : null}, any new ideas?</h1>
-    <PreviewWorkspace visible={entered} conversationMenu={{ selectedKeys: [`activity:${activity}`], items: [{ key: 'preview', label: resultsOpen ? 'Hide file preview' : 'Show file preview' }, { key: 'copy', label: 'Copy conversation', disabled: !turns.length }, { key: 'agents', label: 'Manage agents' }, { type: 'divider' }, { key: 'activity', label: 'Dot activity', children: (Object.keys(DOT_ACTIVITIES) as DotActivity[]).map(value => ({ key: `activity:${value}`, label: labels[value] })) }], onClick: ({ key }) => { if (key === 'preview') setResultsOpen(value => !value); else if (key === 'copy') void copyConversation(); else if (key === 'agents') navigate('/agents'); else if (key.startsWith('activity:')) selectActivity(key.slice(9) as DotActivity); } }} open={entered && resultsOpen} turn={resultTurn} step={previewStep} running={running && resultTurn?.id === latest?.id} onSelect={(artifact) => { setResultsOpen(true); setResultTurnId(artifact.turn); setResultStep(artifact.step); }} onClose={() => setResultsOpen(false)} summaryOpen={contextOpen} onTogglePreview={() => setResultsOpen(value => !value)} onNotice={setNotice} />
+    {entered && <button type="button" className="codex-chat-title" title="Open chats" onClick={() => setLibraryOpen(true)}>{chatStore.chat.pinned ? '● ' : ''}{chatStore.chat.title}</button>}
+    <PreviewWorkspace chatId={chatStore.chat.id} visible={entered} snapshot={chatSnapshot} onSave={() => chatStore.save()} conversationMenu={{ items: [
+      { key: 'new', label: 'New chat' },
+      { key: 'rename', label: 'Rename chat', disabled: chatStore.loading },
+      { key: 'pin', label: chatStore.chat.pinned ? 'Unpin chat' : 'Pin chat', disabled: !turns.length || chatStore.loading },
+      { key: 'branch', label: 'Branch chat', disabled: !turns.length || chatStore.loading },
+      { key: 'schedule', label: 'Scheduled task…', disabled: !turns.length || chatStore.loading || chatStore.chat.archived },
+      { type: 'divider' },
+      { key: 'copy', label: 'Copy as Markdown', disabled: !turns.length },
+      { key: 'window', label: 'Open in new window', disabled: !turns.length || chatStore.loading },
+      { type: 'divider' },
+      { key: 'archive', label: chatStore.chat.archived ? 'Unarchive chat' : 'Archive chat', disabled: !turns.length || chatStore.loading },
+      { key: 'delete', label: 'Delete chat', disabled: !turns.length || chatStore.loading },
+    ], onClick: ({ key }) => { if (key === 'archive' && chatStore.chat.archived) void chatAction(() => chatStore.save({ archived: false })); else void selectChatAction(key); } }} open={entered && resultsOpen} turn={resultTurn} step={previewStep} running={running && resultTurn?.id === latest?.id} onSelect={(artifact) => { setResultsOpen(true); setResultTurnId(artifact.turn); setResultStep(artifact.step); }} onClose={() => setResultsOpen(false)} summaryOpen={contextOpen} onToggleSummary={() => setContextOpen(value => !value)} onTogglePreview={() => setResultsOpen(value => !value)} onNotice={setNotice} />
     {entered && <aside className="scout-history-rail" aria-label="Conversation history" onMouseLeave={() => setHoveredHistory(null)} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setHoveredHistory(null); }}>
       <div className="ai-session-stage-bars">{history.map((entry, index) => {
         const distance = hoveredHistory === null ? -1 : Math.abs(index - hoveredHistory);
@@ -270,8 +293,14 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
     {entered && <ConversationContext open={contextOpen} turn={resultTurn} steps={steps} running={running && resultTurn?.id === latest?.id} activity={labels[activity]} onClose={() => { setContextOpen(false); document.querySelector<HTMLButtonElement>('.scout-context-toggle')?.focus(); }} activePreview={activePreview} onView={(artifact) => { setResultsOpen(true); setResultTurnId(artifact.turn); setResultStep(artifact.step); }} onPause={pauseResponse} sources={sourceFiles} onAddFiles={addSourceFiles} onPreviewFile={setSelectedSource} />}
     <ChatComposer ref={input} entered={entered} value={draft} running={running} files={pendingFiles} queued={queued} onChange={setDraft} onSubmit={submit} onPause={pauseResponse} onAddFiles={addSourceFiles} onRemoveFile={removePendingFile} onPreviewFile={setSelectedSource} onViewSources={() => { if (!entered) onEnter(); setContextOpen(true); }} onHeightChange={setComposerHeight} onEditQueued={(item) => { setQueued((prev) => prev.filter((value) => value.id !== item.id)); setDraft(item.prompt); setPendingFiles(item.files); input.current?.focus(); }} onDeleteQueued={(id) => setQueued((prev) => prev.filter((item) => item.id !== id))} onSendQueued={(item) => { setQueued((prev) => prev.filter((value) => value.id !== item.id)); startTurn(item.prompt, item.files, false); }} />
     {selectedSource && <SourcePreview file={selectedSource} onClose={() => setSelectedSource(null)} />}
+    {chatStore.loading && <div className="codex-chat-archived" role="status">Loading chat…</div>}
+    {chatStore.chat.archived && <div className="codex-chat-archived">This chat is archived. <button className="codex-chat-action" onClick={() => void chatAction(() => chatStore.save({ archived: false }))}>Unarchive and open</button></div>}
+    {libraryOpen && <CodexChatLibrary onClose={() => setLibraryOpen(false)} onNew={() => { setLibraryOpen(false); void chatAction(() => chatStore.startNew()); }} onOpen={chat => { setLibraryOpen(false); void chatAction(() => chatStore.open(chat.id)); }} />}
+    {scheduleOpen && <CodexChatSchedule onSave={() => chatStore.save()} snapshot={chatSnapshot} onClose={() => setScheduleOpen(false)} />}
+    <Modal open={renameOpen} title="Rename chat" onCancel={() => setRenameOpen(false)} footer={null} width={400} className="codex-chat-dialog"><form onSubmit={event => { event.preventDefault(); if (chatName.trim()) void chatAction(async () => { await chatStore.save({ title: chatName.trim() }); setRenameOpen(false); }); }}><label className="codex-share-access">Chat name<input aria-label="Chat name" autoFocus value={chatName} maxLength={200} onChange={event => setChatName(event.target.value)} /></label><button className="codex-chat-action" type="submit" disabled={!chatName.trim()}>Save</button></form></Modal>
+    <Modal open={Boolean(confirmChat)} title={confirmChat === 'delete' ? 'Delete chat?' : running ? 'Stop and archive this chat?' : 'Archive chat?'} onCancel={() => setConfirmChat(undefined)} footer={null} width={440} className="codex-chat-dialog"><p>{confirmChat === 'delete' ? 'This permanently deletes the chat and its shared links.' : 'Archiving stops this chat and removes its scheduled task. You can restore the chat later.'}</p><div className="codex-library-controls"><button className="codex-chat-action" onClick={() => setConfirmChat(undefined)}>Cancel</button><button className="codex-chat-action" onClick={() => { setRunning(false); stopReading(); setQueued([]); void chatAction(async () => { if (confirmChat === 'delete') await chatStore.remove(); else await chatStore.save({ archived: true }); setConfirmChat(undefined); }); }}>{confirmChat === 'delete' ? 'Delete' : running ? 'Stop and archive' : 'Archive'}</button></div></Modal>
     <span className="scout-action-notice" role="status">{notice}</span>
-  </section></Popover.Root>;
+  </section>;
 }
 
 function FeedbackIcon({ down = false }: { down?: boolean }) {

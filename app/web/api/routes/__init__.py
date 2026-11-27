@@ -9,7 +9,7 @@ from . import (
     provider, thread, upload, dataset, embedding,
     health, dashboard, templates, tasks, ai_collect, automation,
     monitor, explorer_layouts, explorer_properties, explorer_saved_items,
-    etl, infrastructure, scheduler, cdc,
+    etl, infrastructure, scheduler, cdc, scout_chats,
 )
 from app.web.core.config import settings
 
@@ -34,6 +34,7 @@ api_router.include_router(dashboard.router)
 api_router.include_router(templates.router)
 api_router.include_router(tasks.router)
 api_router.include_router(ai_collect.router)
+api_router.include_router(scout_chats.router)
 api_router.include_router(agent_router)
 api_router.include_router(agent_management_router)
 api_router.include_router(automation.router)

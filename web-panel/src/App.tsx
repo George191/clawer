@@ -22,6 +22,7 @@ const Monitoring = lazy(() => import('@/pages/Monitoring'));
 const Pipeline = lazy(() => import('@/pages/Pipeline'));
 const ExplorerRecordPage = lazy(() => import('@/pages/Pipeline/ExplorerRecordPage'));
 const AICollect = lazy(() => import('@/pages/AICollect'));
+const SharedChatPage = lazy(() => import('@/pages/AICollect/SharedChatPage'));
 const AICollectGovernance = lazy(() => import('@/pages/AICollectGovernance'));
 const LogExplorer = lazy(() => import('@/pages/LogExplorer'));
 const WorkspacePage = lazy(() => import('@/pages/WorkspacePage'));
@@ -99,7 +100,7 @@ const App: React.FC = () => {
     >
       <UiApp>
         {session.authenticated && !session.locked && !['/login', '/reset-password'].includes(location.pathname) && <ScoutDot />}
-        {['/login', '/reset-password'].includes(location.pathname) ? (
+        {location.pathname.startsWith('/share/scout/') ? <Suspense fallback={<Spin />}><SharedChatPage /></Suspense> : ['/login', '/reset-password'].includes(location.pathname) ? (
           <AuthLayout>
             {location.pathname === '/reset-password' && <ResetPassword />}
             {/* Preserve native autofill values when returning from password recovery. */}
