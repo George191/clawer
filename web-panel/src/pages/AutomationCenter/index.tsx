@@ -8,7 +8,7 @@ import enUS from '@/components/ui/locale';
 import {
   ApartmentOutlined, ArrowRightOutlined, BranchesOutlined, CloseOutlined, DeleteOutlined,
   EditOutlined, ExportOutlined, FieldTimeOutlined,
-  PlusOutlined, SearchOutlined,
+  PlusOutlined, SearchOutlined, ReloadOutlined, RobotOutlined,
 } from '@/components/ui/icons';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
@@ -174,8 +174,20 @@ const AutomationCenter: React.FC = () => {
 
   const viewRun = (id: string) => {
     setDetail(null);
-    navigate(`/automation/runs?task=${encodeURIComponent(id)}`);
+    navigate(`/automation/runs?${new URLSearchParams({ domain, task: id })}`);
   };
+
+  const refresh = () => {
+    const channels = section === 'workflows' ? ['workflows'] : ['schedules', 'tasks'];
+    pendingSnapshots.current = new Set(channels);
+    setLoading(true);
+    channels.forEach(channel => send(JSON.stringify({ type: 'subscribe', channel })));
+  };
+
+  useEffect(() => {
+    setDetail(null); setEditing(null); setEditorOpen(false); setDeleteTarget(null);
+    setKeyword(''); setScheduleFilter('all');
+  }, [section]);
 
   const changeDomain = (value: DomainFilter) => {
     const next = new URLSearchParams(searchParams);
@@ -394,11 +406,19 @@ const AutomationCenter: React.FC = () => {
       <div className="automation-breadcrumb"><BranchesOutlined /><strong>Automation</strong><span>/</span><span>{sectionMeta[section].label}</span></div>
       <div className="automation-header-actions">
         <span className={`automation-connection${connected && streamAvailable ? ' is-live' : ''}`} role="status"><i />{connected && streamAvailable ? 'Live updates' : 'Connecting…'}</span>
-        {section !== 'runs' && <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>New {objectLabel[section].toLowerCase()}</Button>}
+        {section !== 'runs' && <><Button icon={<ReloadOutlined />} disabled={!connected || loading} onClick={refresh}>Refresh</Button><Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>New {objectLabel[section].toLowerCase()}</Button></>}
       </div>
     </header>
     <div className="automation-workspace">
-      <aside className="automation-sidebar" aria-label="Product domain filters">
+      <aside className="automation-sidebar" aria-label="Automation navigation">
+        <div className="automation-sidebar-title">Workspace</div>
+        <nav aria-label="Automation sections">
+          {(Object.keys(sectionMeta) as Section[]).map(value => <Link key={value} className={section === value ? 'is-active' : ''} aria-current={section === value ? 'page' : undefined} to={`/automation/${value}?${new URLSearchParams({ domain })}`}>
+            {value === 'workflows' ? <ApartmentOutlined /> : value === 'schedules' ? <FieldTimeOutlined /> : <BranchesOutlined />}<span>{sectionMeta[value].label}</span>
+          </Link>)}
+          <Link to="/agents?view=executors"><RobotOutlined /><span>Agent executors</span></Link>
+          <Link to="/agents"><RobotOutlined /><span>Agents</span></Link>
+        </nav>
         <div className="automation-sidebar-title">Product domains</div>
         <nav aria-label="Filter by product domain">
           <button type="button" aria-pressed={domain === 'all'} className={domain === 'all' ? 'is-active' : ''} onClick={() => changeDomain('all')}><span className="automation-domain-mark">∗</span><span>All domains</span></button>

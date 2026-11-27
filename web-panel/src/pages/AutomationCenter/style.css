@@ -31,6 +31,8 @@
 .automation-sidebar nav :is(a,button),.automation-ontology-link { display:flex; align-items:center; gap:10px; min-height:34px; padding:7px 10px; border:0; border-radius:3px; background:transparent; color:var(--ontology-muted); font:inherit; font-size:12px; text-align:left; text-decoration:none; cursor:pointer; }
 .automation-sidebar nav :is(a,button):hover,.automation-ontology-link:hover { background:var(--ontology-hover); color:var(--ontology-text); }
 .automation-sidebar nav .is-active { background:var(--ontology-hover); color:var(--ontology-text); font-weight:600; }
+.automation-sidebar nav a[aria-current=page] { box-shadow:inset 2px 0 var(--ui-primary); }
+.automation-sidebar nav :is(a,button):focus-visible { outline:2px solid var(--ui-focus-ring); outline-offset:2px; }
 .automation-sidebar nav :is(a,button) > .ui-icon { font-size:15px; }
 .automation-domain-mark { display:grid; flex:none; place-items:center; width:18px; height:18px; border:1px solid var(--ontology-control-border); border-radius:3px; font-size:10px; font-weight:500; }
 .automation-ontology-link { margin-top:auto; border-top:1px solid var(--ontology-border); border-radius:0; padding-top:14px; }
@@ -45,6 +47,11 @@
 .automation-summary strong { font-size:22px; font-weight:500; font-variant-numeric:tabular-nums; line-height:1.2; }
 .automation-summary span { color:var(--ontology-muted); font-size:11px; }
 .automation-toolbar { display:flex; flex:none; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; }
+.automation-list-context { flex:none; margin:0 0 10px; color:var(--ontology-muted); font-size:12px; }
+.automation-log-toolbar { display:flex; flex:none; flex-wrap:wrap; align-items:center; gap:8px; padding:10px 14px; border-bottom:1px solid var(--ontology-border); }
+.automation-log-toolbar > .ui-input-affix-wrapper { flex:1; min-width:140px; }
+.automation-log-toolbar > .ui-select { min-width:110px; }
+.automation-log-toolbar > span { color:var(--ontology-muted); font-size:11px; white-space:nowrap; }
 .automation-search { width:300px; max-width:100%; }
 .automation-data-type-select { min-width:160px; }
 .automation-status-filters { display:flex; gap:2px; padding:2px; border:1px solid var(--ontology-border); border-radius:3px; background:var(--ontology-panel); }

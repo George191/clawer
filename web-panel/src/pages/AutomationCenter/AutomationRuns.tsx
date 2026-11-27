@@ -8,7 +8,7 @@ import { mergeRunLogs, runLogPresentation } from './runLogEvents';
 import { workerNoticeStatusLabel } from '@/pages/AICollect/workerNotices';
 import { renderConsoleLogMessage } from '@/pages/AICollect/WorkspaceDock';
 
-const statuses = ['all', 'running', 'queued', 'paused', 'completed', 'failed'] as const;
+const statuses = ['all', 'running', 'queued', 'paused', 'completed', 'failed', 'canceled'] as const;
 const date = (value?: string | null) => value ? new Date(value).toLocaleString() : '—';
 const status = (value: string) => <Badge status={value === 'failed' ? 'error' : value === 'completed' ? 'success' : value === 'running' ? 'processing' : 'default'} text={value} />;
 const duration = (run?: WorkspaceTaskLogRun | null) => {
@@ -35,6 +35,8 @@ export default function AutomationRuns({ domain, keyword, onKeywordChange, taskI
   const [logs, setLogs] = useState<WorkspaceTaskLog[]>([]);
   const [logsError, setLogsError] = useState('');
   const [logsLoading, setLogsLoading] = useState(false);
+  const [logQuery, setLogQuery] = useState('');
+  const [logLevel, setLogLevel] = useState('all');
   const [before, setBefore] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -102,6 +104,8 @@ export default function AutomationRuns({ domain, keyword, onKeywordChange, taskI
   const visible = scoped.filter(task => filter === 'all' || task.status === filter);
   const selectedRun = runs.find(run => run.id === runId);
   const { lines, sync, download } = runLogPresentation(logs, runId);
+  const visibleLogs = lines.filter(log => (logLevel === 'all' || log.level === logLevel) && log.message.toLowerCase().includes(logQuery.trim().toLowerCase()));
+  useEffect(() => { setLogQuery(''); setLogLevel('all'); }, [taskId, runId]);
   const writes = selectedRun?.inserted_records != null && selectedRun.updated_records != null
     ? selectedRun.inserted_records + selectedRun.updated_records : null;
   const loadOlder = async () => {
@@ -129,6 +133,7 @@ export default function AutomationRuns({ domain, keyword, onKeywordChange, taskI
     finally { setActing(false); }
   };
   return <div className="automation-runs-workspace">
+    <p className="automation-list-context">Latest execution per task. Open a task to inspect its execution history and logs.</p>
     <div className="automation-run-stats">{(['running', 'queued', 'completed', 'failed'] as const).map(value => <button key={value} type="button" aria-pressed={filter === value} onClick={() => setFilter(filter === value ? 'all' : value)}><span>{value}</span><strong>{loading || error ? '—' : scoped.filter(task => task.status === value).length}</strong></button>)}</div>
     <div className="automation-toolbar"><Input allowClear value={keyword} onChange={event => onKeywordChange(event.target.value)} prefix={<SearchOutlined />} aria-label="Search runs" placeholder="Search runs…" className="automation-search" /><div className="automation-status-filters" role="group" aria-label="Run status">{statuses.map(value => <button type="button" key={value} aria-pressed={filter === value} className={filter === value ? 'is-active' : ''} onClick={() => setFilter(value)}>{value === 'all' ? 'All runs' : value}</button>)}</div><Select allowClear aria-label="Run data type" placeholder="All data types" value={dataType} onChange={setDataType} options={[...new Set(tasks.flatMap(task => [task.data_type || '', ...(task.data_types || [])]).filter(Boolean))].map(value => ({ value, label: value }))} /><Button icon={<ReloadOutlined />} onClick={() => setVersion(value => value + 1)}>Refresh</Button></div>
     {error && <Alert type="error" showIcon message={error} />}
@@ -165,8 +170,9 @@ export default function AutomationRuns({ domain, keyword, onKeywordChange, taskI
             <div className="automation-worker-notice is-sync" role="status"><strong>Data push</strong><span className="automation-notice-record" title={sync?.recordId}>{sync?.recordId || (sync ? 'Record details unavailable' : 'Waiting for updates')}{sync?.topic && <> → <code>{sync.topic}</code></>}</span><span>{sync ? workerNoticeStatusLabel(sync.status) : runId === detail.current_run_id ? detail.sync_state : 'No notifications'}</span><span>Total <b>{selectedRun?.synced_records ?? '—'}</b></span></div>
             <div className="automation-worker-notice is-download" role="status"><strong>Download</strong><span className="automation-notice-record" title={download?.recordId}>{download?.recordId || (download ? 'Record details unavailable' : 'Waiting for updates')}</span><span>Items <b>{download?.itemsCompleted ?? '—'}/{download?.itemsTotal ?? '—'}</b></span>{!!download?.itemsMissing && <span>Missing {download.itemsMissing}</span>}{!!download?.itemsFailed && <span>Failed {download.itemsFailed}</span>}<span>{download ? workerNoticeStatusLabel(download.status) : runId === detail.current_run_id ? detail.download_state : 'No notifications'}</span><span>Run records <b>{selectedRun?.downloaded_records ?? '—'}</b></span></div>
           </div>
+          <div className="automation-log-toolbar"><Input allowClear aria-label="Search execution logs" placeholder="Search loaded logs…" value={logQuery} onChange={event => setLogQuery(event.target.value)} /><Select aria-label="Log level" value={logLevel} onChange={setLogLevel} options={['all', ...new Set(lines.map(log => log.level))].map(value => ({ value, label: value === 'all' ? 'All levels' : value }))} /><span>{visibleLogs.length} / {lines.length} loaded</span></div>
           <div className="automation-inspector-section automation-logs">{logsError && <p role="alert">{logsError}</p>}{hasMore && <Button size="small" loading={logsLoading} onClick={() => void loadOlder()}>Load older logs</Button>}
-            {logsLoading && !lines.length ? <p role="status">Loading logs…</p> : lines.length ? <div className="workspace-dock-log-list is-detail">{lines.slice().reverse().map(log => <div key={log.id} className={`workspace-dock-log-row is-${log.level}`}><code>{renderConsoleLogMessage(log.message)}</code></div>)}</div> : <p className="automation-muted">{runId ? 'No logs recorded for this execution.' : 'This task has not started.'}</p>}
+            {logsLoading && !lines.length ? <p role="status">Loading logs…</p> : visibleLogs.length ? <div className="workspace-dock-log-list is-detail">{visibleLogs.slice().reverse().map(log => <div key={log.id} className={`workspace-dock-log-row is-${log.level}`}><code>{renderConsoleLogMessage(log.message)}</code></div>)}</div> : <p className="automation-muted">{lines.length ? 'No loaded logs match these filters.' : runId ? 'No logs recorded for this execution.' : 'This task has not started.'}</p>}
           </div>
         </>}
       </aside>}
