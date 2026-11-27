@@ -98,7 +98,7 @@ const App: React.FC = () => {
       }}
     >
       <UiApp>
-        <ScoutDot />
+        {session.authenticated && !session.locked && !['/login', '/reset-password'].includes(location.pathname) && <ScoutDot />}
         {['/login', '/reset-password'].includes(location.pathname) ? (
           <AuthLayout>
             {location.pathname === '/reset-password' && <ResetPassword />}

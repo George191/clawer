@@ -143,16 +143,20 @@ export function createCinematicEarth(
   group.add(surface, cloudLayer, atmosphere);
   surface.rotation.y = cloudLayer.rotation.y = -.55;
 
-  const loader = new THREE.TextureLoader();
+  // Decode and orient large images off the main thread before GPU upload.
+  const loader = new THREE.ImageBitmapLoader().setOptions({ imageOrientation: 'flipY', colorSpaceConversion: 'none' });
   async function load(url: string, target: { value: THREE.Texture }, color: boolean) {
-    let texture: THREE.Texture;
+    let texture: THREE.Texture<ImageBitmap>;
     try {
-      texture = await loader.loadAsync(url);
+      const bitmap = await loader.loadAsync(url);
+      texture = new THREE.Texture(bitmap);
+      texture.needsUpdate = true;
     } catch {
       if (!disposed) await onTextureLoaded();
       return;
     }
     if (disposed) {
+      texture.image.close();
       texture.dispose();
       return;
     }
@@ -167,7 +171,10 @@ export function createCinematicEarth(
       await onTextureLoaded(texture);
       if (!disposed) target.value = texture;
     } catch {
-      if (textures.delete(texture)) texture.dispose();
+      if (textures.delete(texture)) {
+        texture.image.close();
+        texture.dispose();
+      }
     }
   }
   const ready = Promise.allSettled([
@@ -194,7 +201,10 @@ export function createCinematicEarth(
       surfaceMaterial.dispose();
       cloudMaterial.dispose();
       atmosphereMaterial.dispose();
-      textures.forEach(texture => texture.dispose());
+      textures.forEach(texture => {
+        if (texture.image instanceof ImageBitmap) texture.image.close();
+        texture.dispose();
+      });
       textures.clear();
       group.clear();
     },
