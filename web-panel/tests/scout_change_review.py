@@ -153,6 +153,13 @@ with sync_playwright() as playwright:
     tabs.get_by_role('button', name='Close adapter.py tab', exact=True).click()
     if args.screenshot:
         page.screenshot(path=args.screenshot)
+    toggle_file = template_file.locator('.codex-change-file-toggle')
+    toggle_file.focus()
+    page.keyboard.press('Enter')
+    expect(toggle_file).to_have_attribute('aria-expanded', 'false')
+    expect(page.get_by_role('menu')).to_have_count(0)
+    page.keyboard.press('Space')
+    expect(toggle_file).to_have_attribute('aria-expanded', 'true')
     def options(label):
         changes.get_by_role("button", name="Changes options", exact=True).click()
         page.get_by_role("menuitem", name=label, exact=True).click()
