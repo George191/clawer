@@ -17,7 +17,7 @@
 - 三个桶均未启用对象版本控制、对象锁、生命周期、默认加密、桶复制或通知；IAM 中另有 4 个用户。
 - 管理接口统计约 6,949 万个对象、10.43 TB 对象逻辑数据；XFS 实际占用约 24.1 TiB。容量规划不能只看对象逻辑大小。
 
-巡检日志位于工作区 `outputs/minio_distributed_migration_20261124/`，不包含登录密码。
+巡检日志位于工作区 `output/minio_distributed_migration_20261124/`，不包含登录密码。
 现有单盘格式不能通过给启动参数追加数据目录直接变成目标分布式格式。
 
 ## 初始迁移资源预检
@@ -40,7 +40,7 @@
 
 当前 `datastore1` 已超过 [Broadcom 文档所述 VMFS5/6 单 datastore 64 TB 支持上限](https://knowledge.broadcom.com/external/article/410951/vmfs-datastore-maximum-supported-capacit.html)。
 新目标存储应另行规划受支持的 datastore 布局，不在本次迁移准备中重建承载其他现有虚拟机的 datastore。
-完整资源记录位于 `outputs/minio_distributed_migration_20261124/esxi-inventory.json`。
+完整资源记录位于 `output/minio_distributed_migration_20261124/esxi-inventory.json`。
 
 ## 目标布局
 
