@@ -118,3 +118,52 @@ def test_electronic_map_is_rejected_before_any_file_or_network_work(tmp_path):
             tiles.worker(str(tmp_path), 'roadmap', 0, 0)
     assert not list(tmp_path.iterdir())
     assert tiles.SOURCES == {'satellite': 's', 'overlay': 'h'}
+
+
+def test_both_sources_share_six_workers_and_finish_before_next_level(tmp_path):
+    from types import SimpleNamespace
+    submitted, completed = [], []
+
+    class Future:
+        def __init__(self, task):
+            self.task = task
+
+        def done(self):
+            return True
+
+        def result(self):
+            completed.append(self.task)
+
+    class Pool:
+        def __init__(self, max_workers):
+            assert max_workers == 6
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def submit(self, function, root, source, level, number):
+            assert function is tiles.worker
+            assert all(task in completed for task in submitted if task[1] < level)
+            task = (source, level, number)
+            submitted.append(task)
+            return Future(task)
+
+    plan = {'sources': {source: {'layer': layer, 'max_level': 1,
+                                **({'apistyle': tiles.ROAD_STYLE} if source == 'overlay' else {})}
+                        for source, layer in tiles.SOURCES.items()}}
+    tiles.save(tmp_path / 'output' / 'plan.json', plan)
+    with patch.object(tiles, 'ProcessPoolExecutor', Pool), \
+            patch.object(tiles, 'snapshot', return_value={}), \
+            patch('sys.argv', ['download_global_tiles.py', '--root', str(tmp_path)]), \
+            patch.dict('sys.modules', {'fcntl': SimpleNamespace(flock=lambda *args: None, LOCK_EX=1, LOCK_NB=2)}):
+        tiles.main()
+    for level in (0, 1):
+        tasks = [task for task in submitted if task[1] == level]
+        assert len(tasks) == 12 and len(set(tasks)) == 12
+        assert [task[0] for task in tasks[:6]] == ['satellite', 'overlay'] * 3
+        for source in tiles.SOURCES:
+            assert {task[2] for task in tasks if task[0] == source} == set(range(6))
+    assert completed == submitted

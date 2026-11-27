@@ -157,16 +157,16 @@ def main():
         try:
             with ProcessPoolExecutor(max_workers=WORKERS) as pool:
                 for level in range(max(s['max_level'] for s in plan['sources'].values()) + 1):
-                    for source in SOURCES:
-                        if level > plan['sources'][source]['max_level']:
-                            continue
-                        futures = [pool.submit(worker, str(root), source, level, n) for n in range(WORKERS)]
-                        while not all(f.done() for f in futures):
-                            save(root / 'output' / 'status.json', snapshot(root, plan, 'running', level))
-                            time.sleep(2)
-                        for future in futures:
-                            future.result()
+                    # Interleave sources so neither waits for the other's entire level.
+                    futures = [pool.submit(worker, str(root), source, level, n)
+                               for n in range(WORKERS) for source in SOURCES
+                               if level <= plan['sources'][source]['max_level']]
+                    while not all(f.done() for f in futures):
                         save(root / 'output' / 'status.json', snapshot(root, plan, 'running', level))
+                        time.sleep(2)
+                    for future in futures:
+                        future.result()
+                    save(root / 'output' / 'status.json', snapshot(root, plan, 'running', level))
                     # Level barrier: neither source advances until both complete this level.
             save(root / 'output' / 'status.json', snapshot(root, plan, 'complete', level))
         except Exception as error:
