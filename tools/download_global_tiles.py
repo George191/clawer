@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime, timezone
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -12,8 +11,9 @@ import shutil
 import time
 import urllib.request
 
-SOURCES = {'satellite': 'World_Imagery', 'roadmap': 'World_Street_Map'}
-BASE = 'https://server.arcgisonline.com/ArcGIS/rest/services/'
+SOURCES = {'satellite': 's', 'roadmap': 'm'}
+BASE = 'https://mt1.google.com/vt/'
+MAX_LEVEL = 22
 WORKERS = 6
 BATCH = 3000
 
@@ -70,7 +70,7 @@ def worker(root_string, source, level, number):
                     if not valid_image(data):
                         raise ValueError(f'Invalid existing tile: {target}')
                 else:
-                    url = BASE + SOURCES[source] + f'/MapServer/tile/{level}/{y}/{x}?blankTile=false'
+                    url = BASE + f'?lyrs={SOURCES[source]}&x={x}&y={y}&z={level}'
                     for attempt in range(4):
                         try:
                             data = fetch(url)
@@ -107,6 +107,7 @@ def snapshot(root, plan, phase, level, error=None):
     states = [json.loads(p.read_text()) for p in (root / 'output').glob('*-*-*.json')]
     return {'updated_at': stamp(), 'phase': phase, 'level': level, 'error': error,
             'root': str(root), 'workers': WORKERS, 'batch_limit': BATCH,
+            'network': 'workstation SSH proxy' if os.environ.get('HTTPS_PROXY') else 'direct',
             'order': 'ascending_xyz', 'sources': plan['sources'],
             'tiles': sum(s['tiles'] for s in states), 'bytes': sum(s['bytes'] for s in states),
             'levels': {source: {str(z): {
@@ -131,18 +132,14 @@ def main():
         if plan_file.exists():
             plan = json.loads(plan_file.read_text())
         else:
-            sources = {}
-            for source, service in SOURCES.items():
-                raw = fetch(BASE + service + '/MapServer?f=pjson')
-                metadata = json.loads(raw)
-                levels = [lod['level'] for lod in metadata['tileInfo']['lods']]
-                if levels != list(range(max(levels) + 1)):
-                    raise ValueError('Noncontiguous source levels')
-                sources[source] = {'service': service, 'max_level': max(levels),
-                                   'metadata_sha256': hashlib.sha256(raw).hexdigest(),
-                                   'credit': metadata['copyrightText']}
+            sources = {source: {'service': 'Google Maps ' + ('satellite' if source == 'satellite' else 'roadmap'),
+                                'layer': layer, 'max_level': MAX_LEVEL, 'credit': 'Google Maps',
+                                'url': BASE + f'?lyrs={layer}&x={{x}}&y={{y}}&z={{z}}'}
+                       for source, layer in SOURCES.items()}
             plan = {'sources': sources, 'created_at': stamp(), 'workers': WORKERS, 'batch_limit': BATCH}
             save(plan_file, plan)
+        if {source: item.get('layer') for source, item in plan['sources'].items()} != SOURCES:
+            raise ValueError('Existing plan uses a different imagery source; refusing to mix tile archives')
         level = 0
         try:
             with ProcessPoolExecutor(max_workers=WORKERS) as pool:
