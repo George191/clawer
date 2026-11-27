@@ -247,7 +247,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
     <div className={`ai-chat-dot ${!entered ? 'is-landing' : ''}`} data-activity={dotActivity} />
     {entered && <div className="scout-chat-dot-frost" aria-hidden="true" />}
     <h1 className="scout-chat-greeting ai-prompt-title" aria-hidden={entered}>Hi{userLoading || userName ? <>, <span className="scout-greeting-name">{userLoading ? <span className="native-dot-loading scout-profile-loading" role="status" aria-label="Loading your profile"><LoadingOrb /></span> : <span key={userName} className="ai-prompt-name scout-loaded-name">{userName}</span>}</span></> : null}, any new ideas?</h1>
-    {entered && <button type="button" className="codex-chat-title" title="Open chats" onClick={() => setLibraryOpen(true)}>{chatStore.chat.pinned ? '● ' : ''}{chatStore.chat.title}</button>}
+    <button type="button" className="codex-chat-title" title="Open chats" onClick={() => setLibraryOpen(true)}>{entered ? `${chatStore.chat.pinned ? '● ' : ''}${chatStore.chat.title}` : 'Chats'}</button>
     <PreviewWorkspace chatId={chatStore.chat.id} visible={entered} snapshot={chatSnapshot} onSave={() => chatStore.save()} conversationMenu={{ items: [
       { key: 'new', label: 'New chat' },
       { key: 'rename', label: 'Rename chat', disabled: chatStore.loading },

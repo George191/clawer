@@ -44,7 +44,8 @@ def include_name(name, type_, parent_names):
     if type_ == "table" and parent_names.get("schema_name") in {None, "app"}:
         if name in {"ontology_objects", "ontology_object_properties", "ontology_object_relations",
                     "ontology_data_connections", "etl_business_connection", "etl_layer_connections",
-                    "agent_settings", "agent_definitions", "agent_connections", "agent_shares", "agent_runs", "agent_events"}:
+                    "agent_settings", "agent_definitions", "agent_connections", "agent_shares", "agent_runs", "agent_events",
+                    "scout_chats", "scout_chat_shares", "scout_chat_schedules"}:
             return False
     if type_ != "schema":
         return True

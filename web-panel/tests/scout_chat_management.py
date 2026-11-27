@@ -110,6 +110,7 @@ with sync_playwright() as playwright:
     more("Copy as Markdown")
     page.wait_for_function("window.__clipboard?.includes('# Saved collection')")
     original = next(iter(chats))
+    assert parse_qs(urlsplit(page.url).query)["chat"][0] == original
     assert chats[original]["pinned"]
     assert chats[original]["turns"][0]["attachments"][0]["content"] == "UHVibGljIHNvdXJjZSBub3Rlcw=="
 
@@ -152,7 +153,7 @@ with sync_playwright() as playwright:
     expect(popup.locator(".codex-chat-title")).to_contain_text("Saved collection")
     popup.close()
     more("Branch chat")
-    page.wait_for_function("location.search.includes('chat=')")
+    page.wait_for_function("id=>{const current=new URLSearchParams(location.search).get('chat');return current && current!==id}", arg=original)
     branched = parse_qs(urlsplit(page.url).query)["chat"][0]
     assert branched != original and chats[branched]["turns"] == chats[original]["turns"]
     expect(page.get_by_role("button", name="Preview sent attachment notes.txt", exact=True)).to_be_visible()

@@ -22,6 +22,10 @@ export default function useScoutChat(turns: SavedTurn[], onLoad: (chat: SavedCha
       const result = await saveChat(target);
       revisions.current.set(result.id, result.revision);
       if (current.current.id === result.id) {
+        if (current.current.revision === 0) {
+          const url = new URL(window.location.href); url.searchParams.set('chat', result.id);
+          window.history.replaceState(window.history.state, '', url);
+        }
         const updated = { ...current.current, ...changes, revision: result.revision };
         current.current = updated; setChat(updated);
         lastSaved.current = JSON.stringify({ id: target.id, title: target.title, pinned: target.pinned, archived: target.archived, turns: target.turns });
