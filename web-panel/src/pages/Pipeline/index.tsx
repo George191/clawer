@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import ExplorerFilterEditor, { normalizeFilterDepth, randomId, type ExplorerSort as SortCondition } from './ExplorerFilterEditor';
 import { editorValue, rowChanges, rowNullControl, type RowDraft } from './explorerRowEditing';
 import  React,  {  useCallback,  useEffect,  useRef,  useState  }  from  'react';
@@ -1156,7 +1157,7 @@ footer: previewPage && <ExplorerResultsFooter offset={previewPage.offset} rowCou
  notices={(!previewPage.result.stableOrder || previewPage.result.hasMore && !previewPage.result.canPageFurther) && <>
  {!previewPage.result.stableOrder && <span>No stable primary key. Rows may repeat or be skipped when paging.</span>}
  {previewPage.result.hasMore && !previewPage.result.canPageFurther && <span>Interactive preview limit reached. Narrow filters to continue.</span>}</>} />} : undefined}>
-                        {savedLoading && <div className="flow-schema-state" role="status">Loading saved item…</div>}
+                        {savedLoading && <div className="flow-schema-state" role="status"><LoadingIndicator size={20}>Loading saved item…</LoadingIndicator></div>}
                         {showIndexPreview && !savedBlocked && (canManage ? <SandboxIndexPreview schema={selectedSchema} table={table.name} /> :
                             <div className="flow-schema-state" role="status">Index-aware sandbox preview is available to administrators only.</div>)}
                         {previewRequested && !showPreview && !savedBlocked && (policyMode === 'indexed_projection_required'
@@ -1209,7 +1210,7 @@ footer: previewPage && <ExplorerResultsFooter offset={previewPage.offset} rowCou
                             {!!inputTopics.length && <label>Input topic <NativeSelect aria-label="Input topic" value={inputTopics[activeTopicIndex] || ''} onChange={event => { setActiveTopicIndex(inputTopics.indexOf(event.target.value)); setStream(undefined); setOffsets([]); setStreamLoading(true); }}>
                                 {inputTopics.map(topic => <option key={topic} value={topic}>{topic}</option>)}
                             </NativeSelect></label>}
-                            {streamLoading && !stream && !streamError ? <div className="flow-schema-state" role="status">Checking stream status…</div>
+                            {streamLoading && !stream && !streamError ? <div className="flow-schema-state" role="status"><LoadingIndicator size={20}>Checking stream status…</LoadingIndicator></div>
                                 : streamError ? null
                                 : !stream?.available ? <div className="flow-schema-state" role="status"><strong>{stream?.topic ? 'Stream unavailable' : 'No active stream'}</strong><p>{stream?.reason || 'There is no stream information for this table.'}</p></div>
                                 : <ExplorerStreamPositions stream={stream} />}

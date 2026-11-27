@@ -1,3 +1,4 @@
+import { LoadingOrb } from './loading';
 import React, { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { createRoot, type Root } from 'react-dom/client';
@@ -55,7 +56,7 @@ function useDialog(open: boolean, ref: React.RefObject<HTMLElement>, close: (e?:
   }, [open, id, ref]);
 }
 function NativeButton({ children, loading, danger, type, className, icon, ...props }: AnyProps) {
-  return <button {...props} type="button" disabled={props.disabled || loading} aria-busy={loading || undefined} className={cx('ui-btn', type === 'primary' && 'ui-btn-primary', danger && 'ui-btn-danger', className)}>{loading ? <span className="ui-overlay-spinner" aria-hidden="true" /> : icon}{children}</button>;
+  return <button {...props} type="button" disabled={props.disabled || loading} aria-busy={loading || undefined} className={cx('ui-btn', type === 'primary' && 'ui-btn-primary', danger && 'ui-btn-danger', className)}>{loading ? <LoadingOrb /> : icon}{children}</button>;
 }
 export interface ModalProps extends AnyProps {
   open?: boolean; motion?: boolean; title?: React.ReactNode; children?: React.ReactNode; onOk?: (e?: any) => unknown; onCancel?: (e?: any) => unknown;
@@ -305,7 +306,7 @@ function renderNotices() {
     <div className={cx('ui-message-notice-content',`ui-message-${notice.type || 'info'}`)} role={notice.type==='error' || notice.type==='warning'?'alert':'status'} aria-live={notice.type==='error'?'assertive':'polite'} tabIndex={0} onClick={notice.onClick}
       onMouseEnter={()=>pauseNotice(notice,'hovered',true)} onMouseLeave={()=>pauseNotice(notice,'hovered',false)}
       onFocus={()=>pauseNotice(notice,'focused',true)} onBlur={event=>{if(!event.currentTarget.contains(event.relatedTarget))pauseNotice(notice,'focused',false);}}>
-      <span aria-hidden="true" className={cx('ui-message-icon',notice.type==='loading' && 'ui-overlay-spinner')}>{notice.icon ?? symbols[notice.type || 'info']}</span>
+      <span aria-hidden="true" className="ui-message-icon">{notice.icon ?? (notice.type==='loading' ? <LoadingOrb /> : symbols[notice.type || 'info'])}</span>
       <div className="ui-message-text"><span className={notice.description ? 'ui-message-title' : undefined}>{notice.content}</span>{notice.description && <div className="ui-message-description">{notice.description}</div>}</div>
       {notice.closable !== false && <button type="button" className="ui-message-close" aria-label="Dismiss notification" onClick={event=>{event.stopPropagation();removeNotice(notice.key);}}><CloseOutlined /></button>}
     </div></div>)}</div>);

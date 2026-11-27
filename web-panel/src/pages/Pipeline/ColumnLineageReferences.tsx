@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { isPhysicalSchema } from '../../services/explorerNavigation';
 import { useEffect, useRef, useState } from 'react';
 import { Button, NativeSelect } from '@/components/ui';
@@ -45,7 +46,7 @@ function Results({ scope, direction }: { scope: Scope; direction: TableLineageDi
     return () => read.abort();
   }, [schema, table, column, direction]);
   if (unavailable) return <p role="status">Column references are unavailable for this selection.</p>;
-  if (!result) return <p role="status">Loading visible column references…</p>;
+  if (!result) return <p role="status"><LoadingIndicator size={20}>Loading visible column references…</LoadingIndicator></p>;
   return <>
     <p>Selected column: <code>{name(scope)}</code></p>
     {result.references.length ? <ol className="flow-lineage-table-references__list">{result.references.map(peer => <li key={name(peer)}>
@@ -100,7 +101,7 @@ function MappingTrace({ scope, direction, identity }: { scope: Scope; direction:
     <h4>Declared column mappings</h4>
     <p>Trace enabled declarations with up to 64 field pairs for <code>{name(scope)}</code>. Shows at most one path per reachable column within the trace limits. The arrows do not imply an observed transfer, reveal values, or match columns by name.</p>
     <Button size="small" loading={loading} disabled={loading} onClick={() => void trace()}>Trace declared column mappings</Button>
-    {loading && <p role="status">Tracing declared mappings…</p>}
+    {loading && <p role="status"><LoadingIndicator size={20}>Tracing declared mappings…</LoadingIndicator></p>}
     {result?.status === 'unavailable' && <p role="status">Declared column mapping paths are unavailable.</p>}
     {result?.status === 'incomplete' && <p role="status">Mapping trace is incomplete. Additional visible paths may exist beyond this bounded result.</p>}
     {result?.status === 'complete' && !result.paths.length && <p role="status">No visible supported declared paths in this direction.</p>}

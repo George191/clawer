@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useState } from 'react';
 import { NativeSelect } from '@/components/ui';
 import { BarChartOutlined, FilterOutlined, ReloadOutlined, TableOutlined } from '@/components/ui/icons';
@@ -112,7 +113,7 @@ export default function ExplorerExploreView({ fields, names, types, rows, field,
                 </div>
                 <footer className="explore-analysis__footer"><span>Showing {number(shown.length)}{aggregation?.hasMore ? '+' : ` of ${number(groups.length)}`} values</span>
                   <div>{ordered.length > 12 && <button type="button" onClick={() => setShowAll(value => !value)}>{showAll ? 'Show less' : `Show all ${number(ordered.length)} values`}</button>}
-                    {aggregation?.hasMore && aggregation.onLoadMore && <button type="button" disabled={busy} onClick={() => { setShowAll(true); aggregation.onLoadMore?.(); }}>{busy ? 'Loading…' : 'Load more values'}</button>}</div>
+                    {aggregation?.hasMore && aggregation.onLoadMore && <button type="button" disabled={busy} onClick={() => { setShowAll(true); aggregation.onLoadMore?.(); }}>{busy ? <LoadingIndicator size={20}>Loading…</LoadingIndicator> : 'Load more values'}</button>}</div>
                 </footer>
               </>}
     </article>

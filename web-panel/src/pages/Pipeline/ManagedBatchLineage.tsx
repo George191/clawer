@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { ArrowRightOutlined, CloseOutlined, DatabaseOutlined } from '@/components/ui/icons';
@@ -117,7 +118,7 @@ function Workspace({ asset, selected, exactReceipt, version, onSelect, onClose }
     setRange({ from: new Date(from).toISOString(), to: new Date(to).toISOString() });
   };
   if (!available) return selected && (loading || missing || loadError)
-    ? <div className="flow-lineage-managed-unavailable" role="status">{loading ? 'Loading managed asset…' : 'Managed asset unavailable.'}</div> : null;
+    ? <div className="flow-lineage-managed-unavailable" role="status">{loading ? <LoadingIndicator size={20}>Loading managed asset…</LoadingIndicator> : 'Managed asset unavailable.'}</div> : null;
   const facts = page?.lineage;
   const showEdge = showUpstream && facts && (facts.state === 'reviewed' || facts.state === 'observed' || facts.state === 'archived');
   const verifiedEdge = Boolean(facts?.state === 'observed' && facts.latestPositiveReceiptId && facts.latestPositiveRecordedAt);
@@ -165,7 +166,7 @@ function Workspace({ asset, selected, exactReceipt, version, onSelect, onClose }
           {currentDetail ? <EntryDetails entry={currentDetail} /> : <p role={detailError ? 'alert' : 'status'}>{detailError ? 'This timeline entry is unavailable.' : 'Loading timeline entry…'}</p>}
         </section>}
         {loadError && <p role="alert">Could not load the timeline. <button type="button" className="flow-lineage-action" onClick={() => setRequestVersion(value => value + 1)}>Retry timeline</button></p>}
-        {loading && <p role="status">Loading run timeline…</p>}
+        {loading && <p role="status"><LoadingIndicator size={20}>Loading run timeline…</LoadingIndicator></p>}
         {page && <>
           <p>From <Time value={page.from} /> to <Time value={page.to} /></p>
           {page.entries.length ? <ol>

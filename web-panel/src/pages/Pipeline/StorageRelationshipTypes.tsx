@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useRef, useState } from 'react';
 import { Button, Input, Modal, Select, message, NativeSelect } from '@/components/ui';
 import { ApartmentOutlined, ArrowRightOutlined, PlusOutlined, SearchOutlined } from '@/components/ui/icons';
@@ -190,7 +191,7 @@ function RelationshipManager({ schema, table, initialRelationId, onClose, onChan
           <aside className="ontology-tool-catalog" aria-label="Relationship types">
             <div className="ontology-tool-search"><Input aria-label="Find relationship types" placeholder="Find relationship types" prefix={<SearchOutlined />} value={search} disabled={busy} onChange={event => setSearch(event.target.value)} /></div>
             <div className="ontology-tool-catalog-list">
-              {loading && !page ? <p role="status">Loading relationship types…</p> : matches.map(item => <button type="button" key={item.id} aria-pressed={!creating && item.id === selectedId} disabled={busy || loading} onClick={() => choose(item)}>
+              {loading && !page ? <p role="status"><LoadingIndicator size={20}>Loading relationship types…</LoadingIndicator></p> : matches.map(item => <button type="button" key={item.id} aria-pressed={!creating && item.id === selectedId} disabled={busy || loading} onClick={() => choose(item)}>
                 <ApartmentOutlined /><span><strong>{item.name}</strong><small>{item.source.table} → {item.target.table}</small></span>
               </button>)}
               {page && !matches.length && <p>{search ? 'No matching relationship types.' : 'No relationship types are defined for this object type.'}</p>}
@@ -240,7 +241,7 @@ function RelationshipManager({ schema, table, initialRelationId, onClose, onChan
                   <div>{selected!.source.fields.map((field, index) => <span key={field}><code>{field}</code><ArrowRightOutlined /><code>{selected!.target.fields[index]}</code></span>)}</div>
                 </details>}
               </form>
-            </> : <div className="ontology-tool-empty"><ApartmentOutlined /><p>{loading ? 'Loading relationship types…' : 'Select a relationship type to view its definition.'}</p></div>}
+            </> : <div className="ontology-tool-empty"><ApartmentOutlined /><p>{loading ? <LoadingIndicator size={20}>Loading relationship types…</LoadingIndicator> : 'Select a relationship type to view its definition.'}</p></div>}
           </div>
         </div>
       </section>

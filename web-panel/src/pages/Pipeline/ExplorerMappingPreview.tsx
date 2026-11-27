@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui';
@@ -57,7 +58,7 @@ export default function ExplorerMappingPreview({schema, table, columns, mapping,
         </div>
         {error ? null
             : restricted ? <p>This table requires an indexed preview. <Link to={'/ontology/explorer?' + new URLSearchParams({schema,table})}>Open indexed preview</Link></p>
-            : !rows ? <p role="status">Loading up to five records…</p> : !rows.length ? <p>No records in this sample.</p> : !fields.length ? <p>{showMapped ? 'No preview columns available.' : 'No unmapped source columns.'}</p>
+            : !rows ? <p role="status"><LoadingIndicator size={20}>Loading up to five records…</LoadingIndicator></p> : !rows.length ? <p>No records in this sample.</p> : !fields.length ? <p>{showMapped ? 'No preview columns available.' : 'No unmapped source columns.'}</p>
             : <div className="flow-foundry-property-table-wrap"><table aria-label="Data preview">
                 <thead><tr><th scope="col">#</th>{fields.map(f => <th key={f.key} scope="col" className={f.property?.id === selected?.id && selected ? 'is-selected' : ''}>
                     <div className="physical-preview-column-heading"><PropertyTypeIcon type={f.type}/>

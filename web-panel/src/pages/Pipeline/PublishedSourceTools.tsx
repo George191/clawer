@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui';
 import { ReloadOutlined } from '@/components/ui/icons';
@@ -34,7 +35,7 @@ function SourceStream({ schema, table }: { schema: string; table: string }) {
   }, [schema, table, version]);
   return <section className="flow-schema-details flow-explorer-stream" aria-label="Source stream">
     <header><div><h3>Source stream</h3><p>Kafka topic and consumer positions for the physical source. Shared topics may include other tables.</p></div><Button size="small" icon={<ReloadOutlined />} onClick={() => refresh(value => value + 1)}>Refresh</Button></header>
-    {error ? null : !result ? <p role="status">Checking source stream…</p> : !result.available ? <div role="status"><strong>{result.topic ? 'Source stream unavailable' : 'No active source stream'}</strong><p>{result.reason}</p></div> : <><p>Topic <code>{result.topic}</code></p><ExplorerStreamPositions stream={result} /></>}
+    {error ? null : !result ? <p role="status"><LoadingIndicator size={20}>Checking source stream…</LoadingIndicator></p> : !result.available ? <div role="status"><strong>{result.topic ? 'Source stream unavailable' : 'No active source stream'}</strong><p>{result.reason}</p></div> : <><p>Topic <code>{result.topic}</code></p><ExplorerStreamPositions stream={result} /></>}
   </section>;
 }
 

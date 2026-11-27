@@ -1,3 +1,4 @@
+import { LoadingOrb } from '../ui/loading';
 import React, { useEffect, useRef, useState } from 'react';
 import './style.css';
 
@@ -71,7 +72,7 @@ export default function NativeDot({ activity = 'None', paused = false, dark = tr
   }, []);
   return <div className="native-dot-view" data-renderer="dot-original" data-state={state} data-activity={activity}>
     <iframe ref={frameRef} className="native-dot-frame" src="/dot/frame.html" title={`Helio · ${DOT_ACTIVITIES[activity].label}`} onLoad={configure} />
-    {state === 'loading' && <span className="native-dot-loading" role="status" aria-label="伙伴正在准备"><i /><i /><i /></span>}
+    {state === 'loading' && <span className="native-dot-loading" role="status" aria-label="伙伴正在准备"><LoadingOrb /></span>}
     {error && <span className="native-dot-message is-error" role="alert">{error}</span>}
   </div>;
 }

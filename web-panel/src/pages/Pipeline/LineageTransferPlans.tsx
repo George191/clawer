@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useId, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Modal, NativeSelect } from '@/components/ui';
@@ -195,7 +196,7 @@ function TransferSchedulePanel({ plan, maxRows, onBusyChange }: { plan: Transfer
     </div>
     <p>{scheduleClock ? `${scheduleClock}.` : monthly ? 'No monthly UTC time is configured.' : weekly ? 'No weekly UTC time is configured.' : 'No daily UTC time is configured.'} This is a sandbox schedule, not a production or CDC job.</p>
     {mutationError && <div role="alert" className="flow-transfer-error">{mutationError}</div>}
-    {scheduleError ? <div role="alert" className="flow-transfer-error">{scheduleError}</div> : !schedule ? <p role="status">Loading schedule…</p> : <>
+    {scheduleError ? <div role="alert" className="flow-transfer-error">{scheduleError}</div> : !schedule ? <p role="status"><LoadingIndicator size={20}>Loading schedule…</LoadingIndicator></p> : <>
       <strong role="status">{armedCadenceBlocked ? 'Schedule armed · blocked' : schedule.enabled ? 'Schedule armed' : schedule.generation != null ? 'Schedule paused' : 'Schedule not armed'}</strong>
       {!schedule.available && <p>Scheduled execution is unavailable for this plan or environment.</p>}
       <div className="flow-transfer-run-actions">
@@ -206,7 +207,7 @@ function TransferSchedulePanel({ plan, maxRows, onBusyChange }: { plan: Transfer
     </>}
     <h4>Schedule jobs</h4>
     <p>Dispatch means a job was sent to Automation. Only a committed job with a receipt confirms a transfer.</p>
-    {jobsError ? <div role="alert" className="flow-transfer-error">{jobsError}</div> : !jobs ? <p role="status">Loading schedule jobs…</p>
+    {jobsError ? <div role="alert" className="flow-transfer-error">{jobsError}</div> : !jobs ? <p role="status"><LoadingIndicator size={20}>Loading schedule jobs…</LoadingIndicator></p>
       : !jobs.length ? <p>No schedule jobs recorded.</p> : <ol className="flow-transfer-receipts">
         {jobs.map(job => <li key={job.id}>
           <strong>{scheduleJobLabels[job.state]}</strong>
@@ -307,7 +308,7 @@ function TablePicker({ label, schema, table, setTable, sourceNode, sourceUpdated
     </NativeSelect></label>
     {error && <div role="alert">{error} <button className="flow-lineage-action" type="button" onClick={() => setRevision(value => value + 1)}>Retry {label.toLowerCase()} lookup</button></div>}
     {sourceNode && hasMore && <button type="button" className="flow-lineage-action" disabled={loading} onClick={() => setPage({ scope: scopeKey, offset: offset + 100 })}>Load more source objects</button>}
-    {sourceNode && loading && offset > 0 && <p role="status">Loading more source objects…</p>}
+    {sourceNode && loading && offset > 0 && <p role="status"><LoadingIndicator size={20}>Loading more source objects…</LoadingIndicator></p>}
   </div>;
 }
 
@@ -641,7 +642,7 @@ export default function LineageTransferPlans({ schema, schemas, selectedSchedule
           <button type="button" className="flow-lineage-action" disabled={checking || saving} onClick={() => void checkCompatibility()}>{checking ? 'Checking…' : 'Check compatibility'}</button>
         </div>
         <p>{draft.sourceNode ? 'Checks the selected source and destination metadata. Cross-engine compatibility must be verified before execution.' : 'Checks PostgreSQL catalog metadata only. No rows are scanned or moved. This does not guarantee a transfer will succeed.'}</p>
-        {checking && <div role="status">Checking table compatibility…</div>}
+        {checking && <div role="status"><LoadingIndicator size={20}>Checking table compatibility…</LoadingIndicator></div>}
         {preflightError && <div role="alert" className="flow-transfer-error">{preflightError}</div>}
         {preflight && <div role="status" className="flow-transfer-preflight-result">
           <strong>{preflight.status === 'compatible' ? 'Catalog checks passed' : 'Compatibility issues found'}</strong>
@@ -652,7 +653,7 @@ export default function LineageTransferPlans({ schema, schemas, selectedSchedule
       {saveError && <p role="alert" className="flow-transfer-error">{saveError}</p>}
       <div className="flow-transfer-actions"><button type="button" className="flow-lineage-action" disabled={saving} onClick={closeDraft}>Cancel</button><button type="submit" className="flow-lineage-action is-primary" disabled={saving}>{saving ? 'Saving draft…' : 'Save draft'}</button></div>
     </form> : loadError ? <div role="alert" className="flow-transfer-error">Unable to load transfer plans. {loadError} <button type="button" className="flow-lineage-action" onClick={() => setRevision(value => value + 1)}>Retry</button></div>
-      : !plans ? <p role="status">Loading transfer plans…</p>
+      : !plans ? <p role="status"><LoadingIndicator size={20}>Loading transfer plans…</LoadingIndicator></p>
         : plans.length ? <ul className="flow-transfer-list">{plans.map(plan => <li key={plan.id}>
           <div><strong>{plan.name}</strong><span className="flow-transfer-badge">Draft</span></div>
           <div className="flow-transfer-route"><code>{plan.sourceSchema}.{plan.sourceTable}</code><ArrowRightOutlined /><code>{plan.targetSchema}.{plan.targetTable}</code></div>
@@ -676,8 +677,8 @@ export default function LineageTransferPlans({ schema, schemas, selectedSchedule
             {historyView === 'attempts' && <p>Attempts record requests and outcomes. A recorded request may no longer be active and does not prove that data was committed.</p>}
             {historyError ? <div role="alert" className="flow-transfer-error">{historyError} <button type="button" className="flow-lineage-action" onClick={() => setHistoryRevision(value => value + 1)}>Retry history</button></div>
               : historyView === 'attempts'
-                ? attempts ? <TransferAttempts attempts={attempts} /> : <p role="status">Loading attempts…</p>
-                : history ? <TransferReceipts receipts={history} /> : <p role="status">Loading run history…</p>}
+                ? attempts ? <TransferAttempts attempts={attempts} /> : <p role="status"><LoadingIndicator size={20}>Loading attempts…</LoadingIndicator></p>
+                : history ? <TransferReceipts receipts={history} /> : <p role="status"><LoadingIndicator size={20}>Loading run history…</LoadingIndicator></p>}
           </section>}
         </li>)}</ul> : <p>No draft uses <code>{schema}</code> as a source or destination yet.</p>}
     <Modal open={Boolean(deletePlan)} destroyOnHidden className="flow-surface-modal" title="Delete transfer draft?" confirmLoading={deleting} okText="Delete draft" okButtonProps={{ danger: true }} cancelButtonProps={{ disabled: deleting }} closable={!deleting} maskClosable={false}

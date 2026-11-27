@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Modal, NativeSelect, Select } from '@/components/ui';
@@ -217,7 +218,7 @@ function RelationshipWorkbench({ objectType, onRelationsChanged }: RelationshipP
       <aside className="ontology-tool-catalog" aria-label="Ontology relationships">
         <div className="ontology-graph-catalog-heading">Relationships</div>
         <div className="ontology-tool-catalog-list">
-          {!types && <p role="status">Loading relationships…</p>}
+          {!types && <p role="status"><LoadingIndicator size={20}>Loading relationships…</LoadingIndicator></p>}
           {types?.error && <p>Relationships are unavailable.</p>}
           {types?.data && !rows.length && <p>No relationships are defined for this object type.</p>}
           {rows.map(relation => <button type="button" key={relation.id}
@@ -488,7 +489,7 @@ function ObjectSets({ object, returnTo, onOpenExplorer }: ObjectSetProps) {
           Delete saved set
         </Button>
       </div>
-      {active && !result && <p role="status">Loading object set…</p>}
+      {active && !result && <p role="status"><LoadingIndicator size={20}>Loading object set…</LoadingIndicator></p>}
       {data && (
         <div className="ontology-graph-set-results" aria-label="Object set results">
           <header className="ontology-graph-set-summary">

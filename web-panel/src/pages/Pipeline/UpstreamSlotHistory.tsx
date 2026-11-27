@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useState } from 'react';
 import { fetchTransferUpstreamSlots } from '../../services/api';
 import type { TransferUpstreamSlot } from '../../services/api';
@@ -26,7 +27,7 @@ function History({ planId }: { planId: string }) {
     <h4>UTC gate decisions</h4>
     <p>A slot without a matching pre-slot witness is not a run. A recorded admission does not prove a child write.</p>
     {failed ? <p role="status">Gate decision history is unavailable.</p>
-      : !slots ? <p role="status">Loading UTC gate decisions…</p>
+      : !slots ? <p role="status"><LoadingIndicator size={20}>Loading UTC gate decisions…</LoadingIndicator></p>
         : !slots.length ? <p>No UTC gate decisions recorded.</p>
           : <ol className="flow-transfer-receipts">{slots.map(slot => <li key={`${slot.slot}:${slot.decidedAt}`}>
             <strong>{slot.state === 'no_witness' ? 'No matching witness · no run' : 'Matching witness admitted · job recorded'}</strong>

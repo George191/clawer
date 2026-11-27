@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useRef, useState } from 'react';
 import { Modal, NativeSelect } from '@/components/ui';
 import { ArrowRightOutlined } from '@/components/ui/icons';
@@ -114,7 +115,7 @@ export default function LineageUpstreamTrigger({ plan, maxRows, formatError }: {
       <button type="button" className="flow-lineage-action" disabled={busy} onClick={() => { setMutationError(''); setVersion(value => value + 1); }}>Refresh trigger</button></div>
     <p>Bind 1–{maxParents} manual producers whose destination is this plan’s exact sandbox source table. Only eligible commits recorded after arming can dispatch this child.</p>
     {mutationError && <p role="alert" className="flow-transfer-error">{mutationError}</p>}
-    {bindingError ? <p role="alert" className="flow-transfer-error">{bindingError}</p> : !binding ? <p role="status">Loading upstream trigger…</p> : <>
+    {bindingError ? <p role="alert" className="flow-transfer-error">{bindingError}</p> : !binding ? <p role="status"><LoadingIndicator size={20}>Loading upstream trigger…</LoadingIndicator></p> : <>
       <strong role="status">{binding.configuredEnabled ? binding.enabled && binding.available ? 'Upstream trigger armed' : 'Upstream trigger armed · blocked' : binding.generation == null ? 'Upstream trigger not armed' : 'Upstream trigger paused'}</strong>
       {!binding.available && <p>Upstream execution is unavailable for this plan or environment.</p>}
       {binding.mixedTimeUtc && <p>Bound UTC time gate: <strong>{binding.mixedTimeUtc} UTC AND an eligible upstream witness</strong>.</p>}
@@ -171,14 +172,14 @@ export default function LineageUpstreamTrigger({ plan, maxRows, formatError }: {
             {!binding.mixedAvailable && !binding.mixedConflict && <p>The saved time gate is unavailable here. Remove it explicitly to review an event-only condition.</p>}
           </fieldset>}
           {binding.mixedConflict && <p>The independent Daily UTC schedule is armed. Pause it before arming a UTC time gate on this trigger.</p>}
-          {candidatesError ? <p role="alert" className="flow-transfer-error">{candidatesError}</p> : !candidates ? <p role="status">Loading upstream producers…</p> :
+          {candidatesError ? <p role="alert" className="flow-transfer-error">{candidatesError}</p> : !candidates ? <p role="status"><LoadingIndicator size={20}>Loading upstream producers…</LoadingIndicator></p> :
             !candidates.length && <p>No eligible manual producer writes to this source table.</p>}
           <div className="flow-transfer-run-actions"><button type="button" className="flow-lineage-action is-primary" disabled={busy || !canArm} onClick={() => setConfirm('arm')}>Arm upstream trigger</button></div>
         </>}
     </>}
     <h4>Upstream jobs</h4>
     <p>Parent receipts show which commits met the condition. Only a separate child receipt verifies the child transfer.</p>
-    {jobsError ? <p role="alert" className="flow-transfer-error">{jobsError}</p> : !jobs ? <p role="status">Loading upstream jobs…</p>
+    {jobsError ? <p role="alert" className="flow-transfer-error">{jobsError}</p> : !jobs ? <p role="status"><LoadingIndicator size={20}>Loading upstream jobs…</LoadingIndicator></p>
       : jobs.length ? <ol className="flow-transfer-receipts">{jobs.map(job => {
         const recorded = recordedUpstreamRule(job);
         return <li key={job.id}>

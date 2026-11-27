@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { Tooltip } from '@/components/ui';
 import { ReloadOutlined } from '@/components/ui/icons';
@@ -28,7 +29,7 @@ export default function LinkedObjectTypes({ items, loading, pendingId, disabled,
         <span>{item.name}</span>
       </button>
     </Tooltip>)}</div>
-    {loading && <p role="status">Loading linked object types…</p>}
+    {loading && <p role="status"><LoadingIndicator size={20}>Loading linked object types…</LoadingIndicator></p>}
     {!loading && !error && !items?.length && <p className="flow-ontology__muted">No relationships defined.</p>}
     {error && <p className="flow-ontology__visibility-feedback is-error" role="alert">{error}{onRetry && <> <button type="button" onClick={onRetry}>Retry linked types</button></>}</p>}
   </section>;

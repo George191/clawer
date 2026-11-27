@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useId, useRef, useState } from 'react';
 import { fetchTableLineageNeighbors } from '../../services/api';
 import type { TableLineageDirection, TableLineageIdentity, TableLineageNeighborhood, TableLineageReferenceKind } from '../../services/api';
@@ -119,7 +120,7 @@ function Workspace({ schema, table, identity }: Props & { identity: string }) {
   return <section className="flow-lineage-table-references" aria-labelledby={label}>
     <h3 ref={heading} tabIndex={-1} id={label}>Table lineage references</h3>
     <p>Direction follows declarations and foreign keys. References are not verified data flow.</p>
-    {status === 'loading' ? <p role="status">Loading visible table references…</p>
+    {status === 'loading' ? <p role="status"><LoadingIndicator size={20}>Loading visible table references…</LoadingIndicator></p>
       : status === 'unavailable' ? <><p role="status">Table references are unavailable.</p><button type="button" className="flow-lineage-action" onClick={retry}>Retry table references</button></>
       : <>
         <p role="status">{nodeCount} / {MAX_NODES} tables · {visibleEdges.length} / {MAX_EDGES} directed references · maximum depth 2</p>
@@ -130,14 +131,14 @@ function Workspace({ schema, table, identity }: Props & { identity: string }) {
           branchRequest.current?.abort(); setResult(undefined); setSelected(undefined); setBranch(undefined); setStatus('unavailable');
         }} />
         {result ? <ReferenceLists parent={root} references={references} selected={selected} onExpand={expand} />
-          : <p role="status">Rechecking visible table references…</p>}
+          : <p role="status"><LoadingIndicator size={20}>Rechecking visible table references…</LoadingIndicator></p>}
         {result?.truncated && <p>Only the first visible references within this view’s limits are shown.</p>}
         {branchError && !selected && <p role="status">The selected table is no longer available.</p>}
         {selected && <section className="flow-lineage-table-references__expansion" aria-label="Selected neighbor expansion">
           <h4 ref={expandedHeading} tabIndex={-1}>References for {name(selected)}</h4>
           <button type="button" className="flow-lineage-action" onClick={collapse}>Clear selected expansion</button>
           {branchError ? <p role="status">The selected references could not be loaded.</p> :
-            !branch ? <p role="status">Loading selected neighbor’s references…</p> :
+            !branch ? <p role="status"><LoadingIndicator size={20}>Loading selected neighbor’s references…</LoadingIndicator></p> :
             <><ReferenceLists parent={selected} references={branch.references} />
               {branch.truncated && <p>This expansion reached the graph or visible relationship limit.</p>}
             </>}

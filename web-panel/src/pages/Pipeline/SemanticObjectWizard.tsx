@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import React, { useEffect, useRef, useState } from 'react';
 import { Button, Checkbox, Input, Modal, Select, Table } from '@/components/ui';
 import { AppstoreOutlined, CheckOutlined, ReloadOutlined, TableOutlined } from '@/components/ui/icons';
@@ -553,7 +554,7 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
         </section>}
         {stage === 'review' && <section className="flow-create-section">
           <Heading title={`Publish “${definition.name}” to ${selectedProject?.name || definition.projectId}?`} detail="This publishes the object type definition, including its properties, keys, actions and access rules. Project members with read access can open it in Ontology → Published." />
-          {busy && !validation && <p role="status">Checking draft…</p>}
+          {busy && !validation && <p role="status"><LoadingIndicator size={20}>Checking draft…</LoadingIndicator></p>}
           {canPublish && <p className="flow-create-notice" role="status">Validation passed for revision {saved?.revision}. Review any warnings before publishing.</p>}
           {validation && <><IssueList title="Blocking errors" issues={validation.errors} /><IssueList title="Warnings" issues={validation.warnings} /></>}
           <dl className="flow-create-summary">

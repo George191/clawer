@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useId, useState } from 'react';
 import { NativeSelect } from '@/components/ui';
 import { Link } from 'react-router-dom';
@@ -60,7 +61,7 @@ function ObservedDirection({ schema, table, direction }: { schema: string; table
   }, [snapshot, now]);
 
   if (failed || snapshot && !snapshot.available) return <p role="status">No current observed transfer evidence is available.</p>;
-  if (!snapshot) return <p role="status">Checking observed sandbox receipts…</p>;
+  if (!snapshot) return <p role="status"><LoadingIndicator size={20}>Checking observed sandbox receipts…</LoadingIndicator></p>;
   const rows = snapshot.neighbors.filter(item => item.schema === source.schema && Number.isSafeInteger(item.rowsAffected) && item.rowsAffected > 0 &&
     Number.isFinite(Date.parse(item.receiptRecordedAt)) && Date.parse(item.receiptRecordedAt) <= now && Date.parse(item.receiptRecordedAt) + horizonMs > now);
   return <>

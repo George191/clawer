@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Modal } from '@/components/ui';
@@ -131,7 +132,7 @@ function TransferSchedulesWorkspace({ keyword, filter, identity }: Props & { ide
     </header>
     {failed.length > 0 && <p role="alert">Unable to load {failed.join(' and ')} schedules.</p>}
     {cancelNotice && <p role={cancelNotice.error ? 'alert' : 'status'}>{cancelNotice.text}</p>}
-    {!matching ? <p role="status">Loading transfer schedules…</p>
+    {!matching ? <p role="status"><LoadingIndicator size={20}>Loading transfer schedules…</LoadingIndicator></p>
       : matching.length ? <ul>{matching.map(item => <li key={itemKey(item)}>
         <div><strong>{item.planName}</strong>{item.kind === 'batch' && <span>Batch sync</span>}{item.kind === 'upstream' && <span>Upstream trigger</span>}<code>{item.sourceTable} → {item.targetTable}</code></div>
         <div>
@@ -150,7 +151,7 @@ function TransferSchedulesWorkspace({ keyword, filter, identity }: Props & { ide
         {historyFor && itemKey(historyFor) === itemKey(item) && <section aria-label={item.kind === 'batch' ? 'Batch sync dispatch history' : item.kind === 'upstream' ? 'Upstream dispatch history' : 'Transfer dispatch history'}>
           <p>Dispatch does not confirm that rows committed.</p>
           {historyError ? <p role="alert">Dispatch history could not be loaded. Refresh schedules to retry.</p>
-            : !history ? <p role="status">Loading dispatch history…</p>
+            : !history ? <p role="status"><LoadingIndicator size={20}>Loading dispatch history…</LoadingIndicator></p>
               : history.length ? <ol>{history.map(job => {
                 const timestamp = 'slot' in job ? job.slot : job.events.reduce<string | undefined>((latest, event) =>
                   !latest || Date.parse(event.eventRecordedAt) > Date.parse(latest) ? event.eventRecordedAt : latest, undefined);

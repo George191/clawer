@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useState } from 'react';
 import { Button, NativeSelect } from '@/components/ui';
 import {
@@ -31,7 +32,7 @@ function useList<T>(scope: string, fetch: () => Promise<T>) {
 
 function ListState({ error, loading, retry }: { error?: string; loading: boolean; retry: () => void }) {
   if (error) return <div className="key-alert" role="alert">{error} <Button onClick={retry}>Retry</Button></div>;
-  if (loading) return <p role="status">Loading…</p>;
+  if (loading) return <p role="status"><LoadingIndicator size={20}>Loading…</LoadingIndicator></p>;
   return null;
 }
 

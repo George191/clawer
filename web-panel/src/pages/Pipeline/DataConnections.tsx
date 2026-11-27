@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Button, Checkbox, Input, message, Modal, Select, NativeSelect, Tabs } from '@/components/ui';
@@ -165,7 +166,7 @@ function SourceCatalog({ sourceId, sourceRevision, initialSchema = '', onSetUpSy
     <div className="ontology-source-catalog__layout">
       <section aria-label="Schemas">
         <h4>1 · Schemas {catalog && <small>{catalog.schemas.length}</small>}</h4>
-        {schemaError ? <div className="source-detail-empty"><p>Schema metadata is unavailable.</p><Button size="small" onClick={() => setRefresh(value => value + 1)}>Retry schemas</Button></div> : !catalog ? <p role="status">Loading schemas…</p> : !catalog.schemas.length ? <p>No visible schemas. Check this account’s schema permissions.</p> : <>
+        {schemaError ? <div className="source-detail-empty"><p>Schema metadata is unavailable.</p><Button size="small" onClick={() => setRefresh(value => value + 1)}>Retry schemas</Button></div> : !catalog ? <p role="status"><LoadingIndicator size={20}>Loading schemas…</LoadingIndicator></p> : !catalog.schemas.length ? <p>No visible schemas. Check this account’s schema permissions.</p> : <>
           <ul className="ontology-source-catalog__list">{catalog.schemas.map(item => <li key={item}>
             <button type="button" aria-pressed={schema === item} onClick={() => changeSchema(item)}><FolderOutlined /><span>{item}</span></button>
           </li>)}</ul>
@@ -180,7 +181,7 @@ function SourceCatalog({ sourceId, sourceRevision, initialSchema = '', onSetUpSy
             <Button size="small" htmlType="submit">Search</Button>
             {(search || appliedSearch) && <Button size="small" onClick={() => { setSearch(''); searchRelations(''); }}>Clear</Button>}
           </form>
-          {relationError ? <div className="source-detail-empty"><p>Table metadata is unavailable.</p><Button size="small" onClick={() => setRefresh(value => value + 1)}>Retry tables</Button></div> : !relations ? <p role="status">Loading tables and views…</p> : relations.relations.length ? <ul className="ontology-source-catalog__list">
+          {relationError ? <div className="source-detail-empty"><p>Table metadata is unavailable.</p><Button size="small" onClick={() => setRefresh(value => value + 1)}>Retry tables</Button></div> : !relations ? <p role="status"><LoadingIndicator size={20}>Loading tables and views…</LoadingIndicator></p> : relations.relations.length ? <ul className="ontology-source-catalog__list">
             {relations.relations.map(relation => <li key={relation.name}><button type="button" aria-pressed={table === relation.name} aria-label={`${relation.name} · ${relationLabel[relation.kind]}`} onClick={() => changeTable(relation.name)}>
               {relation.kind === 'view' || relation.kind === 'materialized_view' ? <EyeOutlined /> : <TableOutlined />}
               <span>{relation.name}</span><small>{relationLabel[relation.kind]}</small>
@@ -198,7 +199,7 @@ function SourceCatalog({ sourceId, sourceRevision, initialSchema = '', onSetUpSy
         <h4>3 · {table ? <code>{schema}.{table}</code> : 'Fields and primary key'}</h4>
         {!table ? <div className="source-detail-empty"><TableOutlined /><strong>Select a table or view</strong><p>Review the fields, types, nullability and primary key here.</p></div>
           : columnError ? <div className="source-detail-empty"><p>Field metadata is unavailable.</p><Button size="small" onClick={() => setRefresh(value => value + 1)}>Retry fields</Button></div>
-          : !columns || columnRevision !== sourceRevision ? <p role="status">Loading column metadata…</p>
+          : !columns || columnRevision !== sourceRevision ? <p role="status"><LoadingIndicator size={20}>Loading column metadata…</LoadingIndicator></p>
           : !columns.columns.length ? <p>No columns are visible with this connection.</p>
           : <><div className="ontology-source-catalog__columns"><table aria-label="Source columns">
             <thead><tr><th scope="col">Column</th><th scope="col">Type</th><th scope="col">Nullable</th><th scope="col">Key</th></tr></thead>
@@ -693,7 +694,7 @@ export default function DataConnections({ warehouse, warehouseFailed, onRetryWar
           <thead><tr><th scope="col">Connection</th><th scope="col">Connector</th><th scope="col">Database</th><th scope="col">Access</th><th scope="col">Actions</th></tr></thead>
           <tbody><tr><td><div className="ontology-connections-source"><ConnectorMark engine={warehouse.engine} /><span className="ontology-connections-source__name">{warehouse.name}</span></div></td><td>PostgreSQL</td><td><code>{warehouse.database}</code></td><td>Read-only catalog</td><td><Link className="ui-btn ui-btn-default" to={ontologyCatalogHref(params.toString(), 'backed')}>Browse tables <ArrowRightOutlined /></Link></td></tr></tbody>
         </table></div>}
-        {!canManage && !loading && !warehouse && !warehouseFailed && <p role="status">Loading catalog access…</p>}
+        {!canManage && !loading && !warehouse && !warehouseFailed && <p role="status"><LoadingIndicator size={20}>Loading catalog access…</LoadingIndicator></p>}
         {canManage && !loading && !loadError && <>
         {!!sources.length && <div className="ontology-connections-inventory__toolbar">
           <Input aria-label="Search sources" placeholder="Search sources" prefix={<SearchOutlined />} value={sourceSearch} allowClear onChange={(event) => setSourceSearch(event.target.value)} />

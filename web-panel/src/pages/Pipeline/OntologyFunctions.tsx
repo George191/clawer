@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useRef, useState } from 'react';
 import { Button, Input, message } from '@/components/ui';
 import { ArrowRightOutlined, CheckCircleOutlined, CodeOutlined, ReloadOutlined, SearchOutlined } from '@/components/ui/icons';
@@ -107,7 +108,7 @@ export default function OntologyFunctions({id, record, onCommitted}: {
       <aside className="ontology-tool-catalog" aria-label="Published functions">
         <div className="ontology-tool-search"><Input aria-label="Find functions" placeholder="Find a function" prefix={<SearchOutlined />} value={search} onChange={event => setSearch(event.target.value)} /></div>
         <div className="ontology-tool-catalog-list">
-          {!catalog && loading && <p role="status">Loading functions…</p>}
+          {!catalog && loading && <p role="status"><LoadingIndicator size={20}>Loading functions…</LoadingIndicator></p>}
           {catalog && !catalog.items.length && <p>No published functions are available to this account.</p>}
           {catalog && !!catalog.items.length && !visible.length && <p>No functions match this search.</p>}
           {visible.map(item => <button type="button" key={item.key} aria-pressed={selected === item.key} disabled={pending || loading} onClick={() => {setSelected(item.key); setValues({}); setError(''); setCompletion(undefined);}}>

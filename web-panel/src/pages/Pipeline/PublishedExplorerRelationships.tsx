@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui';
 import { PlusOutlined } from '@/components/ui/icons';
@@ -58,7 +59,7 @@ function RelationshipPage({ definitionId, recordId, sourceTitle, refreshToken = 
   const selected = page?.relations.find(item => item.id + ':' + item.direction === page.selected);
   useExplorerErrorToast(current?.error, 'Unable to read relationships', () => reload(value => value + 1));
   if (current?.error) return null;
-  if (!page) return <p role="status">Loading relationships…</p>;
+  if (!page) return <p role="status"><LoadingIndicator size={20}>Loading relationships…</LoadingIndicator></p>;
   return <ExplorerRelationshipsView loading={loading} selectedId={page.selected}
     management={page.canManage ? <>
       <Button size="small" icon={<PlusOutlined />} disabled={loading || !selected}

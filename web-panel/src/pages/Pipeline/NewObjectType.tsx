@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import React, { useEffect, useRef, useState } from 'react';
 import { Button, Checkbox, Input, Modal, Select, Table } from '@/components/ui';
 import { ArrowDownOutlined, ArrowUpOutlined, CheckOutlined, DeleteOutlined, PlusOutlined, ReloadOutlined } from '@/components/ui/icons';
@@ -265,7 +266,7 @@ export default function NewObjectType({ variant = 'object', schemas, initialSche
           {activeSchema && <p className="flow-create-help" role="status">{sourcePending ? 'Loading schema…' : tablesReady ? `${tables.length} existing tables in ${activeSchema}` : ''}</p>}
           {tableState.scopeKey === activeScopeKey && tableState.error && <div className="flow-create-error" role="alert">{tableState.error}<Button size="small" onClick={() => setTableVersion((value) => value + 1)} icon={<ReloadOutlined />}>Retry</Button></div>}
           {existing && <div className="flow-create-notice">Existing tables already appear as object types. Opening one does not create a table, copy data, or change property mappings.</div>}
-          {existing && sourceKey && !visiblePreview && <p role="status" className="flow-create-help">Loading object type properties…</p>}
+          {existing && sourceKey && !visiblePreview && <p role="status" className="flow-create-help"><LoadingIndicator size={20}>Loading object type properties…</LoadingIndicator></p>}
           {visiblePreview?.error && <div className="flow-create-error" role="alert">{visiblePreview.error}<Button size="small" onClick={() => setPreviewVersion((value) => value + 1)}>Retry</Button></div>}
           {preview && <>
             <h4 className="flow-create-subheading">{preview.id}</h4>

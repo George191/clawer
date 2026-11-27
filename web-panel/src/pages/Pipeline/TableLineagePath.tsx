@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { isPhysicalSchema } from '../../services/explorerNavigation';
 import { useEffect, useRef, useState } from 'react';
 import { NativeSelect } from '@/components/ui';
@@ -121,7 +122,7 @@ function PathSearch({ source, onScopeDenied, onEndpointUnavailable }: Props) {
         value={search} onChange={event => { setSearch(event.target.value); clearCatalog(); }} /></label>
       <button type="submit" className="flow-lineage-action" disabled={!search.trim() || catalogLoading}>Search visible tables</button>
     </form>
-    {catalogLoading && <p role="status">Searching visible tables…</p>}
+    {catalogLoading && <p role="status"><LoadingIndicator size={20}>Searching visible tables…</LoadingIndicator></p>}
     {options && <>
       {limited && <p>Showing at most the first {CATALOG_LIMIT} visible matches. Refine the search to see a different set.</p>}
       {!options.length ? <p role="status">No eligible visible destination in these results.</p> :
@@ -141,7 +142,7 @@ function PathSearch({ source, onScopeDenied, onEndpointUnavailable }: Props) {
           </div>
         </form>}
     </>}
-    {searching && <p role="status">{searching === 'directed' ? 'Searching for a directed reference path…' : `Searching for a common ${searching} reference…`}</p>}
+    {searching && <p role="status"><LoadingIndicator size={20}>{searching === 'directed' ? 'Searching for a directed reference path…' : `Searching for a common ${searching} reference…`}</LoadingIndicator></p>}
     {error && <p role="status">{error}</p>}
     {result?.state === 'found' && <section aria-label="Directed reference path">
       <h4>Directed reference path</h4>

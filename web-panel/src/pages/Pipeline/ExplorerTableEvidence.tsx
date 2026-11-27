@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui';
@@ -49,7 +50,7 @@ export default function ExplorerTableEvidence({ schema, table, connectionId, can
                 <Button size="small" icon={<ReloadOutlined />} disabled={!snapshot && !failed} onClick={refresh}>{failed ? 'Retry evidence' : 'Refresh evidence'}</Button>
             </header>
             {failed ? null
-                : !snapshot ? <div className="flow-schema-state" role="status">Loading table evidence…</div>
+                : !snapshot ? <div className="flow-schema-state" role="status"><LoadingIndicator size={20}>Loading table evidence…</LoadingIndicator></div>
                     : <div className="flow-evidence-grid">
                         <section className="flow-evidence-card" aria-labelledby="table-evidence-quality">
                             <header><h4 id="table-evidence-quality">Quality</h4><span>PostgreSQL catalog</span></header>

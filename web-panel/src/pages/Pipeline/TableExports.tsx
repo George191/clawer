@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useRef, useState } from 'react';
 import { Button, Input, Modal, NativeSelect } from '@/components/ui';
 import { ArrowRightOutlined } from '@/components/ui/icons';
@@ -103,7 +104,7 @@ function ReceiverSelection({ working, onWorkingChange }: { working: boolean; onW
   }, [version]);
   if (failed) return <div className="ontology-source-sync__body"><p role="alert">Could not load the approved export receivers.
     {' '}<Button size="small" onClick={() => setVersion(value => value + 1)}>Refresh export</Button></p></div>;
-  if (!catalog) return <div className="ontology-source-sync__body"><p role="status">Loading export configuration…</p></div>;
+  if (!catalog) return <div className="ontology-source-sync__body"><p role="status"><LoadingIndicator size={20}>Loading export configuration…</LoadingIndicator></p></div>;
   const choices = catalog.approvedDestinations;
   if (!choices?.some(option => option.id === 'secondary')) return <TableExportWorkspace initialCapabilities={catalog} onWorkingChange={onWorkingChange} />;
   const receiver = choices.find(option => option.id === selected);
@@ -328,7 +329,7 @@ function TableExportWorkspace({ destination, label, initialCapabilities, onWorki
 
   return <div className="ontology-source-sync__body">
     {loadingError ? <p role="alert" className="is-error">Could not load the table export configuration. <Button size="small" onClick={refreshPlan}>Refresh export</Button></p>
-      : !capabilities || !grant || plan === undefined ? <p role="status">Loading table export…</p> : <>
+      : !capabilities || !grant || plan === undefined ? <p role="status"><LoadingIndicator size={20}>Loading table export…</LoadingIndicator></p> : <>
         {!capabilities.enabled && <p role="status">Sending is not enabled for this test. You can review the setup before an administrator enables it.</p>}
         {!capabilities.provisioned && <p role="status">This test needs a destination. Ask an administrator to configure the approved test database before saving an export.</p>}
         <div className="ontology-table-export__mapping">
@@ -374,7 +375,7 @@ function TableExportWorkspace({ destination, label, initialCapabilities, onWorki
         {view && <Button size="small" onClick={() => setHistoryRevision(value => value + 1)}>Refresh history</Button>}
       </div>
       {historyError ? <p role="alert" className="is-error">Could not load export history.</p>
-        : view === 'authorization' ? !grantHistory ? <p role="status">Loading authorization history…</p>
+        : view === 'authorization' ? !grantHistory ? <p role="status"><LoadingIndicator size={20}>Loading authorization history…</LoadingIndicator></p>
           : grantHistory.length ? <ul className="ontology-source-sync__items">
             {grantHistory.map(event => <li key={event.id}>
               <strong>{event.action === 'approved' ? 'Approved' : 'Revoked'} · Generation {event.generation}</strong>
@@ -385,7 +386,7 @@ function TableExportWorkspace({ destination, label, initialCapabilities, onWorki
             </li>)}
           </ul> : <p>No export authorization decisions recorded.</p>
         : view && activeGeneration == null ? <p>Delivery history is not available without an effective approval.</p>
-        : view === 'receipts' ? !currentReceipts ? <p role="status">Loading receiver receipts…</p> : currentReceipts.length ? <ul className="ontology-source-sync__items">
+        : view === 'receipts' ? !currentReceipts ? <p role="status"><LoadingIndicator size={20}>Loading receiver receipts…</LoadingIndicator></p> : currentReceipts.length ? <ul className="ontology-source-sync__items">
           {currentReceipts.map(receipt => <li key={receipt.id}>
             <strong>Receiver confirmed</strong>
             {(capabilities.appendAvailable || receipt.writeMode) && <span>Recorded write mode: {exportModeLabel(exportMode(receipt))}</span>}
@@ -397,7 +398,7 @@ function TableExportWorkspace({ destination, label, initialCapabilities, onWorki
         </ul> : <p>No receiver-confirmed receipts.</p>
           : view === 'attempts' && <>
             <p>A request was not necessarily accepted or committed by the receiver. Verify the receipt before treating an export as complete.</p>
-            {!currentAttempts ? <p role="status">Loading export attempts…</p> : currentAttempts.length ? <ul className="ontology-source-sync__items">
+            {!currentAttempts ? <p role="status"><LoadingIndicator size={20}>Loading export attempts…</LoadingIndicator></p> : currentAttempts.length ? <ul className="ontology-source-sync__items">
               {currentAttempts.map(attempt => {
                 const canRetry = !seenRequests.has(attempt.requestId) && recoverable.has(attempt.status) && exportMode(attempt) === savedMode;
                 seenRequests.add(attempt.requestId);

@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Checkbox, Input, InputNumber, Popconfirm, Segmented, Select, Switch, Table, Tooltip, Typography, Upload } from '@/components/ui';
 import {
@@ -3115,7 +3116,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         </div>
 
         {templateDetailLoading ? (
-          <div className="workspace-dock-empty">Loading template artifacts…</div>
+          <div className="workspace-dock-empty"><LoadingIndicator>Loading template artifacts…</LoadingIndicator></div>
         ) : templateDetailError ? (
           <div className="workspace-dock-empty">{templateDetailError}</div>
         ) : templateDetailMode === 'overview' ? (
@@ -3465,7 +3466,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                 </div>
               ))}
               <div className="workspace-dock-log-row" role={taskLogsError ? 'alert' : 'status'}>
-                {taskLogsLoading ? 'Loading execution logs…' : taskLogsError ? (
+                {taskLogsLoading ? <LoadingIndicator size={20}>Loading execution logs…</LoadingIndicator> : taskLogsError ? (
                   <>{taskLogsError} <Button type="link" size="small" onClick={loadMoreTaskLogs}>Retry</Button></>
                 ) : selectedTaskLogs?.hasMore ? (
                   <Button type="link" size="small" onClick={loadMoreTaskLogs}>Load earlier logs</Button>

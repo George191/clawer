@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import React, { useEffect, useState } from 'react';
 import { Button, Checkbox, Input } from '@/components/ui';
 import { createSourceObjectEvents, fetchSourceObjectEvents, removeSourceObjectEvents } from '../../services/api';
@@ -56,7 +57,7 @@ export default function SourceObjectEvents({ source, onBusyChange, onDirtyChange
       <li><span>3</span><div><strong>Check notification delivery</strong><p>Perform a matching object change and inspect Kafka.</p></div></li>
     </ol>
     {error && <p role="alert">{error}</p>}
-    {!status && !error && <p role="status">Loading notification configuration…</p>}
+    {!status && !error && <p role="status"><LoadingIndicator size={20}>Loading notification configuration…</LoadingIndicator></p>}
     {status && <div className="source-capture__layout">
       <section className="source-capture__panel source-capture__prepare" aria-label="Object notification prerequisites">
         <h4>1. Prepare the notification target</h4>

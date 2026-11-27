@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ApiOutlined, AppstoreOutlined, ArrowLeftOutlined, BarChartOutlined, CheckOutlined, CloseOutlined, CopyOutlined, DeleteOutlined, DownOutlined, DownloadCircleFilled, FileSearchOutlined, FilterOutlined, LinkOutlined, LoadingOutlined, ProfileOutlined, SearchOutlined, ShareAltOutlined, SyncOutlined, TableOutlined } from '@/components/ui/icons';
 import { Button, Dropdown, Modal, message, NativeSelect } from '@/components/ui';
@@ -276,7 +277,7 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
         <div className="wb-library-heading"><div><h3>{menu === 'lists' ? 'Lists' : 'Explorations'}</h3><p>{menu === 'lists' ? 'Saved object selections' : 'Saved searches and views'}</p></div><button aria-label="Close saved items" onClick={() => show('')}><CloseOutlined /></button></div>
         <div className="wb-library-controls"><label className="ui-input-surface"><SearchOutlined /><input aria-label={`Search ${menu}`} placeholder={`Search ${menu}…`} maxLength={100} value={librarySearch} onChange={e => { setLibrarySearch(e.target.value); setPage(0); }}/></label><NativeSelect aria-label="Saved item sharing" value={access} onChange={e => { setAccess(e.target.value as typeof access); setPage(0); }}><option value="all">All</option><option value="private">Private</option><option value="shared">Shared</option></NativeSelect></div>
         <div className="wb-library-items">
-            {!items && !error && <p role="status" className="wb-library-empty">Loading saved items…</p>}
+            {!items && !error && <p role="status" className="wb-library-empty"><LoadingIndicator size={20}>Loading saved items…</LoadingIndicator></p>}
             {items && !items.items.length && <div className="wb-library-empty"><SearchOutlined /><strong>{librarySearch || access !== 'all' ? 'No matching saved items' : `No saved ${menu}`}</strong><p>{librarySearch || access !== 'all' ? 'Try another search or sharing filter.' : 'Save your work to return to it later.'}</p></div>}
             {items?.items.map(item => <div className={'wb-library-item' + (saved?.id === item.id ? ' is-current' : '')} key={item.id}>
                 <button className="wb-library-open" aria-label={`Open ${item.kind} ${item.name}`} aria-current={saved?.id === item.id ? 'page' : undefined} onClick={() => { show(''); p.openSavedItem(item.id); }}><span className="wb-library-icon">{item.kind === 'list' ? <TableOutlined /> : <BarChartOutlined />}</span><span><strong>{item.name}</strong><small>{item.shared ? 'Shared link enabled' : 'Private'} · {sourceLabel}</small></span>{saved?.id === item.id && <CheckOutlined />}</button>
@@ -363,7 +364,7 @@ export default function ExplorerWorkbenchHeader<Q extends object = WorkbenchQuer
             {error && <p role="alert" className="wb-dialog-error">{error}</p>}
         </Modal>
         <Modal className="flow-surface-modal wb-saved-dialog" title={shareTarget ? `Share ${shareTarget.kind}` : 'Share'} open={dialog === 'share'} width={480} onCancel={() => { if (!busy) setDialog(''); }} keyboard={!busy} maskClosable={!busy} footer={null}>
-            {busy && !shareTarget ? <p role="status">Loading saved item…</p> : shareTarget ? <>
+            {busy && !shareTarget ? <p role="status"><LoadingIndicator size={20}>Loading saved item…</LoadingIndicator></p> : shareTarget ? <>
                 <div className="wb-share-resource">{shareTarget.kind === 'list' ? <TableOutlined /> : <BarChartOutlined />}<div><strong>{shareTarget.name}</strong><span>{shareTarget.kind === 'list' ? `${shareTarget.content.keys?.length ?? 0} saved object references` : 'Saved search, filters, sorting and chart'}</span></div></div>
                 <p className="wb-dialog-help">{shareTarget.kind === 'list' ? 'This link opens the saved object selection.' : 'This link opens the saved exploration. Save current changes as a new exploration to share them.'}</p>
                 <p className="wb-dialog-help">People with this link must sign in and have access to the underlying {p.source.kind === 'published' ? 'object type' : 'table'}. Sharing does not grant data access.</p>

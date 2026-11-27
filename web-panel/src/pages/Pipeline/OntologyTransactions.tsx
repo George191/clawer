@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useRef, useState } from 'react';
 import { Button, message, NativeSelect } from '@/components/ui';
 import { graphRequest, type LinkType, type Page } from '../../services/ontology_graph';
@@ -219,7 +220,7 @@ export default function OntologyTransactions({objectType, onCommitted}: {objectT
         <footer className="ontology-tool-footer"><p>All steps succeed or none are applied.</p><Button type="primary" loading={pending} disabled={pending || !entries.length || !name.trim()} onClick={() => perform()}>Commit transaction</Button></footer>
       </aside>
     </div> : <section className="flow-tool-section ontology-transaction-history" aria-label="My transactions"><header><h4><HistoryOutlined />My transactions</h4><p>Inspect committed operations, undo eligible transactions and review writeback delivery.</p></header>
-      {historyLoading && <p role="status">Loading transactions…</p>}
+      {historyLoading && <p role="status"><LoadingIndicator size={20}>Loading transactions…</LoadingIndicator></p>}
       {!historyLoading && !history.length && !error && !requestError && <p>No transactions on this page.</p>}
       <ul>{history.map(item => <li key={item.id} className="ontology-transaction-history-item">
         <div className="ontology-transaction-history-summary"><strong>{item.name}</strong>

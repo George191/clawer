@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { fetchCurrentUserContext, fetchDataSourceNodes, fetchDataSources } from '../../services/api';
@@ -44,7 +45,7 @@ function Workspace({ identity, version, schemas }: { identity: string; version: 
   return <section className={`connection-flow-nodes${selected ? ' is-selected' : ''}`} aria-label="Connection storage nodes">
     <header><strong>Connection storage nodes</strong>{status === 'ready' && <span>{sources.length} connections</span>}</header>
     <p>Browse each connection's storage scopes to configure syncs and transfer plans.</p>
-    {status === 'loading' ? <p role="status">Loading connection nodes…</p>
+    {status === 'loading' ? <p role="status"><LoadingIndicator size={20}>Loading connection nodes…</LoadingIndicator></p>
       : status === 'error' ? <p role="alert">Unable to load connection nodes or verify access. <button type="button" className="flow-lineage-action" onClick={() => setRetry(value => value + 1)}>Retry connections</button></p>
         : status === 'denied' ? <p>Connection storage nodes are available to administrators.</p>
           : !sources.length ? <p>No saved connections. <Link to="/ontology/connections">Add a connection</Link></p>
@@ -85,11 +86,11 @@ function ConnectionNode({ source, identity, selected, onSelect }: { source: Data
     <div className="connection-flow-nodes__heading"><ConnectorMark engine={source.engine} size="small" />
       <Link className="connection-flow-nodes__node" data-node-id={JSON.stringify([source.id])} to={connectionHref(source)} aria-label={`Manage ${source.name}`}><strong>{source.name}</strong><span>{source.config.database || source.config.bucket || source.engine}</span></Link>
       {paused && <span>Paused</span>}
-      {!paused && <button type="button" className="flow-lineage-action" aria-expanded={expanded} disabled={loading} onClick={() => browse()}>{loading ? 'Loading nodes…' : failed ? 'Retry nodes' : expanded ? 'Hide nodes' : 'Browse nodes'}</button>}
+      {!paused && <button type="button" className="flow-lineage-action" aria-expanded={expanded} disabled={loading} onClick={() => browse()}>{loading ? <LoadingIndicator size={20}>Loading nodes…</LoadingIndicator> : failed ? 'Retry nodes' : expanded ? 'Hide nodes' : 'Browse nodes'}</button>}
     </div>
     {expanded && <div className="connection-flow-nodes__schemas">
       <form className="connection-flow-nodes__search" onSubmit={event => { event.preventDefault(); browse(true); }}><input aria-label={`Search storage scopes in ${source.name}`} placeholder="Search storage scopes" maxLength={100} value={search} onChange={event => setSearch(event.target.value)} /><button className="flow-lineage-action" type="submit" disabled={loading}>Search scopes</button></form>
-      {loading ? <p role="status">Loading storage nodes for {source.name}…</p>
+      {loading ? <p role="status"><LoadingIndicator size={20}>Loading storage nodes for {source.name}…</LoadingIndicator></p>
         : failed ? <p role="alert">Unable to load storage scopes for {source.name}. Retry to verify the source catalog.</p>
           : storageNodes && (storageNodes.length ? storageNodes.map(node => <button type="button" className="connection-flow-nodes__node" key={node.id} data-node-id={node.id} aria-pressed={selected === node.id} onClick={() => onSelect(node)} aria-label={`Select ${source.name}: ${node.kind} ${node.name}`}><strong>{node.name}</strong><span>{node.kind} · {source.name}</span></button>) : <p>No visible storage scopes in this connection.</p>)}
       {!loading && !failed && hasMore && <p role="status">More storage scopes are available. Search to find scopes outside this limited catalog.</p>}

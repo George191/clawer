@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useRef, useState } from 'react';
 import { Button, Input, Modal, NativeSelect } from '@/components/ui';
 import { acknowledgeAssetQualityIncident, captureAssetSchemaBaseline, fetchAssetFreshness, fetchAssetFreshnessCandidates, previewAssetSchemaBaseline, updateAssetFreshness } from '../../services/api';
@@ -183,7 +184,7 @@ export default function ExplorerAssetFreshness({ schema, table, version }: { sch
     <header><h4>Transfer freshness</h4><span>Sandbox · confirmed writes</span></header>
     <p>Checks when the selected transfer last recorded a positive write for this table. This does not measure source data freshness.</p>
     {failed ? null
-      : !snapshot ? <p role="status">Loading freshness check…</p> : <>
+      : !snapshot ? <p role="status"><LoadingIndicator size={20}>Loading freshness check…</LoadingIndicator></p> : <>
         <strong role="status">{stateLabels[evaluationExpired ? 'unknown' : snapshot.assessment.state]}</strong>
         {evaluationExpired ? <p>{reasonLabels.evaluation_stale}</p>
           : snapshot.assessment.reason && <p>{reasonLabels[snapshot.assessment.reason] ?? snapshot.assessment.reason}</p>}
@@ -214,7 +215,7 @@ export default function ExplorerAssetFreshness({ schema, table, version }: { sch
           </div>
         </div>
         {snapshot.available && (candidateFailed ? null
-          : !candidates ? <p role="status">Loading transfer candidates…</p>
+          : !candidates ? <p role="status"><LoadingIndicator size={20}>Loading transfer candidates…</LoadingIndicator></p>
             : !candidates.length && <p>No eligible saved transfer writes to this table.</p>)}
         <details>
           <summary>Freshness history</summary>

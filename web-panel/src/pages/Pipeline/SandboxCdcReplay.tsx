@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useRef, useState } from 'react';
 import { Button, Modal } from '@/components/ui';
 import { ArrowRightOutlined } from '@/components/ui/icons';
@@ -155,7 +156,7 @@ function CdcReplayWorkspace() {
   return <div className="ontology-source-sync__body ontology-cdc-replay__body" aria-busy={refreshing}>
     <div className="ontology-source-sync__actions"><Button size="small" disabled={busy || refreshing} onClick={refresh}>Refresh replay status</Button></div>
     {notice && <p role={notice.error ? 'alert' : 'status'} className={notice.error ? 'is-error' : undefined}>{notice.message}</p>}
-    {loadFailed ? <p role="alert">Sandbox replay status could not be loaded.</p> : !status ? <p role="status">Loading sandbox replay status…</p> : <>
+    {loadFailed ? <p role="alert">Sandbox replay status could not be loaded.</p> : !status ? <p role="status"><LoadingIndicator size={20}>Loading sandbox replay status…</LoadingIndicator></p> : <>
       <strong role="status">{states[status.state]}</strong>
       {!loaded && <p>This test is not ready. Ask an administrator to enable it and configure its sample source and target.</p>}
       <div className="ontology-source-sync__route"><code>{status.source}</code><ArrowRightOutlined /><code>{status.target}</code></div>
@@ -175,7 +176,7 @@ function CdcReplayWorkspace() {
     </>}
     <section aria-label="Committed CDC receipts">
       <h4>Committed CDC receipts</h4>
-      {receiptsFailed ? <p role="alert">Committed receipts could not be loaded.</p> : !receipts ? <p role="status">Loading CDC receipts…</p>
+      {receiptsFailed ? <p role="alert">Committed receipts could not be loaded.</p> : !receipts ? <p role="status"><LoadingIndicator size={20}>Loading CDC receipts…</LoadingIndicator></p>
         : receipts.length ? <ol className="ontology-source-sync__items">{receipts.map(receipt => <li key={receipt.id}>
           <strong>Committed target receipt</strong>
           <span>Range: after <code>{receipt.fromExclusive}</code> through <code>{receipt.appliedThrough}</code></span>

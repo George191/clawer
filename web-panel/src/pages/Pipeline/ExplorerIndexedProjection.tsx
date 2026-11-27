@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useRef, useState } from 'react';
 import { Button, Input, Modal, NativeSelect } from '@/components/ui';
 import { fetchIndexedProjectionCapability, queryIndexedProjection } from '../../services/api';
@@ -53,7 +54,7 @@ export default function ExplorerIndexedProjection(props: Scope) {
     });
     return () => read.abort();
   }, [schema, table, identity]);
-  if (loading) return <p role="status">Checking approved projection metadata…</p>;
+  if (loading) return <p role="status"><LoadingIndicator size={20}>Checking approved projection metadata…</LoadingIndicator></p>;
   if (!profile) return <p role="status">Verified indexed projection is unavailable. No preview query was run.</p>;
   return <ProjectionFilter key={profile.projectionRevision} {...props} {...profile} />;
 }

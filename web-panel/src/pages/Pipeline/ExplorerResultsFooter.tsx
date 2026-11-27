@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import type { ReactNode } from 'react';
 import { Button, NativeSelect } from '@/components/ui';
 
@@ -7,7 +8,7 @@ export function ExplorerResultsFooter({ offset, rowCount, pageSize, loading, loc
 }) {
   return <footer className="flow-preview-pager">
     {notices && <div className="flow-preview-pager-notices" role="status">{notices}</div>}
-    <nav aria-label="Preview pagination"><span className="flow-preview-range" aria-live="polite">{loading ? 'Loading preview…' : rowCount
+    <nav aria-label="Preview pagination"><span className="flow-preview-range" aria-live="polite">{loading ? <LoadingIndicator size={20}>Loading preview…</LoadingIndicator> : rowCount
       ? `Rows ${(offset + 1).toLocaleString('en-US')}–${(offset + rowCount).toLocaleString('en-US')}` : 'No rows on this page'}</span>
       <div className="flow-preview-page-controls"><label>Rows per page <NativeSelect aria-label="Rows per page" value={pageSize} disabled={loading || locked} onChange={event => { if (!loading && !locked) onPageSize(Number(event.target.value)); }}>
         {[10, 20, 50].map(count => <option key={count} value={count}>{count}</option>)}

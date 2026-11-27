@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { theme } from '@/components/ui';
 import { fetchExplorerHtml, fetchExplorerFile, fetchExplorerStorage, type ExplorerStorage } from '../../services/api';
@@ -76,7 +77,7 @@ function HtmlPreview({ value, identity, field }: { value: string; identity: Reco
   }, [sourceKey, key, field, value, sessionIdentity, retry]);
   useExplorerErrorToast(error && !invalid ? 'HTML preview failed.' : undefined, 'HTML preview unavailable', () => reload(value => value + 1));
   if (error) return invalid ? <div className="explorer-html explorer-html--status" role="alert">HTML preview failed. Reload to retry.</div> : null;
-  if (html === undefined) return <div className="explorer-html explorer-html--status" role="status">Loading HTML preview…</div>;
+  if (html === undefined) return <div className="explorer-html explorer-html--status" role="status"><LoadingIndicator size={20}>Loading HTML preview…</LoadingIndicator></div>;
   const scrollbarTheme = `:root{--ui-muted:${token.colorTextSecondary};--ui-panel:${token.colorBgContainer};color-scheme:${dark ? 'dark' : 'light'}}`;
   const style = `body{margin:16px;font:13px/1.65 system-ui;overflow-wrap:anywhere;color:${dark ? '#d8dee9' : '#263244'};background:${dark ? '#242936' : '#fff'}}img,video{display:block;max-width:100%;height:auto;margin:12px auto}audio{width:100%}a{color:${dark ? '#80bfff' : '#176bb5'}}table{border-collapse:collapse;max-width:100%}td,th{border:1px solid #687080;padding:6px}pre{white-space:pre-wrap}blockquote{margin:12px 0;padding-left:16px;border-left:3px solid #687080}`;
   const doc = '<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; style-src &#39;unsafe-inline&#39;; img-src https: http: data:; media-src https: http:; base-uri &#39;none&#39;; form-action &#39;none&#39;"><style>' + style + scrollbarTheme + scrollbarStyles + '</style>' + html;
@@ -154,7 +155,7 @@ export function ExplorerValue({ value, text, identity = {}, field, presentation 
     } catch (error) { tab.close(); if (live(controller.signal, sessionIdentity) && (error as { code?: string })?.code !== 'ERR_CANCELED') setRequestError('Unable to open this file. Try again.'); }
     finally { if (live(controller.signal, sessionIdentity)) setBusy(false); }
   }
-  if (media && !config) return failed ? null : <span role="status">Loading media configuration…</span>;
+  if (media && !config) return failed ? null : <span role="status"><LoadingIndicator size={20}>Loading media configuration…</LoadingIndicator></span>;
   if (media && Array.isArray(parsed)) return <div className="explorer-media-list">{parsed.length ? parsed.map((item, index) =>
     <ExplorerValue key={index} value={item} identity={identity} field={field} presentation="media" path={[...path, index]} />) : <span>No media resources.</span>}</div>;
   if (media && typeof value === 'string' && (field?.endsWith('_html') || /<\/?(?:html|body|head|div|p|span|a|img|table|ul|ol|li|section|article|h[1-6]|br|strong|em)\b[^>]*>/i.test(value))) {
@@ -169,7 +170,7 @@ export function ExplorerValue({ value, text, identity = {}, field, presentation 
     {media && !kind && <span role="status">This file type has no inline preview.</span>}
     {!kind && error && <span role="alert">{error}</span>}
     {kind && <span className={`explorer-file-media explorer-file-media--${kind}`} onContextMenu={event => event.stopPropagation()}>
-      {busy ? <span role="status">Loading file preview…</span> : error ? <span role="alert">{error}</span> : requestError || !preview ? null
+      {busy ? <span role="status"><LoadingIndicator size={20}>Loading file preview…</LoadingIndicator></span> : error ? <span role="alert">{error}</span> : requestError || !preview ? null
         : kind === 'image' ? <img src={preview} alt={file.name} loading="lazy" referrerPolicy="no-referrer" onError={() => { setPreview(undefined); setRequestError('Image preview failed.'); }} />
         : kind === 'video' ? <video src={preview} controls playsInline preload="metadata" aria-label={file.name} onError={() => { setPreview(undefined); setRequestError('Video preview failed.'); }} />
           : kind === 'audio' ? <audio src={preview} controls preload="metadata" aria-label={file.name} onError={() => { setPreview(undefined); setRequestError('Audio preview failed.'); }} />

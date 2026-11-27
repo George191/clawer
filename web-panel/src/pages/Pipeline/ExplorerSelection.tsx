@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { PropertyLabel } from './PropertyTypeIcon';
 import { ExplorerValueProvider } from './ExplorerValue';
 import { useExplorerLinkAvailability } from './ExplorerRowLinks';
@@ -333,7 +334,7 @@ export default function ExplorerSelection({
     const row = describeRow(record, index);
     return <span className="flow-explorer-selection__table-title" title={row.title}>
       {glyph(true)}
-      {!metadata ? <span>Loading title…</span> : Object.keys(row.identity).length > 0 && renderTitleLink ? renderTitleLink(row) : <span>{row.title}</span>}
+      {!metadata ? <span><LoadingIndicator size={20}>Loading title…</LoadingIndicator></span> : Object.keys(row.identity).length > 0 && renderTitleLink ? renderTitleLink(row) : <span>{row.title}</span>}
     </span>;
   };
   const tableColumns = dataColumns.map(column => {
@@ -426,7 +427,7 @@ export default function ExplorerSelection({
           : <>
             <div className="flow-explorer-selection__object">
               {glyph()}
-              <div className="flow-explorer-selection__identity"><span>{typeName}</span><h4>{metadata ? active.title : 'Loading title…'}</h4>
+              <div className="flow-explorer-selection__identity"><span>{typeName}</span><h4>{metadata ? active.title : <LoadingIndicator size={20}>Loading title…</LoadingIndicator>}</h4>
                 {!!Object.keys(active.identity).length && <small>{Object.entries(active.identity).map(([field, value]) => field + ': ' + format(value)).join(' · ')}</small>}
               </div>
               <div className="flow-explorer-selection__object-actions">
@@ -449,7 +450,7 @@ export default function ExplorerSelection({
               </div>
               {displayView === 'links' ? renderPublishedRelationships?.(active) ?? renderRelationships?.(active, links.page)
                 : displayView.startsWith('extra:') ? availableViews.find(view => `extra:${view.key}` === displayView)?.render(active)
-                : !metadata ? <p role="status">Loading object presentation…</p>
+                : !metadata ? <p role="status"><LoadingIndicator size={20}>Loading object presentation…</LoadingIndicator></p>
                 : metadata.error ? <div role="alert"><strong>Object details could not be loaded</strong><p>{metadata.error}</p>
                     {metadata.retry && <Button size="small" onClick={metadata.retry}>Retry object details</Button>}</div>
                 : displayView === 'properties'

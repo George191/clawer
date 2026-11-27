@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { exactTransferReceiptFocus } from './transferReceiptFocus';
@@ -228,7 +229,7 @@ function TimelineWorkspace({ schema, table, onLatestCurrentReceipt }: Props) {
     </form>
     {focusId && focusLoading === focusId && <p role="status">Verifying the requested receipt…</p>}
     {failed ? null
-      : !entries ? <p role="status">Loading transfer timeline…</p> : entries.length ? <>
+      : !entries ? <p role="status"><LoadingIndicator size={20}>Loading transfer timeline…</LoadingIndicator></p> : entries.length ? <>
         <ol className="flow-evidence-receipts" aria-label="Transfer timeline entries">
           {entries.map(entry => <li key={keyFor(entry)}>
             <TimelineEntryFacts entry={entry} />
@@ -240,7 +241,7 @@ function TimelineWorkspace({ schema, table, onLatestCurrentReceipt }: Props) {
     <Modal open={Boolean(showSelected || exactDetail)} destroyOnHidden className="flow-surface-modal" title="Transfer timeline detail"
       onCancel={() => { if (focusId) closeFocus(); else if (showSelected) setSelected(undefined); }} footer={null}>
       {showSelected && detailFailed ? null
-        : !shownDetail ? <p role="status">Loading timeline detail…</p> : <div className="flow-evidence-timeline-detail">
+        : !shownDetail ? <p role="status"><LoadingIndicator size={20}>Loading timeline detail…</LoadingIndicator></p> : <div className="flow-evidence-timeline-detail">
           <TimelineEntryFacts entry={shownDetail} />
           <div><span>Plan ID</span> <code>{shownDetail.planId}</code></div>
           <div><span>Plan revision</span> {shownDetail.planUpdatedAt ? <TimelineTime value={shownDetail.planUpdatedAt} /> : 'Not verified'}</div>

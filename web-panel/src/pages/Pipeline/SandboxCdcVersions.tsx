@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useRef, useState } from 'react';
 import { Button, Modal, NativeSelect } from '@/components/ui';
 import { compareSandboxCdcVersions, fetchSandboxCdcVersion, fetchSandboxCdcVersions } from '../../services/api';
@@ -128,7 +129,7 @@ function VersionWorkspace({ refreshRevision, onScopeDenied }: { refreshRevision:
   return <>
     {listFailed ? <><p role="alert">Version history could not be loaded.</p>
       <Button size="small" onClick={() => setRevision(value => value + 1)}>Retry version history</Button></>
-      : !list ? <p role="status">Loading captured versions…</p>
+      : !list ? <p role="status"><LoadingIndicator size={20}>Loading captured versions…</LoadingIndicator></p>
         : !list.available ? <p>Version capture is unavailable in this environment.</p>
           : !list.versions.length ? <p>No captured versions. Existing receipts are not reconstructed from the current table.</p> : <>
             <ol className="ontology-source-sync__items" aria-label="Captured target versions">
@@ -156,7 +157,7 @@ function VersionWorkspace({ refreshRevision, onScopeDenied }: { refreshRevision:
     <Modal open={Boolean(inspecting)} destroyOnHidden className="flow-surface-modal" title="Historical target snapshot"
       onCancel={() => setInspecting(undefined)} footer={null} width={720}>
       {detailFailed ? <p role="alert">This captured version could not be verified.</p>
-        : !detail ? <p role="status">Loading historical snapshot…</p> : <>
+        : !detail ? <p role="status"><LoadingIndicator size={20}>Loading historical snapshot…</LoadingIndicator></p> : <>
           <div className="ontology-cdc-versions__detail"><VersionFacts version={detail} /></div>
           <p>Values show the table as captured for this receipt, not the live destination.</p>
           {detail.rows.length ? <div className="ontology-cdc-versions__table"><table aria-label="Captured snapshot rows">

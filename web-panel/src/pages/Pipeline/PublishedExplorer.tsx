@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { message } from '@/components/ui';
@@ -274,7 +275,7 @@ function Workspace({ entry, routeKey }: { entry: PublishedExplorerEntry; routeKe
           </section>}<ExplorerResultsFooter offset={offset} rowCount={rows.length} pageSize={pageSize} loading={busy} locked={objectTools.mutationOpen} canPageFurther={!!result?.hasMore && offset + pageSize <= 100000}
             onPageSize={size => { if (canChange()) { setPageSize(size); setOffset(0); } }} onPrevious={() => { if (canChange()) setOffset(value => Math.max(0, value - pageSize)); }} onNext={() => { if (canChange()) setOffset(value => value + pageSize); }} /></>,
         } : undefined}>
-          {busy && !objectType && <div className="flow-schema-state" role="status">Loading published object set…</div>}
+          {busy && !objectType && <div className="flow-schema-state" role="status"><LoadingIndicator size={20}>Loading published object set…</LoadingIndicator></div>}
           {query?.keys && <div className="flow-schema-applied flow-query-chips" aria-label="Object set scope"><span>{query.keys.length} object references{result ? ` · ${result.count} matching objects` : ''}</span></div>}
           {filtersOpen && query && <ExplorerFilterEditor rules={filterRules} setRules={setFilterRules} sorts={draftSorts}
             validationRequest={filterValidationRequest}

@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import React, { useEffect, useState } from 'react';
 import { Button, Input } from '@/components/ui';
 import { bindSourceDamengCdc, fetchSourceDamengCdc, removeSourceDamengCdc } from '../../services/api';
@@ -52,7 +53,7 @@ export default function SourceDamengCdc({ source, onBusyChange, onDirtyChange }:
       <li><span>3</span><div><strong>Verify the capture chain</strong><p>Check DMDRS health and inspect Kafka messages separately.</p></div></li>
     </ol>
     {error && <p role="alert">{error}</p>}
-    {!status && !error && <p role="status">Loading DMDRS binding…</p>}
+    {!status && !error && <p role="status"><LoadingIndicator size={20}>Loading DMDRS binding…</LoadingIndicator></p>}
     {status && <div className="source-capture__layout">
       <section className="source-capture__panel source-capture__prepare" aria-label="DMDRS prerequisites">
         <h4>1. Prepare the external capture</h4>

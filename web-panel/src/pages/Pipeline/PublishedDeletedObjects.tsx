@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useRef, useState } from 'react';
 import { Button, Input, message } from '@/components/ui';
 import { DeleteOutlined, EditOutlined, HistoryOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, UndoOutlined } from '@/components/ui/icons';
@@ -48,7 +49,7 @@ export function RecordHistory({ objectType, recordId, onChanged }: { objectType:
   return <section className="explorer-history" aria-label="Record action history">
     <header><HistoryOutlined /><h4>Edit history</h4></header>
     {error ? null
-      : !page ? <p role="status">Loading action history…</p> : <>
+      : !page ? <p role="status"><LoadingIndicator size={20}>Loading action history…</LoadingIndicator></p> : <>
         {page.items.length ? <ol className="explorer-history-events">{page.items.map(event => <li key={event.revision}>
           <span className="explorer-history-marker" aria-hidden="true">{event.kind === 'modify' ? <EditOutlined /> : event.kind === 'delete' ? <DeleteOutlined /> : <PlusOutlined />}</span>
           <details open><summary><span><strong>{{ create: 'Created', modify: 'Modified', delete: 'Deleted' }[event.kind]}</strong><small>Revision {event.revision}</small></span>
@@ -104,7 +105,7 @@ export default function PublishedDeletedObjects({ objectType, onChanged }: { obj
       <aside className="ontology-tool-catalog" aria-label="Deleted object list">
         <div className="ontology-tool-search"><Input aria-label="Find deleted objects on this page" placeholder="Find on this page" prefix={<SearchOutlined />} value={search} onChange={event => setSearch(event.target.value)} /></div>
         <div className="ontology-tool-catalog-list">
-          {!page && !error && <p role="status">Loading deleted objects…</p>}
+          {!page && !error && <p role="status"><LoadingIndicator size={20}>Loading deleted objects…</LoadingIndicator></p>}
           {page && !page.items.length && <p>No deleted objects are available to this account.</p>}
           {!!page?.items.length && !visible.length && <p>No objects on this page match your search.</p>}
           {visible.map(record => <button type="button" key={record.id} aria-pressed={selectedId === record.id} onClick={() => setSelectedId(record.id ?? '')}><DeleteOutlined /><span><strong>{title(record.title)}</strong><small>Deleted · Revision {record.revision}</small></span></button>)}

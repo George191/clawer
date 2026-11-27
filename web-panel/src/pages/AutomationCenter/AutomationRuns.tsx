@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, App, Badge, Button, Empty, Input, Popconfirm, Select, Table } from '@/components/ui';
 import { CloseOutlined, ReloadOutlined, SearchOutlined } from '@/components/ui/icons';
@@ -148,7 +149,7 @@ export default function AutomationRuns({ domain, keyword, onKeywordChange, taskI
         { title: 'Started', width: 170, render: (_: unknown, task: WorkspaceTask) => date(task.started_at) },
       ]} /></div>
       {taskId && <aside className="automation-run-inspector" aria-label="Run details"><header><div><h2>{detail?.name || 'Run details'}</h2></div><Button type="text" icon={<CloseOutlined />} aria-label="Close run details" onClick={() => onSelect(null)} /></header>
-        {detailError ? <Alert type="error" message={detailError} /> : !detail ? <p role="status">Loading run details…</p> : <>
+        {detailError ? <Alert type="error" message={detailError} /> : !detail ? <p role="status"><LoadingIndicator size={20}>Loading run details…</LoadingIndicator></p> : <>
           {detail.control_state !== 'canceled' && <div className="automation-run-actions">
             {detail.status === 'running' && <Button loading={acting} onClick={() => void act('pause')}>Pause</Button>}
             {detail.status === 'paused' && <Button loading={acting} onClick={() => void act('resume')}>Resume</Button>}
@@ -172,7 +173,7 @@ export default function AutomationRuns({ domain, keyword, onKeywordChange, taskI
           </div>
           <div className="automation-log-toolbar"><Input allowClear aria-label="Search execution logs" placeholder="Search loaded logs…" value={logQuery} onChange={event => setLogQuery(event.target.value)} /><Select aria-label="Log level" value={logLevel} onChange={setLogLevel} options={['all', ...new Set(lines.map(log => log.level))].map(value => ({ value, label: value === 'all' ? 'All levels' : value }))} /><span>{visibleLogs.length} / {lines.length} loaded</span></div>
           <div className="automation-inspector-section automation-logs">{logsError && <p role="alert">{logsError}</p>}{hasMore && <Button size="small" loading={logsLoading} onClick={() => void loadOlder()}>Load older logs</Button>}
-            {logsLoading && !lines.length ? <p role="status">Loading logs…</p> : visibleLogs.length ? <div className="workspace-dock-log-list is-detail">{visibleLogs.slice().reverse().map(log => <div key={log.id} className={`workspace-dock-log-row is-${log.level}`}><code>{renderConsoleLogMessage(log.message)}</code></div>)}</div> : <p className="automation-muted">{lines.length ? 'No loaded logs match these filters.' : runId ? 'No logs recorded for this execution.' : 'This task has not started.'}</p>}
+            {logsLoading && !lines.length ? <p role="status"><LoadingIndicator size={20}>Loading logs…</LoadingIndicator></p> : visibleLogs.length ? <div className="workspace-dock-log-list is-detail">{visibleLogs.slice().reverse().map(log => <div key={log.id} className={`workspace-dock-log-row is-${log.level}`}><code>{renderConsoleLogMessage(log.message)}</code></div>)}</div> : <p className="automation-muted">{lines.length ? 'No loaded logs match these filters.' : runId ? 'No logs recorded for this execution.' : 'This task has not started.'}</p>}
           </div>
         </>}
       </aside>}

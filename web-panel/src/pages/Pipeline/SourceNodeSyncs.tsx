@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useCallback, useEffect, useState } from 'react';
 import { Button, NativeSelect } from '@/components/ui';
 import { fetchCurrentUserContext, fetchDataSourceNodes, fetchLayers } from '../../services/api';
@@ -69,20 +70,20 @@ function Workspace({ source, kind, scope, identity, onStateChange }: Props & { i
       <li><span>3</span><div><strong>Preview and save</strong><p>Read up to 20 source rows and save a draft. Cross-source execution is not available.</p></div></li>
     </ol>
     {paused ? <p role="status">This connection is paused. Resume it before discovering nodes or reading source data.</p>
-      : access === 'loading' ? <p role="status">Checking access…</p>
+      : access === 'loading' ? <p role="status"><LoadingIndicator size={20}>Checking access…</LoadingIndicator></p>
         : access === 'denied' ? <p role="alert">Only administrators can manage source node syncs.</p>
           : access === 'error' ? <p role="alert">Unable to verify access. Refresh storage nodes to try again.</p>
             : <div className="source-node-syncs__layout"><aside className="source-node-syncs__source" aria-label="Source node selection">
               <h4>1 · Source node</h4><p>Search scopes in this saved connection, then choose one to manage its transfer drafts.</p>
               <form className="source-node-syncs__search" onSubmit={event => { event.preventDefault(); if (setupLocked) return; setAppliedSearch(search.trim()); setRevision(value => value + 1); }}><input aria-label="Search source storage scopes" placeholder="Search storage scopes" maxLength={100} disabled={setupLocked} value={search} onChange={event => setSearch(event.target.value)} /><Button htmlType="submit" disabled={setupLocked}>Search scopes</Button></form>
-              {nodeError ? <p role="alert">Unable to discover storage nodes. {nodeError}</p> : !nodes ? <p role="status">Loading storage nodes…</p> : !nodes.length ? <p>No visible storage scopes in this connection.</p> : <label>Source storage node<NativeSelect aria-label="Source storage node" disabled={setupLocked} value={selectedId} onChange={event => { if (!setupLocked) setSelectedId(event.target.value); }}><option value="">Select a storage node</option>{nodes.map(node => <option key={node.id} value={node.id}>{node.kind} · {node.name}</option>)}</NativeSelect></label>}
+              {nodeError ? <p role="alert">Unable to discover storage nodes. {nodeError}</p> : !nodes ? <p role="status"><LoadingIndicator size={20}>Loading storage nodes…</LoadingIndicator></p> : !nodes.length ? <p>No visible storage scopes in this connection.</p> : <label>Source storage node<NativeSelect aria-label="Source storage node" disabled={setupLocked} value={selectedId} onChange={event => { if (!setupLocked) setSelectedId(event.target.value); }}><option value="">Select a storage node</option>{nodes.map(node => <option key={node.id} value={node.id}>{node.kind} · {node.name}</option>)}</NativeSelect></label>}
               {selected && <dl className="source-node-syncs__facts"><div><dt>Connection</dt><dd>{source.name}</dd></div><div><dt>Scope</dt><dd>{selected.kind} · <code>{selected.name}</code></dd></div><div><dt>Mode</dt><dd>Draft setup &amp; read-only preview</dd></div></dl>}
               {setupLocked && <p role="status">{activity.busy ? 'Setup is being saved or processed. Keep this source open until the request finishes.' : 'Save or cancel the open draft before changing the source node or refreshing its catalog.'}</p>}
               {nodes && scope !== undefined && !nodes.some(node => node.name === scope && (!kind || node.kind === kind)) && <p role="alert">The requested storage node is not visible in this connection. Select another node or check the source permissions.</p>}
               {hasMore && <p role="status">Additional storage scopes are not listed in this limited catalog. Search to find another scope.</p>}
             </aside><div className="source-node-syncs__plans">
               {targetError && <p role="alert">Unable to load destination schemas. {targetError}</p>}
-              {selected && !schemas && !targetError && <p role="status">Loading destination schemas…</p>}
+              {selected && !schemas && !targetError && <p role="status"><LoadingIndicator size={20}>Loading destination schemas…</LoadingIndicator></p>}
               {!selected && <div className="source-detail-empty"><strong>Choose a source node</strong><p>Its saved drafts and transfer setup will appear here.</p></div>}
               {selected && schemas && <LineageTransferPlans key={JSON.stringify([selected.id, selected.sourceUpdatedAt])} schema={selected.name} schemas={schemas} sourceNode={selected} onStateChange={reportActivity} />}
             </div></div>}

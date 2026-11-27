@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui';
 import { fetchDataSourceReferences } from '../../services/api';
@@ -50,7 +51,7 @@ export default function SourceCatalogReferences({ sourceId, schema, table, sourc
       <Button size="small" aria-pressed={direction === 'incoming'} onClick={() => changeDirection('incoming')}>Incoming</Button>
       <Button size="small" disabled={status === 'loading'} onClick={() => void load()}>Load references</Button>
     </div>
-    {status === 'loading' && <p role="status">Loading references…</p>}
+    {status === 'loading' && <p role="status"><LoadingIndicator size={20}>Loading references…</LoadingIndicator></p>}
     {status === 'stale' && <p role="alert">This saved connection changed. Reload Data Connections before loading references again.</p>}
     {status === 'error' && <p role="alert">Could not load foreign key references for this table.</p>}
     {result && (result.references.length ? <ul>

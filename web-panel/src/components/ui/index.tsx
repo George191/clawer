@@ -1,3 +1,4 @@
+export * from './loading';
 export * from './foundation';
 export * from './forms';
 export * from './data';

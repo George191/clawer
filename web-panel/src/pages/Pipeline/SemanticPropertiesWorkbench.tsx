@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import PropertyTypeIcon from './PropertyTypeIcon';
 import { useEffect, useRef, useState } from 'react';
 import { Button, Checkbox, Input, Select } from '@/components/ui';
@@ -188,7 +189,7 @@ export default function SemanticPropertiesWorkbench({ definition, preview, busy,
         <Button size="small" aria-expanded={previewOpen} disabled={busy || !preview} onClick={sourceSample}>{previewOpen ? 'Hide preview' : 'Preview table'}</Button>
       </div>
       {previewOpen && <div className="flow-foundry-property-table-wrap">
-        {sampleError ? <div className="flow-foundry-property-empty" role="alert">The source sample could not be loaded. <Button size="small" onClick={() => setRetry(value => value + 1)}>Retry</Button></div> : !sample ? <div className="flow-foundry-property-empty" role="status">Loading up to 5 source rows…</div> : sampleColumns.length ? <table aria-label="Source table sample">
+        {sampleError ? <div className="flow-foundry-property-empty" role="alert">The source sample could not be loaded. <Button size="small" onClick={() => setRetry(value => value + 1)}>Retry</Button></div> : !sample ? <div className="flow-foundry-property-empty" role="status"><LoadingIndicator size={20}>Loading up to 5 source rows…</LoadingIndicator></div> : sampleColumns.length ? <table aria-label="Source table sample">
           <thead><tr><th>#</th>{sampleColumns.map(column => {
             const index = properties.findIndex(item => item.sourceColumn === column.name);
             return <th key={column.name} className={selected !== undefined && selected === index ? 'is-selected' : undefined}><code>{column.name}</code><small>{column.type}</small>{index >= 0 && <button type="button" className="flow-foundry-property-link" onClick={() => openProperty(index)}>{label(properties[index])}</button>}</th>;

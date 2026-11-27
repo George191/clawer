@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import ExplorerRecordMutation, { recordMutationActions } from './ExplorerRecordMutation';
 import { PropertyLabel } from './PropertyTypeIcon';
 import { ExplorerValueProvider } from './ExplorerValue';
@@ -195,7 +196,7 @@ function RecordPage({ source, identity }: { source: ExplorerDetailSource; identi
             <Button icon={<ReloadOutlined />} disabled={busy || (!!draft && !stale) || objectTools.mutationOpen} onClick={()=>reload(n=>n+1)}>Refresh</Button>
             <ExplorerRecordActions items={actions} row={row || undefined} disabled={locked || stale} />
         </div></header>
-        {!result && !error && <p role="status">Loading object…</p>}
+        {!result && !error && <p role="status"><LoadingIndicator size={20}>Loading object…</LoadingIndicator></p>}
         {result && row && <>
             <dl className="record-identity">{Object.entries(result.identity).map(([name,value])=>
                 <div key={name}><dt><PropertyLabel type={result.columnTypes[name] || 'string'}>{name}</PropertyLabel></dt><dd>{String(value)}</dd></div>)}</dl>
@@ -211,9 +212,9 @@ function RecordPage({ source, identity }: { source: ExplorerDetailSource; identi
                 ? <PublishedExplorerRelationships definitionId={source.definitionId} recordId={publishedRecord!.id!} sourceTitle={title} refreshToken={objectTools.relationsVersion} />
                 : <ExplorerRowLinks schema={schema} table={table} primaryKey={result.identity} sourceTitle={title} initialPage={links.page}/> :
                 currentMode === 'history' && publishedRecord ? objectTools.renderHistory(publishedRecord) :
-                !layouts && !layoutError ? <p role="status">Loading property layout…</p> :
+                !layouts && !layoutError ? <p role="status"><LoadingIndicator size={20}>Loading property layout…</LoadingIndicator></p> :
                 layoutError ? null :
-                !metadata ? <p role="status">Loading object presentation…</p> :
+                !metadata ? <p role="status"><LoadingIndicator size={20}>Loading object presentation…</LoadingIndicator></p> :
                 metadata.error ? <div role="alert"><strong>Object details could not be loaded</strong><p>{metadata.error}</p>
                     {metadata.retry && <Button size="small" onClick={metadata.retry}>Retry object details</Button>}</div> :
                 currentMode==='properties' ? <ExplorerProperties presentation={presentation} presentations={presentations} row={row}/> :

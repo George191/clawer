@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { fetchTableExportLineage, type TableExportLineage, type TableExportLineageReceipt } from '../../services/api';
@@ -38,7 +39,7 @@ export default function TableExportEvidence({ mode, version }: { mode: 'explorer
     <div className="flow-evidence-grid">
       <section className="flow-evidence-card" aria-label="Export lineage">
         <header><h4>Table export lineage</h4><span>{failed ? '' : !record ? 'Checking evidence' : observation ? 'Observed export' : 'No observed edge'}</span></header>
-        {failed ? null : !record ? <p role="status">Loading export lineage…</p> : <>
+        {failed ? null : !record ? <p role="status"><LoadingIndicator size={20}>Loading export lineage…</LoadingIndicator></p> : <>
           <strong>{record.declaration ? stateLabels[record.declaration.state] : 'No saved export review'}</strong>
           {record.declaration && <p>{record.declaration.name} · Reviewed <time dateTime={record.declaration.reviewedAt}>{displayTime(record.declaration.reviewedAt)}</time></p>}
           <div className="flow-evidence-path flow-table-export-path" data-observed={Boolean(observation)} role="group" aria-label={observation ? 'Observed export edge' : 'Fixed outbound scope without observed edge'}>
@@ -56,7 +57,7 @@ export default function TableExportEvidence({ mode, version }: { mode: 'explorer
       </section>
       <section className="flow-evidence-card" aria-label="Receiver receipt history">
         <header><h4>Receiver receipt history</h4><span>Confirmed receipts only</span></header>
-        {failed ? null : !record ? <p role="status">Loading receiver receipts…</p>
+        {failed ? null : !record ? <p role="status"><LoadingIndicator size={20}>Loading receiver receipts…</LoadingIndicator></p>
           : record.receipts.length ? <ul className="flow-evidence-receipts">{record.receipts.map(receipt => <li key={receipt.id}>
             <div><strong>{receipt.rowsAffected.toLocaleString()} rows affected</strong><span>{reviewLabels[receipt.reviewRelation]}</span></div>
             <div><span>Receiver recorded</span><time dateTime={receipt.recordedAt}>{displayTime(receipt.recordedAt)}</time></div>

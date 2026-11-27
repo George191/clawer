@@ -112,9 +112,9 @@ const App: React.FC = () => {
         ) : session.locked ? (
           <AuthLayout><LockScreen /></AuthLayout>
         ) : (
-          <Suspense fallback={<div role="status" style={{ minHeight: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12 }}><Spin /><span>Loading workspace...</span></div>}>
+          <Suspense fallback={<div role="status" style={{ minHeight: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12 }}><Spin tip="Loading workspace..." /></div>}>
           <MainLayout key={session.identity}>
-          <Suspense fallback={<div role="status" style={{ minHeight: 240, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12 }}><Spin /><span>Loading workspace...</span></div>}>
+          <Suspense fallback={<div role="status" style={{ minHeight: 240, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12 }}><Spin tip="Loading workspace..." /></div>}>
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/dashboard" element={<Dashboard />} />

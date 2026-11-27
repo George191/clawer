@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { PropertyLabel } from './PropertyTypeIcon';
 import { ExplorerValue } from './ExplorerValue';
 import { lazy, Suspense, useEffect, useState } from 'react';
@@ -122,7 +123,7 @@ export function ExplorerFieldValue({ row, field }: { row: ExplorerPreviewRow; fi
   const value = explorerFieldValue(row, field);
   if (field.presentation === 'media' && notEmpty(value)) return <ExplorerValue value={value} identity={row.identity} field={field.field} presentation="media" />;
   return field.presentation !== 'value' && field.presentation !== 'media' && notEmpty(value)
-    ? <Suspense fallback={<span role="status">Loading property preview…</span>}>
+    ? <Suspense fallback={<span role="status"><LoadingIndicator size={20}>Loading property preview…</LoadingIndicator></span>}>
       <ExplorerPropertyPreview kind={field.presentation} value={value} label={field.label} />
     </Suspense> : <ExplorerPropertyValue value={value} format={field.format} identity={row.identity} field={field.field} />;
 }

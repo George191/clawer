@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import React, { useEffect, useState } from 'react';
 import { Button, Input, NativeSelect } from '@/components/ui';
 import { controlSourceCdc, createSourceCdc, fetchSourceCdc } from '../../services/api';
@@ -81,7 +82,7 @@ export default function SourceCdc({ source, onBusyChange, onDirtyChange }: { sou
       <li><span>3</span><div><strong>Check status and output</strong><p>Inspect tasks and verify events in the Kafka topics.</p></div></li>
     </ol>
     {error && <p role="alert">{error}</p>}
-    {!status && !error && <p role="status">Loading CDC status…</p>}
+    {!status && !error && <p role="status"><LoadingIndicator size={20}>Loading CDC status…</LoadingIndicator></p>}
     {status && <div className="source-capture__layout">
       <section className="source-capture__panel source-capture__prepare" aria-label="Capture prerequisites">
       <h4>1. Check prerequisites</h4>

@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useRef, useState } from 'react';
 import { Button, Input, NativeSelect } from '@/components/ui';
 import { fetchIndexPreviewSandbox, queryIndexPreviewSandbox } from '../../services/api';
@@ -124,7 +125,7 @@ function IndexPreviewWorkspace({ schema, table }: { schema: string; table: strin
     <header><h3>Index-aware sandbox preview</h3><p>Fixed relation: <code>{schema}.{table}</code>. No generic preview fallback.</p></header>
     {availabilityError ? <><p role="alert">Sandbox preview availability could not be checked.</p>
       <Button size="small" onClick={() => setRevision(value => value + 1)}>Retry availability</Button></>
-      : available === undefined ? <p role="status">Checking sandbox preview availability…</p>
+      : available === undefined ? <p role="status"><LoadingIndicator size={20}>Checking sandbox preview availability…</LoadingIndicator></p>
         : !available ? <p>Index-aware sandbox preview is disabled in this environment.</p> : <>
     <section className="flow-index-preview__query" aria-label="Primary key query">
       <label>ID predicate

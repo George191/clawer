@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Alert, Button, Drawer, Empty, Form, Input, Switch, Modal, Table, message } from '@/components/ui';
@@ -105,7 +106,7 @@ export default function Agents() {
         { title: 'Access', render: (_, item) => item.system_key ? 'System' : item.can_edit ? item.visibility : 'Shared with you' },
         { title: 'Revision', dataIndex: 'revision', width: 90 },
       ]} />}
-      <div className="agent-catalog-footer">{loaded ? `${executorsView ? executors.length : connectionsView ? connections.length : agents.length} matching ${executorsView ? 'executors' : connectionsView ? 'connections' : 'agents'}` : 'Loading catalog…'}</div>
+      <div className="agent-catalog-footer">{loaded ? `${executorsView ? executors.length : connectionsView ? connections.length : agents.length} matching ${executorsView ? 'executors' : connectionsView ? 'connections' : 'agents'}` : <LoadingIndicator size={20}>Loading catalog…</LoadingIndicator>}</div>
     </section>
     <Drawer open={Boolean(selected)} title={selected?.id ? connectionsView ? 'Connection details' : 'Agent details' : connectionsView ? 'New connection' : 'New agent'} width="min(720px, 100vw)" onClose={closeEditor} className="agent-editor-drawer" destroyOnHidden>
       {selected && <Form layout="vertical" onFinish={() => void act(save)}>{error && <Alert type="error" message={error} />}

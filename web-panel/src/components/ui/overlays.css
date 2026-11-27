@@ -78,11 +78,11 @@
 .ui-message-close:hover{background:#ffffff1f;opacity:1}
 .ui-message-notice-content:focus-visible,.ui-message-close:focus-visible{outline:2px solid currentColor;outline-offset:2px}
 .ui-message-info .ui-message-icon{color:var(--ui-action-link,var(--ui-primary))}
-.ui-message-icon.ui-overlay-spinner{width:16px;height:16px;min-width:16px}
+
 @keyframes ui-message-enter{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
 @keyframes ui-dropdown-enter{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
 @keyframes ui-dropdown-exit{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(-4px)}}
-.ui-overlay-spinner{display:inline-block;width:13px;height:13px;min-width:13px;box-sizing:border-box;border:1.5px solid currentColor;border-right-color:transparent;border-radius:50%;animation:ui-overlay-spin .75s linear infinite}
-@keyframes ui-overlay-spin{to{transform:rotate(360deg)}}
+
+
 @media(max-width:600px){.ui-modal-wrap{padding:24px 12px}.ui-modal{max-width:calc(100vw - 24px)}.ui-modal-header{padding:17px 17px 12px}.ui-modal-body{padding:17px}.ui-modal-footer{padding:12px 17px}.ui-drawer-header,.ui-drawer-body{padding:16px}}
-@media(prefers-reduced-motion:reduce){.ui-overlay-spinner{animation-duration:1.5s}.ui-message-notice,.ui-dropdown[data-state]{animation:none}.ui-message-close{transition:none}}
+@media(prefers-reduced-motion:reduce){.ui-message-notice,.ui-dropdown[data-state]{animation:none}.ui-message-close{transition:none}}

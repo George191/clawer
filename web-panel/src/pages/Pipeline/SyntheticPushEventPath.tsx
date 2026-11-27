@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useRef, useState } from 'react';
 import { Button, Modal } from '@/components/ui';
 import { checkSyntheticPushEventPath } from '../../services/api';
@@ -53,7 +54,7 @@ export default function SyntheticPushEventPath({ identity, receipt }: { identity
   return <>
     <Button size="small" onClick={() => void check()}>Check application evidence</Button>
     <Modal open={open} destroyOnHidden className="flow-surface-modal" title="Application evidence" footer={null} onCancel={close}>
-      {unavailable ? <p role="status">Application evidence is unavailable.</p> : !evidence ? <p role="status">Checking recorded application evidence…</p> : <>
+      {unavailable ? <p role="status">Application evidence is unavailable.</p> : !evidence ? <p role="status"><LoadingIndicator size={20}>Checking recorded application evidence…</LoadingIndicator></p> : <>
         <strong role="status">{evidence.status === 'applied_recorded' ? 'Application receipt verified.' : 'Accepted, with no application recorded at observation.'}</strong>
         <p>This is a point-in-time check of recorded evidence for this receipt only, not a live delivery status. It does not apply an event.</p>
         <dl className="ontology-connections-summary">

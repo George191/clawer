@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link } from 'react-router-dom';
@@ -177,7 +178,7 @@ function BatchSyncSchedulePanel({ plan, source, capability, sourceReviewNeeded, 
     <div className="ontology-source-sync__schedule-heading"><h4 ref={title} tabIndex={-1}>Batch sync schedule</h4><Button size="small" disabled={busy} onClick={() => { setRequestError(''); setRevision(value => value + 1); }}>Refresh schedule</Button></div>
     <p>Automation runs this bounded sandbox snapshot Upsert at the same UTC time each day. It does not delete target rows.</p>
     {requestError && <p role="alert" className="is-error">{requestError}</p>}
-    {stateError ? <p role="alert" className="is-error">{stateError}</p> : !schedule ? <p role="status">Loading schedule…</p> : <>
+    {stateError ? <p role="alert" className="is-error">{stateError}</p> : !schedule ? <p role="status"><LoadingIndicator size={20}>Loading schedule…</LoadingIndicator></p> : <>
       <p role="status"><strong>{schedule.configuredEnabled ? (schedule.available && schedule.enabled && !sourceReviewNeeded ? 'Schedule armed' : 'Schedule armed · blocked') : schedule.generation == null ? 'Schedule not armed' : 'Schedule paused'}</strong>
         {schedule.plannedTimeUtc && <> · Daily at {schedule.plannedTimeUtc} UTC · local time {nextLocalTimeForUtcClock(schedule.plannedTimeUtc)}</>}</p>
       {sourceChanged && <p>Review and save the changed source revision before arming a schedule.</p>}
@@ -191,7 +192,7 @@ function BatchSyncSchedulePanel({ plan, source, capability, sourceReviewNeeded, 
     </>}
     <h4>Schedule jobs</h4>
     <p>{plan.mode === 'incremental' ? 'Dispatch is not a commit. “No new data” does not verify data movement.' : 'Dispatch is not a commit. Only a committed receipt verifies the transfer outcome.'}</p>
-    {jobError ? <p role="alert" className="is-error">{jobError}</p> : !jobs ? <p role="status">Loading schedule jobs…</p> :
+    {jobError ? <p role="alert" className="is-error">{jobError}</p> : !jobs ? <p role="status"><LoadingIndicator size={20}>Loading schedule jobs…</LoadingIndicator></p> :
       jobs.length ? <ul className="ontology-source-sync__items">{jobs.map(job => <li key={job.id}>
         <strong>{scheduleLabels[job.state]}</strong>
         <span>Scheduled slot: <time dateTime={job.slot}>{utcText(job.slot)}</time></span>
@@ -520,7 +521,7 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
         </fieldset>
         {saveError && <p role="alert" className="is-error">{saveError}</p>}
         <div className="ontology-source-sync__actions"><Button disabled={Boolean(busy)} onClick={closeDraft}>Cancel</Button><Button type="primary" htmlType="submit" loading={busy === 'save'} disabled={sourcePaused || !fullyMapped || !draft.name.trim() || sourceProof?.state === 'blocked'}>Save draft</Button></div>
-      </form> : !visiblePlans ? !stateError && <p role="status">Loading batch syncs…</p> : visiblePlans.length ? <ul className="ontology-source-sync__items">{visiblePlans.map(plan => <li key={plan.id}>
+      </form> : !visiblePlans ? !stateError && <p role="status"><LoadingIndicator size={20}>Loading batch syncs…</LoadingIndicator></p> : visiblePlans.length ? <ul className="ontology-source-sync__items">{visiblePlans.map(plan => <li key={plan.id}>
         <div><strong>{plan.name}</strong> · {plan.keyRange ? 'Snapshot ID interval' : plan.mode === 'incremental' ? 'Committed batch Upsert' : capability?.incrementalBatchSync ? 'Snapshot Upsert' : 'Draft'}</div>
         {plan.keyRange && <p><RangeFacts range={plan.keyRange} /></p>}
         {plan.mode === 'incremental' && <p>Committed through: <code>{plan.appliedThrough ?? 'Not recorded'}</code>. This is the saved target checkpoint, not the latest source head.</p>}
@@ -549,8 +550,8 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
           {historyView === 'attempts' && <p>Attempts record execution requests and outcomes. A recorded request is not proof that a worker is active or that any rows committed.</p>}
           {historyError ? <p role="alert" className="is-error">{historyError} <Button size="small" onClick={() => setRevision(value => value + 1)}>Retry history</Button></p>
             : historyView === 'attempts'
-              ? attemptList ? <AttemptList attempts={attemptList.filter(attempt => attempt.planId === plan.id)} canRetry={Boolean(capability?.enabled && !busy)} onRetry={attempt => askRun(plan, attempt)} /> : <p role="status">Loading attempts…</p>
-              : receiptList ? <ReceiptList receipts={receiptList.filter(receipt => receipt.planId === plan.id)} incremental={plan.mode === 'incremental'} lineageAvailable={capability?.incrementalLineage === true} /> : <p role="status">Loading sync history…</p>}
+              ? attemptList ? <AttemptList attempts={attemptList.filter(attempt => attempt.planId === plan.id)} canRetry={Boolean(capability?.enabled && !busy)} onRetry={attempt => askRun(plan, attempt)} /> : <p role="status"><LoadingIndicator size={20}>Loading attempts…</LoadingIndicator></p>
+              : receiptList ? <ReceiptList receipts={receiptList.filter(receipt => receipt.planId === plan.id)} incremental={plan.mode === 'incremental'} lineageAvailable={capability?.incrementalLineage === true} /> : <p role="status"><LoadingIndicator size={20}>Loading sync history…</LoadingIndicator></p>}
         </section>}
       </li>)}</ul> : <p>{sourcePaused ? 'No saved batch syncs.' : 'No saved batch syncs. Select a table in Explore source to set one up.'}</p>}
     </div>

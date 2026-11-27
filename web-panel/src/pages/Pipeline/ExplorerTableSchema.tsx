@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import PropertyTypeIcon from './PropertyTypeIcon';
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -68,7 +69,7 @@ function Workbench({schema,table,canManage,identity,onSaved,onDirtyChange}: Prop
         onDirtyChange?.(dirty);
         return () => onDirtyChange?.(false);
     }, [dirty, onDirtyChange]);
-    if (!draft || !saved) return <section aria-label="Properties">{error ? <p role="alert">{error} <Button onClick={() => setReload(v=>v+1)}>Retry metadata</Button></p> : <p role="status">Loading properties…</p>}</section>;
+    if (!draft || !saved) return <section aria-label="Properties">{error ? <p role="alert">{error} <Button onClick={() => setReload(v=>v+1)}>Retry metadata</Button></p> : <p role="status"><LoadingIndicator size={20}>Loading properties…</LoadingIndicator></p>}</section>;
     const editable = !!canManage && !busy, bound = !!draft.sourceDefinitionId, structural = editable && !bound;
     const p = draft.properties[selected];
     const change = (next:Mapping) => {if (!editable) return;setDraft(next);if (!conflict) setError('');};
