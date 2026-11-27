@@ -259,21 +259,21 @@
 .scout-result-overflow-hint.is-top { top: 0; background: linear-gradient(#141a29b3, transparent); mask-image: linear-gradient(#000, transparent); }
 .scout-result-overflow-hint.is-bottom { bottom: 0; background: linear-gradient(transparent, #141a29b3); mask-image: linear-gradient(transparent, #000); }
 .scout-result-overflow-hint.is-visible { opacity: 1; }
-/* Four edge fades, softened and feathered inside the preview only. */
-@property --scout-control-progress { syntax: '<number>'; inherits: true; initial-value: 0; }
-.scout-computer-control { position: absolute; z-index: 4; inset: 0; overflow: hidden; border-radius: 24px; isolation: isolate; container-type: size; pointer-events: none; visibility: hidden; opacity: 0; --scout-control-color: 116 164 210; --scout-control-progress: 0; --scout-control-fade: min(96px, 50cqw, 50cqh); mask-image: linear-gradient(to right, transparent, #000 16px, #000 calc(100% - 16px), transparent), linear-gradient(to bottom, transparent, #000 16px, #000 calc(100% - 16px), transparent); mask-composite: intersect; transition: opacity 240ms ease, visibility 0s 240ms; }
-.scout-computer-control[data-active] { visibility: visible; opacity: .58; transition-delay: 0s; animation: scout-control-enter 500ms ease-out both, scout-control-breathe 3s ease-in-out 500ms infinite; }
-.scout-computer-control > span { position: absolute; pointer-events: none; filter: blur(16px); background: linear-gradient(var(--scout-control-direction), rgb(var(--scout-control-color) / .580392157) 0%, rgb(var(--scout-control-color) / .360784314) 18%, rgb(var(--scout-control-color) / .121568627) 58%, rgb(var(--scout-control-color) / 0) 100%); }
-.scout-computer-control > [data-edge=top], .scout-computer-control > [data-edge=bottom] { left: 0; right: 0; height: var(--scout-control-fade); transform: scaleY(calc(.88 + .12 * var(--scout-control-progress))); }
-.scout-computer-control > [data-edge=left], .scout-computer-control > [data-edge=right] { top: 0; bottom: 0; width: var(--scout-control-fade); transform: scaleX(calc(.88 + .12 * var(--scout-control-progress))); }
-.scout-computer-control > [data-edge=top] { top: 0; transform-origin: top; --scout-control-direction: to bottom; }
-.scout-computer-control > [data-edge=bottom] { bottom: 0; transform-origin: bottom; --scout-control-direction: to top; }
-.scout-computer-control > [data-edge=left] { left: 0; transform-origin: left; --scout-control-direction: to right; }
-.scout-computer-control > [data-edge=right] { right: 0; transform-origin: right; --scout-control-direction: to left; }
+/* Uneven, independently drifting fog patches, clipped to the preview. */
+.scout-computer-control { position: absolute; z-index: 4; inset: 0; overflow: hidden; border-radius: 24px; isolation: isolate; container-type: size; pointer-events: none; visibility: hidden; opacity: 0; --scout-control-color: 116 164 210; --scout-control-fade: min(144px, 40cqw, 40cqh); mask-image: linear-gradient(to right, transparent, #000 16px, #000 calc(100% - 16px), transparent), linear-gradient(to bottom, transparent, #000 16px, #000 calc(100% - 16px), transparent); mask-composite: intersect; transition: opacity 240ms ease, visibility 0s 240ms; }
+.scout-computer-control[data-active] { visibility: visible; opacity: .58; transition-delay: 0s; animation: scout-control-enter 700ms ease-out both; }
+.scout-computer-control > span { position: absolute; pointer-events: none; filter: blur(22px); background: radial-gradient(ellipse var(--scout-fog-size) at var(--scout-fog-origin), rgb(var(--scout-control-color) / .64), rgb(var(--scout-control-color) / .24) 42%, transparent 100%), radial-gradient(ellipse var(--scout-fog-secondary-size) at var(--scout-fog-secondary-origin), rgb(145 155 193 / .32), transparent 100%); }
+.scout-computer-control[data-active] > span { animation: scout-control-drift var(--scout-fog-duration) ease-in-out var(--scout-fog-delay) infinite alternate; }
+.scout-computer-control > [data-edge=top], .scout-computer-control > [data-edge=bottom] { left: 0; right: 0; height: var(--scout-control-fade); --scout-fog-size: 38% 100%; --scout-fog-secondary-size: 24% 74%; }
+.scout-computer-control > [data-edge=left], .scout-computer-control > [data-edge=right] { top: 0; bottom: 0; width: var(--scout-control-fade); --scout-fog-size: 100% 32%; --scout-fog-secondary-size: 72% 22%; }
+.scout-computer-control > [data-edge=top] { top: 0; transform-origin: top; --scout-fog-origin: 24% 0%; --scout-fog-secondary-origin: 82% 0%; --scout-fog-x: 9%; --scout-fog-y: 8%; --scout-fog-duration: 11s; --scout-fog-delay: -3s; }
+.scout-computer-control > [data-edge=bottom] { bottom: 0; transform-origin: bottom; --scout-fog-origin: 73% 100%; --scout-fog-secondary-origin: 16% 100%; --scout-fog-x: -12%; --scout-fog-y: -6%; --scout-fog-duration: 13s; --scout-fog-delay: -8s; }
+.scout-computer-control > [data-edge=left] { left: 0; transform-origin: left; --scout-fog-origin: 0% 68%; --scout-fog-secondary-origin: 0% 13%; --scout-fog-x: 7%; --scout-fog-y: -10%; --scout-fog-duration: 15s; --scout-fog-delay: -11s; }
+.scout-computer-control > [data-edge=right] { right: 0; transform-origin: right; --scout-fog-origin: 100% 32%; --scout-fog-secondary-origin: 100% 87%; --scout-fog-x: -9%; --scout-fog-y: 13%; --scout-fog-duration: 9s; --scout-fog-delay: -5s; }
 @keyframes scout-control-enter { from { opacity: 0; } to { opacity: .58; } }
-@keyframes scout-control-breathe { 0%, 100% { opacity: .46; --scout-control-progress: 0; } 50% { opacity: .58; --scout-control-progress: 1; } }
-:root[data-reduced-motion=true] .scout-computer-control { animation: none; transition: none; --scout-control-progress: 1; }
-@media (prefers-reduced-motion: reduce) { .scout-computer-control, .scout-computer-control[data-active] { animation: none; transition: none; --scout-control-progress: 1; } }
+@keyframes scout-control-drift { from { opacity: .62; transform: translate3d(0, 0, 0) scale(.92); } to { opacity: 1; transform: translate3d(var(--scout-fog-x), var(--scout-fog-y), 0) scale(1.12); } }
+:root[data-reduced-motion=true] .scout-computer-control, :root[data-reduced-motion=true] .scout-computer-control > span { animation: none; transition: none; }
+@media (prefers-reduced-motion: reduce) { .scout-computer-control, .scout-computer-control[data-active], .scout-computer-control[data-active] > span { animation: none; transition: none; } }
 @media (max-width: 767px) { .scout-chat-preview { --scout-chat-gutter: 40px; } .scout-chat-preview.has-results::after { background: repeating-linear-gradient(to right, #d2def214 0 3px, transparent 3px 8px); } }
 @media (prefers-reduced-motion: reduce) { .scout-result-overflow-hint { transition: none; } }
 

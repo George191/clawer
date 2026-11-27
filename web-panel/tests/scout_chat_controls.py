@@ -113,18 +113,24 @@ with sync_playwright() as p:
             expect(effect).to_have_css("border-width", "0px")
             expect(effect).to_have_css("box-shadow", "none")
             expect(effect).to_have_css("border-radius", "24px")
-            expect(effect.locator("[data-edge=top]")).to_have_css("filter", "blur(16px)")
+            expect(effect.locator("[data-edge=top]")).to_have_css("filter", "blur(22px)")
             expect(viewport.locator(".scout-source-preview")).to_have_css("filter", "none")
             assert effect.evaluate("e=>Number(getComputedStyle(e).opacity)") <= .58
             assert effect.evaluate("e=>getComputedStyle(e).maskImage.includes('16px')")
             assert viewport.evaluate("e=>getComputedStyle(e,'::after').content") == "none"
             gradient = effect.locator("[data-edge=top]").evaluate("e=>getComputedStyle(e).backgroundImage")
-            assert "linear-gradient" in gradient and "18%" in gradient and "58%" in gradient
+            assert "radial-gradient" in gradient and "42%" in gradient
             assert viewport.evaluate("e=>e.getBoundingClientRect().toJSON()") == effect.evaluate("e=>e.getBoundingClientRect().toJSON()")
-            assert effect.evaluate("e=>e.getAnimations().some(a=>a.animationName==='scout-control-breathe')")
+            animations = effect.evaluate("e=>e.getAnimations({subtree:true}).filter(a=>a.animationName==='scout-control-drift').map(a=>a.effect.getTiming())")
+            assert len(animations) == 4
+            assert len({a["duration"] for a in animations}) == 4
+            assert len({a["delay"] for a in animations}) == 4
+            transforms = effect.locator(":scope > span").evaluate_all("es=>es.map(e=>getComputedStyle(e).transform)")
+            effect.evaluate("e=>e.getAnimations({subtree:true}).forEach(a=>{a.pause();a.currentTime+=2400})")
+            assert transforms != effect.locator(":scope > span").evaluate_all("es=>es.map(e=>getComputedStyle(e).transform)")
             bounds = effect.bounding_box()
             edge = effect.locator("[data-edge=left]").bounding_box()
-            assert 0 < edge["width"] <= min(96, bounds["width"] / 2, bounds["height"] / 2) + 1
+            assert 0 < edge["width"] <= min(144, bounds["width"] * .4, bounds["height"] * .4) * 1.12 + 1
             assert effect.evaluate("e=>{const b=e.getBoundingClientRect(); return !e.contains(document.elementFromPoint(b.x+b.width/2,b.y+b.height/2))}")
             assert page.locator(".scout-browser-control-border, .scout-browser-trace").count() == 0
             if args.screenshot:
@@ -133,14 +139,15 @@ with sync_playwright() as p:
             page.get_by_role("button", name="Stop response", exact=True).click()
             expect(effect).not_to_have_attribute("data-active", "true")
             expect(effect).to_have_css("visibility", "hidden")
-            assert effect.evaluate("e=>e.getAnimations().length") == 0
+            assert effect.evaluate("e=>e.getAnimations({subtree:true}).length") == 0
         page.emulate_media(reduced_motion="reduce")
         search()
         expect(effect).to_have_css("animation-name", "none")
         expect(effect).to_have_css("opacity", "0.58")
+        assert effect.evaluate("e=>e.getAnimations({subtree:true}).length") == 0
         assert not posts, posts
         assert not errors, errors
-        print("Scoped four-edge takeover gradients, native stops/extent, breathing, pause cleanup, input pass-through and reduced motion passed", flush=True)
+        print("Scoped asymmetric fog, independent motion, rounded feathering, pause cleanup, input pass-through and reduced motion passed", flush=True)
         b.close()
         raise SystemExit(0)
     assert entry.evaluate("e=>e.tagName") == "INPUT"
