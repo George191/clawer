@@ -1,7 +1,7 @@
 import { LoadingIndicator } from '@/components/ui/loading';
 import { useState } from 'react';
 import { NativeSelect } from '@/components/ui';
-import { BarChartOutlined, FilterOutlined, ReloadOutlined, TableOutlined } from '@/components/ui/icons';
+import { BarChartOutlined, FilterOutlined, TableOutlined } from '@/components/ui/icons';
 import { explorerPropertyType } from '../../services/explorerProperties';
 import PropertyTypeIcon from './PropertyTypeIcon';
 import './explorer-explore-view.css';
@@ -96,7 +96,7 @@ export default function ExplorerExploreView({ fields, names, types, rows, field,
         <button type="button" disabled={!field} onClick={() => onFilter(field)}><FilterOutlined /> Add filter</button>
       </header>
       {error ? aggregation?.limitReached ? <div className="explore-analysis__empty" role="alert"><strong>Unable to load this analysis</strong><p>{error}</p>{aggregation?.onRetry && <button type="button" onClick={aggregation.onRetry}>Retry</button>}</div> : null
-        : busy && !groups.length ? <div className="explore-analysis__empty" role="status"><ReloadOutlined spin /><span>Calculating property values…</span></div>
+        : busy && !groups.length ? <div className="explore-analysis__empty" role="status"><LoadingIndicator size={20}>Calculating property values…</LoadingIndicator></div>
           : !field || !fields.length ? <div className="explore-analysis__empty"><p>Choose an available property to begin.</p></div>
             : !chartable ? <div className="explore-analysis__empty"><PropertyTypeIcon type={type} /><strong>{media ? 'Media properties are explored in object details' : 'Structured properties do not have a scalar distribution'}</strong><p>Choose a text, number, date or boolean property to compare values. Use Add filter to refine this property.</p></div>
               : !groups.length ? <div className="explore-analysis__empty"><BarChartOutlined /><strong>No values to analyze</strong><p>Change the current filters or choose another property.</p></div> : <>

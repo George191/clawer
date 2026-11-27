@@ -1,6 +1,7 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useState } from 'react';
 import { Tooltip } from '@/components/ui';
-import { ReloadOutlined, WarningOutlined } from '@/components/ui/icons';
+import { WarningOutlined } from '@/components/ui/icons';
 import { checkPreviewIndexCoverage, type PreviewIndexCoverageInput, type PreviewIndexCoverageOperator, type PreviewIndexCoverageState } from '../../services/api';
 import type { ExplorerSort } from '../../services/explorerLayouts';
 import { getSessionState } from '../../services/session';
@@ -82,5 +83,5 @@ function IndexNotice({ schema, table, input, retryLabel, warning, noIndexDescrip
   if (current?.state === 'unavailable') return <Tooltip overlayClassName="explorer-index-tooltip" mouseEnterDelay={0} title="Index metadata could not be checked. The check may have timed out or be unavailable. Retry to verify it; this does not mean an index is missing.">
     <button type="button" className="explorer-filter-index-notice is-warning is-retry" aria-label={retryLabel} onClick={() => retry(value => value + 1)}><WarningOutlined /><span>Index check unavailable</span></button>
   </Tooltip>;
-  return <span className="explorer-filter-index-notice" role="status"><ReloadOutlined spin /><span>Checking index…</span></span>;
+  return <span className="explorer-filter-index-notice" role="status"><LoadingIndicator size={20}>Checking index…</LoadingIndicator></span>;
 }

@@ -282,7 +282,7 @@
 @media (prefers-reduced-motion:reduce) { .flow-explorer-query-status, .flow-explorer-query-status.is-leaving { animation:none; } }
 .flow-console--ontology .flow-explorer-selection .flow-data-table .ui-table-content, .flow-console--ontology .flow-explorer-selection__cards { overflow:auto; }
 
-.flow-console--ontology .flow-explorer-selection__results > .flow-data-table { display:flex; flex:1; flex-direction:column; min-height:0; overflow:hidden; }
+.flow-console--ontology .flow-explorer-selection__source > .flow-data-table { display:flex; flex:1; flex-direction:column; min-height:0; overflow:hidden; }
 .flow-explorer-selection .flow-data-table :is(.ui-spin-nested-loading,.ui-spin-container,.ui-table,.ui-table-container) { display:flex; flex:1; flex-direction:column; min-height:0; max-width:100%; }
 .flow-explorer-selection .flow-data-table .ui-table-content { flex:1; min-height:0; }
 

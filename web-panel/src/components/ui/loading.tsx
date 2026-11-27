@@ -10,5 +10,5 @@ export function LoadingOrb({ state = 'working', size = 20, paused = false }: { s
 }
 
 export function LoadingIndicator({ children, state = 'working', size = 32 }: { children?: ReactNode; state?: LoadingState; size?: 20 | 32 | 64 }) {
-  return <span className={`ui-loading-indicator${children ? ' has-label' : ''}`}><LoadingOrb state={state} size={size} />{children && <span>{children}</span>}</span>;
+  return <span className="ui-loading-indicator"><LoadingOrb state={state} size={size} />{children && <span>{children}</span>}</span>;
 }

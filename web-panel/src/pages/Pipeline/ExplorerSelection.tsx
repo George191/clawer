@@ -388,7 +388,7 @@ export default function ExplorerSelection({
           <Button size="small" disabled={disabled} onClick={clear}>Clear selection</Button>
       </header>}
       <Table<RecordRow> className="flow-data-table" size="small" pagination={false} rowKey={(record, index = 0) => rowKey(record, index)}
-        locale={{ emptyText: loading ? <div className="flow-schema-state" role="status"><LoadingIndicator size={20}>Loading object data…</LoadingIndicator></div> : undefined }}
+        loading={{ spinning: loading, tip: 'Loading object data…' }}
         scroll={{ x: 'max-content' }} dataSource={rows} columns={tableColumns} rowSelection={checkboxProps} onRow={rowProps} />
       {footer}
       </div>

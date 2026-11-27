@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Button, Input, NativeSelect, message } from '@/components/ui';
@@ -98,7 +99,7 @@ export default function PublishedApiWorkbench({ items, title = 'Published APIs',
       {onAdd && <Button size="small" icon={<PlusOutlined />} disabled={disabled || dirty} onClick={onAdd}>Publish API</Button>}
     </div></header>
     {dirty && invalid && <p className="api-workbench-error" role="alert">Each publication needs a valid start date and a later expiry date.</p>}
-    {!items.length ? (loading ? <div className="api-workbench-empty" role="status"><ReloadOutlined spin /><strong>Loading published APIs…</strong></div> : <>
+    {!items.length ? (loading ? <div className="api-workbench-empty" role="status"><LoadingIndicator size={20}>Loading published APIs…</LoadingIndicator></div> : <>
       {userTokenSdk && documentTabs}
       {userTokenSdk && tab === 'sdk' ? <div className="api-document-body">{sdkPanel}</div> : !error && <div className="api-workbench-empty">
         <ApiOutlined /><strong>No published APIs</strong><p>{onAdd ? 'Publish the current data range to provide a read-only endpoint.' : 'This source has no published read endpoints.'}</p>

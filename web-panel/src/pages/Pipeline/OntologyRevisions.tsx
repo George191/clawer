@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useRef, useState } from 'react';
 import useExplorerErrorToast from './useExplorerErrorToast';
 import { Button, Checkbox, Input, message } from '@/components/ui';
@@ -187,7 +188,7 @@ export default function OntologyRevisions({ definitionId, onMerged, showTitle = 
       {workspace.canManageRoles && <button type="button" aria-pressed={tab === 'roles'} disabled={busy} onClick={() => switchTab('roles')}>Revision roles</button>}
     </nav>}
     <div className={`ontology-revisions__body${composer ? ' is-composing' : ''}`} role="region" aria-label="Revision workspace" tabIndex={0}>
-      {!workspace && !error && !requestError && <p className="ontology-revisions__loading" role="status"><ReloadOutlined spin />Loading revision workspace…</p>}
+      {!workspace && !error && !requestError && <p className="ontology-revisions__loading" role="status"><LoadingIndicator size={20}>Loading revision workspace…</LoadingIndicator></p>}
       {workspace && <>
         {composer ? <section className="ontology-revisions__composer" aria-label={composer.kind === 'restore' ? 'Restore proposal' : 'Change proposal'}>
           <div className="ontology-revisions__form" role="region" aria-label="Proposal form" tabIndex={0}>
@@ -203,7 +204,7 @@ export default function OntologyRevisions({ definitionId, onMerged, showTitle = 
             <Button size="small" type="primary" onClick={submit} loading={busy} disabled={!composer.summary.trim()}>Submit proposal</Button>
           </footer>
         </section> : <>
-          {!listing && !error && !requestError && <p className="ontology-revisions__loading" role="status"><ReloadOutlined spin />Loading revisions…</p>}
+          {!listing && !error && !requestError && <p className="ontology-revisions__loading" role="status"><LoadingIndicator size={20}>Loading revisions…</LoadingIndicator></p>}
           {listing?.tab === 'proposals' && <section className="ontology-revisions__listing" aria-label="Revision proposals">
             {!listing.page.items.length ? <div className="ontology-revisions__empty" role="status"><FileSearchOutlined /><strong>No revision proposals</strong><p>Submitted changes will appear here for review.</p></div> : <div className="ontology-revisions__table-wrap"><table className="flow-ontology-revision-table">
               <thead><tr><th scope="col">Proposal</th><th scope="col">Base revision</th><th scope="col">Status</th></tr></thead>
@@ -237,7 +238,7 @@ export default function OntologyRevisions({ definitionId, onMerged, showTitle = 
               <Button size="small" disabled={busy || !listing.page.hasMore || offset + pageSize > 100_000} onClick={() => setOffset(value => value + pageSize)}>Next</Button></div>
           </nav>}
         </>}
-        {!composer && detailLoading && <p className="ontology-revisions__loading" role="status"><ReloadOutlined spin />Loading selected revision…</p>}
+        {!composer && detailLoading && <p className="ontology-revisions__loading" role="status"><LoadingIndicator size={20}>Loading selected revision…</LoadingIndicator></p>}
         {!composer && proposal && <section className="ontology-revisions__panel" aria-label="Proposal details">
           <header className="ontology-revisions__panel-heading"><div><h4>{proposal.summary}</h4><p><span className={`ontology-revisions__status is-${proposal.stale ? 'stale' : proposal.status}`}>{label(proposal)}</span>Based on revision {proposal.baseRevision}{proposal.restoreRevision != null && ' · Restores revision ' + proposal.restoreRevision}</p></div>
             <button type="button" className="ontology-revisions__close" aria-label="Close proposal details" disabled={busy} onClick={() => setSelectedProposal('')}><CloseOutlined /></button>

@@ -1,3 +1,4 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useId, type ComponentProps, type CSSProperties, type ReactNode, type Ref } from 'react';
 import { Drawer, Select } from '@/components/ui';
 import { ArrowRightOutlined, CloseOutlined, EyeOutlined, InfoCircleOutlined, ReloadOutlined, RightOutlined } from '@/components/ui/icons';
@@ -46,7 +47,7 @@ export default function ObjectTypePreview({
       </header>
       <div className="flow-ontology__inspector-content" aria-busy={busy}>
         {loading ? <section className="flow-ontology__preview-section" role="status"><h3>Object details</h3>
-            <p className="flow-ontology__muted"><ReloadOutlined spin /> Loading {name}…</p></section>
+            <p className="flow-ontology__muted"><LoadingIndicator size={20}>Loading {name}…</LoadingIndicator></p></section>
           : error ? <section className="flow-ontology__preview-error" role="alert">
             <InfoCircleOutlined className="flow-ontology__preview-error-icon" aria-hidden="true" />
             <div className="flow-ontology__preview-error-body"><h3>Object details unavailable</h3><p>{error}</p>
@@ -66,7 +67,7 @@ export default function ObjectTypePreview({
                 <Select className="flow-ontology__select" popupClassName="flow-ontology__select-popup" aria-label="Object type visibility" value={visibility.draft}
                   disabled={visibility.disabled || closing} onChange={visibility.onChange} options={visibility.options} />
                 <button type="button" className="flow-ontology__button" aria-label="Save visibility" disabled={visibility.disabled || visibility.saveDisabled || closing}
-                  aria-busy={visibility.saving} onClick={visibility.onSave}>{visibility.saving ? <><ReloadOutlined spin />Saving…</> : 'Save'}</button>
+                  aria-busy={visibility.saving} onClick={visibility.onSave}>{visibility.saving ? <LoadingIndicator size={20}>Saving…</LoadingIndicator> : 'Save'}</button>
               </div>}
               <p className="flow-ontology__visibility-help">{visibility.help}</p>
               {visibility.error && <p className="flow-ontology__visibility-feedback is-error" role="alert">{visibility.error}</p>}

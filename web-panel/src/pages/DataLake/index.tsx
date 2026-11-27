@@ -209,7 +209,7 @@ const DataLake: React.FC = () => {
               <span>资产名称</span><span>数据量</span><span>存储</span><span>更新时间</span>
             </div>
             {tablesLoading ? (
-              <div className="product-panel__state"><Spin /><span>正在读取分层目录</span></div>
+              <div className="product-panel__state"><Spin tip="正在读取分层目录" /></div>
             ) : tableError ? (
               <div className="product-panel__state product-panel__state--error">
                 <WarningFilled />

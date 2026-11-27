@@ -1,6 +1,7 @@
+import { LoadingIndicator } from '@/components/ui/loading';
 import { useEffect, useRef, useState } from 'react';
 import { Button, Modal } from '@/components/ui';
-import { BarChartOutlined, InfoCircleOutlined, ReloadOutlined } from '@/components/ui/icons';
+import { BarChartOutlined, InfoCircleOutlined } from '@/components/ui/icons';
 import { fetchColumnPlannerStatistic } from '../../services/api';
 import type { ColumnPlannerStatistic } from '../../services/api';
 import { getSessionState } from '../../services/session';
@@ -46,7 +47,7 @@ export default function ExplorerColumnPlannerStatistic({ schema, table, column, 
     <Button size="small" className="physical-planner-trigger" icon={<BarChartOutlined/>} aria-label={`Planner statistics: ${column}`} onClick={() => void inspect()}>Planner statistics</Button>
     <Modal open={open} destroyOnHidden className="flow-surface-modal physical-planner-statistics-modal" title="Planner statistics" width={520} onCancel={cancel} footer={<Button onClick={cancel}>Done</Button>}>
       <div className="physical-planner-context"><div className="physical-planner-heading"><BarChartOutlined/><strong>{column}</strong><span className="physical-planner-source">Stored metadata</span></div><code>{schema}.{table}</code></div>
-      {error ? null : !result ? <div className="physical-planner-state" role="status"><ReloadOutlined spin/>Reading stored planner metadata…</div> : result.status === 'unavailable'
+      {error ? null : !result ? <div className="physical-planner-state" role="status"><LoadingIndicator size={20}>Reading stored planner metadata…</LoadingIndicator></div> : result.status === 'unavailable'
         ? <div className="physical-planner-state" role="status"><InfoCircleOutlined/><div><strong>Statistics unavailable</strong><p>Stored planner metadata could not be read for this column.</p></div></div>
         : <dl className="physical-planner-metrics">
           <div><dt>Estimated null fraction</dt><dd>{percent.format(result.nullFraction)}</dd></div>

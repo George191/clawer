@@ -1,6 +1,5 @@
 .ui-loading-orb{display:inline-block;flex:none;vertical-align:middle}
-.ui-loading-indicator{display:inline-flex;align-items:center;justify-content:center;gap:10px;max-width:100%;vertical-align:middle;color:var(--ui-text,#e3e6eb);font-size:12px;font-weight:400;line-height:1.5}
-.ui-loading-indicator.has-label{padding:6px 16px 6px 8px}
+.ui-loading-indicator{display:inline-flex;align-items:center;justify-content:center;gap:10px;max-width:100%;vertical-align:middle;color:inherit;font:inherit;line-height:1.5}
 .ui-loading-indicator>span{min-width:0;overflow-wrap:anywhere}
 
 .ui-switch-handle .ui-loading-orb{width:100%!important;height:100%!important}

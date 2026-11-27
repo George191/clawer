@@ -1,0 +1,109 @@
+"""Browser regression for loading alignment and table viewport placement."""
+import argparse
+from ipaddress import ip_address
+from urllib.parse import urlsplit
+
+from playwright.sync_api import sync_playwright
+
+parser = argparse.ArgumentParser()
+parser.add_argument("base")
+parser.add_argument("--channel", default="msedge")
+parser.add_argument("--screenshot-prefix")
+args = parser.parse_args()
+if not ip_address(urlsplit(args.base).hostname).is_loopback:
+    raise ValueError("Expected a loopback frontend URL")
+
+with sync_playwright() as p:
+    browser = p.chromium.launch(channel=args.channel, args=["--no-proxy-server"])
+    page = browser.new_page(viewport={"width": 1280, "height": 900})
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.route("**/src/main.tsx*", lambda route: route.abort())
+    page.route("**/api/**", lambda route: route.fulfill(json={}))
+    page.goto(args.base, wait_until="domcontentloaded")
+    page.evaluate("""async () => {
+      const React = (await import('/node_modules/.vite/deps/react.js')).default;
+      const { createRoot } = (await import('/node_modules/.vite/deps/react-dom_client.js')).default;
+      const { ConfigProvider, theme, Table } = await import('/src/components/ui/index.tsx');
+      const { default: Preview } = await import('/src/pages/Pipeline/ObjectTypePreview.tsx');
+      const { default: Selection } = await import('/src/pages/Pipeline/ExplorerSelection.tsx');
+      for (const path of ['styles/global.css', 'pages/ProductWorkspace/workspace.css',
+        'pages/Pipeline/ontology-frame.css', 'pages/Pipeline/foundry-workbench-tokens.css',
+        'pages/Pipeline/ontology-workspace.css', 'pages/Pipeline/ontology-explorer.css']) {
+        await import('/src/' + path);
+      }
+      document.querySelector('.sp-auth-boot').remove();
+      const root = createRoot(document.getElementById('root')), h = React.createElement;
+      const columns = Array.from({ length: 12 }, (_, i) => ({ title: 'Column ' + i, dataIndex: 'c' + i, width: 160 }));
+      window.renderLoading = (mode, dark = true, loading = true) => {
+        let content;
+        if (mode === 'preview') content = h(Preview, { open: true, id: 'ods.ods_article', name: 'ods_article',
+          loading: true, icon: null, onClose() {}, onExplore() {}, properties: [], allProperties: false,
+          onPropertiesToggle() {}, linkedTypes: {} });
+        else if (mode === 'selection') content = h('div', { className: 'flow-console flow-console--ontology flow-foundry-workbench' },
+          h('div', { className: 'flow-schema-workbench', style: { height: 420, display: 'flex', flexDirection: 'column' } },
+            h(Selection, { schema: 'ods', table: 'ods_article', rows: [], columns: columns.map(c => c.dataIndex),
+              dataColumns: columns, rowKey: (_, i) => String(i), rowIdentity: r => r, rowVersion: () => undefined,
+              loading, locked: false })));
+        else content = h('div', { className: mode === 'explorer' ? 'flow-console flow-console--ontology flow-foundry-workbench' : '' },
+          h('div', { className: mode === 'explorer' ? 'flow-schema-workbench' : '' },
+            h('div', { className: mode === 'explorer' ? 'flow-inspector-body' : '', style: { height: 420, display: 'flex', flexDirection: 'column' } },
+              h(Table, { className: mode === 'explorer' ? 'flow-data-table' : '',
+                style: { height: '100%' }, columns, scroll: { x: 1920 }, pagination: false,
+                loading: { spinning: loading, tip: 'Loading object data…' },
+                dataSource: mode === 'populated' ? Array.from({ length: 30 }, (_, i) => ({ key: i, c0: 'Row ' + i })) : [] }))));
+        root.render(h(ConfigProvider, { theme: { algorithm: dark ? theme.darkAlgorithm : theme.defaultAlgorithm } }, content));
+      };
+    }""")
+
+    def centered(selector):
+        result = page.locator(selector).evaluate("""e => {
+          const orb = e.querySelector('canvas').getBoundingClientRect();
+          const text = e.querySelector('span').getBoundingClientRect();
+          const row = e.getBoundingClientRect(), css = getComputedStyle(e);
+          return { delta: Math.abs(orb.y + orb.height / 2 - text.y - text.height / 2),
+            width: row.width, background: css.backgroundColor, border: css.borderTopWidth };
+        }""")
+        assert result["delta"] < 0.6, result
+        assert result["background"] == "rgba(0, 0, 0, 0)", result
+        assert result["border"] == "0px", result
+
+    for width, dark in [(1280, True), (1280, False), (375, True), (375, False)]:
+        page.set_viewport_size({"width": width, "height": 900})
+        page.evaluate("dark => renderLoading('preview', dark)", dark)
+        page.locator(".flow-ontology__muted .ui-loading-indicator").wait_for()
+        centered(".flow-ontology__muted .ui-loading-indicator")
+        if dark and width == 1280 and args.screenshot_prefix:
+            page.screenshot(path=args.screenshot_prefix + "-preview.png")
+        for mode in ["table", "explorer", "selection", "populated"]:
+            page.evaluate("([mode, dark]) => renderLoading(mode, dark)", [mode, dark])
+            indicator = page.locator(".ui-table-loading .ui-loading-indicator")
+            indicator.wait_for()
+            centered(".ui-table-loading .ui-loading-indicator")
+            for scroll in [0, 700]:
+                page.locator(".ui-table-content").evaluate("(e, x) => {e.scrollLeft=x;e.scrollTop=120}", scroll)
+                delta = indicator.evaluate("""e => {
+                  const a = e.getBoundingClientRect();
+                  const b = e.closest('.ui-spin-nested-loading').getBoundingClientRect();
+                  const table = e.closest('.ui-table-wrapper').getBoundingClientRect();
+                  const css = getComputedStyle(e.closest('.ui-table-loading'));
+                  return { x: Math.abs(a.x+a.width/2-b.x-b.width/2),
+                    y: Math.abs(a.y+a.height/2-b.y-b.height/2), height: b.height, tableHeight: table.height,
+                    background: css.backgroundColor, border: css.borderTopWidth };
+                }""")
+                assert delta["x"] < 1 and delta["y"] < 1, (mode, delta)
+                assert delta["height"] >= 140 and abs(delta["height"] - delta["tableHeight"]) < 3, (mode, delta)
+                assert delta["background"] == "rgba(0, 0, 0, 0)" and delta["border"] == "0px", delta
+            assert page.locator(".flow-schema-state").count() == 0
+            if dark and width == 1280 and mode == "explorer" and args.screenshot_prefix:
+                page.screenshot(path=args.screenshot_prefix + "-table.png")
+            page.evaluate("([mode, dark]) => renderLoading(mode, dark, false)", [mode, dark])
+            page.locator(".ui-table-loading").wait_for(state="detached")
+            if mode == "populated":
+                assert page.locator(".ui-table-tbody>tr").count() == 30
+                assert page.get_by_text("Row 29", exact=True).count() == 1
+            else:
+                assert page.locator(".ui-table-tbody").inner_text().strip() == "No data"
+    assert not errors, errors
+    browser.close()
+print("PASS: actual preview alignment; table XY centers, no background, scrolling, loading completion, dark/light")
