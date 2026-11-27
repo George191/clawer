@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -7,6 +8,7 @@ from tools import download_global_tiles as tiles
 
 
 JPEG = b'\xff\xd8\xfftest\xff\xd9'
+PNG = b'\x89PNG\r\n\x1a\n' + b'test' + b'IEND\xaeB`\x82'
 
 
 def test_six_workers_cover_level_once_and_resume_without_network(tmp_path):
@@ -54,3 +56,22 @@ def test_pg_report_failure_does_not_hide_independent_tile_status(tmp_path, capsy
     assert stopped.value.code == 1
     output = capsys.readouterr().out
     assert 'PG connections full' in output and 'TileProbeError' in output
+
+
+def test_adding_roads_preserves_existing_satellite_and_map_without_fetching_again(tmp_path):
+    import hashlib
+    for source in ('satellite', 'roadmap'):
+        with patch.object(tiles, 'fetch', return_value=JPEG):
+            for worker in range(6):
+                tiles.worker(str(tmp_path), source, 2, worker)
+    before = {str(p): (hashlib.sha256(p.read_bytes()).hexdigest(), p.stat().st_mtime_ns)
+              for p in tmp_path.rglob('*') if p.is_file()}
+    with patch.object(tiles, 'fetch', return_value=PNG) as fetch:
+        for source in tiles.SOURCES:
+            for worker in range(6):
+                tiles.worker(str(tmp_path), source, 2, worker)
+    assert fetch.call_count == 16
+    assert all('?lyrs=h&' in call.args[0] for call in fetch.call_args_list)
+    assert before == {p: (hashlib.sha256(Path(p).read_bytes()).hexdigest(), Path(p).stat().st_mtime_ns)
+                      for p in before}
+    assert len(list((tmp_path / 'overlay').rglob('*.png'))) == 16

@@ -11,7 +11,7 @@ import shutil
 import time
 import urllib.request
 
-SOURCES = {'satellite': 's', 'roadmap': 'm'}
+SOURCES = {'satellite': 's', 'roadmap': 'm', 'overlay': 'h'}
 BASE = 'https://mt1.google.com/vt/'
 MAX_LEVEL = 22
 WORKERS = 6
@@ -53,6 +53,8 @@ def worker(root_string, source, level, number):
         'tiles': 0, 'bytes': 0, 'done': False, 'error': None}
     if (state['source'], state['level'], state['worker']) != (source, level, number):
         raise ValueError('Checkpoint binding differs')
+    if state['done']:
+        return state
     extension = 'jpg' if source == 'satellite' else 'png'
     state['error'] = None
     try:
@@ -67,14 +69,14 @@ def worker(root_string, source, level, number):
                 target = root / source / str(level) / str(x) / f'{y}.{extension}'
                 if target.exists():
                     data = target.read_bytes()
-                    if not valid_image(data):
+                    if not valid_image(data) or source == 'overlay' and not data.startswith(b'\x89PNG\r\n\x1a\n'):
                         raise ValueError(f'Invalid existing tile: {target}')
                 else:
                     url = BASE + f'?lyrs={SOURCES[source]}&x={x}&y={y}&z={level}'
                     for attempt in range(4):
                         try:
                             data = fetch(url)
-                            if not valid_image(data):
+                            if not valid_image(data) or source == 'overlay' and not data.startswith(b'\x89PNG\r\n\x1a\n'):
                                 raise ValueError(f'Invalid image response: {url}')
                             break
                         except Exception:
@@ -132,7 +134,7 @@ def main():
         if plan_file.exists():
             plan = json.loads(plan_file.read_text())
         else:
-            sources = {source: {'service': 'Google Maps ' + ('satellite' if source == 'satellite' else 'roadmap'),
+            sources = {source: {'service': 'Google Maps ' + {'satellite': 'satellite', 'roadmap': 'roadmap', 'overlay': 'road labels'}[source],
                                 'layer': layer, 'max_level': MAX_LEVEL, 'credit': 'Google Maps',
                                 'url': BASE + f'?lyrs={layer}&x={{x}}&y={{y}}&z={{z}}'}
                        for source, layer in SOURCES.items()}
@@ -154,7 +156,7 @@ def main():
                         for future in futures:
                             future.result()
                         save(root / 'output' / 'status.json', snapshot(root, plan, 'running', level))
-                    # Level barrier: neither source can advance until both complete this level.
+                    # Level barrier: no source advances until all three complete this level.
             save(root / 'output' / 'status.json', snapshot(root, plan, 'complete', level))
         except Exception as error:
             save(root / 'output' / 'status.json', snapshot(root, plan, 'failed', level, str(error)))
