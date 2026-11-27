@@ -140,6 +140,8 @@ with sync_playwright() as playwright:
     assert chats[original]["pinned"]
     assert chats[original]["turns"][0]["attachments"][0]["content"] == "UHVibGljIHNvdXJjZSBub3Rlcw=="
 
+    chats[original]["turns"][0]["complete"] = True
+    page.reload(wait_until="domcontentloaded")
     page.get_by_role("button", name="More response actions", exact=True).click()
     response_menu = page.locator(".scout-response-more-menu")
     expect(response_menu.get_by_role("menuitem")).to_have_count(1)
