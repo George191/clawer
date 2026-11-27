@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -41,3 +40,17 @@ def test_file_published_before_interruption_is_reused(tmp_path):
     with patch.object(tiles, 'fetch', side_effect=AssertionError('Unexpected redownload')):
         state = tiles.worker(str(tmp_path), 'satellite', 0, 0)
     assert state['tiles'] == 1 and state['done']
+
+
+def test_pg_report_failure_does_not_hide_independent_tile_status(tmp_path, capsys):
+    import asyncio
+    from unittest.mock import AsyncMock
+    from output.source_dedup_20261109 import progress_table as progress
+    with patch.object(progress, 'HERE', tmp_path), \
+            patch.object(progress, 'collect', AsyncMock(side_effect=RuntimeError('PG connections full'))), \
+            patch.object(progress, 'collect_tiles', AsyncMock(return_value={'verified': False, 'error_class': 'TileProbeError'})):
+        with pytest.raises(SystemExit) as stopped:
+            asyncio.run(progress.main(as_markdown=True))
+    assert stopped.value.code == 1
+    output = capsys.readouterr().out
+    assert 'PG connections full' in output and 'TileProbeError' in output
