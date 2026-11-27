@@ -10,6 +10,8 @@ from pathlib import Path
 import sys
 import unicodedata
 
+from tools.offline_tile_progress import collect as collect_tiles, markdown as tile_markdown
+
 if __package__:
     from .pg_worker import unit_owner
 else:
@@ -595,7 +597,9 @@ def save(path, value):
 async def main(as_json=False, as_markdown=False):
     last = HERE / 'progress-table-last.json'
     previous = json.loads(last.read_text(encoding='utf8')) if last.exists() else None
-    value = summarize(await collect(), previous)
+    snapshot, tiles = await asyncio.gather(collect(), collect_tiles())
+    value = summarize(snapshot, previous)
+    value['tiles'] = tiles
     stamp = parse_time(value['observed_at']).strftime('%Y%m%dT%H%M%SZ')
     receipt = HERE / ('progress-table-' + stamp + '.json')
     value['receipt'] = str(receipt)
@@ -605,11 +609,11 @@ async def main(as_json=False, as_markdown=False):
     if not current or parse_time(value['observed_at']) > parse_time(current['observed_at']):
         latest = HERE / 'progress-table-latest.md'
         temporary = latest.with_name(latest.name + f'.{os.getpid()}.tmp')
-        temporary.write_text(markdown(value), encoding='utf8')
+        temporary.write_text(markdown(value) + tile_markdown(tiles), encoding='utf8')
         save(last, value)
         os.replace(temporary, latest)
     print(json.dumps(value, ensure_ascii=False, separators=(',', ':')) if as_json
-          else markdown(value) if as_markdown else plain_table(value))
+          else (markdown(value) if as_markdown else plain_table(value)) + tile_markdown(tiles))
 
 if __name__ == '__main__':
     sys.stdout.reconfigure(encoding='utf8')
