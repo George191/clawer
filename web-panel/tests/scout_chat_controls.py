@@ -11,6 +11,7 @@ parser = argparse.ArgumentParser(
     description="Verify Scout response controls, state actions and history rail on a loopback frontend."
 )
 parser.add_argument("base")
+parser.add_argument("--composer-only", action="store_true", help="Verify homepage and conversation composer controls only")
 parser.add_argument(
     "--channel", default=None, help="Installed Playwright browser channel, for example msedge"
 )
@@ -33,6 +34,15 @@ with sync_playwright() as p:
     )
 
     pending_profiles = []
+    page.add_init_script("""
+      window.__recognitions = [];
+      window.SpeechRecognition = class {
+        constructor() { window.__recognitions.push(this); }
+        start() { this.started = true; }
+        stop() { this.stopped = true; this.onend?.(); }
+        abort() { this.aborted = true; this.onend?.(); }
+      };
+    """)
     profile_loading = True
     profile = {
         "user": {
@@ -79,6 +89,35 @@ with sync_playwright() as p:
     expect(page.locator(".scout-loaded-name")).to_have_text("Alex")
     expect(loading).to_have_count(0)
     assert entry.evaluate("e=>e.tagName") == "INPUT"
+    add = page.get_by_role("button", name="Add files and more", exact=True)
+    expect(add.locator('[data-codex-icon="plus-md-light-20"]')).to_have_count(1)
+    add.click()
+    expect(page.get_by_role("menuitem", name="View sources", exact=True)).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(add).to_be_focused()
+    add.press("Enter")
+    with page.expect_file_chooser() as chooser:
+        page.get_by_role("menuitem", name="Add files and photos", exact=True).click()
+    assert chooser.value.is_multiple()
+    voice = page.get_by_role("button", name="Voice input", exact=True)
+    expect(voice.locator('[data-codex-icon="microphone-light-20"]')).to_have_count(1)
+    entry.fill("Collect")
+    voice.click()
+    expect(page.get_by_role("button", name="Stop voice input", exact=True)).to_have_attribute("aria-pressed", "true")
+    page.evaluate("window.__recognitions.at(-1).onresult({results:[{0:{transcript:'patents'}}]})")
+    expect(entry).to_have_value("Collect patents")
+    page.evaluate("window.__recognitions.at(-1).onresult({results:[{0:{transcript:'patents today'}}]})")
+    expect(entry).to_have_value("Collect patents today")
+    page.get_by_role("button", name="Stop voice input", exact=True).click()
+    expect(voice).to_have_attribute("aria-pressed", "false")
+    expect(entry).to_be_focused()
+    voice.click()
+    page.evaluate("window.__recognitions.at(-1).onerror({error:'not-allowed'}); window.__recognitions.at(-1).onend()")
+    expect(page.get_by_role("alert")).to_contain_text("Microphone access was denied")
+    voice.click()
+    expect(page.get_by_role("alert")).to_have_count(0)
+    page.get_by_role("button", name="Stop voice input", exact=True).click()
+    entry.fill("")
     page.locator('input[aria-label="Composer files"]').set_input_files(
         {"name": "notes.py", "mimeType": "text/plain", "buffer": b"print('source')"}
     )
@@ -100,6 +139,33 @@ with sync_playwright() as p:
     results = page.get_by_role("complementary", name="Collection results")
     expect(results).to_be_visible()
     assert entry.evaluate("e=>e.tagName") == "TEXTAREA"
+    voice.click()
+    page.evaluate("window.__recognitions.at(-1).onresult({results:[{0:{transcript:'Follow up'}}]})")
+    expect(entry).to_have_value("Follow up")
+    entry.press("Enter")
+    expect(voice).to_have_attribute("aria-pressed", "false")
+    expect(page.locator(".scout-chat-turn")).to_have_count(1)
+    entry.fill("")
+    add.click()
+    expect(page.get_by_role("menuitem", name="Manage agents", exact=True)).to_be_visible()
+    page.keyboard.press("Escape")
+    if args.composer_only:
+        page.evaluate("window.__Recognition = window.SpeechRecognition; window.SpeechRecognition = undefined; window.webkitSpeechRecognition = undefined")
+        voice.click()
+        expect(page.get_by_role("alert")).to_contain_text("does not support voice input")
+        page.evaluate("() => { window.SpeechRecognition = window.__Recognition; }")
+        page.set_viewport_size({"width": 390, "height": 844})
+        expect(voice).to_be_visible()
+        voice.click()
+        add.click()
+        page.get_by_role("menuitem", name="Manage agents", exact=True).click()
+        page.wait_for_url("**/agents")
+        assert page.evaluate("window.__recognitions.at(-1).aborted")
+        assert not posts, posts
+        assert not errors, errors
+        print("Homepage and conversation Codex controls, file picker, dictation updates/stop/errors, mobile visibility and microphone cleanup passed", flush=True)
+        b.close()
+        raise SystemExit(0)
     assert page.get_by_role("button", name="Hide collection results").count() == 0
     entry.fill("First line")
     entry.press("Shift+Enter")
