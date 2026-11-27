@@ -124,6 +124,11 @@ with sync_playwright() as p:
             assert "native-control" in image and ".apng" in image
             assert effect.evaluate("e=>{const b=e.getBoundingClientRect(); return !e.contains(document.elementFromPoint(b.x+b.width/2,b.y+b.height/2))}")
             bounds = effect.bounding_box()
+            if width >= 768:
+                divider = viewport.evaluate("e=>{const s=getComputedStyle(e,'::before');return {top:parseFloat(s.top),bottom:parseFloat(s.bottom),visibility:s.visibility}}")
+                radius = effect.evaluate("e=>parseFloat(getComputedStyle(e).borderTopLeftRadius)")
+                assert divider == {"top": radius, "bottom": radius, "visibility": "hidden"}
+                assert page.locator(".scout-chat-preview").evaluate("e=>getComputedStyle(e,'::after').content") == "none"
             clip = {"x": bounds["x"] + 4, "y": bounds["y"] + bounds["height"] * .4, "width": 6, "height": min(60, bounds["height"] * .2)}
             samples = []
             for _ in range(5):
@@ -137,6 +142,8 @@ with sync_playwright() as p:
             expect(effect).not_to_have_attribute("data-active", "true")
             expect(effect).to_have_css("visibility", "hidden")
             assert effect.evaluate("e=>getComputedStyle(e,'::before').borderImageSource") == "none"
+            if width >= 768:
+                assert viewport.evaluate("e=>getComputedStyle(e,'::before').visibility") == "visible"
         page.emulate_media(reduced_motion="reduce")
         search()
         expect(effect).to_have_css("opacity", "1")

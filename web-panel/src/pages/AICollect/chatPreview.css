@@ -251,13 +251,18 @@
 .scout-chat-preview ::-webkit-scrollbar { display: none; }
 .scout-chat-preview .scout-template-sheet .ai-template-stage-section { padding: 0 0 10px; margin: 0; border: 0; }
 .scout-chat-preview .scout-template-sheet .ai-template-field-value pre { padding: 0; width: auto; min-width: 0; font-size: 12px; line-height: 1.45; }
-.scout-result-viewport { position: absolute; inset: 0; overflow: hidden; }
+.scout-result-viewport { --scout-preview-radius: 24px; position: absolute; inset: 0; overflow: hidden; }
+@media (min-width: 768px) {
+  .scout-chat-preview.has-results::after { content: none; }
+  .scout-result-viewport::before { content: ''; position: absolute; z-index: 3; top: var(--scout-preview-radius); bottom: var(--scout-preview-radius); left: 0; width: 1px; background: repeating-linear-gradient(to bottom, #d2def214 0 3px, transparent 3px 8px); pointer-events: none; }
+  .scout-result-viewport[data-browser-active]::before { visibility: hidden; }
+}
 .scout-result-overflow-hint { position: absolute; z-index: 3; left: 0; right: 0; height: 48px; pointer-events: none; opacity: 0; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); transition: opacity 180ms ease; }
 .scout-result-overflow-hint.is-top { top: 0; background: linear-gradient(#141a29b3, transparent); mask-image: linear-gradient(#000, transparent); }
 .scout-result-overflow-hint.is-bottom { bottom: 0; background: linear-gradient(transparent, #141a29b3); mask-image: linear-gradient(transparent, #000); }
 .scout-result-overflow-hint.is-visible { opacity: 1; }
 /* Original Codex Windows Composition frames: 120px slices captured at 1.25x scale. */
-.scout-computer-control { position: absolute; z-index: 4; inset: 0; overflow: hidden; border-radius: 24px; isolation: isolate; container-type: size; pointer-events: none; visibility: hidden; opacity: 0; transition: opacity 240ms ease, visibility 0s 240ms; }
+.scout-computer-control { position: absolute; z-index: 4; inset: 0; overflow: hidden; border-radius: var(--scout-preview-radius); isolation: isolate; container-type: size; pointer-events: none; visibility: hidden; opacity: 0; transition: opacity 240ms ease, visibility 0s 240ms; }
 .scout-computer-control::before { content: ''; position: absolute; inset: 0; border: min(96px, 40cqw, 40cqh) solid transparent; border-image-slice: 120; border-image-repeat: stretch; }
 .scout-computer-control[data-active] { visibility: visible; opacity: 1; transition-delay: 0s; }
 .scout-computer-control[data-active]::before { border-image-source: url('./native-control.apng'); }
