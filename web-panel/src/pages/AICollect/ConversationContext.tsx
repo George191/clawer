@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Modal } from '@/components/ui';
 import * as Popover from '@radix-ui/react-popover';
-import { CodexToolbarButton, CodexSummarySection } from './CodexToolbar';
+import { CodexSummarySection } from './CodexToolbar';
 import { ArtifactIcon, type StageArtifact } from './StageArtifacts';
 import ScoutToolbarIcon from './ScoutToolbarIcon';
 
@@ -9,15 +9,14 @@ type ContextTurn = { id: number; prompt: string; step: number; done: number; tem
 type Step = { title: string; detail: string };
 
 // Mirrors Codex's Changes / Background processes / Sources interactions using collection preview state.
-export default function ConversationContext({ open, pinned, canPin, onTogglePinned, turn, steps, running, activity, onClose, onView, activePreview, onPause, sources, onAddFiles, onPreviewFile }: { open: boolean; pinned: boolean; canPin: boolean; onTogglePinned: () => void; turn?: ContextTurn; steps: Step[]; running: boolean; activity: string; onClose: () => void; onView: (artifact: StageArtifact) => void; activePreview?: string; onPause: () => void; sources: File[]; onAddFiles: (files: File[]) => void; onPreviewFile: (file: File) => void }) {
+export default function ConversationContext({ open, turn, steps, running, activity, onClose, onView, activePreview, onPause, sources, onAddFiles, onPreviewFile }: { open: boolean; turn?: ContextTurn; steps: Step[]; running: boolean; activity: string; onClose: () => void; onView: (artifact: StageArtifact) => void; activePreview?: string; onPause: () => void; sources: File[]; onAddFiles: (files: File[]) => void; onPreviewFile: (file: File) => void }) {
   const [showAll, setShowAll] = useState(false);
   const picker = useRef<HTMLInputElement>(null);
   const files = turn ? [{ name: 'template.yaml', content: turn.template, step: 2 }, { name: 'adapter.py', content: turn.adapter, step: 3 }].filter((file) => file.content) : [];
   function view(step: number) {
     if (turn) onView({ key: `${turn.id}-${step}`, turn: turn.id, step });
   }
-  const panel = <aside id="scout-conversation-context" className={`scout-context-panel ${open ? 'is-open' : ''} ${pinned ? 'is-pinned' : ''}`} aria-label="Conversation context" aria-hidden={!open} onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
-      <header className="scout-context-heading"><span>Summary</span><div>{canPin && <CodexToolbarButton aria-label={pinned ? 'Unpin summary' : 'Pin summary'} title={pinned ? 'Unpin summary' : 'Pin summary'} aria-pressed={pinned} onClick={onTogglePinned}><ScoutToolbarIcon name="panel" /></CodexToolbarButton>}<CodexToolbarButton aria-label="Close context panel" title="Close summary" onClick={onClose}><ScoutToolbarIcon name="close" /></CodexToolbarButton></div></header>
+  const panel = <aside id="scout-conversation-context" className={`scout-context-panel ${open ? 'is-open' : ''}`} aria-label="Conversation context" aria-hidden={!open} onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
       <CodexSummarySection title="Changes">
         {files.length ? files.map((file) => <button type="button" key={file.name} className="scout-context-row" aria-label={`Open ${file.name}`} aria-pressed={activePreview === `${turn!.id}-${file.step}`} aria-controls="scout-collection-results" onClick={() => view(file.step)}><ArtifactIcon step={file.step} /><span>{file.name}<small>{turn!.done > file.step ? 'Generated · example' : 'Writing · example'}</small></span><b className="scout-context-added" aria-label={`${file.content.trimEnd().split('\n').length} generated lines`}>+{file.content.trimEnd().split('\n').length}</b></button>) : <p className="scout-context-empty">Generated files appear here.</p>}
       </CodexSummarySection>
@@ -36,7 +35,6 @@ export default function ConversationContext({ open, pinned, canPin, onTogglePinn
         <button type="button" className="scout-context-view-all" aria-label={showAll ? 'Show less' : 'View all'} aria-expanded={showAll} onClick={() => setShowAll((prev) => !prev)}>{showAll ? 'Show less' : 'View all'}<small>{sources.length + 2}</small></button>
       </CodexSummarySection>
     </aside>;
-  if (pinned) return panel;
   // Codex pDUk/W4GL: end-aligned floating summary, 8px inset, outside dismissal,
   // focus return and 300ms slide transition; only the collection data differs.
   return <Popover.Portal container={document.querySelector('.scout-chat-preview')}><Popover.Content asChild align="end" side="bottom" sideOffset={8} collisionPadding={8} onOpenAutoFocus={event => event.preventDefault()}>{panel}</Popover.Content></Popover.Portal>;
