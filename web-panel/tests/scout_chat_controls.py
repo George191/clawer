@@ -13,7 +13,7 @@ parser = argparse.ArgumentParser(
 )
 parser.add_argument("base")
 parser.add_argument("--composer-only", action="store_true", help="Verify homepage and conversation composer controls only")
-parser.add_argument("--control-effect-only", action="store_true", help="Verify the scoped computer takeover gradients")
+parser.add_argument("--control-effect-only", action="store_true", help="Verify the scoped native computer takeover animation")
 parser.add_argument("--screenshot", help="Optional control effect screenshot path")
 parser.add_argument(
     "--channel", default=None, help="Installed Playwright browser channel, for example msedge"
@@ -46,7 +46,7 @@ with sync_playwright() as p:
         abort() { this.aborted = true; this.onend?.(); }
       };
     """)
-    profile_loading = True
+    profile_loading = not args.control_effect_only
     profile = {
         "user": {
             "id": "fixture",
@@ -61,93 +61,92 @@ with sync_playwright() as p:
     def route(r):
         if r.request.method == "POST":
             posts.append(r.request.url)
+        if args.control_effect_only and r.request.method == "PUT" and "/scout/chats/" in r.request.url:
+            data = r.request.post_data_json
+            r.fulfill(json={**data, "id": r.request.url.rsplit("/", 1)[-1], "revision": data["revision"] + 1})
+            return
         if "/users/me/context" in r.request.url and profile_loading:
             pending_profiles.append(r)
             return
         r.fulfill(json=profile if "/users/me/context" in r.request.url else {"items": []})
 
+    if args.control_effect_only:
+        # Hold source analysis open while sampling native compositor frames.
+        page.add_init_script("const nativeTimeout=window.setTimeout.bind(window);window.setTimeout=(fn,delay,...args)=>nativeTimeout(fn,delay===4200?60000:delay,...args)")
     page.route("**/api/**", route)
     page.route_web_socket("**/ws**", lambda ws: ws.on_message(lambda _: None))
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.goto(args.base.rstrip("/") + "/scout", wait_until="domcontentloaded")
     entry = page.get_by_role("textbox", name="Message Scout", exact=True)
     expect(entry).to_be_visible()
-    loading = page.get_by_role("status", name="Loading your profile")
-    expect(loading).to_be_visible()
-    expect(loading.locator("i")).to_have_count(3)
-    home = page.locator(".scout-chat-preview").bounding_box()
-    composer = page.locator(".scout-persistent-composer").bounding_box()
-    greeting = page.locator(".scout-chat-greeting").bounding_box()
-    dot = page.locator(".ai-chat-dot").bounding_box()
-    assert abs(composer["y"] + composer["height"] / 2 - home["y"] - home["height"] / 2) < 2
-    assert (
-        dot["y"] + dot["height"]
-        < greeting["y"]
-        < greeting["y"] + greeting["height"]
-        < composer["y"]
-    )
-    profile_loading = False
-    for pending in pending_profiles:
-        pending.fulfill(json=profile)
+    if not args.control_effect_only:
+        loading = page.get_by_role("status", name="Loading your profile")
+        expect(loading).to_be_visible()
+        expect(loading.locator("i")).to_have_count(3)
+        home = page.locator(".scout-chat-preview").bounding_box()
+        composer = page.locator(".scout-persistent-composer").bounding_box()
+        greeting = page.locator(".scout-chat-greeting").bounding_box()
+        dot = page.locator(".ai-chat-dot").bounding_box()
+        assert abs(composer["y"] + composer["height"] / 2 - home["y"] - home["height"] / 2) < 2
+        assert (
+            dot["y"] + dot["height"]
+            < greeting["y"]
+            < greeting["y"] + greeting["height"]
+            < composer["y"]
+        )
+        profile_loading = False
+        for pending in pending_profiles:
+            pending.fulfill(json=profile)
     expect(page.locator(".scout-loaded-name")).to_have_text("Alex")
-    expect(loading).to_have_count(0)
+    if not args.control_effect_only:
+        expect(loading).to_have_count(0)
     if args.control_effect_only:
-        entry.fill("Inspect the source page")
-        entry.press("Enter")
         results = page.get_by_role("complementary", name="Collection results")
         viewport = results.locator(".scout-result-viewport")
         effect = results.locator(".scout-computer-control")
 
         def search():
-            page.get_by_role("button", name="More conversation actions", exact=True).click()
-            page.get_by_role("menuitem", name="Dot activity", exact=True).click()
-            page.get_by_role("menuitem", name="Searching", exact=True).click()
+            entry.fill("Inspect the source page")
+            entry.press("Enter")
             expect(effect).to_have_attribute("data-active", "true")
 
         for width, height in [(1920, 1080), (390, 844)]:
             page.set_viewport_size({"width": width, "height": height})
             search()
             page.wait_for_timeout(700)
-            expect(effect.locator(":scope > [data-edge]")).to_have_count(4)
             expect(effect).to_have_css("pointer-events", "none")
-            expect(effect).to_have_css("border-width", "0px")
-            expect(effect).to_have_css("box-shadow", "none")
             expect(effect).to_have_css("border-radius", "24px")
-            expect(effect.locator("[data-edge=top]")).to_have_css("filter", "blur(22px)")
+            expect(effect).to_have_css("overflow", "hidden")
+            expect(effect).to_have_css("opacity", "1")
             expect(viewport.locator(".scout-source-preview")).to_have_css("filter", "none")
-            assert effect.evaluate("e=>Number(getComputedStyle(e).opacity)") <= .58
-            assert effect.evaluate("e=>getComputedStyle(e).maskImage.includes('16px')")
-            assert viewport.evaluate("e=>getComputedStyle(e,'::after').content") == "none"
-            gradient = effect.locator("[data-edge=top]").evaluate("e=>getComputedStyle(e).backgroundImage")
-            assert "radial-gradient" in gradient and "42%" in gradient
             assert viewport.evaluate("e=>e.getBoundingClientRect().toJSON()") == effect.evaluate("e=>e.getBoundingClientRect().toJSON()")
-            animations = effect.evaluate("e=>e.getAnimations({subtree:true}).filter(a=>a.animationName==='scout-control-drift').map(a=>a.effect.getTiming())")
-            assert len(animations) == 4
-            assert len({a["duration"] for a in animations}) == 4
-            assert len({a["delay"] for a in animations}) == 4
-            transforms = effect.locator(":scope > span").evaluate_all("es=>es.map(e=>getComputedStyle(e).transform)")
-            effect.evaluate("e=>e.getAnimations({subtree:true}).forEach(a=>{a.pause();a.currentTime+=2400})")
-            assert transforms != effect.locator(":scope > span").evaluate_all("es=>es.map(e=>getComputedStyle(e).transform)")
-            bounds = effect.bounding_box()
-            edge = effect.locator("[data-edge=left]").bounding_box()
-            assert 0 < edge["width"] <= min(144, bounds["width"] * .4, bounds["height"] * .4) * 1.12 + 1
+            image = effect.evaluate("e=>getComputedStyle(e,'::before').borderImageSource")
+            assert "native-control" in image and ".apng" in image
             assert effect.evaluate("e=>{const b=e.getBoundingClientRect(); return !e.contains(document.elementFromPoint(b.x+b.width/2,b.y+b.height/2))}")
-            assert page.locator(".scout-browser-control-border, .scout-browser-trace").count() == 0
+            bounds = effect.bounding_box()
+            clip = {"x": bounds["x"] + 4, "y": bounds["y"] + bounds["height"] * .4, "width": 6, "height": min(60, bounds["height"] * .2)}
+            samples = []
+            for _ in range(5):
+                samples.append(page.screenshot(clip=clip))
+                page.wait_for_timeout(300)
+            assert len(set(samples)) > 1, "Native breathing pixels did not change"
             if args.screenshot:
                 target = Path(args.screenshot)
                 page.screenshot(path=str(target if width == 1920 else target.with_name(target.stem + "-mobile.png")))
             page.get_by_role("button", name="Stop response", exact=True).click()
             expect(effect).not_to_have_attribute("data-active", "true")
             expect(effect).to_have_css("visibility", "hidden")
-            assert effect.evaluate("e=>e.getAnimations({subtree:true}).length") == 0
+            assert effect.evaluate("e=>getComputedStyle(e,'::before').borderImageSource") == "none"
         page.emulate_media(reduced_motion="reduce")
         search()
-        expect(effect).to_have_css("animation-name", "none")
-        expect(effect).to_have_css("opacity", "0.58")
-        assert effect.evaluate("e=>e.getAnimations({subtree:true}).length") == 0
+        expect(effect).to_have_css("opacity", "1")
+        assert "native-control-still" in effect.evaluate("e=>getComputedStyle(e,'::before').borderImageSource")
+        still = page.screenshot(clip=clip)
+        page.wait_for_timeout(600)
+        assert still == page.screenshot(clip=clip), "Reduced motion must use a static native frame"
         assert not posts, posts
         assert not errors, errors
-        print("Scoped asymmetric fog, independent motion, rounded feathering, pause cleanup, input pass-through and reduced motion passed", flush=True)
+        print("Original native breathing pixels, preview bounds, stop cleanup, input pass-through and reduced motion passed", flush=True)
         b.close()
         raise SystemExit(0)
     assert entry.evaluate("e=>e.tagName") == "INPUT"

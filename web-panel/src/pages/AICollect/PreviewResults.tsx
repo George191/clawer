@@ -110,7 +110,7 @@ export default function PreviewResults({ turn, step, running, structured = false
     </div>
     <div className={`scout-result-overflow-hint is-top ${edges.top ? 'is-visible' : ''}`} aria-hidden="true" />
     <div className={`scout-result-overflow-hint is-bottom ${edges.bottom ? 'is-visible' : ''}`} aria-hidden="true" />
-    <div className="scout-computer-control" data-active={browserActive || undefined} aria-hidden="true"><span data-edge="top" /><span data-edge="bottom" /><span data-edge="left" /><span data-edge="right" /></div>
+    <div className="scout-computer-control" data-active={browserActive || undefined} aria-hidden="true" />
   </div>;
 }
 
