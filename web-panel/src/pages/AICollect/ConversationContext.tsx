@@ -1,40 +1,41 @@
 import { useEffect, useRef, useState } from 'react';
 import { Modal } from '@/components/ui';
+import * as Popover from '@radix-ui/react-popover';
+import { useThemeStore } from '@/stores/settings';
 import { CodexSummarySection } from './CodexToolbar';
 import { ArtifactIcon, type StageArtifact } from './StageArtifacts';
 import ScoutToolbarIcon from './ScoutToolbarIcon';
 
-type ContextTurn = { id: number; prompt: string; step: number; done: number; template: string; adapter: string; complete: boolean };
-type Step = { title: string; detail: string };
+type ContextTurn = { id: number; prompt: string; done: number; template: string; adapter: string };
 
-// Mirrors Codex's Changes / Background processes / Sources interactions using collection preview state.
-export default function ConversationContext({ open, turn, steps, running, activity, onClose, onView, activePreview, onPause, sources, onAddFiles, onPreviewFile }: { open: boolean; turn?: ContextTurn; steps: Step[]; running: boolean; activity: string; onClose: () => void; onView: (artifact: StageArtifact) => void; activePreview?: string; onPause: () => void; sources: File[]; onAddFiles: (files: File[]) => void; onPreviewFile: (file: File) => void }) {
+export default function ConversationContext({ open, turn, onClose, onView, activePreview, sources, onAddFiles, onPreviewFile }: { open: boolean; turn?: ContextTurn; onClose: () => void; onView: (artifact: StageArtifact) => void; activePreview?: string; sources: File[]; onAddFiles: (files: File[]) => void; onPreviewFile: (file: File) => void }) {
   const [showAll, setShowAll] = useState(false);
   const picker = useRef<HTMLInputElement>(null);
-  const files = turn ? [{ name: 'template.yaml', content: turn.template, step: 2 }, { name: 'adapter.py', content: turn.adapter, step: 3 }].filter((file) => file.content) : [];
-  function view(step: number) {
-    if (turn) onView({ key: `${turn.id}-${step}`, turn: turn.id, step });
-  }
-  const panel = <aside id="scout-conversation-context" className={`scout-context-panel ${open ? 'is-open' : ''}`} aria-label="Conversation context" aria-hidden={!open} onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
-      <CodexSummarySection title="Changes">
-        {files.length ? files.map((file) => <button type="button" key={file.name} className="scout-context-row" aria-label={`Open ${file.name}`} aria-pressed={activePreview === `${turn!.id}-${file.step}`} aria-controls="scout-collection-results" onClick={() => view(file.step)}><ArtifactIcon step={file.step} /><span>{file.name}<small>{turn!.done > file.step ? 'Generated · example' : 'Writing · example'}</small></span><b className="scout-context-added" aria-label={`${file.content.trimEnd().split('\n').length} generated lines`}>+{file.content.trimEnd().split('\n').length}</b></button>) : <p className="scout-context-empty">Generated files appear here.</p>}
-      </CodexSummarySection>
-      <CodexSummarySection title="Background processes">
-        {turn && steps.slice(0, turn.step + 1).map((step, index) => {
-          const done = index < turn.done;
-          const active = !done && index === turn.step;
-          return <div key={step.title} className="scout-context-process"><div className={`scout-context-process-row ${active ? 'is-active' : ''}`}><button type="button" className="scout-context-row" aria-label={`Inspect ${step.title}`} aria-pressed={activePreview === `${turn!.id}-${index}`} aria-controls="scout-collection-results" onClick={() => view(index)}><ScoutToolbarIcon name="terminal" /><span>{step.title}</span><small>{done ? 'Done' : active ? running ? 'Running' : activity : 'Queued'}</small></button>{active && running && <button type="button" className="scout-context-stop" aria-label={`Pause ${step.title}`} title="Pause process" onClick={onPause}><span /></button>}</div></div>;
-        })}
-      </CodexSummarySection>
-      <CodexSummarySection title="Sources" action={<button type="button" className="scout-context-add" aria-label="Add source" title="Add source" onClick={() => picker.current?.click()}>+</button>}>
-        <input ref={picker} type="file" aria-label="Source files" accept=".txt,.md,.yaml,.yml,.json,.py,image/*" multiple hidden onChange={(event) => { const files = Array.from(event.target.files ?? []); onAddFiles(files); event.target.value = ''; }} />
-        <button type="button" className="scout-context-row" aria-label="Open webpage source" aria-pressed={activePreview === `${turn?.id}-1`} aria-controls="scout-collection-results" onClick={() => view(1)}><ArtifactIcon step={1} /><span>example.org/articles<small>Example webpage</small></span></button>
-        <button type="button" className="scout-context-row" aria-label="Open request source" aria-pressed={activePreview === `${turn?.id}-0`} aria-controls="scout-collection-results" onClick={() => view(0)}><ArtifactIcon step={0} /><span>{turn?.prompt || 'Collection request'}</span></button>
-        {(showAll ? sources : sources.slice(0, 3)).map((file, index) => <button type="button" key={`${file.name}-${index}`} className="scout-context-row" title={file.name} aria-label={`Preview source ${file.name}`} onClick={() => onPreviewFile(file)}><ArtifactIcon step={file.name.endsWith('.py') ? 3 : /\.ya?ml$/.test(file.name) ? 2 : 0} /><span>{file.name}<small>{Math.ceil(file.size / 1024)} KB · Local source</small></span></button>)}
-        <button type="button" className="scout-context-view-all" aria-label={showAll ? 'Show less' : 'View all'} aria-expanded={showAll} onClick={() => setShowAll((prev) => !prev)}>{showAll ? 'Show less' : 'View all'}<small>{sources.length + 2}</small></button>
-      </CodexSummarySection>
-    </aside>;
-  return panel;
+  const zh = useThemeStore(state => state.language === 'zh-CN');
+  const files = turn ? [{ name: 'template.yaml', content: turn.template, step: 2 }, { name: 'adapter.py', content: turn.adapter, step: 3 }].filter(file => file.content) : [];
+  const urls = [...new Set(turn?.prompt.match(/https?:\/\/[^\s<>()]+/g) ?? [])];
+  const panel = <aside id="scout-conversation-context" className={`scout-context-panel ${open ? 'is-open' : ''}`} aria-label="Conversation context" onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
+    {files.length > 0 && <CodexSummarySection title={zh ? '更改' : 'Changes'}>
+      {files.map(file => <button type="button" key={file.name} className="scout-context-row" aria-label={`Open ${file.name}`} aria-pressed={activePreview === `${turn!.id}-${file.step}`} aria-controls="scout-collection-results" onClick={() => onView({ key: `${turn!.id}-${file.step}`, turn: turn!.id, step: file.step })}><ArtifactIcon step={file.step} /><span>{file.name}</span><b className="scout-context-added">+{file.content.trimEnd().split('\n').length}</b></button>)}
+    </CodexSummarySection>}
+    <CodexSummarySection title={zh ? '来源' : 'Sources'} action={<button type="button" className="scout-context-add" aria-label="Add source" title={zh ? '添加来源' : 'Add source'} onClick={() => picker.current?.click()}>+</button>}>
+      <input ref={picker} type="file" aria-label="Source files" accept=".txt,.md,.yaml,.yml,.json,.py,image/*" multiple hidden onChange={event => { onAddFiles(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
+      {urls.map(url => <a key={url} className="scout-context-row" href={url} target="_blank" rel="noopener noreferrer"><ArtifactIcon step={1} /><span>{url}</span></a>)}
+      {(showAll ? sources : sources.slice(0, 3)).map((file, index) => <button type="button" key={`${file.name}-${index}`} className="scout-context-row" title={file.name} aria-label={`Preview source ${file.name}`} onClick={() => onPreviewFile(file)}><SourceThumbnail file={file} /><span>{file.name}</span></button>)}
+      {sources.length > 0 && <button type="button" className="scout-context-view-all" aria-label={showAll ? 'Show less' : 'View all'} aria-expanded={showAll} onClick={() => setShowAll(value => !value)}><ScoutToolbarIcon name="link" /><span>{showAll ? zh ? '收起' : 'Show less' : zh ? '查看全部' : 'View all'}</span></button>}
+    </CodexSummarySection>
+  </aside>;
+  return <Popover.Portal container={document.querySelector('.scout-chat-preview')}><Popover.Content asChild align="end" side="bottom" sideOffset={8} collisionPadding={8} onOpenAutoFocus={event => event.preventDefault()}>{panel}</Popover.Content></Popover.Portal>;
+}
+
+function SourceThumbnail({ file }: { file: File }) {
+  const [url, setUrl] = useState('');
+  useEffect(() => {
+    if (!file.type.startsWith('image/')) return;
+    const value = URL.createObjectURL(file); setUrl(value);
+    return () => URL.revokeObjectURL(value);
+  }, [file]);
+  return url ? <img src={url} alt="" /> : <ArtifactIcon step={file.name.endsWith('.py') ? 3 : /\.ya?ml$/.test(file.name) ? 2 : 0} />;
 }
 
 export function SourcePreview({ file, onClose }: { file: File; onClose: () => void }) {

@@ -22,7 +22,7 @@
 .codex-chat-library > button { display: flex; justify-content: space-between; gap: 16px; padding: 12px; border: 0; border-radius: 8px; background: transparent; color: #ededed; text-align: left; cursor: pointer; }
 .codex-chat-library > button:hover { background: #ffffff0d; }
 .codex-chat-library small { color: #999; }
-.codex-library-controls { display: flex; gap: 8px; margin-bottom: 16px; }
+.codex-library-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
 .codex-shared-page { min-height: 100dvh; background: #171717; color: #ededed; padding: 40px max(16px,calc((100% - 800px)/2)); box-sizing: border-box; }
 .codex-shared-page h1 { font-size: 22px; font-weight: 500; }
 .codex-shared-page a { color: inherit; }

@@ -64,7 +64,7 @@ with sync_playwright() as playwright:
                 chats.pop(ident, None)
                 data = {"deleted": True}
             else:
-                data = chats[ident]
+                data = json.loads(json.dumps(chats[ident], sort_keys=True))
         elif "/scout/shares/" in path:
             data = shares[parts[-1]]
         route.fulfill(status=status, content_type="application/json", body=json.dumps(data))
@@ -73,7 +73,7 @@ with sync_playwright() as playwright:
     context.route_web_socket("**/ws**", lambda ws: ws.on_message(lambda _: None))
     page = context.new_page()
     page.on("pageerror", lambda error: errors.append(str(error)))
-    page.goto(args.base + "/scout")
+    page.goto(args.base + "/scout", wait_until="domcontentloaded")
     entry = page.get_by_role("textbox", name="Message Scout", exact=True)
     page.locator('.scout-persistent-composer input[type="file"]').set_input_files({"name": "notes.txt", "mimeType": "text/plain", "buffer": b"Public source notes"})
     entry.fill("Inspect a public webpage")
@@ -82,32 +82,46 @@ with sync_playwright() as playwright:
     toolbar = page.get_by_role("toolbar", name="Conversation actions")
     results = page.get_by_role("complementary", name="Collection results")
     summary = page.locator("#scout-conversation-context")
+    initial_chat_bounds = page.locator(".scout-chat-messages").bounding_box()
     toolbar.get_by_role("button", name="Conversation context", exact=True).click()
     expect(summary).to_be_visible()
     page.wait_for_timeout(700)
     chat_bounds = page.locator(".scout-chat-messages").bounding_box()
-    assert abs(chat_bounds["x"] + chat_bounds["width"] - summary.bounding_box()["x"]) < 1
+    assert abs(chat_bounds["width"] - initial_chat_bounds["width"]) < 1
+    expect(summary).to_have_css("border-radius", "20px")
+    assert abs(summary.bounding_box()["width"] - 300) < 1
+    assert toolbar.locator("svg").evaluate_all("es=>es.every(e=>e.getBoundingClientRect().width===16 && e.getAttribute('viewBox')==='0 0 16 16')")
+    expect(toolbar.locator('[data-codex-icon="sidebar-light-16"]')).to_have_count(1)
+    if args.screenshot:
+        page.screenshot(path=args.screenshot.replace(".png", "-summary.png"))
     expect(summary.locator(".scout-context-heading")).to_have_count(0)
-    expect(summary.get_by_role("button", name="Changes", exact=True)).to_be_visible()
+    expect(summary.get_by_role("button", name="Sources", exact=True)).to_be_visible()
+    expect(summary.get_by_role("button", name="Background processes", exact=True)).to_have_count(0)
     toolbar.get_by_role("button", name="Hide file preview", exact=True).click()
     expect(results).to_be_hidden()
-    expect(summary).to_be_visible()
+    expect(summary).to_be_hidden()
+    expect(toolbar.locator('[data-codex-icon="sidebar-hidden-light-16"]')).to_have_count(1)
     toolbar.get_by_role("button", name="Show file preview", exact=True).click()
 
-    def more(name):
+    def more(name, child=None):
         expect(toolbar).to_have_count(1)
         toolbar.get_by_role("button", name="More conversation actions", exact=True).click()
         expect(page.get_by_role("menuitem", name="Dot activity", exact=True)).to_have_count(0)
+        expect(page.locator('.codex-menu[data-state="open"]').first.get_by_role("menuitem")).to_have_count(7)
+        if args.screenshot and name == "Rename":
+            page.screenshot(path=args.screenshot.replace(".png", "-more.png"))
         page.get_by_role("menuitem", name=name, exact=True).click()
+        if child:
+            page.get_by_role("menuitem", name=child, exact=True).click()
 
-    more("Rename chat")
+    more("Rename")
     rename = page.get_by_role("dialog", name="Rename chat", exact=True)
     rename.get_by_role("textbox", name="Chat name").fill("Saved collection")
     rename.get_by_role("button", name="Save", exact=True).click()
     expect(rename).to_be_hidden()
     more("Pin chat")
     expect(page.locator(".codex-chat-title")).to_contain_text("● Saved collection")
-    more("Copy as Markdown")
+    more("Copy", "Copy as Markdown")
     page.wait_for_function("window.__clipboard?.includes('# Saved collection')")
     original = next(iter(chats))
     assert parse_qs(urlsplit(page.url).query)["chat"][0] == original
@@ -130,12 +144,13 @@ with sync_playwright() as playwright:
     expect(share.get_by_role("button", name="Copied", exact=True)).to_be_visible()
     share.get_by_role("button", name="Close dialog", exact=True).click()
     shared = context.new_page()
-    shared.goto(link)
+    shared.goto(link, wait_until="domcontentloaded")
     expect(shared.get_by_role("heading", name="Saved collection")).to_be_visible()
     expect(shared.get_by_text("Inspect a public webpage", exact=True)).to_be_visible()
     shared.close()
 
-    more("Scheduled task…")
+    page.locator(".codex-chat-title").click()
+    page.get_by_role("dialog", name="Chats", exact=True).get_by_role("button", name="Scheduled task…").click()
     schedule = page.get_by_role("dialog", name="Add scheduled task", exact=True)
     expect(schedule.get_by_role("button", name="Save task")).to_be_enabled(timeout=15000)
     schedule.get_by_label("Repeat", exact=True).select_option("3600")
@@ -148,9 +163,10 @@ with sync_playwright() as playwright:
     page.get_by_role("dialog", name="Add scheduled task").get_by_role("button", name="Close dialog", exact=True).click()
 
     with page.expect_popup() as popup_info:
-        more("Open in new window")
+        more("Open in", "New window")
     popup = popup_info.value
     expect(popup.locator(".codex-chat-title")).to_contain_text("Saved collection")
+    popup.wait_for_timeout(1800)
     popup.close()
     more("Branch chat")
     page.wait_for_function("id=>{const current=new URLSearchParams(location.search).get('chat');return current && current!==id}", arg=original)
@@ -158,7 +174,7 @@ with sync_playwright() as playwright:
     assert branched != original and chats[branched]["turns"] == chats[original]["turns"]
     expect(page.get_by_role("button", name="Preview sent attachment notes.txt", exact=True)).to_be_visible()
 
-    more("Archive chat")
+    more("Archive")
     confirm = page.get_by_role("dialog", name="Archive chat?", exact=True)
     confirm.get_by_role("button", name="Archive", exact=True).click()
     expect(page.get_by_role("button", name="Unarchive and open")).to_be_visible()
@@ -185,10 +201,33 @@ with sync_playwright() as playwright:
         toolbar.get_by_role("button", name="Conversation context").click()
         page.wait_for_timeout(700)
         page.screenshot(path=args.screenshot)
-    more("Delete chat")
+    more("Delete")
     page.get_by_role("dialog", name="Delete chat?").get_by_role("button", name="Delete", exact=True).click()
     expect(page.locator(".codex-chat-title")).to_have_text("New chat")
     assert branched not in chats
     assert not errors, errors
+    zh_context = browser.new_context(viewport={"width": 1100, "height": 800})
+    auth = page.evaluate("localStorage.getItem('auth_session')")
+    zh_context.add_init_script("localStorage.setItem('auth_session'," + json.dumps(auth) + ");localStorage.setItem('etl-panel-settings',JSON.stringify({state:{mode:'dark',language:'zh-CN'},version:0}));")
+    zh_context.route("**/api/**", api)
+    zh_context.route_web_socket("**/ws**", lambda ws: ws.on_message(lambda _: None))
+    chats[original]["pinned"] = False
+    chats[original]["turns"][0]["template"] = "name: articles\nfields:\n  title: h1"
+    zh = zh_context.new_page()
+    zh.goto(args.base + "/scout?chat=" + original, wait_until="domcontentloaded")
+    zh.get_by_role("button", name="Conversation context", exact=True).click()
+    expect(zh.get_by_role("button", name="更改", exact=True)).to_be_visible()
+    expect(zh.get_by_role("button", name="来源", exact=True)).to_be_visible()
+    if args.screenshot:
+        zh.wait_for_timeout(350)
+        zh.screenshot(path=args.screenshot.replace(".png", "-zh-summary.png"))
+    zh.get_by_role("button", name="More conversation actions", exact=True).click()
+    for label in ["重命名", "置顶聊天", "创建聊天分支", "复制", "打开方式", "归档", "删除"]:
+        expect(zh.get_by_role("menuitem", name=label, exact=True)).to_be_visible()
+    if args.screenshot:
+        zh.screenshot(path=args.screenshot.replace(".png", "-zh-more.png"))
+    zh.keyboard.press("r")
+    expect(zh.get_by_role("dialog", name="Rename chat", exact=True)).to_be_visible()
+    zh_context.close()
     browser.close()
     print("Chat persistence, Summary layout, share snapshot, schedule, rename/pin/branch/archive/restore/delete and new-window checks passed")

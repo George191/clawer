@@ -1,5 +1,7 @@
 import { LoadingOrb } from '@/components/ui/loading';
 import { useEffect, useRef, useState } from 'react';
+import * as Popover from '@radix-ui/react-popover';
+import ScoutToolbarIcon from './ScoutToolbarIcon';
 import { Dropdown, Modal } from '@/components/ui';
 import useScoutChat from './useScoutChat';
 import { CodexChatLibrary, CodexChatSchedule } from './CodexChatDialogs';
@@ -54,6 +56,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
   const [chatName, setChatName] = useState('');
   const [confirmChat, setConfirmChat] = useState<'archive' | 'delete'>();
   const goodLabel = language === 'zh-CN' ? '回复优秀' : 'Good response';
+  const localized = (en: string, zh: string) => language === 'zh-CN' ? zh : en;
   const badLabel = language === 'zh-CN' ? '回复不佳' : 'Bad response';
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const historyTimer = useRef<number>();
@@ -81,8 +84,9 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
     if (key === 'rename') { setChatName(chatStore.chat.title); setRenameOpen(true); }
     else if (key === 'pin') await chatAction(() => chatStore.save({ pinned: !chatStore.chat.pinned }));
     else if (key === 'copy') { try { await navigator.clipboard.writeText(markdown(chatSnapshot)); setNotice('Copied conversation as Markdown'); } catch { setNotice('Failed to copy conversation as Markdown'); } }
-    else if (key === 'window') {
-      const target = window.open('', '_blank');
+    else if (key === 'link') { try { await navigator.clipboard.writeText(chatUrl((await chatStore.save()).id)); setNotice(localized('Chat link copied', '聊天链接已复制')); } catch (error) { setNotice(error instanceof Error ? error.message : 'Could not copy chat link'); } }
+    else if (key === 'window' || key === 'tab') {
+      const target = window.open('', '_blank', key === 'window' ? 'popup,width=1100,height=800' : undefined);
       if (!target) { setNotice('Allow pop-ups to open this chat in a new window.'); return; }
       target.opener = null;
       try { target.location.href = chatUrl((await chatStore.save()).id); } catch (error) { target.close(); setNotice(error instanceof Error ? error.message : 'Could not open chat'); }
@@ -243,24 +247,26 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
     catch { utteranceRef.current = null; setSpeaking(null); setSpeechError(true); setNotice('Read aloud could not start.'); }
   }
 
-  return <section className={`scout-chat-preview ${entered ? 'is-entered' : ''} ${entered && resultsOpen ? 'has-results' : ''} ${entered && contextOpen ? 'has-context' : ''} ${chatStore.chat.archived ? 'is-archived' : ''}`} aria-label="Scout conversation" style={{ '--scout-composer-height': `${composerHeight}px` } as React.CSSProperties}>
+  return <Popover.Root open={contextOpen} onOpenChange={setContextOpen}><section className={`scout-chat-preview ${entered ? 'is-entered' : ''} ${entered && resultsOpen ? 'has-results' : ''} ${entered && contextOpen ? 'has-context' : ''} ${chatStore.chat.archived ? 'is-archived' : ''}`} aria-label="Scout conversation" style={{ '--scout-composer-height': `${composerHeight}px` } as React.CSSProperties}>
     <div className={`ai-chat-dot ${!entered ? 'is-landing' : ''}`} data-activity={dotActivity} />
     {entered && <div className="scout-chat-dot-frost" aria-hidden="true" />}
     <h1 className="scout-chat-greeting ai-prompt-title" aria-hidden={entered}>Hi{userLoading || userName ? <>, <span className="scout-greeting-name">{userLoading ? <span className="native-dot-loading scout-profile-loading" role="status" aria-label="Loading your profile"><LoadingOrb /></span> : <span key={userName} className="ai-prompt-name scout-loaded-name">{userName}</span>}</span></> : null}, any new ideas?</h1>
     <button type="button" className="codex-chat-title" title="Open chats" onClick={() => setLibraryOpen(true)}>{entered ? `${chatStore.chat.pinned ? '● ' : ''}${chatStore.chat.title}` : 'Chats'}</button>
     <PreviewWorkspace chatId={chatStore.chat.id} visible={entered} snapshot={chatSnapshot} onSave={() => chatStore.save()} conversationMenu={{ items: [
-      { key: 'new', label: 'New chat' },
-      { key: 'rename', label: 'Rename chat', disabled: chatStore.loading },
-      { key: 'pin', label: chatStore.chat.pinned ? 'Unpin chat' : 'Pin chat', disabled: !turns.length || chatStore.loading },
-      { key: 'branch', label: 'Branch chat', disabled: !turns.length || chatStore.loading },
-      { key: 'schedule', label: 'Scheduled task…', disabled: !turns.length || chatStore.loading || chatStore.chat.archived },
-      { type: 'divider' },
-      { key: 'copy', label: 'Copy as Markdown', disabled: !turns.length },
-      { key: 'window', label: 'Open in new window', disabled: !turns.length || chatStore.loading },
-      { type: 'divider' },
-      { key: 'archive', label: chatStore.chat.archived ? 'Unarchive chat' : 'Archive chat', disabled: !turns.length || chatStore.loading },
-      { key: 'delete', label: 'Delete chat', disabled: !turns.length || chatStore.loading },
-    ], onClick: ({ key }) => { if (key === 'archive' && chatStore.chat.archived) void chatAction(() => chatStore.save({ archived: false })); else void selectChatAction(key); } }} open={entered && resultsOpen} turn={resultTurn} step={previewStep} running={running && resultTurn?.id === latest?.id} onSelect={(artifact) => { setResultsOpen(true); setResultTurnId(artifact.turn); setResultStep(artifact.step); }} onClose={() => setResultsOpen(false)} summaryOpen={contextOpen} onToggleSummary={() => setContextOpen(value => !value)} onTogglePreview={() => setResultsOpen(value => !value)} onNotice={setNotice} />
+      { key: 'rename', label: localized('Rename', '重命名'), icon: <ScoutToolbarIcon name="rename" />, disabled: chatStore.loading },
+      { key: 'pin', label: chatStore.chat.pinned ? localized('Unpin chat', '取消置顶聊天') : localized('Pin chat', '置顶聊天'), icon: <ScoutToolbarIcon name="pin" />, disabled: !turns.length || chatStore.loading },
+      { key: 'branch', label: localized('Branch chat', '创建聊天分支'), icon: <ScoutToolbarIcon name="branch" />, disabled: !turns.length || chatStore.loading },
+      { key: 'copy-menu', label: localized('Copy', '复制'), icon: <ScoutToolbarIcon name="copy" />, children: [
+        { key: 'link', label: localized('Chat link', '聊天链接'), disabled: !turns.length },
+        { key: 'copy', label: localized('Copy as Markdown', '复制为 Markdown'), disabled: !turns.length },
+      ] },
+      { key: 'open-menu', label: localized('Open in', '打开方式'), icon: <ScoutToolbarIcon name="open" />, children: [
+        { key: 'window', label: localized('New window', '新窗口'), disabled: !turns.length || chatStore.loading },
+        { key: 'tab', label: localized('New tab', '新标签页'), disabled: !turns.length || chatStore.loading },
+      ] },
+      { key: 'archive', label: chatStore.chat.archived ? localized('Unarchive', '取消归档') : localized('Archive', '归档'), icon: <ScoutToolbarIcon name="archive" />, disabled: !turns.length || chatStore.loading },
+      { key: 'delete', label: localized('Delete', '删除'), icon: <ScoutToolbarIcon name="trash" />, disabled: !turns.length || chatStore.loading },
+    ], onClick: ({ key }) => { if (key === 'archive' && chatStore.chat.archived) void chatAction(() => chatStore.save({ archived: false })); else void selectChatAction(key); } }} open={entered && resultsOpen} turn={resultTurn} step={previewStep} running={running && resultTurn?.id === latest?.id} onSelect={(artifact) => { setResultsOpen(true); setResultTurnId(artifact.turn); setResultStep(artifact.step); }} onClose={() => setResultsOpen(false)} summaryOpen={contextOpen} onTogglePreview={() => setResultsOpen(value => !value)} onNotice={setNotice} />
     {entered && <aside className="scout-history-rail" aria-label="Conversation history" onMouseLeave={() => setHoveredHistory(null)} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setHoveredHistory(null); }}>
       <div className="ai-session-stage-bars">{history.map((entry, index) => {
         const distance = hoveredHistory === null ? -1 : Math.abs(index - hoveredHistory);
@@ -290,17 +296,17 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
         <button type="button" className="scout-resume" onClick={resume}>{activity === 'Error' ? 'Retry' : latest.waiting === 'template' ? 'Confirm Template' : latest.waiting === 'adapter' ? 'Confirm Adapter' : 'Continue'}</button>
       </div>}
     </div>
-    {entered && <ConversationContext open={contextOpen} turn={resultTurn} steps={steps} running={running && resultTurn?.id === latest?.id} activity={labels[activity]} onClose={() => { setContextOpen(false); document.querySelector<HTMLButtonElement>('.scout-context-toggle')?.focus(); }} activePreview={activePreview} onView={(artifact) => { setResultsOpen(true); setResultTurnId(artifact.turn); setResultStep(artifact.step); }} onPause={pauseResponse} sources={sourceFiles} onAddFiles={addSourceFiles} onPreviewFile={setSelectedSource} />}
+    {entered && <ConversationContext open={contextOpen} turn={resultTurn} onClose={() => { setContextOpen(false); document.querySelector<HTMLButtonElement>('.scout-context-toggle')?.focus(); }} activePreview={activePreview} onView={(artifact) => { setResultsOpen(true); setResultTurnId(artifact.turn); setResultStep(artifact.step); }} sources={sourceFiles} onAddFiles={addSourceFiles} onPreviewFile={setSelectedSource} />}
     <ChatComposer ref={input} entered={entered} value={draft} running={running} files={pendingFiles} queued={queued} onChange={setDraft} onSubmit={submit} onPause={pauseResponse} onAddFiles={addSourceFiles} onRemoveFile={removePendingFile} onPreviewFile={setSelectedSource} onViewSources={() => { if (!entered) onEnter(); setContextOpen(true); }} onHeightChange={setComposerHeight} onEditQueued={(item) => { setQueued((prev) => prev.filter((value) => value.id !== item.id)); setDraft(item.prompt); setPendingFiles(item.files); input.current?.focus(); }} onDeleteQueued={(id) => setQueued((prev) => prev.filter((item) => item.id !== id))} onSendQueued={(item) => { setQueued((prev) => prev.filter((value) => value.id !== item.id)); startTurn(item.prompt, item.files, false); }} />
     {selectedSource && <SourcePreview file={selectedSource} onClose={() => setSelectedSource(null)} />}
     {chatStore.loading && <div className="codex-chat-archived" role="status">Loading chat…</div>}
     {chatStore.chat.archived && <div className="codex-chat-archived">This chat is archived. <button className="codex-chat-action" onClick={() => void chatAction(() => chatStore.save({ archived: false }))}>Unarchive and open</button></div>}
-    {libraryOpen && <CodexChatLibrary onClose={() => setLibraryOpen(false)} onNew={() => { setLibraryOpen(false); void chatAction(() => chatStore.startNew()); }} onOpen={chat => { setLibraryOpen(false); void chatAction(() => chatStore.open(chat.id)); }} />}
+    {libraryOpen && <CodexChatLibrary onClose={() => setLibraryOpen(false)} onNew={() => { setLibraryOpen(false); void chatAction(() => chatStore.startNew()); }} onSchedule={turns.length && !chatStore.chat.archived ? () => { setLibraryOpen(false); setScheduleOpen(true); } : undefined} onOpen={chat => { setLibraryOpen(false); void chatAction(() => chatStore.open(chat.id)); }} />}
     {scheduleOpen && <CodexChatSchedule onSave={() => chatStore.save()} snapshot={chatSnapshot} onClose={() => setScheduleOpen(false)} />}
     <Modal open={renameOpen} title="Rename chat" onCancel={() => setRenameOpen(false)} footer={null} width={400} className="codex-chat-dialog"><form onSubmit={event => { event.preventDefault(); if (chatName.trim()) void chatAction(async () => { await chatStore.save({ title: chatName.trim() }); setRenameOpen(false); }); }}><label className="codex-share-access">Chat name<input aria-label="Chat name" autoFocus value={chatName} maxLength={200} onChange={event => setChatName(event.target.value)} /></label><button className="codex-chat-action" type="submit" disabled={!chatName.trim()}>Save</button></form></Modal>
     <Modal open={Boolean(confirmChat)} title={confirmChat === 'delete' ? 'Delete chat?' : running ? 'Stop and archive this chat?' : 'Archive chat?'} onCancel={() => setConfirmChat(undefined)} footer={null} width={440} className="codex-chat-dialog"><p>{confirmChat === 'delete' ? 'This permanently deletes the chat and its shared links.' : 'Archiving stops this chat and removes its scheduled task. You can restore the chat later.'}</p><div className="codex-library-controls"><button className="codex-chat-action" onClick={() => setConfirmChat(undefined)}>Cancel</button><button className="codex-chat-action" onClick={() => { setRunning(false); stopReading(); setQueued([]); void chatAction(async () => { if (confirmChat === 'delete') await chatStore.remove(); else await chatStore.save({ archived: true }); setConfirmChat(undefined); }); }}>{confirmChat === 'delete' ? 'Delete' : running ? 'Stop and archive' : 'Archive'}</button></div></Modal>
     <span className="scout-action-notice" role="status">{notice}</span>
-  </section>;
+  </section></Popover.Root>;
 }
 
 function FeedbackIcon({ down = false }: { down?: boolean }) {

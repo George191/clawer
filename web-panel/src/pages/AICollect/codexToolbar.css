@@ -5,13 +5,15 @@
 .scout-chat-preview .conversation-header-control:not(:disabled):is(:hover,[data-state=open],[aria-pressed=true]) { background: var(--codex-hover); }
 .scout-chat-preview .conversation-header-control:focus-visible { outline: 2px solid #ffffff59; outline-offset: 0; }
 .scout-chat-preview .conversation-header-control:disabled { opacity: .4; cursor: default; }
-.codex-menu { --app-menu-gutter: var(--codex-spacing); --app-menu-item-height: calc(var(--codex-spacing) * 9); --app-menu-item-padding: calc(var(--codex-spacing) * 2) calc(var(--codex-spacing) * 2.5); --app-menu-item-font-size: 14px; --app-menu-item-line-height: calc(var(--codex-spacing) * 5); --spacing-menu-item-content: calc(var(--codex-spacing) * 1.5); --shadow-dropdown-overlay: 0 8px 12px #00000014, 0 0 1px #0000009e; z-index: 1100; box-sizing: border-box; width: max-content; min-width: 220px; max-width: calc(100vw - 16px); max-height: var(--radix-dropdown-menu-content-available-height); padding: var(--app-menu-gutter); overflow: auto; border: .5px solid #ffffff14; border-radius: 16px; background: var(--codex-surface); color: var(--codex-text); box-shadow: var(--shadow-dropdown-overlay); outline: none; transform-origin: var(--radix-dropdown-menu-content-transform-origin); }
+.codex-menu { --app-menu-gutter: 6px; --app-menu-item-height: 28px; --app-menu-item-padding: 4px 8px; --app-menu-item-font-size: 14px; --app-menu-item-line-height: 20px; --spacing-menu-item-content: 8px; --shadow-dropdown-overlay: 0 8px 12px #00000014, 0 0 1px #0000009e; z-index: 1100; box-sizing: border-box; width: max-content; min-width: 220px; max-width: calc(100vw - 16px); max-height: var(--radix-dropdown-menu-content-available-height); padding: var(--app-menu-gutter); overflow: auto; border: .5px solid #ffffff14; border-radius: 20px; background: #2c2c2c; color: var(--codex-text); box-shadow: var(--shadow-dropdown-overlay); outline: none; transform-origin: var(--radix-dropdown-menu-content-transform-origin); }
 .codex-menu-item { display: flex; align-items: center; gap: var(--spacing-menu-item-content); min-height: var(--app-menu-item-height); padding: var(--app-menu-item-padding); box-sizing: border-box; border-radius: 12px; outline: none; font-size: var(--app-menu-item-font-size); line-height: var(--app-menu-item-line-height); user-select: none; cursor: default; }
 .codex-menu-item[data-highlighted] { background: var(--codex-hover); }
 .codex-menu-item[data-danger] { color: #ff8583; }
 .codex-menu-item[data-disabled] { opacity: .4; pointer-events: none; }
 .codex-menu-separator { height: .5px; margin: 4px 6px; background: #ffffff14; }
 .codex-menu-trailing { margin-left: auto; color: #ffffff80; }
+.codex-menu kbd { font: 12px ui-monospace, monospace; }
+.codex-menu-item > .scout-toolbar-icon { width: 16px; height: 16px; }
 .codex-menu-trailing svg { display: block; width: 16px; height: 16px; }
 .codex-submenu-chevron { transform: rotate(-90deg); }
 /* Nwje.Section and MIZk.Item: original inset, section spacing and row hover area. */
@@ -27,6 +29,11 @@
 .scout-context-panel .scout-context-row::before { position: absolute; z-index: -1; inset: 0 -8px; border-radius: 4px; content: ''; }
 .scout-context-panel .scout-context-row:is(:hover,[aria-pressed=true])::before { background: var(--codex-hover); }
 .scout-context-panel .scout-context-row > .scout-toolbar-icon { fill: currentColor; stroke: none; }
+.scout-context-panel .scout-context-row > img { width: 16px; height: 16px; object-fit: cover; border-radius: 2px; }
+.scout-context-panel .scout-context-section:last-child .scout-context-row { color: #b4b4b4; }
+.scout-context-panel a.scout-context-row { box-sizing: border-box; text-decoration: none; }
+.scout-context-panel .scout-context-view-all { justify-content: flex-start; gap: 12px; padding: 4px 0; font-size: 12px; line-height: 20px; }
+.scout-context-view-all .scout-toolbar-icon { width: 16px; height: 16px; }
 .scout-context-panel[data-state] { z-index: 50; outline: none; transform-origin: var(--radix-popover-content-transform-origin); }
 .scout-context-panel[data-state=open] { animation: codex-summary-enter 300ms cubic-bezier(.16,1,.3,1); }
 .scout-context-panel[data-state=closed] { animation: codex-summary-exit 180ms ease-in; }

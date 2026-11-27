@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { MenuProps } from '@/components/ui';
 import { CodexShareDialog } from './CodexChatDialogs';
 import { persistTurns, type SavedChat, type ShareSnapshot } from './chatStore';
+import * as Popover from '@radix-ui/react-popover';
 import { CodexToolbarButton, CodexToolbarMenu } from './CodexToolbar';
 import PreviewResults, { previewFile, type PreviewResult } from './PreviewResults';
 import { ArtifactIcon, type StageArtifact } from './StageArtifacts';
@@ -13,12 +14,12 @@ type Props = {
   snapshot: ShareSnapshot; onSave: () => Promise<SavedChat>;
   open: boolean; turn?: PreviewResult; step: number; running: boolean;
   onSelect: (artifact: StageArtifact) => void; onClose: () => void;
-  summaryOpen: boolean; onToggleSummary: () => void; onTogglePreview: () => void;
+  summaryOpen: boolean; onTogglePreview: () => void;
   onNotice: (message: string) => void;
 };
 
 export default function PreviewWorkspace(props: Props) {
-  const { chatId, visible, conversationMenu, snapshot, onSave, open, turn, step, running, onSelect, onClose, summaryOpen, onToggleSummary, onTogglePreview, onNotice } = props;
+  const { chatId, visible, conversationMenu, snapshot, onSave, open, turn, step, running, onSelect, onClose, summaryOpen, onTogglePreview, onNotice } = props;
   const [tabs, setTabs] = useState<StageArtifact[]>([]);
   const [structured, setStructured] = useState(false);
   const [wrap, setWrap] = useState(false);
@@ -74,12 +75,12 @@ export default function PreviewWorkspace(props: Props) {
         <PreviewResults turn={turn} step={step} running={running} structured={structured} wrap={wrap} lineNumbers={lineNumbers} />
       </div>
     </aside>
-    {visible && <div className="scout-conversation-toolbar" role="toolbar" aria-label="Conversation actions">
-      <CodexToolbarMenu menu={conversationMenu}><CodexToolbarButton aria-label="More conversation actions" title="More"><ScoutToolbarIcon name="more" /></CodexToolbarButton></CodexToolbarMenu>
+    {visible && <Popover.Anchor asChild><div className="scout-conversation-toolbar" role="toolbar" aria-label="Conversation actions">
+      <CodexToolbarMenu menu={conversationMenu} shortcuts={{ rename: 'R', pin: 'P', archive: 'A' }}><CodexToolbarButton aria-label="More conversation actions" title="More"><ScoutToolbarIcon name="more" /></CodexToolbarButton></CodexToolbarMenu>
       <CodexToolbarButton aria-label="Share chat" title="Share chat" disabled={!snapshot.turns.length} onClick={() => { void persistTurns(snapshot.turns).then(turns => setSharing({ title: snapshot.title, turns })).catch(error => onNotice(error.message)); }}><ScoutToolbarIcon name="share" /></CodexToolbarButton>
-      <CodexToolbarButton className="scout-context-toggle" aria-label="Conversation context" title="Summary" aria-pressed={summaryOpen} aria-controls="scout-conversation-context" onClick={onToggleSummary}><ScoutToolbarIcon name="summary" /></CodexToolbarButton>
-      <CodexToolbarButton aria-label={open ? 'Hide file preview' : 'Show file preview'} title={open ? 'Hide file preview' : 'Show file preview'} aria-pressed={open} aria-controls="scout-collection-results" onClick={onTogglePreview}><ScoutToolbarIcon name="panel" /></CodexToolbarButton>
-    </div>}
+      <Popover.Trigger asChild><CodexToolbarButton className="scout-context-toggle" aria-label="Conversation context" title="Summary" aria-pressed={summaryOpen} aria-controls="scout-conversation-context"><ScoutToolbarIcon name="summary" /></CodexToolbarButton></Popover.Trigger>
+      <CodexToolbarButton className="scout-preview-toggle" aria-label={open ? 'Hide file preview' : 'Show file preview'} title={open ? 'Hide file preview' : 'Show file preview'} aria-pressed={open} aria-controls="scout-collection-results" onClick={onTogglePreview}><ScoutToolbarIcon name={open ? 'panel' : 'panelHidden'} /></CodexToolbarButton>
+    </div></Popover.Anchor>}
     {sharing && <CodexShareDialog snapshot={sharing} onSave={onSave} onClose={() => setSharing(undefined)} />}
   </>;
 }

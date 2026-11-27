@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { branchChat, deleteChat, newChat, persistTurns, readChat, saveChat, type SavedChat, type SavedTurn } from './chatStore';
 
+function turnState(turns: SavedTurn[]) {
+  return turns.map(({ id, prompt, reply, template, adapter, step, done, complete, waiting, vote, attachments }) => ({ id, prompt, reply, template, adapter, step, done, complete, waiting, vote,
+    attachments: (attachments ?? []).map(({ name, type, content }) => ({ name, type, content })) }));
+}
+
 export default function useScoutChat(turns: SavedTurn[], onLoad: (chat: SavedChat) => void, onError: (message: string) => void) {
   const [chat, setChat] = useState(newChat);
   const [loading, setLoading] = useState(Boolean(new URLSearchParams(window.location.search).get('chat')));
@@ -11,7 +16,7 @@ export default function useScoutChat(turns: SavedTurn[], onLoad: (chat: SavedCha
   const revisions = useRef(new Map<string, number>());
   const lastSaved = useRef('');
   current.current = chat; content.current = turns; callbacks.current = { onLoad, onError };
-  const serialized = JSON.stringify(turns.map(({ id, prompt, reply, template, adapter, step, done, complete, waiting, vote, attachments }) => ({ id, prompt, reply, template, adapter, step, done, complete, waiting, vote, attachments })));
+  const serialized = JSON.stringify(turnState(turns));
 
   function save(changes: Partial<Pick<SavedChat, 'title' | 'pinned' | 'archived'>> = {}) {
     const snapshot = { ...current.current, ...changes, turns: content.current };
@@ -28,7 +33,7 @@ export default function useScoutChat(turns: SavedTurn[], onLoad: (chat: SavedCha
         }
         const updated = { ...current.current, ...changes, revision: result.revision };
         current.current = updated; setChat(updated);
-        lastSaved.current = JSON.stringify({ id: target.id, title: target.title, pinned: target.pinned, archived: target.archived, turns: target.turns });
+        lastSaved.current = JSON.stringify({ id: target.id, title: target.title, pinned: target.pinned, archived: target.archived, turns: turnState(target.turns) });
       }
       return result;
     });
@@ -39,7 +44,7 @@ export default function useScoutChat(turns: SavedTurn[], onLoad: (chat: SavedCha
   function apply(next: SavedChat) {
     revisions.current.set(next.id, next.revision);
     current.current = next; setChat(next); content.current = next.turns;
-    lastSaved.current = JSON.stringify({ id: next.id, title: next.title, pinned: next.pinned, archived: next.archived, turns: next.turns });
+    lastSaved.current = JSON.stringify({ id: next.id, title: next.title, pinned: next.pinned, archived: next.archived, turns: turnState(next.turns) });
     callbacks.current.onLoad(next);
     const url = new URL(window.location.href);
     if (next.revision) url.searchParams.set('chat', next.id); else url.searchParams.delete('chat');
