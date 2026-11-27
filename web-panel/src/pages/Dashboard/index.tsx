@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRightOutlined, CheckCircleFilled, ExclamationCircleFilled } from '@/components/ui/icons';
-import { Alert as AlertBanner, App, Button, Select, Skeleton } from '@/components/ui';
+import { Alert as AlertBanner, App, Button, Select, PageLoading } from '@/components/ui';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import workspacePalette from '@/pages/AICollect/palette';
@@ -288,9 +288,7 @@ const Dashboard: React.FC = () => {
   return (
     <div className={`dashboard-v2${pathname === '/' ? ' dashboard-v2--root' : ''}`}>
       {showLoading ? (
-        <div className="dashboard-loading" aria-label="正在加载 Dashboard">
-          <Skeleton active paragraph={{ rows: 14 }} title={{ width: '28%' }} />
-        </div>
+        <PageLoading tip="Loading dashboard…" />
       ) : (
         <>
           {!!metrics?.unavailable_metrics?.length && <AlertBanner type="info" showIcon

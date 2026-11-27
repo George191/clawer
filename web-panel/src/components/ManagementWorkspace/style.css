@@ -104,3 +104,6 @@ html[data-theme='light'] .management-workspace {
   .management-content { padding: 20px 16px 32px; }
   .management-workspace .access-contract-grid { grid-template-columns: 1fr; }
 }
+
+.management-main:has(.management-content>.ui-page-loading){display:flex;flex-direction:column}
+.management-main:has(.management-content>.ui-page-loading) .management-content{display:flex;flex:1;flex-direction:column;min-height:0;width:100%;padding:24px;box-sizing:border-box}

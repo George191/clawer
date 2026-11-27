@@ -96,16 +96,14 @@
   color: var(--dashboard-subtle) !important;
 }
 
-.dashboard-card,
-.dashboard-loading {
+.dashboard-card {
   border: 1px solid var(--dashboard-border-soft);
   border-radius: 16px;
   background: var(--dashboard-surface);
 }
 
-.dashboard-loading {
-  min-height: 520px;
-  padding: 28px;
+.dashboard-v2:has(>.ui-page-loading) {
+  display: flex; flex: 1; min-height: 0; max-width: none; padding: 0; zoom: 1;
 }
 
 .dashboard-hero-grid,

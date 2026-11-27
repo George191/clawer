@@ -1,7 +1,7 @@
 import ScoutDot from '@/components/NativeDot/ScoutDot';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { ConfigProvider, App as UiApp, theme as uiTheme, message, notification, Modal, Spin } from '@/components/ui';
+import { ConfigProvider, App as UiApp, theme as uiTheme, message, notification, Modal, PageLoading } from '@/components/ui';
 import enUS from '@/components/ui/locale';
 import { useThemeStore } from '@/stores/settings';
 import { themeTokens } from './theme/tokens';
@@ -100,7 +100,7 @@ const App: React.FC = () => {
     >
       <UiApp>
         {session.authenticated && !session.locked && !['/login', '/reset-password'].includes(location.pathname) && <ScoutDot />}
-        {location.pathname.startsWith('/share/scout/') ? <Suspense fallback={<Spin />}><SharedChatPage /></Suspense> : ['/login', '/reset-password'].includes(location.pathname) ? (
+        {location.pathname.startsWith('/share/scout/') ? <Suspense fallback={<PageLoading fullscreen />}><SharedChatPage /></Suspense> : ['/login', '/reset-password'].includes(location.pathname) ? (
           <AuthLayout>
             {location.pathname === '/reset-password' && <ResetPassword />}
             {/* Preserve native autofill values when returning from password recovery. */}
@@ -113,9 +113,9 @@ const App: React.FC = () => {
         ) : session.locked ? (
           <AuthLayout><LockScreen /></AuthLayout>
         ) : (
-          <Suspense fallback={<div role="status" style={{ minHeight: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12 }}><Spin tip="Loading workspace..." /></div>}>
+          <Suspense fallback={<PageLoading fullscreen />}>
           <MainLayout key={session.identity}>
-          <Suspense fallback={<div role="status" style={{ minHeight: 240, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12 }}><Spin tip="Loading workspace..." /></div>}>
+          <Suspense fallback={<PageLoading />}>
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/dashboard" element={<Dashboard />} />

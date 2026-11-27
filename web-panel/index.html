@@ -8,9 +8,9 @@
     <script src="/runtime-config.js"></script>
     <style>
       .sp-auth-boot { position: fixed; inset: 0; z-index: 1000; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px; background: radial-gradient(ellipse at 30% 55%, #0b1925 0%, #03070d 55%, #010306 100%); font-family: system-ui, sans-serif; line-height: 1.5; text-align: center; }
-      .sp-auth-loading-pill { display: flex; align-items: center; gap: 12px; padding: 6px 24px 6px 8px; }
-      .sp-auth-boot canvas { width: 64px; height: 64px; }
-      .sp-auth-boot span { color: #e3e3e3; font-size: 16px; }
+      .sp-auth-loading-pill { display: flex; align-items: center; gap: 12px; max-width: 100%; }
+      .sp-auth-boot canvas { width: 64px; height: 64px; flex: none; }
+      .sp-auth-boot span { min-width: 0; color: #e3e3e3; font-size: 16px; overflow-wrap: anywhere; }
       #root:not(:empty) ~ .sp-auth-boot { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .35s ease, visibility 0s linear .35s; }
       #root:has(.sp-login-background-loader:not(.is-ready)) ~ .sp-auth-boot { opacity: 1; visibility: visible; pointer-events: auto; transition: none; }
       @media (max-width: 960px) { #root:not(:empty) ~ .sp-auth-boot { display: none; } }

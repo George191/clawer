@@ -3,3 +3,6 @@
 .ui-loading-indicator>span{min-width:0;overflow-wrap:anywhere}
 
 .ui-switch-handle .ui-loading-orb{width:100%!important;height:100%!important}
+.ui-page-loading{display:flex;flex:1;align-self:stretch;align-items:center;justify-content:center;min-width:0;min-height:0;width:100%;padding:24px;box-sizing:border-box;color:var(--ui-muted,#abb3bf);font-size:16px;line-height:1.5}
+.ui-page-loading>.ui-loading-indicator{gap:12px}
+.ui-page-loading-fullscreen{min-height:100dvh;background:var(--ui-bg,#171b21)}
