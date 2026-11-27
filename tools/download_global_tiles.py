@@ -79,16 +79,17 @@ def worker(root_string, source, level, number):
                     url = BASE + f'?lyrs={SOURCES[source]}&x={x}&y={y}&z={level}'
                     if source == 'overlay':
                         url += '&apistyle=' + quote(ROAD_STYLE, safe='')
-                    for attempt in range(4):
+                    for attempt in range(8):
                         try:
                             data = fetch(url)
                             if not valid_image(data) or source == 'overlay' and not data.startswith(b'\x89PNG\r\n\x1a\n'):
                                 raise ValueError(f'Invalid image response: {url}')
                             break
                         except Exception:
-                            if attempt == 3:
+                            if attempt == 7:
                                 raise
-                            time.sleep(2 ** attempt)
+                            # Allow a brief proxy/TLS outage to recover before failing this tile.
+                            time.sleep(min(60, 5 * 2 ** attempt))
                     target.parent.mkdir(parents=True, exist_ok=True)
                     partial = target.with_suffix('.part')
                     with partial.open('wb') as output:

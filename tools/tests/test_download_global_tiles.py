@@ -1,4 +1,6 @@
 import json
+import ssl
+from urllib.error import URLError
 from pathlib import Path
 from unittest.mock import patch
 
@@ -9,6 +11,37 @@ from tools import download_global_tiles as tiles
 
 JPEG = b'\xff\xd8\xfftest\xff\xd9'
 PNG = b'\x89PNG\r\n\x1a\n' + b'test' + b'IEND\xaeB`\x82'
+
+
+def test_tls_outage_recovers_after_four_failed_attempts(tmp_path):
+    error = URLError(ssl.SSLEOFError('UNEXPECTED_EOF_WHILE_READING'))
+    with patch.object(tiles, 'fetch', side_effect=[error] * 4 + [JPEG]) as fetch, \
+            patch.object(tiles.time, 'sleep') as sleep:
+        state = tiles.worker(str(tmp_path), 'satellite', 0, 0)
+    assert fetch.call_count == 5
+    assert [call.args[0] for call in sleep.call_args_list] == [5, 10, 20, 40]
+    assert state['done'] and state['tiles'] == 1 and state['error'] is None
+
+
+def test_persistent_tls_failure_preserves_checkpoint_for_resume(tmp_path):
+    error = URLError(ssl.SSLEOFError('UNEXPECTED_EOF_WHILE_READING'))
+    with patch.object(tiles, 'fetch', side_effect=[JPEG] + [error] * 8) as fetch, \
+            patch.object(tiles.time, 'sleep') as sleep:
+        with pytest.raises(URLError):
+            tiles.worker(str(tmp_path), 'satellite', 2, 0)
+    assert fetch.call_count == 9
+    assert [call.args[0] for call in sleep.call_args_list] == [5, 10, 20, 40, 60, 60, 60]
+    checkpoint = tmp_path / 'output' / 'satellite-2-0.json'
+    state = json.loads(checkpoint.read_text())
+    assert state['next'] == 6 and state['tiles'] == 1 and not state['done']
+    assert 'UNEXPECTED_EOF' in state['error']
+    target = tmp_path / 'satellite' / '2' / '0' / '0.jpg'
+    before = target.stat().st_mtime_ns
+    with patch.object(tiles, 'fetch', return_value=JPEG) as fetch:
+        state = tiles.worker(str(tmp_path), 'satellite', 2, 0)
+    assert fetch.call_count == 2
+    assert state['done'] and state['tiles'] == 3 and state['error'] is None
+    assert target.stat().st_mtime_ns == before
 
 
 def test_six_workers_cover_level_once_and_resume_without_network(tmp_path):
