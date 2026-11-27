@@ -16,6 +16,7 @@ type VoiceRecognition = {
   start: () => void; stop: () => void; abort: () => void;
 };
 type Props = {
+  userName: string; placeholderReady: boolean;
   entered: boolean; value: string; running: boolean; files: File[]; queued: QueuedMessage[];
   onChange: (value: string) => void; onSubmit: () => void; onPause: () => void;
   onAddFiles: (files: File[]) => void; onRemoveFile: (file: File) => void; onPreviewFile: (file: File) => void;
@@ -24,11 +25,27 @@ type Props = {
 };
 
 export default forwardRef<ComposerField, Props>(function ChatComposer(props, ref) {
-  const { entered, value, running, files, queued, onChange, onSubmit, onPause, onAddFiles, onRemoveFile, onPreviewFile, onViewSources, onHeightChange, onEditQueued, onDeleteQueued, onSendQueued } = props;
+  const { userName, placeholderReady, entered, value, running, files, queued, onChange, onSubmit, onPause, onAddFiles, onRemoveFile, onPreviewFile, onViewSources, onHeightChange, onEditQueued, onDeleteQueued, onSendQueued } = props;
   const form = useRef<HTMLFormElement>(null);
   const field = useRef<ComposerField | null>(null);
   const picker = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
+  const [placeholderLength, setPlaceholderLength] = useState(0);
+  const placeholderPrefix = userName ? 'Hi, ' : 'Hi';
+  const placeholderText = `${placeholderPrefix}${userName}, any new ideas?`;
+  useEffect(() => {
+    setPlaceholderLength(0);
+    if (entered || !placeholderReady) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || document.documentElement.dataset.reducedMotion === 'true') {
+      setPlaceholderLength(placeholderText.length);
+      return;
+    }
+    const timer = setInterval(() => setPlaceholderLength(length => {
+      if (length + 1 >= placeholderText.length) clearInterval(timer);
+      return Math.min(length + 1, placeholderText.length);
+    }), 65);
+    return () => clearInterval(timer);
+  }, [entered, placeholderReady, placeholderText]);
   const [listening, setListening] = useState(false);
   const [voiceError, setVoiceError] = useState('');
   const recognition = useRef<VoiceRecognition | null>(null);
@@ -110,7 +127,7 @@ export default forwardRef<ComposerField, Props>(function ChatComposer(props, ref
     {files.length > 0 && <div className="scout-composer-attachments" aria-label="Message attachments">{files.map((file, index) => <div className="scout-composer-attachment" key={`${file.name}-${index}`}><button type="button" aria-label={`Preview attachment ${file.name}`} onClick={() => onPreviewFile(file)}><FileThumbnail file={file} /><span>{file.name}</span></button><button type="button" aria-label={`Remove attachment ${file.name}`} onClick={() => onRemoveFile(file)}>×</button></div>)}</div>}
     <div className="scout-composer-body" onPaste={(event) => { const pasted = Array.from(event.clipboardData.files); if (pasted.length) { event.preventDefault(); onAddFiles(pasted); } }}>
       {!entered && addControl}
-      {entered ? <textarea ref={(node) => { field.current = node; }} className="scout-message-textarea" aria-label="Message Scout" placeholder="Ask for changes or describe a collection" rows={1} value={value} readOnly={listening} onChange={(event) => onChange(event.target.value)} onKeyDown={onKeyDown} /> : <Input ref={(node) => { field.current = node; }} className="scout-message-input" aria-label="Message Scout" placeholder="Ask anything or describe what you want to collect" value={value} readOnly={listening} onChange={(event) => onChange(event.target.value.replace(/[\r\n]+/g, ''))} onKeyDown={onKeyDown} />}
+      {entered ? <textarea ref={(node) => { field.current = node; }} className="scout-message-textarea" aria-label="Message Scout" placeholder="Ask for changes or describe a collection" rows={1} value={value} readOnly={listening} onChange={(event) => onChange(event.target.value)} onKeyDown={onKeyDown} /> : <div className="scout-landing-field"><Input ref={(node) => { field.current = node; }} className="scout-message-input" aria-label="Message Scout" aria-description={placeholderText} placeholder="" value={value} readOnly={listening} onChange={(event) => onChange(event.target.value.replace(/[\r\n]+/g, ''))} onKeyDown={onKeyDown} />{!value && <span className="scout-landing-placeholder" aria-hidden="true">{placeholderPrefix.slice(0, placeholderLength)}<span className="ai-prompt-name">{userName.slice(0, Math.max(0, placeholderLength - placeholderPrefix.length))}</span>{placeholderText.slice(placeholderPrefix.length + userName.length, placeholderLength)}{placeholderReady && placeholderLength < placeholderText.length && <span className="scout-placeholder-caret" />}</span>}</div>}
       {!entered && <>{voiceControl}<button type="submit" className="scout-send" aria-label="Send message" disabled={!value.trim() && !files.length}><ScoutToolbarIcon name="send" /></button></>}
     </div>
     {entered && <div className="scout-composer-footer">

@@ -31,6 +31,25 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
   const [draft, setDraft] = useState('');
   const [turns, setTurns] = useState<Turn[]>([]);
   const [activity, setActivity] = useState<DotActivity>('Paused');
+  const [landingActivity, setLandingActivity] = useState<DotActivity>('Paused');
+  useEffect(() => {
+    setLandingActivity('Paused');
+    if (entered) return;
+    let started = false;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const start = () => {
+      if (started) return;
+      started = true;
+      timers.push(setTimeout(() => setLandingActivity('None'), 900));
+      timers.push(setTimeout(() => setLandingActivity('Working'), 1700));
+    };
+    const ready = (event: MessageEvent) => {
+      if (event.origin === location.origin && event.source === document.querySelector<HTMLIFrameElement>('.scout-dot-host iframe')?.contentWindow && event.data?.type === 'helio-dot-status' && event.data.state === 'ready') start();
+    };
+    window.addEventListener('message', ready);
+    if (document.querySelector('.scout-dot-host .native-dot-view[data-state="ready"]')) start();
+    return () => { timers.forEach(clearTimeout); window.removeEventListener('message', ready); };
+  }, [entered]);
   const [running, setRunning] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [sourceFiles, setSourceFiles] = useState<File[]>([]);
@@ -247,9 +266,8 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
   }
 
   return <section className={`scout-chat-preview ${entered ? 'is-entered' : ''} ${entered && resultsOpen ? 'has-results' : ''} ${entered && contextOpen ? 'has-context' : ''} ${chatStore.chat.archived ? 'is-archived' : ''}`} aria-label="Scout conversation" style={{ '--scout-composer-height': `${composerHeight}px` } as React.CSSProperties}>
-    <div className={`ai-chat-dot ${!entered ? 'is-landing' : ''}`} data-activity={dotActivity} />
+    <div className={`ai-chat-dot ${!entered ? 'is-landing' : ''}`} data-activity={entered ? dotActivity : landingActivity} />
     {entered && <div className="scout-chat-dot-frost" aria-hidden="true" />}
-    <h1 className="scout-chat-greeting ai-prompt-title" aria-hidden={entered}>Hi{userLoading || userName ? <>, <span className="scout-greeting-name">{userLoading ? <span className="native-dot-loading scout-profile-loading" role="status" aria-label="Loading your profile"><LoadingOrb /></span> : <span key={userName} className="ai-prompt-name scout-loaded-name">{userName}</span>}</span></> : null}, any new ideas?</h1>
     <button type="button" className="codex-chat-title" title="Open chats" onClick={() => setLibraryOpen(true)}>{entered ? `${chatStore.chat.pinned ? '● ' : ''}${chatStore.chat.title}` : 'Chats'}</button>
     <PreviewWorkspace chatId={chatStore.chat.id} visible={entered} snapshot={chatSnapshot} onSave={() => chatStore.save()} conversationMenu={{ items: [
       { key: 'rename', label: localized('Rename', '重命名'), icon: <ScoutToolbarIcon name="rename" />, disabled: chatStore.loading },
@@ -296,7 +314,7 @@ export default function ChatPreview({ entered, userName, userLoading, onEnter }:
       </div>}
     </div>
     {entered && <ConversationContext open={contextOpen} turn={resultTurn} onClose={() => { setContextOpen(false); document.querySelector<HTMLButtonElement>('.scout-context-toggle')?.focus(); }} activePreview={activePreview} onView={(artifact) => { setResultsOpen(true); setResultTurnId(artifact.turn); setResultStep(artifact.step); }} sources={sourceFiles} onAddFiles={addSourceFiles} onPreviewFile={setSelectedSource} />}
-    <ChatComposer ref={input} entered={entered} value={draft} running={running} files={pendingFiles} queued={queued} onChange={setDraft} onSubmit={submit} onPause={pauseResponse} onAddFiles={addSourceFiles} onRemoveFile={removePendingFile} onPreviewFile={setSelectedSource} onViewSources={() => { if (!entered) onEnter(); setContextOpen(true); }} onHeightChange={setComposerHeight} onEditQueued={(item) => { setQueued((prev) => prev.filter((value) => value.id !== item.id)); setDraft(item.prompt); setPendingFiles(item.files); input.current?.focus(); }} onDeleteQueued={(id) => setQueued((prev) => prev.filter((item) => item.id !== id))} onSendQueued={(item) => { setQueued((prev) => prev.filter((value) => value.id !== item.id)); startTurn(item.prompt, item.files, false); }} />
+    <ChatComposer ref={input} userName={userName} placeholderReady={!userLoading && landingActivity === 'Working'} entered={entered} value={draft} running={running} files={pendingFiles} queued={queued} onChange={setDraft} onSubmit={submit} onPause={pauseResponse} onAddFiles={addSourceFiles} onRemoveFile={removePendingFile} onPreviewFile={setSelectedSource} onViewSources={() => { if (!entered) onEnter(); setContextOpen(true); }} onHeightChange={setComposerHeight} onEditQueued={(item) => { setQueued((prev) => prev.filter((value) => value.id !== item.id)); setDraft(item.prompt); setPendingFiles(item.files); input.current?.focus(); }} onDeleteQueued={(id) => setQueued((prev) => prev.filter((item) => item.id !== id))} onSendQueued={(item) => { setQueued((prev) => prev.filter((value) => value.id !== item.id)); startTurn(item.prompt, item.files, false); }} />
     {selectedSource && <SourcePreview file={selectedSource} onClose={() => setSelectedSource(null)} />}
     {chatStore.loading && <div className="codex-chat-archived" role="status">Loading chat…</div>}
     {chatStore.chat.archived && <div className="codex-chat-archived">This chat is archived. <button className="codex-chat-action" onClick={() => void chatAction(() => chatStore.save({ archived: false }))}>Unarchive and open</button></div>}

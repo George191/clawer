@@ -42,5 +42,5 @@ export default function ScoutDot() {
     update();
     return () => cancelAnimationFrame(frame);
   }, []);
-  return <div ref={host} className="scout-dot-host" style={{ position: 'fixed', left: anchor?.left ?? -200, top: anchor?.top ?? 0, width: anchor?.width ?? 112, height: anchor?.height ?? 112, zIndex: 20, transition: anchor?.idle ? 'none' : 'left 620ms cubic-bezier(.22,1,.36,1), top 620ms cubic-bezier(.22,1,.36,1), width 620ms, height 620ms', pointerEvents: anchor ? 'auto' : 'none' }}><NativeDot activity={idle && awake ? 'None' : anchor?.activity ?? 'Paused'} preload /></div>;
+  return <div ref={host} className="scout-dot-host" style={{ position: 'fixed', left: anchor?.left ?? -200, top: anchor?.top ?? 0, width: anchor?.width ?? 112, height: anchor?.height ?? 112, zIndex: 20, transition: anchor?.idle ? 'none' : 'left 620ms cubic-bezier(.22,1,.36,1), top 620ms cubic-bezier(.22,1,.36,1), width 620ms, height 620ms', pointerEvents: anchor ? 'auto' : 'none' }}><NativeDot activity={idle && awake && anchor?.activity === 'Paused' ? 'None' : anchor?.activity ?? 'Paused'} preload /></div>;
 }
