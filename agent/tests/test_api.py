@@ -1,6 +1,6 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
 
 import httpx
@@ -97,3 +97,22 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             generate.assert_not_called()
             response = await self.client.post(f"/agents/definitions/{agent_id}/build", json={"message": "Research", "expected_revision": 2})
             self.assertEqual(response.status_code, 502)
+
+    async def test_catalog_uses_existing_definition_timestamp_column(self):
+        from datetime import datetime, timezone
+        from agent.registry import AgentRegistry
+        updated = datetime.now(timezone.utc)
+        row = {"config": {"name": "Agent"}, "owner_id": self.user.id, "id": uuid4(),
+               "connection_id": uuid4(), "revision": 1, "tested_revision": 1,
+               "tested_connection_revision": 1, "connection_revision": 1, "visibility": "private",
+               "shared_with": [], "system_key": None, "updated_at": updated}
+        results = [Mock(), Mock(), Mock()]
+        results[0].mappings.return_value.all.return_value = []
+        results[1].mappings.return_value.all.return_value = [row]
+        results[2].mappings.return_value.one.return_value = {"config": {}, "revision": 1, "tested_revision": 1}
+        connection = SimpleNamespace(execute=AsyncMock(side_effect=results))
+        context = AsyncMock()
+        context.__aenter__.return_value = connection
+        catalog = await AgentRegistry(SimpleNamespace(connect=lambda: context)).list(self.user.id)
+        self.assertEqual(catalog["agents"][0]["updated_at"], updated)
+        self.assertNotIn("created_at", catalog["agents"][0])

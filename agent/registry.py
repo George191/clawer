@@ -87,7 +87,7 @@ class AgentRegistry:
             agents.append({**config, "id": row["id"], "connection_id": row["connection_id"], "revision": row["revision"],
                            "verified": verified, "visibility": row["visibility"], "shared_with": row["shared_with"],
                            "system_key": row["system_key"], "can_edit": row["owner_id"] == actor})
-            agents[-1].update(created_at=row["created_at"], updated_at=row["updated_at"])
+            agents[-1].update(updated_at=row["updated_at"])
         return {"connections": [dict(row) for row in connections], "agents": agents,
                 "harnesses": {key: {"name": item["name"], "tools": item["steps"]} for key, item in EXECUTORS.items()}}
 

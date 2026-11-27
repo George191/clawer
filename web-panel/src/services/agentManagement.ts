@@ -6,11 +6,11 @@ export type AgentDefinition = {
   instructions: string; model: string; reasoning_effort: string; enabled: boolean;
   icon?: string;
   timeout_seconds: number; max_output_tokens: number; revision: number; verified: boolean; visibility: 'private' | 'shared' | 'public'; shared_with: string[]; system_key: string | null; can_edit: boolean;
-  created_at?: string; updated_at?: string;
+  updated_at?: string;
 };
 export type AgentCatalog = { connections: AgentConnection[]; agents: AgentDefinition[]; harnesses: Record<string, { name: string; tools: string[] }> };
 export const fetchAgentCatalog = () => client.get('/agents/catalog').then((r) => unwrap<AgentCatalog>(r.data));
-export const saveAgentDefinition = (agent: Omit<AgentDefinition, 'id' | 'verified' | 'revision' | 'system_key' | 'can_edit' | 'created_at' | 'updated_at'> & { expected_revision: number }, id?: string) =>
+export const saveAgentDefinition = (agent: Omit<AgentDefinition, 'id' | 'verified' | 'revision' | 'system_key' | 'can_edit' | 'updated_at'> & { expected_revision: number }, id?: string) =>
   (id ? client.put(`/agents/definitions/${id}`, agent) : client.post('/agents/definitions', agent)).then((r) => unwrap<{ id: string }>(r.data));
 export const saveAgentConnection = (connection: { name: string; base_url: string; api_key?: string; expected_revision: number }, id?: string) =>
   (id ? client.put(`/agents/connections/${id}`, connection) : client.post('/agents/connections', connection)).then((r) => unwrap<{ id: string }>(r.data));
