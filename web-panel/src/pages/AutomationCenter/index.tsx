@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert, App, Badge, Button, Card, ConfigProvider, Descriptions, Drawer, Empty, Form, Input,
+  Alert, App, Badge, Button, Card, ConfigProvider, Descriptions, Drawer, Form, Input,
   InputNumber, Modal, Popconfirm, Segmented, Select, Space, Spin, Switch,
   Table, Tag,
 } from '@/components/ui';
@@ -384,6 +384,12 @@ const AutomationCenter: React.FC = () => {
     ? filteredWorkflows.filter((item) => scheduleFilter === 'all' || item.enabled === (scheduleFilter === 'enabled'))
     : visibleSchedules;
   const currentColumns = section === 'workflows' ? workflowColumns : scheduleColumns;
+  const hasActiveFilters = Boolean(keyword.trim()) || scheduleFilter !== 'all' || domain !== 'all';
+  const emptyLabel = sectionMeta[section].label.toLowerCase();
+  const emptyState = <div className="automation-empty-state" role="status">
+    <span>{loading ? `Loading ${emptyLabel}…` : hasActiveFilters ? `No matching ${emptyLabel}` : `No ${emptyLabel} yet`}</span>
+    {!loading && <small>{hasActiveFilters ? 'Try changing your search, status or domain filter.' : section === 'workflows' ? 'Create a workflow to define an execution path.' : 'Create a schedule to automate when tasks run.'}</small>}
+  </div>;
   useLayoutEffect(() => {
     const updateTableHeight = () => {
       const card = tableCardRef.current;
@@ -444,7 +450,7 @@ const AutomationCenter: React.FC = () => {
         {editableSection && (!connected || !streamAvailable) && <Alert className="automation-load-alert" type="warning" showIcon message="Live updates unavailable. Reconnecting automatically…" />}
         {section === 'schedules' && (domain === 'all' || domain === 'etl-pipeline') && <TransferSchedules keyword={keyword} filter={scheduleFilter} />}
     {section === 'workers' ? <Workers /> : section === 'runs' ? <AutomationRuns domain={domain} keyword={keyword} onKeywordChange={setKeyword} taskId={searchParams.get('task')} executionId={searchParams.get('run')} onSelect={selectRun} /> : <Card ref={tableCardRef} className="automation-table-card" styles={{ body: { padding: 0 } }}>
-      <Spin spinning={loading}><Table scroll={{ y: tableBodyHeight, x: 900 }} rowKey={(record) => String('id' in record && record.id ? record.id : 'task_name' in record ? record.task_name : record.name)} columns={currentColumns as never} dataSource={currentData as never} pagination={{ pageSize: section === 'schedules' ? 20 : 10, hideOnSinglePage: false, ...(section === 'schedules' ? { showSizeChanger: false } : {}) }} locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={`No ${sectionMeta[section].label.toLowerCase()} match the current filters`} /> }} onRow={(record) => ({ onClick: () => section === 'schedules' ? openScheduleDetail(record as AutomationSchedule) : setDetail(record as SelectedRecord), style: { cursor: 'pointer' } })} /></Spin>
+      <Spin spinning={loading}><Table scroll={{ y: tableBodyHeight, x: 900 }} rowKey={(record) => String('id' in record && record.id ? record.id : 'task_name' in record ? record.task_name : record.name)} columns={currentColumns as never} dataSource={currentData as never} pagination={{ pageSize: section === 'schedules' ? 20 : 10, hideOnSinglePage: false, ...(section === 'schedules' ? { showSizeChanger: false } : {}) }} locale={{ emptyText: emptyState }} onRow={(record) => ({ onClick: () => section === 'schedules' ? openScheduleDetail(record as AutomationSchedule) : setDetail(record as SelectedRecord), style: { cursor: 'pointer' } })} /></Spin>
     </Card>}
 
       </main>

@@ -31,6 +31,9 @@
 .automation-name small { margin-top:6px; font-size:12px; }
 .automation-name > .ui-icon { width:32px; height:32px; border:0; background:var(--wm-field); color:var(--wm-muted); }
 .automation-table-card .ui-tag { font-size:11px; border:0; border-radius:5px; background:var(--wm-field); }
+.automation-table-card .ui-table-placeholder > td { padding:0; background:var(--wm-bg); text-align:left; }
+.automation-empty-state { display:flex; flex-direction:column; align-items:flex-start; justify-content:center; gap:6px; min-height:96px; padding:20px 16px; color:var(--wm-text); font-size:13px; }
+.automation-empty-state small { color:var(--wm-muted); font-size:12px; line-height:1.6; }
 .automation-runs-workspace { gap:0; }
 .is-runs .automation-page-heading { margin-bottom:18px; }
 .is-runs .automation-page-heading p { display:none; }
