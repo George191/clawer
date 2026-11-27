@@ -28,11 +28,11 @@ def test_six_workers_cover_level_once_and_resume_without_network(tmp_path):
 def test_invalid_response_never_publishes_or_advances_checkpoint(tmp_path):
     with patch.object(tiles, 'fetch', return_value=b'<html>error</html>'), patch.object(tiles.time, 'sleep'):
         with pytest.raises(ValueError, match='Invalid image'):
-            tiles.worker(str(tmp_path), 'roadmap', 0, 0)
-    state = json.loads((tmp_path / 'output' / 'roadmap-0-0.json').read_text())
+            tiles.worker(str(tmp_path), 'overlay', 0, 0)
+    state = json.loads((tmp_path / 'output' / 'overlay-0-0.json').read_text())
     assert state['next'] == 0 and state['tiles'] == 0 and not state['done']
     assert state['error']
-    assert not list((tmp_path / 'roadmap').rglob('*.png'))
+    assert not list((tmp_path / 'overlay').rglob('*.png'))
 
 
 def test_file_published_before_interruption_is_reused(tmp_path):
@@ -58,12 +58,11 @@ def test_pg_report_failure_does_not_hide_independent_tile_status(tmp_path, capsy
     assert 'PG connections full' in output and 'TileProbeError' in output
 
 
-def test_adding_roads_preserves_existing_satellite_and_map_without_fetching_again(tmp_path):
+def test_adding_roads_preserves_existing_satellite_without_fetching_again(tmp_path):
     import hashlib
-    for source in ('satellite', 'roadmap'):
-        with patch.object(tiles, 'fetch', return_value=JPEG):
-            for worker in range(6):
-                tiles.worker(str(tmp_path), source, 2, worker)
+    with patch.object(tiles, 'fetch', return_value=JPEG):
+        for worker in range(6):
+            tiles.worker(str(tmp_path), 'satellite', 2, worker)
     before = {str(p): (hashlib.sha256(p.read_bytes()).hexdigest(), p.stat().st_mtime_ns)
               for p in tmp_path.rglob('*') if p.is_file()}
     with patch.object(tiles, 'fetch', return_value=PNG) as fetch:
@@ -78,3 +77,11 @@ def test_adding_roads_preserves_existing_satellite_and_map_without_fetching_agai
     assert before == {p: (hashlib.sha256(Path(p).read_bytes()).hexdigest(), Path(p).stat().st_mtime_ns)
                       for p in before}
     assert len(list((tmp_path / 'overlay').rglob('*.png'))) == 16
+
+
+def test_electronic_map_is_rejected_before_any_file_or_network_work(tmp_path):
+    with patch.object(tiles, 'fetch', side_effect=AssertionError('Unexpected electronic map fetch')):
+        with pytest.raises(ValueError, match='Unsupported tile source: roadmap'):
+            tiles.worker(str(tmp_path), 'roadmap', 0, 0)
+    assert not list(tmp_path.iterdir())
+    assert tiles.SOURCES == {'satellite': 's', 'overlay': 'h'}

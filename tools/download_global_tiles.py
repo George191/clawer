@@ -12,7 +12,7 @@ import time
 import urllib.request
 from urllib.parse import quote
 
-SOURCES = {'satellite': 's', 'roadmap': 'm', 'overlay': 'h'}
+SOURCES = {'satellite': 's', 'overlay': 'h'}
 BASE = 'https://mt1.google.com/vt/'
 MAX_LEVEL = 22
 ROAD_STYLE = 's.t:0|s.e:l|p.v:off'
@@ -47,6 +47,8 @@ def valid_image(data):
 
 
 def worker(root_string, source, level, number):
+    if source not in SOURCES:
+        raise ValueError('Unsupported tile source: ' + source)
     root = Path(root_string)
     checkpoint = root / 'output' / f'{source}-{level}-{number}.json'
     total = 4 ** level
@@ -138,7 +140,7 @@ def main():
         if plan_file.exists():
             plan = json.loads(plan_file.read_text())
         else:
-            sources = {source: {'service': 'Google Maps ' + {'satellite': 'satellite', 'roadmap': 'roadmap', 'overlay': 'road labels'}[source],
+            sources = {source: {'service': 'Google Maps ' + {'satellite': 'satellite', 'overlay': 'road labels'}[source],
                                 'layer': layer, 'max_level': MAX_LEVEL, 'credit': 'Google Maps',
                                 'url': BASE + f'?lyrs={layer}&x={{x}}&y={{y}}&z={{z}}' +
                                        ('&apistyle=' + quote(ROAD_STYLE, safe='') if source == 'overlay' else ''),
@@ -164,7 +166,7 @@ def main():
                         for future in futures:
                             future.result()
                         save(root / 'output' / 'status.json', snapshot(root, plan, 'running', level))
-                    # Level barrier: no source advances until all three complete this level.
+                    # Level barrier: neither source advances until both complete this level.
             save(root / 'output' / 'status.json', snapshot(root, plan, 'complete', level))
         except Exception as error:
             save(root / 'output' / 'status.json', snapshot(root, plan, 'failed', level, str(error)))

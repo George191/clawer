@@ -50,7 +50,7 @@ def markdown(value):
              f"采样断点时间：{value['updated_at']}；任务状态：{value['phase']}；6 个进程；当前等级：{value['level']}。",
              '| 类型 | 当前级已落盘 / 总数 | 完成等级 | 累计瓦片 |',
              '| --- | ---: | --- | ---: |']
-    for source, title in [('satellite', '卫星影像'), ('roadmap', '电子地图'), ('overlay', '透明道路（无文字）')]:
+    for source, title in [('satellite', '卫星影像'), ('overlay', '透明道路（无文字）')]:
         if source not in value['levels']:
             lines.append(f'| {title} | — | 尚未加入下载计划 | — |')
             continue
@@ -59,7 +59,7 @@ def markdown(value):
         done = ', '.join(z for z, state in levels.items() if state['done']) or '—'
         lines.append(f"| {title} | {current['tiles']:,} / {current['total']:,} | {done} | {sum(s['tiles'] for s in levels.values()):,} |")
     lines.append(f"已落盘 {value['bytes'] / 1024**2:,.1f} MiB；目录：`{value['root']}`。")
-    lines.append('数据源：Google 卫星(s) / 电子地图(m) / 透明道路(h)；不含 Earth 实景三维。网络：' + value.get('network', '未核定') + '。')
+    lines.append('数据源：Google 卫星(s) / 透明道路(h)；电子地图(m)已停止下载并删除。不含 Earth 实景三维。网络：' + value.get('network', '未核定') + '。')
     errors = [error for levels in value['levels'].values() for level, state in levels.items()
               if int(level) <= value['level'] for error in state['errors']]
     if value.get('error') or errors:
